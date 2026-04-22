@@ -18,7 +18,9 @@ const config: KnipConfig = {
   ignoreDependencies: [
     'fast-xml-parser', // consumed by src/lib/sources.ts in Phase 5
     'zod', // consumed by validation schemas added in Phase 2+
-    '@vite-pwa/astro' // Astro integration, loaded via astro.config.mjs
+    '@vite-pwa/astro', // Astro integration, loaded via astro.config.mjs
+    'tailwindcss', // resolved transitively via @tailwindcss/vite plugin
+    '@astrojs/check' // used by `astro check` CLI
   ],
   ignoreExportsUsedInFile: true,
   ignore: ['**/*.test.ts', 'src/lib/types.ts']
