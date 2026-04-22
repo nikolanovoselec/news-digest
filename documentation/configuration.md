@@ -17,7 +17,7 @@ Stored via `wrangler secret put <name>`. Never committed to git.
 | `OAUTH_JWT_SECRET` | 32+ character random string used to HMAC-sign session JWTs |
 | `RESEND_API_KEY` | Resend API key for digest-ready emails (starts with `re_`) |
 | `RESEND_FROM` | Sender address for emails, e.g., `News Digest <digest@example.com>`; domain must be verified in Resend |
-| `APP_URL` | Canonical origin, e.g., `https://digest.example.com`; used in email CTA links and for the Origin CSRF check |
+| `APP_URL` | Canonical origin, e.g., `https://digest.example.com`; used in email CTA links, OAuth redirect URI construction, and as the reference value for the Origin CSRF check ([REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)) |
 
 ## GitHub Actions Secrets (CI deploy only)
 
@@ -44,6 +44,10 @@ Queue consumer binding is configured in the `[[queues.consumers]]` section of `w
 ## Cron
 
 `crons = ["*/5 * * * *"]` — every 5 minutes at minute 0, 5, 10, ..., 55 UTC.
+
+## Security Headers
+
+Security headers (CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`) are applied by `src/middleware/security-headers.ts` on every response. No configuration is required — the policy is hardcoded and tested byte-for-byte. See [REQ-OPS-003](../sdd/observability.md#req-ops-003-security-headers-on-every-response) for the exact header values.
 
 ## Configuration Files
 
