@@ -21,7 +21,7 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 **Priority:** P0
 **Dependencies:** None
 **Verification:** Manual check
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -42,7 +42,7 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 **Priority:** P0
 **Dependencies:** REQ-DES-001
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -63,4 +63,4 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 **Priority:** P1
 **Dependencies:** REQ-DES-001
 **Verification:** Manual check
-**Status:** Planned
+**Status:** Implemented
