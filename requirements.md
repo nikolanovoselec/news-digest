@@ -22,8 +22,8 @@ Every digest shows execution time, token count, and estimated cost, so you can s
 | Database | Cloudflare D1 |
 | Sessions | Stateless JWT in HttpOnly cookie |
 | LLM | Workers AI (user-selectable model) |
-| Scheduling | Cron Trigger every 5 minutes — generates inline when a user's HH:MM matches the current window |
-| Async work | `ctx.waitUntil` for manual refresh (return 202, generate in background). No Queues. |
+| Scheduling | Cron Trigger every 5 minutes — dispatches per-user generation jobs to a Queue |
+| Queues | `digest-jobs` — cron + manual refresh both enqueue; consumer processes with per-isolate isolation. Natural backpressure under thundering-herd (100 users at 08:00). |
 | Email | Resend — "your daily digest is ready" notification after each scheduled run |
 | Styling | Tailwind CSS 4 |
 | PWA | `@vite-pwa/astro` — manifest, service worker, install prompt |
@@ -135,6 +135,7 @@ Per-hashtag item cap 30 per source (generics) and 20 per source (tag-specific), 
 | `source_health:{url}` | `{ consecutive_failures, last_fail_at }` counter per feed URL | 7 days |
 | `discovery_pending:{user_id}` | `string[]` — tags awaiting discovery | No TTL (deleted when list empties) |
 | `discovery_failures:{tag}` | `{ count, last_attempt_at }` | 7 days |
+| `headlines:{source_name}:{tag}` | Cached fetch results from a source for a tag, shared across users | 10 minutes |
 
 ### Security note on discovered URLs
 
@@ -556,52 +557,60 @@ Deployed via `wrangler secret put`:
 
 ## Generation pipeline
 
-One function, `generateDigest(user, trigger)`, called from two places: the cron handler (scheduled) and the refresh API handler (manual). No queues, no consumer/producer split, no lock management.
+Producer/consumer architecture. Cron and the refresh API both **enqueue** messages to `digest-jobs`; the **consumer** processes them with Cloudflare Queues' built-in concurrency and backpressure. Handles the 100-users-at-08:00 thundering herd naturally.
 
-### Cron (every 5 minutes)
-
-Cron runs every 5 minutes. Each invocation scans for users whose `digest_hour:digest_minute` falls in the current 5-min window and who haven't generated today.
+### Cron (every 5 minutes) — dispatcher only
 
 ```
-1. Cron fires at HH:MM where MM % 5 == 0 (00, 05, 10, ..., 55 UTC).
-2. For each distinct tz in the users table (usually <10 in practice):
-   a. Compute local_time = now_utc converted to this tz.
-   b. Compute window_minute_lo = floor(local_time.minute / 5) * 5.
-      Window is [window_minute_lo, window_minute_lo + 5) — half-open,
-      5 distinct minute values, non-overlapping between cron runs.
-   c. Query:
-      SELECT * FROM users
-      WHERE hashtags_json IS NOT NULL
-        AND tz = ?
-        AND digest_hour = ?  -- local_time.hour
-        AND digest_minute >= ? AND digest_minute < ?  -- [lo, lo+5)
-        AND (last_generated_local_date IS NULL
-             OR last_generated_local_date != ?)  -- today's local date
-3. For each matched user: await generateDigest(user, 'scheduled').
-4. Parallelize with Promise.all, concurrency cap 5.
-5. Before any other work, cron runs two maintenance passes:
+1. Cron fires at HH:MM where MM % 5 == 0.
+2. Maintenance passes (fast, single queries):
    a. Stuck-digest sweeper: UPDATE digests SET status='failed',
       error_code='generation_stalled' WHERE status='in_progress'
       AND generated_at < (now - 600).
-   b. Discovery processor: scan `discovery_pending:*` KV entries, pick up
-      to 3 tags total across all users, run LLM + validation, write
-      `sources:{tag}`, remove from pending list.
+   b. Discovery processor: scan `discovery_pending:*` KV, pick up to 3
+      tags total across all users, run LLM + validation inline, write
+      `sources:{tag}` (low volume — fits in cron; doesn't need Queues).
+3. Scheduling pass: for each distinct tz in users:
+   a. Compute local_time = now_utc in this tz.
+   b. Window = [floor(minute/5)*5, +5) — half-open, non-overlapping.
+   c. Query:
+      SELECT id FROM users
+      WHERE hashtags_json IS NOT NULL
+        AND tz = ?
+        AND digest_hour = ?
+        AND digest_minute >= ? AND digest_minute < ?
+        AND (last_generated_local_date IS NULL
+             OR last_generated_local_date != ?)
+   d. For each matched user, enqueue { trigger: 'scheduled', user_id,
+      local_date } to `digest-jobs`. Use sendBatch for efficiency.
+4. Cron itself returns in <1s regardless of user count.
+```
+
+### Consumer (`digest-jobs` handler)
+
+Runs with Cloudflare Queues' default concurrency (10 concurrent messages). Each message runs in its own isolate — no shared-memory OOM risk. Backpressure is automatic: 100 messages enqueued at 08:00 process over ~10 minutes naturally.
+
+```
+For each message { trigger, user_id, local_date, digest_id? }:
+  await generateDigest(user, trigger, digest_id)
+Queue retry: 3 attempts on consumer throw. No DLQ (logs suffice).
+```
 ```
 
 No 15-min polling. Each user gets exactly one scheduled job per day, delivered at their local hour.
 
 ### Manual refresh (POST /api/digest/refresh)
 
-Handler returns immediately with `202 { digest_id }`; generation continues in the background via `ctx.waitUntil`.
+Handler enqueues and returns immediately. Same consumer handles it.
 
 ```
 1. Rate-limit check via atomic conditional UPDATE (see rate limits below).
 2. INSERT a new digest row: id=ULID, status='in_progress', trigger='manual',
    local_date=today's local date in user.tz, model_id from user row.
-3. Return 202 { digest_id, status: 'in_progress' }.
-4. ctx.waitUntil(generateDigest(user, 'manual', digestId))
-   — keeps the Worker alive to complete the pipeline; the HTTP response
-   is already sent to the client, which will poll /api/digest/:id.
+3. Enqueue { trigger: 'manual', user_id, local_date, digest_id }
+   to `digest-jobs` with no delay.
+4. Return 202 { digest_id, status: 'in_progress' }.
+Client polls /api/digest/:id as before.
 ```
 
 ### `generateDigest(user, trigger, digestId?)` — the one function
@@ -618,6 +627,10 @@ Handler returns immediately with `202 { digest_id }`; generation continues in th
    - Feeds cached under KV key `sources:{tag}`
    Per-source 5s timeout, 1MB body cap, 30 items (generic) / 20 items
    (tag-specific) per feed. Global concurrency cap 10 across all fetches.
+   **Before each fetch**, check KV `headlines:{source_name}:{tag}` — if
+   present, use cached results and skip the fetch. Cache TTL 10 minutes.
+   At 100 users sharing common tags, cache hit rate is high during hot
+   windows (08:00 etc.) — cuts redundant fetches by ~10-20x.
 3. Canonicalize + dedupe URLs. Cap pool at 300 headlines, tag-specific first.
 4. Single Workers AI call using the prompts from src/lib/prompts.ts
    (see "LLM prompts" section below).
@@ -1102,16 +1115,29 @@ Internal error details (exception messages, response bodies) are logged at `leve
 
 Cloudflare Workers. Cron Trigger every 5 minutes in `wrangler.toml` (`crons = ["*/5 * * * *"]`). D1 and KV (discovered sources cache + source_health counters) bindings provisioned via `wrangler`. No Queues. GitHub OAuth client ID/secret, `OAUTH_JWT_SECRET`, `RESEND_API_KEY`, `RESEND_FROM`, and `APP_URL` configured as Worker secrets. Schema migrations applied with `wrangler d1 migrations apply`.
 
-## Known tradeoffs (accept for MVP, revisit at scale)
+## Scale and tradeoffs
 
-These are conscious decisions that optimize for simplicity/time-to-ship at the cost of scale-time robustness. Each has a well-bounded migration path if the product needs it later.
+**Target: ~100 users.** Architecture chosen to handle the worst realistic case: all 100 users pick the same scheduled time (thundering herd).
 
-| Tradeoff | Why it's fine for MVP | Migration path when it isn't |
+### What's sized for 100-user scale
+
+| Component | Sizing | Why |
 |---|---|---|
-| No Queues — scheduled generation runs inline in cron | Solo/small user base; concurrency cap 5 keeps memory bounded; 15-min cron wall time is plenty for a few users | Wrap `generateDigest` as a Queue consumer; cron enqueues instead of calling directly. Bounded change. |
-| Reddit + Google News from Cloudflare IPs | Some requests may be blocked/throttled; we have 3 generic sources + per-tag discovery, so partial coverage is still useful. Logs track `source.fetch.failed`. | Switch those two sources to an authenticated SERP API (Tavily, Exa, SerpAPI). One-file change in `src/lib/sources.ts`. |
-| No durable retry on mid-flight crashes | Workers isolate eviction is rare; stuck-sweeper catches orphans within 10 min; user can click Refresh | Queues give at-least-once delivery — same migration as the first row. |
-| Cron fan-out concurrency cap 5 | Fits 128MB isolate. Can still handle tens of users per 5-min window. | Queue-based consumer handles hundreds concurrently with per-message isolation. |
+| `digest-jobs` Queue | Default concurrency 10, 3 retries, no DLQ | 100 concurrent enqueues processed in ~10 min; Queues handle backpressure. |
+| Cron = dispatcher only | <1s per invocation regardless of user count | Generation happens in Queue consumer, isolated per message. |
+| `headlines:{source}:{tag}` cache | 10-min TTL | In a hot window, 30 users with `#cloudflare` produce 1 cache write + 29 reads, not 30 full fetches. |
+| Consumer isolate memory | ~5MB per digest, each in own isolate | No shared-memory OOM from batching. |
+| Workers AI | Paid plan required at 100 users/day (~$16/month Neurons) | Free tier (10K Neurons/day) only covers ~20 digests. |
+| Resend | Paid plan (~$20/month) | Free tier is 100/day — borderline; Pro gives deliverability + monitoring. |
+
+### Known tradeoffs (accepted)
+
+| Tradeoff | Why it's fine at 100 users | Migration path if scale grows |
+|---|---|---|
+| Reddit + Google News from Cloudflare IPs | Some requests may throttle. 3 generic sources + per-tag discovery means partial coverage is fine. Logs track `source.fetch.failed`. | Switch to Brave Search API or Tavily (one-file change in `src/lib/sources.ts`). |
+| Discovery cron-serial (3 tags per 5-min) | 100 users × ~2 new unique tags each = 200 total over lifetime. Processes in ~6 hours of operation. | Dedicate a discovery consumer Worker or use Queues for discovery too. |
+| D1 single-region write | D1 handles ~1K writes/sec; 100 users generates ~1K writes/day total. | Shard users across D1 databases or add read replicas. |
+| No DLQ on digest-jobs | 3 Queues retries + structured logging catches failures. DLQ inspection adds ops burden. | Add DLQ + admin UI when failure rate warrants it. |
 
 ## Scaffolding order
 
