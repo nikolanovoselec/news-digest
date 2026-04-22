@@ -9,14 +9,7 @@
 # unleashed:   apply everything (including JUDGMENT) on a new branch + PR.
 #              Conservative defaults preserve information without overwriting intent.
 #              Walk-away workflow — review the PR when you come back.
-# Desired behavior: unleashed-style (fix everything including JUDGMENT) + enforce_tdd,
-# but push to the current branch instead of opening a PR.
-# Current SDD only supports branch-push for 'auto' (which escalates JUDGMENT to
-# .review-needed.md rather than fixing it) and PR-based for 'unleashed'.
-# Tracking a codeflare issue to split "JUDGMENT handling" from "branch vs PR".
-# Until that lands, we use 'auto' — JUDGMENT items will surface in .review-needed.md
-# for manual resolution rather than being auto-fixed with conservative defaults.
-mode: auto
+mode: unleashed
 
 # enforce_tdd: when true, spec-reviewer enforces the TDD contract on every run:
 #   - Downgrades Implemented REQs without test coverage to Partial
