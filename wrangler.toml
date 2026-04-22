@@ -4,13 +4,11 @@ compatibility_flags = ["nodejs_compat"]
 main = "./dist/_worker.js/_merged.mjs"
 assets = { directory = "./dist", binding = "ASSETS" }
 
-# Custom domain. Wrangler creates the proxied CNAME in the graymatter.ch
-# zone on first deploy. Fork-friendly note: a forker will want to either
-# remove this routes block or change it to their own (sub)domain that's
-# already a Cloudflare zone in their account.
-[[routes]]
-pattern = "news.graymatter.ch"
-custom_domain = true
+# Custom domain is NOT declared here. Hardcoding the hostname here would
+# force every fork to edit this file before deploy. Instead, the Deploy
+# GitHub Action reads the APP_URL secret, extracts its hostname, and calls
+# the Cloudflare Workers Custom Domains API to bind it after `wrangler
+# deploy`. See .github/workflows/deploy.yml step "Bind custom domain".
 
 [observability]
 enabled = true

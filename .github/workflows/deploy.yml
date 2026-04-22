@@ -72,23 +72,83 @@ jobs:
           echo "worker_url=$WORKER_URL" >> "$GITHUB_OUTPUT"
           echo "Deployed to: $WORKER_URL"
 
+      - name: Bind custom domain
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          APP_URL: ${{ secrets.APP_URL }}
+        run: |
+          set -e
+          if [ -z "$APP_URL" ]; then
+            echo "APP_URL not set; skipping custom-domain binding"
+            exit 0
+          fi
+          # Extract hostname from APP_URL (strip scheme + path + port).
+          HOST=$(printf '%s' "$APP_URL" | sed -E 's|^[a-z]+://||; s|/.*$||; s|:.*$||')
+          if [ -z "$HOST" ]; then
+            echo "Could not extract hostname from APP_URL; skipping"
+            exit 0
+          fi
+          echo "Binding Worker to custom domain: $HOST"
+
+          # Find the Cloudflare zone for the hostname by trying progressively
+          # shorter parent domains (host → ...rest.of.host → apex).
+          CANDIDATE="$HOST"
+          ZONE_ID=""
+          while [ -n "$CANDIDATE" ] && [ "$CANDIDATE" != "${CANDIDATE#*.}" ]; do
+            ZONE_ID=$(curl -fsS \
+              "https://api.cloudflare.com/client/v4/zones?name=$CANDIDATE" \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              | jq -r '.result[0].id // empty')
+            if [ -n "$ZONE_ID" ]; then
+              echo "Found zone for $CANDIDATE: $ZONE_ID"
+              break
+            fi
+            CANDIDATE="${CANDIDATE#*.}"
+          done
+          if [ -z "$ZONE_ID" ]; then
+            echo "No Cloudflare zone found for $HOST in this account; cannot bind custom domain"
+            echo "Either add the zone to Cloudflare first, or point APP_URL at the workers.dev URL"
+            exit 1
+          fi
+
+          # Idempotent attach: Cloudflare's PUT endpoint creates-or-updates
+          # the binding between this hostname and the Worker.
+          SERVICE="ai-news-digest"
+          RESP=$(mktemp)
+          HTTP_CODE=$(curl -sS -o "$RESP" -w "%{http_code}" -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"zone_id\":\"$ZONE_ID\",\"hostname\":\"$HOST\",\"service\":\"$SERVICE\",\"environment\":\"production\"}")
+          SUCCESS=$(jq -r '.success' < "$RESP" 2>/dev/null || echo "")
+          if [ "$HTTP_CODE" != "200" ] || [ "$SUCCESS" != "true" ]; then
+            echo "Custom-domain bind failed (HTTP $HTTP_CODE):"
+            cat "$RESP"
+            rm -f "$RESP"
+            exit 1
+          fi
+          rm -f "$RESP"
+          echo "Custom domain $HOST → $SERVICE (zone $ZONE_ID) attached"
+
       - name: Smoke test
         env:
           WORKER_URL: ${{ steps.deploy.outputs.worker_url }}
+          APP_URL: ${{ secrets.APP_URL }}
         run: |
-          # Prefer the workers.dev URL from wrangler deploy output — it's
-          # always resolvable regardless of custom-domain DNS state. Fall
-          # back to APP_URL only if the parse failed.
-          URL="${WORKER_URL:-${{ secrets.APP_URL }}}"
-          if [ -z "$URL" ]; then
-            echo "No smoke-test URL available; skipping"
-            exit 0
-          fi
-          # Expect 200 (authenticated user → /digest) or 303 (anonymous → login)
-          # on /, both indicate a live worker. The landing page itself returns 200.
-          CODE=$(curl -s -o /dev/null -w "%{http_code}" "$URL/")
-          echo "GET $URL/ → HTTP $CODE"
-          case "$CODE" in
-            200|303) exit 0 ;;
-            *) echo "Unexpected status"; exit 1 ;;
-          esac
+          # Prefer the custom domain (APP_URL) since that's where users land;
+          # fall back to the workers.dev URL if the custom domain hasn't
+          # propagated yet.
+          for URL in "$APP_URL" "$WORKER_URL"; do
+            if [ -z "$URL" ]; then continue; fi
+            CODE=$(curl -s --max-time 15 -o /dev/null -w "%{http_code}" "$URL/" || echo "000")
+            echo "GET $URL/ → HTTP $CODE"
+            case "$CODE" in
+              200|303)
+                echo "Smoke test passed via $URL"
+                exit 0
+                ;;
+            esac
+          done
+          echo "No reachable smoke-test URL"
+          exit 1
