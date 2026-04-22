@@ -325,7 +325,8 @@ describe('generateDigest — happy path', () => {
     expect(Array.isArray(params.messages)).toBe(true);
     expect(params.messages).toHaveLength(2);
     expect(params.messages?.[0]?.role).toBe('system');
-    expect(params.messages?.[0]?.content).toContain('tech news curator');
+    // System prompt begins with the JSON-API contract (see DIGEST_SYSTEM).
+    expect(params.messages?.[0]?.content).toContain('JSON API');
     expect(params.messages?.[1]?.role).toBe('user');
     expect(params.messages?.[1]?.content).toContain('User interests');
     // LLM_PARAMS pinned.
