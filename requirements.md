@@ -22,7 +22,8 @@ Every digest shows execution time, token count, and estimated cost, so you can s
 | Database | Cloudflare D1 |
 | Sessions | Stateless JWT in HttpOnly cookie |
 | LLM | Workers AI (user-selectable model) |
-| Scheduling | Daily Cron Trigger (00:00 UTC) + Cloudflare Queues with per-user delayed delivery |
+| Scheduling | Two Cron Triggers (00:00 and 12:00 UTC) + Cloudflare Queues with per-user delayed delivery (≤12h) |
+| Email | Resend — "your daily digest is ready" notification after each scheduled run |
 | Styling | Tailwind CSS 4 |
 | PWA | `@vite-pwa/astro` — manifest, service worker, install prompt |
 
@@ -147,6 +148,7 @@ Provided by `@vite-pwa/astro` (Workbox under the hood). Caching strategies:
 | Static (JS, CSS, fonts, icons) | Cache-first, hashed filenames |
 | `/digest/*` HTML | Stale-while-revalidate |
 | `/api/*` | Network-first, 3s timeout, fall back to cache |
+| `/api/digest/*/events` (SSE) | Bypass SW entirely — fetched directly with `EventSource`; long-lived stream must not hit the 3s API timeout |
 | `/manifest.webmanifest`, `/icons/*` | Cache-first |
 
 The last viewed digest and its article detail pages remain readable offline. `/settings` and the refresh button show an "offline" banner when `navigator.onLine === false`.
@@ -411,6 +413,9 @@ Deployed via `wrangler secret put`:
 | `OAUTH_CLIENT_SECRET` | GitHub OAuth App client secret |
 | `OAUTH_JWT_SECRET` | Random 32+ char string for HMAC signing |
 | `CLOUDFLARE_API_TOKEN` | For the Workers AI models catalog lookup. **Scope: `AI: Read` only** — no account edit, no Worker deploy permissions. The deployment token used in CI is separate and is never stored as a Worker secret. |
+| `RESEND_API_KEY` | Resend API key (starts with `re_`) for sending digest-ready notification emails |
+| `RESEND_FROM` | Sender address for Resend, e.g., `News Digest <digest@yourdomain.com>` — must match a verified domain |
+| `APP_URL` | Canonical app URL (e.g., `https://digest.yourdomain.com`) — used in email CTAs |
 
 ### Why no auth library
 
@@ -423,19 +428,25 @@ Deployed via `wrangler secret put`:
 
 Architecture: dispatcher + consumer, connected by Cloudflare Queues. The dispatcher runs once per day; the consumer processes jobs as they become due. This pattern keeps each Worker invocation short, avoids CPU/wall-time limits, and gives us retries + dead-letter handling for free.
 
-### Dispatcher (daily cron at 00:00 UTC)
+### Dispatcher (two crons at 00:00 and 12:00 UTC)
+
+Cloudflare Queues caps `delaySeconds` at 12 hours. Running the dispatcher twice daily keeps every user's computed delay below that limit: the 00:00 UTC run schedules users whose local digest time lands in 00:00–12:00 UTC; the 12:00 UTC run handles 12:00–24:00 UTC.
 
 ```
-1. Single Cron Trigger fires at 00:00 UTC.
+1. Cron Trigger fires at 00:00 OR 12:00 UTC.
 2. SELECT id, tz, digest_hour, digest_minute FROM users
    WHERE hashtags_json IS NOT NULL AND digest_hour IS NOT NULL.
 3. For each user:
-   a. Compute delay_seconds = seconds until next occurrence of
-      digest_hour:digest_minute in user's tz (handles DST, wraps to
-      tomorrow if that wall-clock time has already passed today).
-   b. Enqueue job { user_id, trigger: 'scheduled', local_date: YYYY-MM-DD }
-      to the 'digest-jobs' Queue with delaySeconds = delay_seconds.
-4. Done — this run touches D1 only for the user list, fans out to Queues.
+   a. Compute target_utc = next occurrence of digest_hour:digest_minute
+      in user's tz, converted to UTC (handles DST via Intl).
+   b. Compute delay_seconds = target_utc - now_utc.
+   c. Skip if delay_seconds < 0 OR delay_seconds > 43200 (12h) — the
+      OTHER cron run will handle this user's window.
+   d. Skip if users.last_generated_local_date == local_date_for(target_utc)
+      — already generated today (manual refresh claimed the slot).
+   e. Enqueue job { user_id, trigger: 'scheduled', local_date: YYYY-MM-DD }
+      to the 'digest-jobs' Queue with delaySeconds.
+4. Done — this run touches D1 only for reads and fans out to Queues.
 ```
 
 No 15-min polling. Each user gets exactly one scheduled job per day, delivered at their local hour.
@@ -446,8 +457,9 @@ No 15-min polling. Each user gets exactly one scheduled job per day, delivered a
 For each message:
 1. Claim the digest row: INSERT a new digest with status='in_progress',
    locked_at=now(). Use a conditional INSERT guarded by NOT EXISTS against
-   any in_progress digest for this user — prevents duplicate concurrent
-   generation. 15-min lock TTL (claims released if locked_at < now()-900).
+   any digest for this user where status='in_progress' AND locked_at > now()-900
+   (15-min lock TTL — stale locks are naturally released on the next consumer
+   invocation via this check; no dedicated reclaim job needed).
 2. Idempotency check: if message.trigger='scheduled' AND
    users.last_generated_local_date == message.local_date → ack and exit.
 3. For each hashtag in users.hashtags_json, fan out 4 queries in parallel
@@ -478,7 +490,13 @@ For each message:
    usage field; if absent, store NULL and UI shows "~" prefix). Compute
    estimated_cost_usd from a constants file mapping model_id → per-Mtok
    prices (bundled with the Worker; updated via code, not at runtime).
-10. INSERT articles rows. UPDATE digests SET status='ready', clear lock.
+10. Final write is race-safe against cancel:
+    - INSERT articles rows first.
+    - Then: UPDATE digests SET status='ready', execution_ms=?, tokens_in=?,
+      tokens_out=?, estimated_cost_usd=?, locked_at=NULL
+      WHERE id=? AND status='in_progress'.
+    - If the UPDATE returns 0 rows, cancel won — DELETE articles
+      WHERE digest_id=?. Consumer exits without marking ready.
 11. UPDATE users SET last_generated_local_date = local_date_in_user_tz(now())
     for BOTH trigger types. This means a manual refresh consumed today's
     scheduled slot — if a user refreshes at 07:55 and their scheduled run
@@ -554,6 +572,107 @@ These are first-class design surfaces, not afterthoughts. Generation takes 2–1
 | OAuth error (`access_denied`, `no_verified_email`, etc.) | Mapped from error code | Human-readable match for the code | "Try again" | "Help" |
 
 **Visual treatment** of error pages: no illustrations, no emoji, no exclamation marks. A single icon (16–20px) in the accent color next to the headline, generous whitespace, monospace for any error code shown in a muted footer. The tone is calm and matter-of-fact — errors happen, the app handles them.
+
+## Email notifications (Resend)
+
+After every successful scheduled digest (not manual refreshes — the user already saw the result when they clicked), send a "your daily digest is ready" email via Resend. One email per user per day.
+
+### When it fires
+
+Immediately after the consumer commits `status='ready'` for a `trigger='scheduled'` digest. Manual refreshes do not trigger email. Failed digests do not trigger email.
+
+Email sending is best-effort: if the Resend API call fails, log the error and continue. The digest itself is still available in the app — email is convenience, not core functionality.
+
+### Email template
+
+Two-part multipart MIME (HTML + plaintext fallback). Matches the app's Swiss-minimal aesthetic: system fonts, generous whitespace, one accent color, no drop shadows, no images.
+
+**Subject**: `Your news digest is ready · {N} stories`
+
+**HTML body** (inlined styles because email clients strip `<style>`):
+
+```html
+<!doctype html>
+<html>
+  <body style="margin:0; padding:48px 24px; background:#fafafa; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif; color:#111;">
+    <table role="presentation" width="100%" style="max-width:560px; margin:0 auto;">
+      <tr><td style="padding-bottom:32px; font-size:14px; color:#666; letter-spacing:0.02em; text-transform:uppercase;">News Digest</td></tr>
+      <tr><td style="padding-bottom:24px; font-size:32px; font-weight:600; line-height:1.2;">Your daily digest is ready</td></tr>
+      <tr><td style="padding-bottom:32px; font-size:16px; color:#444; line-height:1.6;">{N} stories curated from your interests: {top-3 hashtags}.</td></tr>
+      <tr><td style="padding-bottom:48px;"><a href="{APP_URL}/digest" style="display:inline-block; padding:14px 28px; background:#0066ff; color:#fff; text-decoration:none; font-weight:600; border-radius:6px;">Read today's digest</a></td></tr>
+      <tr><td style="padding-top:32px; border-top:1px solid #e5e5e5; font-size:13px; color:#999;">Generated in {execution_s}s · {tokens} tokens · ~${cost}<br><a href="{APP_URL}/settings" style="color:#999;">Edit interests or schedule</a></td></tr>
+    </table>
+  </body>
+</html>
+```
+
+**Plaintext body**:
+
+```
+Your daily digest is ready.
+
+{N} stories curated from your interests: {top-3 hashtags}.
+
+Read today's digest: {APP_URL}/digest
+
+---
+Generated in {execution_s}s · {tokens} tokens · ~${cost}
+Edit interests or schedule: {APP_URL}/settings
+```
+
+Both bodies use the same variables: `N` (article count), top 3 hashtags joined with `, `, `execution_s` (execution_ms / 1000, 1 decimal), `tokens`, `cost`. `APP_URL` is baked in at deploy time via an env var.
+
+### Resend call
+
+```ts
+await fetch('https://api.resend.com/emails', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    from: env.RESEND_FROM,             // e.g., 'News Digest <digest@yourdomain.com>'
+    to: [user.email],
+    subject: `Your news digest is ready · ${N} stories`,
+    html: htmlBody,
+    text: plainBody,
+    tags: [{ name: 'kind', value: 'daily-digest' }]
+  }),
+  signal: AbortSignal.timeout(5000)
+});
+```
+
+On non-2xx response: log `console.log({ level: 'error', event: 'email.send.failed', user_id, digest_id, status, ... })` and move on.
+
+### Secrets
+
+Both values are stored as GitHub repo Secrets (Settings → Secrets → Actions) AND pushed to Cloudflare as Worker secrets during deploy:
+
+| Repo Secret | Worker Secret | Purpose |
+|---|---|---|
+| `RESEND_API_KEY` | `RESEND_API_KEY` | Resend API key (starts with `re_`) |
+| `RESEND_FROM` | `RESEND_FROM` | Sender address, e.g., `News Digest <digest@yourdomain.com>` |
+
+The deploy GitHub Actions workflow syncs both into the Worker:
+
+```yaml
+- name: Push Resend secrets to Worker
+  run: |
+    TMP=$(mktemp) && echo -n "$RESEND_API_KEY" > "$TMP" && npx -y wrangler secret put RESEND_API_KEY < "$TMP" && rm "$TMP"
+    TMP=$(mktemp) && echo -n "$RESEND_FROM" > "$TMP" && npx -y wrangler secret put RESEND_FROM < "$TMP" && rm "$TMP"
+  env:
+    RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+    RESEND_FROM: ${{ secrets.RESEND_FROM }}
+    CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+```
+
+File-redirect form (not pipe) per the standard secret-injection pattern — pipes can silently store empty values in some CI environments.
+
+### Sender domain
+
+Resend requires a verified sending domain. Configure in Resend dashboard by adding DNS records for the domain that will appear in `RESEND_FROM`. Until verification completes, emails send from Resend's default sandbox address.
 
 ## Cost and time transparency
 
@@ -659,7 +778,7 @@ All mutating endpoints require an authenticated session (valid `__Host-news_dige
 
 | Method | Path | Request | Response | Errors |
 |---|---|---|---|---|
-| GET | `/api/history?offset=0` | query: `offset` (default 0) | `{ digests: [{ id, generated_at, status, execution_ms, tokens_in, tokens_out, estimated_cost_usd, model_id, article_count }], has_more: bool }` (30 per page) | 401 |
+| GET | `/api/history?offset=0` | query: `offset` (default 0) | `{ digests: [{ id, generated_at, status, execution_ms, tokens_in, tokens_out, estimated_cost_usd, model_id, article_count }], has_more: bool }` (30 per page; `article_count` via `(SELECT COUNT(*) FROM articles WHERE digest_id=d.id)` subquery in the SELECT) | 401 |
 | GET | `/api/stats` | — | `{ digests_generated, articles_read, articles_total, tokens_consumed, cost_usd }` | 401 |
 
 ### Cancel semantics
