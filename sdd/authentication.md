@@ -51,9 +51,10 @@ GitHub OAuth as the only sign-in method. Stateless HMAC-SHA256 JWT sessions with
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. Every `POST`, `PUT`, `PATCH`, and `DELETE` endpoint rejects requests whose `Origin` header is missing or does not equal the app's canonical origin.
+1. Every `POST`, `PUT`, `PATCH`, and `DELETE` endpoint that acts on an authenticated session rejects requests whose `Origin` header is missing or does not equal the app's canonical origin.
 2. Rejection returns HTTP 403 with JSON body `{ error, code: "forbidden_origin" }`.
 3. GET endpoints are not subject to this check (the session cookie's `SameSite=Lax` handles cross-origin GETs).
+4. OAuth flow entry points that only initiate a redirect to the identity provider and do not mutate authenticated state are exempt from the Origin check. The only effect of such an endpoint is setting a short-lived opaque state cookie and returning a 303 redirect; any actual authentication requires the user to consent at the identity provider. Login-CSRF is mitigated by the identity provider's own consent screen.
 
 **Constraints:** CON-SEC-001
 **Priority:** P0

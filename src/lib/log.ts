@@ -24,6 +24,7 @@ export type LogLevel = 'info' | 'warn' | 'error';
 export type LogEvent =
   | 'auth.login'
   | 'auth.callback.failed'
+  | 'auth.callback.invalid_state'
   | 'auth.logout'
   | 'auth.account.delete'
   | 'auth.account.delete.failed'

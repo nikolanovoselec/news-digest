@@ -115,12 +115,19 @@ async function startOAuth(context: APIContext): Promise<Response> {
  * prefetch race where prefetch of a GET link regenerates the state
  * cookie multiple times and leaves a cookie value that no longer
  * matches what GitHub returns in the callback query.
+ *
+ * Per REQ-AUTH-003 AC 4 this endpoint is exempt from the Origin check:
+ * it does not act on an authenticated session — its only effect is
+ * setting a short-lived opaque state cookie and returning a 303 redirect
+ * to GitHub. Login-CSRF is mitigated by GitHub's consent screen, which
+ * an attacker cannot bypass.
  */
 export const POST = startOAuth;
 
 /**
- * GET is retained for direct URL access (bookmarks, typed URLs, tests).
- * Prefetch-induced state regeneration is a real risk on this path; the
- * landing page uses POST to sidestep it entirely.
+ * GET is retained for direct URL access (bookmarks, typed URLs, tests)
+ * and is exempt from the Origin check per REQ-AUTH-003 AC 3. Prefetch-
+ * induced state regeneration is a real risk on this path; the landing
+ * page uses POST to sidestep it entirely.
  */
 export const GET = startOAuth;
