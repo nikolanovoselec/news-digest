@@ -1,4 +1,4 @@
-name = "news-digest"
+name = "ai-news-digest"
 compatibility_date = "2026-04-01"
 compatibility_flags = ["nodejs_compat"]
 main = "./dist/_worker.js/index.js"
@@ -9,13 +9,13 @@ enabled = true
 
 [[d1_databases]]
 binding = "DB"
-database_name = "news-digest"
-database_id = "placeholder"  # replaced at deploy time via `wrangler d1 create`
+database_name = "ai-news-digest"
+database_id = "633eb7e8-0930-46bb-b1a9-f35587290bf8"
 migrations_dir = "./migrations"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "placeholder"  # replaced at deploy time via `wrangler kv namespace create`
+id = "34a836c647a4453fb167e60d00b06f0d"
 
 [[queues.producers]]
 binding = "DIGEST_JOBS"
