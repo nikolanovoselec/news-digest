@@ -46,21 +46,41 @@ When a user selects a tag (default or custom), the system discovers authoritativ
 
 ### Discovery flow
 
-Discovery runs **asynchronously via `ctx.waitUntil`** after the settings save returns. The save itself is instant — tags are stored immediately. Discovery runs in the background; the UI shows a subtle "Discovering sources for #langchain, #rust…" indicator on `/digest` until it completes (polls the settings `sources_discovery_status` field every 5s).
+Discovery is **fully asynchronous and cron-driven**. Settings save is instant; discovery happens over subsequent cron invocations. Avoids HTTP-request timeouts, `ctx.waitUntil` limits, and need for Queues.
 
 ```
 On settings save (onboarding or edit):
-  1. Validate + UPDATE users row with new hashtags_json (instant, < 100ms).
-  2. Return 200 { ok: true, discovering: [tag1, tag2, ...] } listing any
-     tags that don't yet have KV entries.
-  3. ctx.waitUntil(discoverSources(newTags)) — background LLM + validation.
-     Each tag has a 15s budget; discovery runs sequentially (not parallel)
-     to avoid OOM and rate limits.
-  4. As each tag completes, write to KV `sources:{tag}`. The UI polls
-     and updates the indicator.
+  1. Validate + UPDATE users row with new hashtags_json (instant).
+  2. For any submitted tag that doesn't yet have a `sources:{tag}` KV entry,
+     add it to the user's pending-discovery list:
+       KV.put(`discovery_pending:{user_id}`, JSON.stringify([tag1, tag2, ...]))
+  3. Return 200 { ok: true, discovering: [tag1, tag2, ...] }.
+
+On every 5-min cron invocation (before generation scheduling):
+  1. Scan `discovery_pending:*` KV entries — list returns a small set.
+  2. Pick up to 3 tags across all users (budget: 3 × 15s = 45s, well inside
+     cron's 15-min wall-clock budget).
+  3. For each: run LLM + validation, write to `sources:{tag}` KV (no TTL).
+     Remove the tag from its user's discovery_pending list; if the list
+     becomes empty, KV.delete the key.
+  4. A stubborn tag (3 consecutive discovery failures — tracked in
+     `discovery_failures:{tag}` KV) is stored with an empty sources array
+     and removed from pending; user can manually re-discover from /settings.
 ```
 
-Avoids the 60s browser/proxy timeout risk of synchronous discovery while still giving the user immediate feedback that discovery is happening. Failed-budget tags are stored with an empty sources list (retryable via manual 're-discover').
+**State machine**: the presence of the tag in `discovery_pending:{user_id}` means "not discovered yet". Presence of `sources:{tag}` means "discovered (possibly empty if stubborn)". These two are the complete state.
+
+**UI indicator**: `/digest` fetches `/api/discovery/status` which returns `{ pending: [tag, ...] }` from the user's KV entry. While non-empty, a subtle banner shows "Discovering sources for #{tag1}, #{tag2}… Your next digest will include them." No schema columns needed.
+
+### New API
+
+| Method | Path | Response |
+|---|---|---|
+| GET | `/api/discovery/status` | `{ pending: string[] }` — current discovery_pending list; empty array if none |
+
+### First digest after adding a new tag
+
+Uses generic sources only for that tag. Subsequent digests pick up tag-specific sources as discovery completes (typically within 5–15 min of save).
 
 Discovery procedure:
   1. Ask an LLM (default llama-3.1-8b-instruct-fp8-fast for cost):
@@ -111,8 +131,10 @@ Per-hashtag item cap 30 per source (generics) and 20 per source (tag-specific), 
 
 | Key | Value | TTL |
 |---|---|---|
-| `sources:{tag}` | `[{ name, url, kind }]` validated feeds | No TTL (evicted on repeated feed failures, not on time) |
-| `source_health:{url}` | `{ consecutive_failures, last_fail_at }` counter per feed URL | 7 days (rolls over) |
+| `sources:{tag}` | `[{ name, url, kind }]` validated feeds | No TTL (evicted on repeated feed failures) |
+| `source_health:{url}` | `{ consecutive_failures, last_fail_at }` counter per feed URL | 7 days |
+| `discovery_pending:{user_id}` | `string[]` — tags awaiting discovery | No TTL (deleted when list empties) |
+| `discovery_failures:{tag}` | `{ count, last_attempt_at }` | 7 days |
 
 ### Security note on discovered URLs
 
@@ -557,9 +579,13 @@ Cron runs every 5 minutes. Each invocation scans for users whose `digest_hour:di
              OR last_generated_local_date != ?)  -- today's local date
 3. For each matched user: await generateDigest(user, 'scheduled').
 4. Parallelize with Promise.all, concurrency cap 5.
-5. Before scheduling work (step 2), run the stuck-digest sweeper:
-   UPDATE digests SET status='failed', error_code='generation_stalled'
-   WHERE status='in_progress' AND generated_at < (now - 600).
+5. Before any other work, cron runs two maintenance passes:
+   a. Stuck-digest sweeper: UPDATE digests SET status='failed',
+      error_code='generation_stalled' WHERE status='in_progress'
+      AND generated_at < (now - 600).
+   b. Discovery processor: scan `discovery_pending:*` KV entries, pick up
+      to 3 tags total across all users, run LLM + validation, write
+      `sources:{tag}`, remove from pending list.
 ```
 
 No 15-min polling. Each user gets exactly one scheduled job per day, delivered at their local hour.
@@ -981,7 +1007,9 @@ All mutating endpoints require an authenticated session (valid `__Host-news_dige
 | Method | Path | Request | Response | Errors |
 |---|---|---|---|---|
 | GET | `/api/settings` | — | `{ hashtags: string[], digest_hour: int, digest_minute: int, tz: string, model_id: string, email_enabled: bool, first_run: bool }` | 401 |
-| PUT | `/api/settings` | `{ hashtags, digest_hour, digest_minute, model_id, email_enabled }` | `{ ok: true }` | 400 `invalid_hashtags` \| `invalid_time` \| `invalid_model_id` \| `invalid_email_enabled`; 401 |
+| PUT | `/api/settings` | `{ hashtags, digest_hour, digest_minute, model_id, email_enabled }` | `{ ok: true, discovering: string[] }` — `discovering` lists any newly-added tags awaiting discovery | 400 `invalid_hashtags` \| `invalid_time` \| `invalid_model_id` \| `invalid_email_enabled`; 401 |
+| GET | `/api/discovery/status` | — | `{ pending: string[] }` — tags still awaiting discovery for this user | 401 |
+| POST | `/api/discovery/retry` | `{ tag: string }` | `{ ok: true }` — re-queues a stubborn tag | 400 `unknown_tag`; 401 |
 
 ### Digest and refresh
 
