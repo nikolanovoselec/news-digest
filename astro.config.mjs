@@ -9,6 +9,12 @@ export default defineConfig({
   adapter: cloudflare({
     platformProxy: {
       enabled: true
+    },
+    // Use our src/worker.ts as the Module Worker entry so scheduled + queue
+    // handlers are shipped alongside Astro's generated fetch handler.
+    workerEntryPoint: {
+      path: 'src/worker.ts',
+      namedExports: ['scheduled', 'queue']
     }
   }),
   integrations: [
