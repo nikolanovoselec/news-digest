@@ -5,7 +5,7 @@ export default defineWorkersConfig({
     include: ['tests/**/*.test.ts'],
     poolOptions: {
       workers: {
-        wrangler: { configPath: './wrangler.toml' },
+        wrangler: { configPath: './wrangler.test.toml' },
         miniflare: {
           compatibilityFlags: ['nodejs_compat']
         }

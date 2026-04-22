@@ -1,0 +1,23 @@
+# Test-only wrangler config for @cloudflare/vitest-pool-workers.
+# Omits the `[ai]` binding (workerd can't construct it in tests) and the
+# `assets.directory` (no build artifacts needed). The production
+# wrangler.toml remains the source of truth for deployment.
+
+name = "news-digest-test"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+main = "./src/worker.ts"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "news-digest-test"
+database_id = "test-placeholder"
+migrations_dir = "./migrations"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "test-placeholder"
+
+[[queues.producers]]
+binding = "DIGEST_JOBS"
+queue = "digest-jobs-test"
