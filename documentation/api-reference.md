@@ -32,19 +32,21 @@ Bumps `session_version`, clears cookie, redirects to `/?logged_out=1`.
 
 ### POST /api/auth/set-tz
 
-**Request:** `{ tz: string }` (IANA timezone)
+**Request:** `{ tz: string }` (IANA timezone — validated via `Intl.supportedValuesOf('timeZone')`)
 
-**Response:** `200 { ok: true }` | `400 invalid_tz` | `401`
+**Response:** `200 { ok: true, tz: string }` | `400 invalid_tz` | `401 unauthorized` | `403 forbidden_origin`
 
-**Implements:** [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone)
+Session near-expiry triggers a `Set-Cookie` refresh in the same response.
+
+**Implements:** [REQ-SET-007](../sdd/settings.md#req-set-007-timezone-change-detection), [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
 
 ### DELETE /api/auth/account
 
 **Request:** `{ confirm: "DELETE" }`
 
-**Response:** `200 { ok: true }` (session cleared) | `400 confirm_required` | `401`
+**Response:** `200 { ok: true, redirect: "/?account_deleted=1" }` (session cookie cleared, FK cascade deletes all user data, KV entries under `user:{id}:*` deleted best-effort) | `400 confirmation_required` | `401 unauthorized` | `403 forbidden_origin`
 
-**Implements:** [REQ-AUTH-005](../sdd/authentication.md#req-auth-005-account-deletion)
+**Implements:** [REQ-AUTH-005](../sdd/authentication.md#req-auth-005-account-deletion), [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
 
 ---
 
@@ -129,6 +131,40 @@ Verifies the tag is in the user's `hashtags_json`, clears `sources:{tag}` and `d
 **Response:** `{ digests_generated: int, articles_read: int, articles_total: int, tokens_consumed: int, cost_usd: number }`
 
 **Implements:** [REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget)
+
+---
+
+## Observability
+
+### Structured log events
+
+Implements [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-logging). Every log line is `JSON.stringify`'d to `console.log` so Cloudflare Logs parses it as a structured record.
+
+**Envelope** (all events):
+
+| Field | Type | Description |
+|---|---|---|
+| `ts` | `number` | Unix milliseconds (`Date.now()`) |
+| `level` | `"info" \| "warn" \| "error"` | Severity |
+| `event` | `LogEvent` | Closed enum (see below) |
+
+**Event enum** (`src/lib/log.ts` `LogEvent`):
+
+| Event | When emitted |
+|---|---|
+| `auth.login` | Successful OAuth callback — user created or re-authenticated |
+| `auth.callback.failed` | Any failure in the OAuth callback (token exchange, user fetch, DB) |
+| `auth.logout` | Session version bumped; cookie cleared |
+| `auth.account.delete` | User row deleted from D1 (info on success, warn when no row affected) |
+| `auth.account.delete.failed` | D1 delete threw, or KV cleanup threw |
+| `auth.set_tz.failed` | D1 update in `POST /api/auth/set-tz` threw |
+| `digest.generation` | Digest generation completed (success or failure) |
+| `source.fetch.failed` | An individual source could not be fetched during fan-out |
+| `refresh.rejected` | Manual refresh rejected (rate-limited or already in progress) |
+| `email.send.failed` | Resend API call failed |
+| `discovery.completed` | Per-tag LLM discovery run finished |
+
+Raw exception messages appear only in the `detail` field of error-level records; they are never stored in D1 and never returned to clients (see [REQ-OPS-002](../sdd/observability.md#req-ops-002-sanitized-error-surfaces)).
 
 ---
 
