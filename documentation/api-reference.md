@@ -74,9 +74,9 @@ Session near-expiry triggers a `Set-Cookie` refresh in the same response.
 
 ### GET /api/digest/today
 
-**Response:** `{ digest: {...} | null, articles: [...], live: bool, next_scheduled_at: int | null }`
+**Response:** `{ digest: DigestRow | null, articles: ArticleRow[], live: bool, next_scheduled_at: int | null }`
 
-Returns the most recent digest row for this user; `live=true` when `status='in_progress'`; `next_scheduled_at` is the unix ts of the next scheduled run when today's has not yet generated.
+Returns the most recent digest row for this user; `live=true` when `status='in_progress'`; `next_scheduled_at` is the unix ts of the next scheduled run when today's has not yet generated (null when live). The digest row includes `id`, `local_date`, `generated_at`, `execution_ms`, `tokens_in`, `tokens_out`, `estimated_cost_usd`, `model_id`, `status`, `error_code`, `trigger`. Each article row includes `id`, `digest_id`, `slug`, `source_url`, `title`, `one_liner`, `details_json`, `source_name`, `published_at`, `rank`, `read_at`.
 
 **Implements:** [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-READ-005](../sdd/reading.md#req-read-005-pending-today-banner)
 
@@ -122,13 +122,15 @@ Verifies the tag is in the user's `hashtags_json`, clears `sources:{tag}` and `d
 
 ### GET /api/history?offset=0
 
-**Response:** `{ digests: [...], has_more: bool }` — up to 30 per page ordered by `generated_at DESC`.
+**Response:** `{ digests: [...], has_more: bool }` — up to 30 per page ordered by `generated_at DESC`. Each digest row includes `article_count` (correlated subquery), `model_name` (human-readable, resolved from the model catalog — falls back to the raw `model_id` for removed models), `execution_ms`, `tokens_in`, `tokens_out`, `estimated_cost_usd`, `status`, `error_code`, and `trigger`.
 
 **Implements:** [REQ-HIST-001](../sdd/history.md#req-hist-001-paginated-past-digests)
 
 ### GET /api/stats
 
 **Response:** `{ digests_generated: int, articles_read: int, articles_total: int, tokens_consumed: int, cost_usd: number }`
+
+All fields are user-scoped via the session. Article queries JOIN through `digests` on `user_id` (IDOR protection by construction). Queries run in parallel via `Promise.all` — no sequential round-trips. `digests_generated` counts only `status='ready'` rows. Defaults to `0` for each field if no data exists.
 
 **Implements:** [REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget)
 
