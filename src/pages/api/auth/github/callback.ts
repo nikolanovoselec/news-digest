@@ -176,7 +176,8 @@ export async function GET(context: APIContext): Promise<Response> {
 
   // 2. CSRF state match.
   const queryState = url.searchParams.get('state');
-  const cookieState = readCookie(context.request.headers.get('Cookie'), OAUTH_STATE_COOKIE_NAME);
+  const cookieHeader = context.request.headers.get('Cookie');
+  const cookieState = readCookie(cookieHeader, OAUTH_STATE_COOKIE_NAME);
   if (
     queryState === null ||
     queryState === '' ||
@@ -184,6 +185,24 @@ export async function GET(context: APIContext): Promise<Response> {
     cookieState === '' ||
     !timingSafeEqual(queryState, cookieState)
   ) {
+    // Log the mismatch signal — no full values, just fingerprints, so an
+    // operator can tell a missing-cookie case apart from a mismatched-value
+    // case without any PII in the log stream. Diagnostic only.
+    log('warn', 'auth.callback.invalid_state', {
+      query_state_present: queryState !== null && queryState !== '',
+      cookie_state_present: cookieState !== null && cookieState !== '',
+      cookie_header_present: cookieHeader !== null,
+      cookie_names: cookieHeader !== null
+        ? cookieHeader
+            .split(';')
+            .map((p) => p.split('=')[0]?.trim() ?? '')
+            .filter((n) => n !== '')
+        : [],
+      states_match:
+        queryState !== null &&
+        cookieState !== null &&
+        timingSafeEqual(queryState, cookieState),
+    });
     const headers = new Headers();
     headers.append('Set-Cookie', clearState);
     return invalidStateResponse(origin, headers);

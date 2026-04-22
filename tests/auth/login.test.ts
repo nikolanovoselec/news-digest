@@ -4,6 +4,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   GET,
+  POST,
   generateOAuthState,
   buildAuthorizeUrl,
   buildOAuthStateCookie,
@@ -161,5 +162,22 @@ describe('GET /api/auth/github/login', () => {
     const s1 = new URL(first.headers.get('Location')!).searchParams.get('state');
     const s2 = new URL(second.headers.get('Location')!).searchParams.get('state');
     expect(s1).not.toBe(s2);
+  });
+});
+
+describe('POST /api/auth/github/login', () => {
+  it('REQ-AUTH-001: POST is accepted (landing form path) and behaves identically to GET', async () => {
+    // POST is the canonical entry point used by the landing form — avoids
+    // mobile-browser prefetch of a GET anchor regenerating the state cookie
+    // in a race with GitHub's callback.
+    const ctx = makeContext(fullEnv());
+    const res = await POST(ctx as never);
+    expect(res.status).toBe(303);
+    const location = new URL(res.headers.get('Location')!);
+    expect(location.origin).toBe('https://github.com');
+    expect(location.searchParams.get('scope')).toBe('user:email');
+    const setCookies = setCookiesOf(res);
+    const stateCookie = setCookies.find((c) => c.startsWith(`${OAUTH_STATE_COOKIE_NAME}=`));
+    expect(stateCookie).toBeDefined();
   });
 });

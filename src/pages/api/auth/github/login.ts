@@ -73,7 +73,13 @@ export function buildAuthorizeUrl(clientId: string, redirectUri: string, state: 
   return `https://github.com/login/oauth/authorize?${params.toString()}`;
 }
 
-export async function GET(context: APIContext): Promise<Response> {
+/**
+ * Shared handler used by both POST (the canonical path, triggered by a
+ * form submission from the landing page) and GET (kept for
+ * backwards-compatibility and test tooling). Issues a fresh state cookie
+ * and redirects the browser to GitHub's authorize endpoint.
+ */
+async function startOAuth(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env;
   const clientId = env.OAUTH_CLIENT_ID;
   const appUrl = env.APP_URL;
@@ -102,3 +108,19 @@ export async function GET(context: APIContext): Promise<Response> {
   // original method, which matches the OAuth redirect contract.
   return new Response(null, { status: 303, headers });
 }
+
+/**
+ * POST is the canonical entry point. The landing page submits a
+ * same-origin form to this endpoint, which avoids the mobile-browser
+ * prefetch race where prefetch of a GET link regenerates the state
+ * cookie multiple times and leaves a cookie value that no longer
+ * matches what GitHub returns in the callback query.
+ */
+export const POST = startOAuth;
+
+/**
+ * GET is retained for direct URL access (bookmarks, typed URLs, tests).
+ * Prefetch-induced state regeneration is a real risk on this path; the
+ * landing page uses POST to sidestep it entirely.
+ */
+export const GET = startOAuth;
