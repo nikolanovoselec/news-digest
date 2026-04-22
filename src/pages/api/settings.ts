@@ -276,8 +276,9 @@ export async function PUT(context: APIContext): Promise<Response> {
       .bind(hashtagsJson, digestHour, digestMinute, tz, modelId, emailEnabledInt, session.user.id)
       .run();
   } catch (err) {
-    log('error', 'auth.callback.failed', {
+    log('error', 'settings.update.failed', {
       user_id: session.user.id,
+      op: 'write',
       error_code: 'internal_error',
       detail: String(err).slice(0, 500),
     });
