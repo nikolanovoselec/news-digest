@@ -68,10 +68,42 @@ The result is cached in KV for one hour. The dropdown displays each model's name
 | Route | Purpose |
 |---|---|
 | `/` | Landing page with "Sign in with GitHub" |
-| `/settings` | Hashtag chips, custom hashtag input, time picker, timezone, model dropdown |
+| `/onboarding` | First-run configuration: hashtags, digest time, model. Only reachable before first digest is set up. |
+| `/settings` | Same form as onboarding, edit-mode. Also hosts logout, account deletion, install-app prompt |
 | `/digest` | Today's digest — card grid with one-line summaries, "Refresh now" button, execution/cost footer |
 | `/digest/:id/:slug` | Article detail — longer summary with critical points and source link |
 | `/history` | Past digests, each with its own execution/cost metrics |
+
+## Onboarding flow
+
+First-run experience after a brand-new user signs in with GitHub.
+
+```
+1. GitHub OAuth callback creates the users row (github_id, email, tz) — tz is
+   captured from the browser via Intl.DateTimeFormat().resolvedOptions().timeZone
+   and posted to the callback as a query param from the landing page.
+2. Callback checks if hashtags IS NULL OR digest_hour IS NULL.
+   - Yes  → redirect to /onboarding
+   - No   → redirect to /digest
+3. /onboarding is a single-page form with three inline sections:
+   a. Interests — 20 default hashtag chips, custom text input, min 1 required
+   b. Schedule — hour picker (0-23, local time). Timezone shown read-only as
+      "detected: Europe/Zurich" with no edit control.
+   c. Model — Workers AI model dropdown, default pre-selected, collapsible
+      "Advanced" disclosure hides this by default.
+4. Submit button: "Generate my first digest".
+5. On submit: UPDATE users SET hashtags, digest_hour, model_id, then trigger
+   the digest pipeline immediately and redirect to /digest with a loading
+   state while generation runs.
+```
+
+### Middleware gating
+
+Every authenticated request checks: if `hashtags IS NULL OR digest_hour IS NULL` AND path is not `/onboarding` or an auth route → redirect to `/onboarding`. Once both are set, visiting `/onboarding` redirects to `/settings` (edit-mode reuse of the same form component).
+
+### Timezone handling
+
+Captured once at first login from the browser and stored on the users row. Not user-editable. If the browser's timezone changes between visits (user travels), the app continues to use the stored value unless the user explicitly re-logs in. Cron scans compute each user's "due" moment as `digest_hour` interpreted in their stored `tz`.
 
 ## Data model (D1)
 
