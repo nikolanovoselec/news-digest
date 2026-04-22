@@ -564,7 +564,7 @@ These are first-class design surfaces, not afterthoughts. Generation takes 2–1
 - Full-width indeterminate progress bar at the top of `/digest` with the label "Generating your digest…".
 - 10 card skeletons matching real card dimensions (no layout shift when real cards arrive). Shimmer sweep at 1.4s linear gradient, disabled under reduced-motion.
 - Footer shows a running clock: "Generating — 3.2s elapsed". Snaps to final execution_ms + token count + cost on completion.
-- Client polls `GET /api/digest/:id` every 2 seconds until `status='ready'` (render cards with a staggered fade-in) or `status='failed'` (render the error page layout). Polling stops immediately on status change.
+- Client polls `GET /api/digest/:id` every 5 seconds until `status='ready'` (render cards with a staggered fade-in) or `status='failed'` (render the error page layout). Polling stops immediately on status change.
 
 **First-run loading**: identical to above but with a welcome message above the rail — "Welcome, @gh_login. Your first digest is on the way."
 
@@ -791,7 +791,9 @@ All mutating endpoints require an authenticated session (valid `__Host-news_dige
 
 ### Client-side polling during generation
 
-No SSE, no cancel endpoint. While a digest is `status='in_progress'`, the client polls `GET /api/digest/:id` every 2 seconds until it returns `status='ready'` or `'failed'`. Typical wait is 2–10 seconds. The loading UI shows a skeleton grid + a progress spinner; on status change, real cards render. Polling adds ~5 tiny requests per digest and removes an entire SSE transport layer.
+No SSE, no WebSocket, no cancel endpoint. While a digest is `status='in_progress'`, the client polls `GET /api/digest/:id` every 5 seconds until it returns `status='ready'` or `'failed'`. Typical wait is ~60 seconds. The loading UI shows a skeleton grid + an indeterminate progress bar; on status change, real cards render with staggered fade-in.
+
+**Why polling is enough**: the primary completion signal for scheduled digests is the email — users get "your digest is ready" and open the app when it's already done. Polling only matters for the rare case where the user clicks Refresh and waits on the page. 5-second interval × 60s = 12 tiny requests, negligible overhead and no architectural plumbing.
 
 ## User stats widget
 
