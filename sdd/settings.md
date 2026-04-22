@@ -20,7 +20,7 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 **Priority:** P0
 **Dependencies:** REQ-AUTH-001
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -41,7 +41,7 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 **Priority:** P0
 **Dependencies:** REQ-SET-001
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -62,7 +62,7 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 **Priority:** P0
 **Dependencies:** REQ-SET-002
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -83,7 +83,7 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 **Priority:** P1
 **Dependencies:** REQ-SET-003
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -103,7 +103,7 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 **Priority:** P1
 **Dependencies:** REQ-SET-001
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -122,7 +122,7 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 **Priority:** P0
 **Dependencies:** REQ-SET-001, REQ-AUTH-002
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -141,4 +141,4 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 **Priority:** P2
 **Dependencies:** REQ-SET-003
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented

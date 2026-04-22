@@ -21,7 +21,7 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 **Priority:** P0
 **Dependencies:** REQ-GEN-006
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -41,7 +41,7 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 **Priority:** P0
 **Dependencies:** REQ-READ-001
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -61,7 +61,7 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 **Priority:** P1
 **Dependencies:** REQ-READ-002
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -82,7 +82,7 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 **Priority:** P0
 **Dependencies:** REQ-READ-001, REQ-GEN-005
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -102,7 +102,7 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 **Priority:** P1
 **Dependencies:** REQ-SET-003, REQ-GEN-006
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -123,4 +123,4 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 **Priority:** P1
 **Dependencies:** REQ-READ-001
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented

@@ -21,7 +21,7 @@ Resend-backed notification sent after every successful scheduled digest (not man
 **Priority:** P1
 **Dependencies:** REQ-GEN-006, REQ-SET-005
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -41,7 +41,7 @@ Resend-backed notification sent after every successful scheduled digest (not man
 **Priority:** P1
 **Dependencies:** REQ-MAIL-001
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
