@@ -9,7 +9,7 @@
 # unleashed:   apply everything (including JUDGMENT) on a new branch + PR.
 #              Conservative defaults preserve information without overwriting intent.
 #              Walk-away workflow — review the PR when you come back.
-mode: unleashed
+mode: auto
 
 # enforce_tdd: when true, spec-reviewer enforces the TDD contract on every run:
 #   - Downgrades Implemented REQs without test coverage to Partial
