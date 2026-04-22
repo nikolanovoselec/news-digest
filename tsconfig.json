@@ -20,6 +20,6 @@
     "jsx": "preserve",
     "jsxImportSource": "astro"
   },
-  "include": ["src/**/*", "tests/**/*", "astro.config.mjs", "vitest.config.ts"],
+  "include": ["src/**/*", "tests/**/*", "tests/env.d.ts", "astro.config.mjs", "vitest.config.ts"],
   "exclude": ["node_modules", "dist", ".wrangler"]
 }
