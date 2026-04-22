@@ -44,13 +44,14 @@ describe('requireSettingsComplete', () => {
     expect(res).toBeNull();
   });
 
-  it('REQ-SET-006: redirects to /settings?first_run=1 when hashtags_json is null', () => {
+  it('REQ-SET-006: does NOT redirect when hashtags_json is null (tags now edited on /digest)', () => {
+    // Hashtags moved out of /settings into the /digest tag strip.
+    // A user with digest_hour set and no hashtags_json is free to visit
+    // /digest — the empty tag strip prompts them to add their first tag.
     const res = requireSettingsComplete(
       ctx('/digest', user({ hashtags_json: null })) as never,
     );
-    expect(res).not.toBeNull();
-    expect(res!.status).toBe(303);
-    expect(res!.headers.get('Location')).toBe('/settings?first_run=1');
+    expect(res).toBeNull();
   });
 
   it('REQ-SET-006: redirects to /settings?first_run=1 when digest_hour is null', () => {
@@ -62,17 +63,16 @@ describe('requireSettingsComplete', () => {
     expect(res!.headers.get('Location')).toBe('/settings?first_run=1');
   });
 
-  it('REQ-SET-006: redirects to /settings?first_run=1 when hashtags_json is empty string', () => {
+  it('REQ-SET-006: does NOT redirect when hashtags_json is empty string (tags now edited on /digest)', () => {
     const res = requireSettingsComplete(
       ctx('/digest', user({ hashtags_json: '' })) as never,
     );
-    expect(res).not.toBeNull();
-    expect(res!.headers.get('Location')).toBe('/settings?first_run=1');
+    expect(res).toBeNull();
   });
 
   it('REQ-SET-006: does NOT redirect when user is already on /settings', () => {
     const res = requireSettingsComplete(
-      ctx('/settings', user({ hashtags_json: null })) as never,
+      ctx('/settings', user({ digest_hour: null })) as never,
     );
     expect(res).toBeNull();
   });
