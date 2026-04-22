@@ -22,7 +22,8 @@ Every digest shows execution time, token count, and estimated cost, so you can s
 | Database | Cloudflare D1 |
 | Sessions | Stateless JWT in HttpOnly cookie |
 | LLM | Workers AI (user-selectable model) |
-| Scheduling | Hourly Cron Trigger + Cloudflare Queues with per-user delayed delivery (≤60 min) |
+| Scheduling | Cron Trigger every 5 minutes — generates inline when a user's HH:MM matches the current window |
+| Async work | `ctx.waitUntil` for manual refresh (return 202, generate in background). No Queues. |
 | Email | Resend — "your daily digest is ready" notification after each scheduled run |
 | Styling | Tailwind CSS 4 |
 | PWA | `@vite-pwa/astro` — manifest, service worker, install prompt |
@@ -51,10 +52,10 @@ Discovery runs **synchronously** inside the `PUT /api/settings` handler (and the
 On settings save (onboarding or edit):
   For each tag in the submitted hashtags that does NOT have a KV entry
   `sources:{tag}`:
-    Run discovery inline (with a 10s budget per tag, hard-capped).
-    If the budget blows: fall back to enqueuing a 'source-discovery' Queue
-    job so discovery completes asynchronously, and the tag proceeds with
-    generic sources only for the next digest.
+    Run discovery inline (with a 15s budget per tag — one LLM call +
+    up to 5 validation GETs). If the budget blows on a specific tag,
+    that tag is stored with an empty sources list (retryable via
+    manual 're-discover'); save still succeeds.
 
 Discovery procedure:
   1. Ask an LLM (default llama-3.1-8b-instruct-fp8-fast for cost):
@@ -374,12 +375,10 @@ CREATE TABLE digests (
   model_id              TEXT NOT NULL,
   status                TEXT NOT NULL,                -- 'in_progress' | 'ready' | 'failed'
   error_code            TEXT,                         -- sanitized code only (see error handling)
-  locked_at             INTEGER,                      -- optimistic lock: NULL when free, unix ts when claimed
   trigger               TEXT NOT NULL                 -- 'scheduled' | 'manual'
 );
 CREATE INDEX idx_digests_user_generated ON digests(user_id, generated_at DESC);
 CREATE INDEX idx_digests_user_date ON digests(user_id, local_date DESC);
-CREATE INDEX idx_digests_status_lock ON digests(status, locked_at);
 
 CREATE TABLE articles (
   id              TEXT PRIMARY KEY,                   -- ULID (sortable, 26 chars, generated in-process)
@@ -406,8 +405,8 @@ CREATE INDEX idx_articles_read ON articles(digest_id, read_at);  -- supports "ar
 
 ### ID and slug generation
 
-- `digests.id` and `articles.id`: **ULID** (26-char Crockford-base32, sortable by creation time). Generated in-process via a small helper, no DB sequence.
-- `articles.slug`: derived from `title` — lowercase, replace non-`[a-z0-9]` runs with `-`, trim hyphens, truncate to 60 chars, append a 4-char suffix from the ULID if a collision occurs within the same `digest_id`. The `UNIQUE(digest_id, slug)` index enforces uniqueness at the DB level.
+- `digests.id` and `articles.id`: **ULID** (26-char Crockford-base32, sortable by creation time). Generated in-process via a small helper.
+- `articles.slug`: derived from `title` — lowercase, replace non-`[a-z0-9]` runs with `-`, trim hyphens, truncate to 60 chars. On the rare collision within the same digest (same two titles slugify to the same string), append `-2`, `-3`, etc. The `UNIQUE(digest_id, slug)` index enforces uniqueness.
 
 ### Migrations
 
@@ -530,117 +529,76 @@ Deployed via `wrangler secret put`:
 
 ## Generation pipeline
 
-Architecture: dispatcher + consumer, connected by Cloudflare Queues. The dispatcher runs once per day; the consumer processes jobs as they become due. This pattern keeps each Worker invocation short, avoids CPU/wall-time limits, and gives us retries + dead-letter handling for free.
+One function, `generateDigest(user, trigger)`, called from two places: the cron handler (scheduled) and the refresh API handler (manual). No queues, no consumer/producer split, no lock management.
 
-### Dispatcher (hourly cron)
+### Cron (every 5 minutes)
 
-Cron runs every hour on the hour. Each run enqueues only users whose local digest time falls within the next 60 minutes, so the computed delay always fits within Cloudflare Queues' 12h `delaySeconds` cap with room to spare.
+Cron runs every 5 minutes. Each invocation scans for users whose `digest_hour:digest_minute` falls in the current 5-min window and who haven't generated today.
 
 ```
-1. Cron Trigger fires at HH:00 UTC (24 times per day).
-2. SELECT id, tz, digest_hour, digest_minute, last_generated_local_date
-   FROM users WHERE hashtags_json IS NOT NULL AND digest_hour IS NOT NULL.
-3. For each user:
-   a. Compute target_utc = next occurrence of digest_hour:digest_minute
-      in user's tz, converted to UTC (handles DST via Intl).
-   b. Compute delay_seconds = target_utc - now_utc.
-   c. Skip if delay_seconds < 0 OR delay_seconds >= 3600 — a future hourly
-      run will pick this user up closer to their time.
-   d. Skip if last_generated_local_date == local_date_for(target_utc) —
-      already generated today (manual refresh claimed the slot).
-   e. Enqueue job { user_id, trigger: 'scheduled', local_date: YYYY-MM-DD }
-      to the 'digest-jobs' Queue with delaySeconds.
-4. Done. Each invocation is tiny: one SELECT, 0–N Queue writes.
+1. Cron fires at HH:MM where MM % 5 == 0.
+2. Compute now_local_hm_set = set of (tz, HH:MM) tuples matching the
+   current UTC time for each distinct tz in the users table (usually 1-5
+   timezones in practice). This avoids a cross-join — for each distinct
+   tz, compute the local HH:MM at now_utc, then query:
+   
+   SELECT * FROM users
+   WHERE hashtags_json IS NOT NULL
+     AND tz = ? AND digest_hour = ? AND digest_minute BETWEEN ? AND ?
+     AND (last_generated_local_date IS NULL
+          OR last_generated_local_date != ?)  -- today's local_date in this tz
+   
+   (minute window is ±2 to absorb cron jitter)
+3. For each matched user: await generateDigest(user, 'scheduled').
+4. Parallelize with Promise.all, concurrency cap 5.
 ```
 
 No 15-min polling. Each user gets exactly one scheduled job per day, delivered at their local hour.
 
-### Consumer (Queue handler)
+### Manual refresh (POST /api/digest/refresh)
+
+Handler returns immediately with `202 { digest_id }`; generation continues in the background via `ctx.waitUntil`.
 
 ```
-For each message:
-1. Claim or create the digest row. Queue message shape is fixed:
-   `{ trigger: 'scheduled' | 'manual', user_id, local_date, digest_id? }`
-   — `digest_id` is always present for manual, absent for scheduled.
+1. Rate-limit check via atomic conditional UPDATE (see rate limits below).
+2. INSERT a new digest row: id=ULID, status='in_progress', trigger='manual',
+   local_date=today's local date in user.tz, model_id from user row.
+3. Return 202 { digest_id, status: 'in_progress' }.
+4. ctx.waitUntil(generateDigest(user, 'manual', digestId))
+   — keeps the Worker alive to complete the pipeline; the HTTP response
+   is already sent to the client, which will poll /api/digest/:id.
+```
 
-   - **Scheduled trigger** (no digest_id in message): first check idempotency
-     via `SELECT last_generated_local_date FROM users WHERE id=?`. If equal
-     to message.local_date, ack and exit. Else INSERT a new digest:
-     ```sql
-     INSERT INTO digests (id, user_id, local_date, generated_at, model_id,
-                          status, locked_at, trigger)
-     SELECT ?, ?, ?, ?, model_id, 'in_progress', :now, 'scheduled'
-     FROM users
-     WHERE id = ?
-       AND NOT EXISTS (
-         SELECT 1 FROM digests
-         WHERE user_id = ? AND status = 'in_progress' AND locked_at > :now - 900
-       );
-     ```
-     If 0 rows inserted, another run owns it — ack and exit.
+### `generateDigest(user, trigger, digestId?)` — the one function
 
-   - **Manual trigger** (digest_id in message): the POST handler already
-     INSERTed the row. Consumer atomically re-claims (handles retry after
-     stale lock):
-     ```sql
-     UPDATE digests SET locked_at = :now
-     WHERE id = ? AND user_id = ? AND status = 'in_progress'
-       AND (locked_at IS NULL OR locked_at < :now - 900)
-     RETURNING id;
-     ```
-     If 0 rows returned, another run owns it or status changed — ack and exit.
-
-   No `lock_owner` column is used; `locked_at` + 15-min TTL is the complete
-   mechanism.
-2. Idempotency check: if message.trigger='scheduled' AND
-   users.last_generated_local_date == message.local_date → ack and exit.
-3. For each hashtag in users.hashtags_json, fan out in parallel:
-   - All generic sources (HN, Google News, Reddit) queried with the tag
-   - All feeds cached under KV key `sources:{tag}` (validated discovery output)
-   Per-source 5s timeout, 1MB body cap, 30 items per generic source, 20 per
-   tag-specific feed. Global concurrency cap 10 across all fetches to prevent
-   burst throttling. After canonical-URL dedupe, cap the pool sent to the
-   LLM at 300 headlines (prioritize tag-specific first, then generics).
-4. Canonicalize and dedupe URLs (see URL canonicalization below).
-5. Single Workers AI call with users.model_id, structured as:
-   - system message: "You curate tech news. Return strict JSON only.
-     All strings are plaintext — no HTML, no Markdown, no links inside text."
-   - user message: "User interests: <fenced hashtag list>. Headlines:
-     <fenced JSON array of {title, url, snippet} objects>. Return top 10 as
-     { articles: [{ title, url, one_liner, details }] } where one_liner is
-     <=120 chars plaintext and details is an array of exactly 3 plaintext
-     bullets (each a complete sentence, no leading bullet characters)."
-   Fencing (triple backticks) around user-controlled content limits
-   prompt-injection blast radius.
-6. Parse the LLM JSON response strictly (reject on parse error).
-7. For each article: sanitize title, one_liner, and each bullet in the
-   details array to plaintext (strip all HTML tags, strip control chars,
-   collapse whitespace). Store the bullets as JSON array in
-   `articles.details_json`. Client renders as `<ul><li>{bullet}</li></ul>`
-   with `textContent` — no markdown parser, no HTML sanitizer dependency,
-   XSS-safe by construction.
-8. If LLM call or parsing fails: mark digest status='failed' with
-   sanitized error_code ('llm_timeout'|'llm_invalid_json'|'all_sources_failed').
-   Queue default retry (3 attempts) handles transient errors — no custom
-   retry-with-shorter-prompt logic.
-9. Capture execution_ms, tokens_in, tokens_out (from Workers AI response
-   usage field; if absent, store NULL and UI shows "~" prefix). Compute
-   estimated_cost_usd from a constants file mapping model_id → per-Mtok
-   prices (bundled with the Worker; updated via code, not at runtime).
-10. INSERT articles rows. UPDATE digests SET status='ready', execution_ms=?,
-    tokens_in=?, tokens_out=?, estimated_cost_usd=?, locked_at=NULL
-    WHERE id=? AND status='in_progress'. The conditional WHERE clause
-    prevents accidental overwrite if the row was externally marked failed.
-11. UPDATE users SET last_generated_local_date = local_date_in_user_tz(now())
-    for BOTH trigger types. This means a manual refresh consumed today's
-    scheduled slot — if a user refreshes at 07:55 and their scheduled run
-    is at 08:00, the scheduled job sees last_generated_local_date == today
-    and acks without generating. This is the intended behavior: one digest
-    per local day, regardless of which trigger produced it. To get a second
-    digest on the same day, the user can click Refresh again (within rate
-    limits) which always generates because the idempotency check only
-    applies to scheduled triggers.
-12. Acknowledge queue message.
+```
+1. If called from cron (no digestId passed):
+   INSERT a new digest row: status='in_progress', trigger='scheduled'.
+   If today's local_date already has a 'ready' digest for this user → exit
+   (double-safety beyond the cron SELECT filter).
+2. For each hashtag in user.hashtags_json, fan out in parallel:
+   - Generic sources (HN, Google News, Reddit) queried with the tag
+   - Feeds cached under KV key `sources:{tag}`
+   Per-source 5s timeout, 1MB body cap, 30 items (generic) / 20 items
+   (tag-specific) per feed. Global concurrency cap 10 across all fetches.
+3. Canonicalize + dedupe URLs. Cap pool at 300 headlines, tag-specific first.
+4. Single Workers AI call using the prompts from src/lib/prompts.ts
+   (see "LLM prompts" section below).
+5. Parse JSON strictly. If parse fails: write status='failed',
+   error_code='llm_invalid_json', exit.
+6. For each article in the response: strip HTML tags, strip control chars,
+   collapse whitespace on title, one_liner, and each bullet in details.
+   Store bullets as JSON array in articles.details_json. Client renders
+   as <ul><li>{bullet}</li></ul> with textContent — XSS-safe by construction.
+7. INSERT articles rows.
+8. UPDATE digests SET status='ready', execution_ms, tokens_in, tokens_out,
+   estimated_cost_usd WHERE id=? AND status='in_progress'.
+9. UPDATE users SET last_generated_local_date=today_local_date
+   (both trigger types — one digest per local day; manual consumes the slot).
+10. If trigger='scheduled' AND user.email_enabled: send Resend email.
+11. All steps wrapped in try/catch. On exception: UPDATE digests
+    SET status='failed', error_code=<sanitized> WHERE id=?. Log full error
+    to console.log JSON. No automatic retry — user can click Refresh.
 ```
 
 ### Manual refresh
@@ -709,6 +667,95 @@ These are first-class design surfaces, not afterthoughts. Generation takes 2–1
 | OAuth error (`access_denied`, `no_verified_email`, etc.) | Mapped from error code | Human-readable match for the code | "Try again" | "Help" |
 
 **Visual treatment** of error pages: no illustrations, no emoji, no exclamation marks. A single icon (16–20px) in the accent color next to the headline, generous whitespace, monospace for any error code shown in a muted footer. The tone is calm and matter-of-fact — errors happen, the app handles them.
+
+## LLM prompts
+
+All prompts live in `src/lib/prompts.ts`. Kept in one file so iteration is easy and the system/user split is obvious.
+
+### Inference parameters (shared)
+
+```ts
+export const LLM_PARAMS = {
+  temperature: 0.2,          // low — summaries should be consistent, not creative
+  max_tokens: 4096,          // hard cap to prevent runaway generation
+  response_format: { type: 'json_object' },  // force JSON on models that support it
+};
+```
+
+Workers AI returns the response body directly; we parse as JSON with `JSON.parse`. On parse failure, the digest is marked `status='failed', error_code='llm_invalid_json'` — no retry.
+
+### Digest generation prompt
+
+```ts
+export const DIGEST_SYSTEM = `You are a tech news curator. Read the list of headlines and pick the 10 most relevant to the user's interests.
+
+Rules:
+- Return strict JSON only. No prose, no code fences, no explanations.
+- All strings are PLAINTEXT. No HTML, no Markdown syntax, no inline links.
+- Rank by relevance to the user's interests, then by recency.
+- Skip duplicates, press releases with no substance, and pure advertising.
+- If fewer than 10 good matches exist, return fewer — do not pad with weak results.`;
+
+export function digestUserPrompt(hashtags: string[], headlines: Headline[]) {
+  return `User interests (hashtags):
+\`\`\`
+${hashtags.join(', ')}
+\`\`\`
+
+Candidate headlines (JSON array):
+\`\`\`json
+${JSON.stringify(headlines)}
+\`\`\`
+
+Return exactly this JSON shape:
+{
+  "articles": [
+    {
+      "title": "plaintext title, copy as-is from input",
+      "url": "URL from input",
+      "one_liner": "plaintext, max 120 chars, the single most important fact",
+      "details": ["bullet 1", "bullet 2", "bullet 3"]
+    }
+  ]
+}
+
+Each bullet is a complete plaintext sentence covering a critical point. Exactly 3 bullets per article, no leading "- " or "•" characters.`;
+}
+```
+
+Fencing (triple backticks) around user-controlled data (hashtags, headlines) limits prompt-injection blast radius — instructions from a hostile article title get read as data, not instructions.
+
+### Source discovery prompt
+
+```ts
+export const DISCOVERY_SYSTEM = `You suggest authoritative, stable, publicly accessible RSS/Atom/JSON feed URLs for a given technology or topic.
+
+Rules:
+- Return strict JSON only.
+- Only suggest feeds you are highly confident exist at the given URL. Do NOT guess.
+- Prefer official blogs, release notes, and changelogs over third-party news sites.
+- If you are unsure about a feed, omit it — returning fewer correct URLs is better than more guessed URLs.`;
+
+export function discoveryUserPrompt(tag: string) {
+  return `Topic: #${tag}
+
+Return up to 5 authoritative feed URLs as:
+{
+  "feeds": [
+    { "name": "Human-readable name", "url": "https://...", "kind": "rss" }
+  ]
+}
+
+"kind" is one of "rss" | "atom" | "json". If you have no confident suggestions, return { "feeds": [] }.`;
+}
+```
+
+### Why a single file
+
+- Easy to audit for prompt injection handling (all fencing in one place)
+- Easy to iterate when tuning quality
+- Easy to version — changing a prompt is a commit; each revision is a rollback point
+- No per-user prompt customization in MVP — that's a product-level feature decision, not user-tunable
 
 ## Email notifications (Resend)
 
@@ -988,4 +1035,4 @@ Internal error details (exception messages, response bodies) are logged at `leve
 
 ## Deployment
 
-Cloudflare Workers. Hourly Cron Trigger configured in `wrangler.toml` (`crons = ["0 * * * *"]`). D1, KV (discovered sources cache), and two Queues (`digest-jobs` and `source-discovery`, no DLQ; default 3-retry) bindings provisioned via `wrangler`. GitHub OAuth client ID/secret, `OAUTH_JWT_SECRET`, `RESEND_API_KEY`, `RESEND_FROM`, and `APP_URL` configured as Worker secrets. Schema migrations applied with `wrangler d1 migrations apply`.
+Cloudflare Workers. Cron Trigger every 5 minutes in `wrangler.toml` (`crons = ["*/5 * * * *"]`). D1 and KV (discovered sources cache + source_health counters) bindings provisioned via `wrangler`. No Queues. GitHub OAuth client ID/secret, `OAUTH_JWT_SECRET`, `RESEND_API_KEY`, `RESEND_FROM`, and `APP_URL` configured as Worker secrets. Schema migrations applied with `wrangler d1 migrations apply`.
