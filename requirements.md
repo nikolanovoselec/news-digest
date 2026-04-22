@@ -40,18 +40,18 @@ No feed table, no OPML, no per-user feed management. For each hashtag the user h
 
 Results are canonicalized and deduplicated (see URL canonicalization below), then a single LLM call ranks the top 10 across all hashtags and writes the one-line + longer summary for each. The LLM is also asked to return which hashtag(s) matched each article — stored on the article row and shown subtly in the card for transparency.
 
-### URL canonicalization and SSRF protection
+### URL canonicalization
 
-Each source URL is canonicalized before the dedupe key is computed. Before following any redirect, the URL is validated to prevent SSRF:
+The consumer never fetches article pages — Workers AI only sees the headline text from search APIs. This eliminates SSRF surface entirely (nothing to redirect-chase).
 
-1. **URL validation** (applied to source URL AND every intermediate redirect target):
-   - Scheme must be `https:` (reject `http:`, `file:`, `ftp:`, custom schemes).
-   - Parse hostname; reject if it contains `@` (user-info) or is an IP literal in RFC 1918 (10/8, 172.16/12, 192.168/16), RFC 5737 test ranges, loopback (127/8, ::1), link-local (169.254/16, fe80::/10), Cloudflare internal (100.64.0.0/10), or is `localhost`/`metadata.*`.
-   - Resolve hostname via `fetch` with `redirect: 'manual'` — the Workers runtime does the DNS; we inspect the final IP by checking the redirect `Location` header chain, re-validating at each hop.
-2. **Resolution**: GET with `Range: bytes=0-0`, `redirect: 'follow'`, 3s timeout, max 3 redirects. HEAD is NOT used — many CDNs mis-handle it.
-3. **Cache**: resolved URL stored in KV keyed by source URL with 24h TTL. KV only (no D1 mirror).
-4. **Canonicalization**: strip tracking params (`utm_*`, `ref`, `ref_src`, `fbclid`, `gclid`, `mc_cid`, `mc_eid`, `igshid`, `si`, `source`), lowercase scheme and host, drop trailing slash on pathname.
-5. **Dedupe** by canonical URL string. A secondary hash was previously specified but dropped as over-engineering — duplicates across mirror domains are acceptable in a daily digest.
+URLs from the search APIs are canonicalized **string-only** before dedupe:
+
+1. Reject any URL whose scheme is not `https:` or `http:` (the search APIs return http from arXiv occasionally; upgrade to https at canonicalization time).
+2. Strip tracking params: `utm_*`, `ref`, `ref_src`, `fbclid`, `gclid`, `mc_cid`, `mc_eid`, `igshid`, `si`, `source`.
+3. Lowercase scheme and host, drop trailing slash on pathname.
+4. Dedupe by canonical URL string. Occasional duplicates across mirror domains are acceptable for a daily digest.
+
+Google News URLs redirect through `news.google.com/articles/...` — the `source_url` stored is the Google News URL itself (the browser handles the redirect to the real publisher when the user clicks). No server-side resolution. Simpler, no SSRF risk.
 
 ## Default hashtag proposals
 
@@ -84,7 +84,11 @@ The result is cached in KV for one hour. The dropdown displays each model's name
 
 **Default**: `@cf/meta/llama-3.1-8b-instruct-fast`.
 
-**Validation on write**: the `model_id` submitted by the client is validated against the KV catalog before storage. If the submitted value is not present in the cache, reject with 400. If the cache is empty (cold start failure), reject with 503 — never store an unvalidated value. The KV entry uses a 1h TTL; on cache miss, fetch the catalog fresh.
+**Validation on write**: the `model_id` submitted by the client is accepted if EITHER:
+- It appears in a hardcoded `ALWAYS_VALID_MODELS` constant in the Worker source (3 curated options: `@cf/meta/llama-3.1-8b-instruct-fast`, `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, `@cf/meta/llama-3.1-8b-instruct`). These are guaranteed valid regardless of catalog state.
+- OR it appears in the KV-cached catalog.
+
+If neither condition holds, reject with 400. This removes the catalog-cold-start deadlock: users can always save with the default model even if the catalog fetch is failing. The KV entry uses a 1h TTL; on cache miss, fetch the catalog fresh.
 
 ## Pages
 
@@ -148,7 +152,6 @@ Provided by `@vite-pwa/astro` (Workbox under the hood). Caching strategies:
 | Static (JS, CSS, fonts, icons) | Cache-first, hashed filenames |
 | `/digest/*` HTML | Stale-while-revalidate |
 | `/api/*` | Network-first, 3s timeout, fall back to cache |
-| `/api/digest/*/events` (SSE) | Bypass SW entirely — fetched directly with `EventSource`; long-lived stream must not hit the 3s API timeout |
 | `/manifest.webmanifest`, `/icons/*` | Cache-first |
 
 The last viewed digest and its article detail pages remain readable offline. `/settings` and the refresh button show an "offline" banner when `navigator.onLine === false`.
@@ -185,7 +188,6 @@ Mobile-first layout. Looks native on iOS, Android, and desktop without compromis
 - **Pull-to-refresh**: native browser behavior on `/digest` (mobile). The "Refresh now" button handles desktop.
 - **Input zoom prevention**: all `<input>` and `<textarea>` have `font-size: 16px` minimum on iOS.
 - **Tap highlights**: disabled via `-webkit-tap-highlight-color: transparent`; focus and active states handled by CSS.
-- **Haptic feedback**: on the refresh button and theme toggle via `navigator.vibrate(10)` where supported (Android); iOS ignores gracefully.
 
 ## Onboarding flow
 
@@ -262,6 +264,7 @@ CREATE INDEX idx_users_next_due ON users(next_due_at);
 CREATE TABLE digests (
   id                    TEXT PRIMARY KEY,
   user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  local_date            TEXT NOT NULL,                -- YYYY-MM-DD in user's tz at generation time (unambiguous "today")
   generated_at          INTEGER NOT NULL,
   execution_ms          INTEGER,
   tokens_in             INTEGER,                      -- nullable: model may not return counts
@@ -274,6 +277,7 @@ CREATE TABLE digests (
   trigger               TEXT NOT NULL                 -- 'scheduled' | 'manual'
 );
 CREATE INDEX idx_digests_user_generated ON digests(user_id, generated_at DESC);
+CREATE INDEX idx_digests_user_date ON digests(user_id, local_date DESC);
 CREATE INDEX idx_digests_status_lock ON digests(status, locked_at);
 
 CREATE TABLE articles (
@@ -283,7 +287,7 @@ CREATE TABLE articles (
   source_url      TEXT NOT NULL,                      -- canonical, post-resolution URL
   title           TEXT NOT NULL,
   one_liner       TEXT NOT NULL,                      -- <=120 chars, sanitized
-  detail_md       TEXT NOT NULL,                      -- longer summary, markdown, sanitized before storage
+  detail_html     TEXT NOT NULL,                      -- longer summary, server-sanitized HTML (see markdown handling)
   source_name     TEXT,                               -- 'Google News' | 'Hacker News' | 'Reddit' | 'arXiv'
   published_at    INTEGER,
   rank            INTEGER NOT NULL,
@@ -412,7 +416,7 @@ Deployed via `wrangler secret put`:
 | `OAUTH_CLIENT_ID` | GitHub OAuth App client ID |
 | `OAUTH_CLIENT_SECRET` | GitHub OAuth App client secret |
 | `OAUTH_JWT_SECRET` | Random 32+ char string for HMAC signing |
-| `CLOUDFLARE_API_TOKEN` | For the Workers AI models catalog lookup. **Scope: `AI: Read` only** — no account edit, no Worker deploy permissions. The deployment token used in CI is separate and is never stored as a Worker secret. |
+| `CLOUDFLARE_AI_READ_TOKEN` | For the Workers AI models catalog lookup. **Scope: `AI: Read` only** — no account edit, no Worker deploy permissions. The deployment token (`CLOUDFLARE_API_TOKEN` in CI) is separate and is never stored as a Worker secret. |
 | `RESEND_API_KEY` | Resend API key (starts with `re_`) for sending digest-ready notification emails |
 | `RESEND_FROM` | Sender address for Resend, e.g., `News Digest <digest@yourdomain.com>` — must match a verified domain |
 | `APP_URL` | Canonical app URL (e.g., `https://digest.yourdomain.com`) — used in email CTAs |
@@ -455,11 +459,15 @@ No 15-min polling. Each user gets exactly one scheduled job per day, delivered a
 
 ```
 For each message:
-1. Claim the digest row: INSERT a new digest with status='in_progress',
-   locked_at=now(). Use a conditional INSERT guarded by NOT EXISTS against
-   any digest for this user where status='in_progress' AND locked_at > now()-900
-   (15-min lock TTL — stale locks are naturally released on the next consumer
-   invocation via this check; no dedicated reclaim job needed).
+1. Claim or create the digest row:
+   - **Manual trigger**: the row already exists (created by the POST handler
+     with status='in_progress', locked_at=now()). Consumer verifies the
+     message.digest_id still has status='in_progress' and claims it by
+     updating lock_owner.
+   - **Scheduled trigger**: INSERT a new digest with status='in_progress',
+     locked_at=now(). Conditional INSERT guarded by NOT EXISTS against any
+     digest for this user where status='in_progress' AND locked_at > now()-900
+     (15-min lock TTL — stale locks released naturally on next consumer run).
 2. Idempotency check: if message.trigger='scheduled' AND
    users.last_generated_local_date == message.local_date → ack and exit.
 3. For each hashtag in users.hashtags_json, fan out 4 queries in parallel
@@ -477,11 +485,17 @@ For each message:
    Fencing (e.g., triple backticks) around user-controlled content limits
    prompt-injection blast radius.
 6. Parse the LLM JSON response strictly (reject on parse error).
-7. For each article: sanitize title and one_liner to plaintext (strip all
-   HTML and control chars). Render detail as markdown ONLY in the client
-   via a sanitizing renderer (marked + DOMPurify with allowlist: p, ul,
-   ol, li, strong, em, code, br) or a server-side markdown-to-safe-HTML
-   conversion before storage. Reject javascript:, data:, vbscript: URLs.
+7. For each article:
+   - Sanitize title and one_liner to plaintext (strip all HTML and control chars).
+   - Convert the LLM's detail markdown to safe HTML server-side ONCE before
+     storage: parse with `marked` configured with `{ async: false }` and raw
+     HTML disabled, then sanitize with a Workers-compatible HTML sanitizer
+     (e.g., `sanitize-html` or `xss`) allowing only tags `p, ul, ol, li,
+     strong, em, code, br` and attributes `href` on `a` (none emitted by
+     default since raw HTML is disabled). Strip any `javascript:`, `data:`,
+     `vbscript:` URLs.
+   - Stored in `articles.detail_html`. Client renders with `innerHTML` — no
+     client-side markdown parsing, one sanitization code path.
 8. If LLM call or parsing fails: mark digest status='failed' with
    sanitized error_code ('llm_timeout'|'llm_invalid_json'|'all_sources_failed').
    Queue default retry (3 attempts) handles transient errors — no custom
@@ -490,13 +504,10 @@ For each message:
    usage field; if absent, store NULL and UI shows "~" prefix). Compute
    estimated_cost_usd from a constants file mapping model_id → per-Mtok
    prices (bundled with the Worker; updated via code, not at runtime).
-10. Final write is race-safe against cancel:
-    - INSERT articles rows first.
-    - Then: UPDATE digests SET status='ready', execution_ms=?, tokens_in=?,
-      tokens_out=?, estimated_cost_usd=?, locked_at=NULL
-      WHERE id=? AND status='in_progress'.
-    - If the UPDATE returns 0 rows, cancel won — DELETE articles
-      WHERE digest_id=?. Consumer exits without marking ready.
+10. INSERT articles rows. UPDATE digests SET status='ready', execution_ms=?,
+    tokens_in=?, tokens_out=?, estimated_cost_usd=?, locked_at=NULL
+    WHERE id=? AND status='in_progress'. The conditional WHERE clause
+    prevents accidental overwrite if the row was externally marked failed.
 11. UPDATE users SET last_generated_local_date = local_date_in_user_tz(now())
     for BOTH trigger types. This means a manual refresh consumed today's
     scheduled slot — if a user refreshes at 07:55 and their scheduled run
@@ -550,11 +561,10 @@ These are first-class design surfaces, not afterthoughts. Generation takes 2–1
 
 **Live generation indicator** (while a digest is being built, whether first-run, scheduled, or manual refresh):
 
-- Full-width progress rail at the top of `/digest` showing the current pipeline phase with a short label: "Fetching sources…" → "Reading 73 headlines…" → "Summarizing with llama-3.1-8b…" → "Almost done…".
-- Phase advances are pushed from the server via Server-Sent Events on `GET /api/digest/:id/events` (read-only stream; closes when `status='ready'` or `'failed'`). Falls back to 2s polling if SSE is unsupported.
-- Below the rail: 10 card skeletons matching real card dimensions (no layout shift when real cards arrive). Shimmer sweep at 1.4s linear gradient, disabled under reduced-motion.
-- Footer shows running clock: "Generating — 3.2s elapsed". Snaps to final execution_ms + token count + cost on completion.
-- Cancellable: "Cancel" button on the rail triggers `POST /api/digest/:id/cancel` which marks the digest `status='failed' error_code='user_cancelled'`. Any in-flight fetches are aborted via `AbortController`.
+- Full-width indeterminate progress bar at the top of `/digest` with the label "Generating your digest…".
+- 10 card skeletons matching real card dimensions (no layout shift when real cards arrive). Shimmer sweep at 1.4s linear gradient, disabled under reduced-motion.
+- Footer shows a running clock: "Generating — 3.2s elapsed". Snaps to final execution_ms + token count + cost on completion.
+- Client polls `GET /api/digest/:id` every 2 seconds until `status='ready'` (render cards with a staggered fade-in) or `status='failed'` (render the error page layout). Polling stops immediately on status change.
 
 **First-run loading**: identical to above but with a welcome message above the rail — "Welcome, @gh_login. Your first digest is on the way."
 
@@ -731,13 +741,13 @@ Number count-up animations, typing effect for "Detected: Europe/Zurich", particl
 
 ## What is explicitly out of scope for MVP
 
-- Email delivery (read in-app only)
-- Multiple digests per day
-- Slack, Telegram, or RSS output
+- Multiple digests per day (one scheduled run plus rate-limited manual refreshes is the model)
+- Slack, Telegram, or RSS output (email is the only notification channel)
 - OPML import, user-added feeds
 - Sharing, bookmarking, cross-user recommendations
 - Embeddings or vector search (single LLM call handles ranking)
-- R2 archive of digest HTML (D1 stores markdown directly; digests are small)
+- R2 archive of digest HTML (D1 stores sanitized HTML directly; digests are small)
+- Fetching article page bodies (summaries derive from search-API headlines+snippets)
 
 These may be revisited after v1 ships.
 
@@ -769,9 +779,7 @@ All mutating endpoints require an authenticated session (valid `__Host-news_dige
 |---|---|---|---|---|
 | GET | `/api/digest/today` | — | `{ digest: { id, generated_at, status, execution_ms, tokens_in, tokens_out, estimated_cost_usd, model_id }, articles: [...], live?: boolean }` | 401; 404 `no_digest_yet` |
 | GET | `/api/digest/:id` | — | Same shape as `/today`, for a specific digest | 401; 403 `not_yours` (shouldn't happen — filtered by query); 404 |
-| POST | `/api/digest/refresh` | — | `202 { digest_id }` (job enqueued) | 401; 429 `rate_limited` `{ retry_after_seconds, reason: 'cooldown' \| 'daily_cap' }`; 409 `already_in_progress` |
-| POST | `/api/digest/:id/cancel` | — | `200 { ok: true }` | 401; 404; 409 `not_cancellable` (already ready/failed) |
-| GET | `/api/digest/:id/events` | — | SSE stream: `event: phase\ndata: {phase, progress}\n\n` then `event: done\ndata: {status}`. Closes on `ready`/`failed`/`user_cancelled`. Auth required (session cookie). 30s idle timeout; single connection per (user, digest). | 401; 404 |
+| POST | `/api/digest/refresh` | — | `202 { digest_id, status: 'in_progress' }` — handler INSERTs the digest row with status='in_progress' BEFORE enqueuing the job, so the client has an id to poll immediately | 401; 429 `rate_limited` `{ retry_after_seconds, reason: 'cooldown' \| 'daily_cap' }`; 409 `already_in_progress` |
 | POST | `/api/articles/:id/read` | — | `200 { ok: true }` (idempotent; sets `read_at` if NULL) | 401; 404 |
 
 ### History and stats
@@ -781,18 +789,20 @@ All mutating endpoints require an authenticated session (valid `__Host-news_dige
 | GET | `/api/history?offset=0` | query: `offset` (default 0) | `{ digests: [{ id, generated_at, status, execution_ms, tokens_in, tokens_out, estimated_cost_usd, model_id, article_count }], has_more: bool }` (30 per page; `article_count` via `(SELECT COUNT(*) FROM articles WHERE digest_id=d.id)` subquery in the SELECT) | 401 |
 | GET | `/api/stats` | — | `{ digests_generated, articles_read, articles_total, tokens_consumed, cost_usd }` | 401 |
 
-### Cancel semantics
+### Client-side polling during generation
 
-The `POST /api/digest/:id/cancel` endpoint writes `status='failed', error_code='user_cancelled'` to the digest row and does NOT interrupt the Queue consumer directly. The consumer polls the digest row before each major pipeline phase (sources fetched, LLM called, DB writes) via a single `SELECT status FROM digests WHERE id=? AND user_id=?`. If status is no longer `'in_progress'`, the consumer aborts any in-flight `fetch`/AI call via its `AbortController` and acks the queue message without writing articles. The next phase check is the cancellation window — up to ~5 seconds from cancel click to actual abort, acceptable for this use case.
+No SSE, no cancel endpoint. While a digest is `status='in_progress'`, the client polls `GET /api/digest/:id` every 2 seconds until it returns `status='ready'` or `'failed'`. Typical wait is 2–10 seconds. The loading UI shows a skeleton grid + a progress spinner; on status change, real cards render. Polling adds ~5 tiny requests per digest and removes an entire SSE transport layer.
 
 ## User stats widget
 
 A compact stats widget rendered in the header of `/settings` (and optionally repeated at the top of `/history`). Four tiles, each a big number + small label, pulled from a single D1 query.
 
+All stats queries are returned by a single `GET /api/stats` that runs these queries in parallel (all IDOR-safe: every article query JOINs to digests and filters by `d.user_id=?`):
+
 | Tile | Source | Example |
 |---|---|---|
 | Digests generated | `SELECT COUNT(*) FROM digests WHERE user_id=? AND status='ready'` | `142` |
-| Articles read | `SELECT COUNT(*) FROM articles a JOIN digests d ON a.digest_id=d.id WHERE d.user_id=? AND a.read_at IS NOT NULL` | `318 of 1,420` |
+| Articles read / total | Read: `SELECT COUNT(*) FROM articles a JOIN digests d ON a.digest_id=d.id WHERE d.user_id=? AND a.read_at IS NOT NULL`. Total: `SELECT COUNT(*) FROM articles a JOIN digests d ON a.digest_id=d.id WHERE d.user_id=?`. Rendered as `{read} of {total}`. | `318 of 1,420` |
 | Tokens consumed | `SELECT COALESCE(SUM(tokens_in+tokens_out),0) FROM digests WHERE user_id=? AND status='ready'` | `482,193` |
 | Cost to date | `SELECT COALESCE(SUM(estimated_cost_usd),0) FROM digests WHERE user_id=? AND status='ready'` | `$0.14` |
 
@@ -837,7 +847,6 @@ Every log line emits `console.log(JSON.stringify({ ts, level, event, user_id?, .
 | Event | Purpose |
 |---|---|
 | `auth.login` | `{ user_id, gh_login, new_user, status: 'success'\|'failed', error_code? }` |
-| `digest.dispatch` | `{ user_count, elapsed_ms }` (daily cron summary, one line per run) |
 | `digest.generation` | `{ user_id, digest_id, trigger, status, execution_ms?, tokens_in?, tokens_out?, article_count?, error_code? }` |
 | `source.fetch.failed` | `{ source_name, hashtag, http_status?, error_code }` |
 | `refresh.rejected` | `{ user_id, reason: 'cooldown'\|'daily_cap', retry_after_seconds }` |
