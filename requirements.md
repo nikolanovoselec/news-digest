@@ -29,14 +29,71 @@ Every digest shows execution time, token count, and estimated cost, so you can s
 
 ## Content sources
 
-No feed table, no OPML, no per-user feed management. For each hashtag the user has selected, two free query-able sources are hit in parallel at generation time:
+Sources are a combination of **generic search APIs** (query-based, always run) and **dynamically-discovered tag-specific feeds** (authoritative first-party sources for each tag, discovered on first use and cached).
 
-| Source | Endpoint | Purpose | Parsing |
-|---|---|---|---|
-| Hacker News (Algolia) | `hn.algolia.com/api/v1/search_by_date?query={tag}&tags=story&hitsPerPage=25` | Developer-focused stories | `response.json()` — native |
-| Google News RSS | `news.google.com/rss/search?q={tag}+when:1d&hl=en-US&gl=US&ceid=US:en` | General tech news, last 24h | `fast-xml-parser` (Workers-compatible, ~12KB) |
+### Generic sources — run for every hashtag
 
-Reddit and arXiv were cut from MVP. Reddit requires User-Agent gymnastics and aggressive rate-limit handling; arXiv only benefits AI/ML hashtags. Both can be added as future sources via the same fan-out pattern once MVP ships. HN + Google News together cover ~95% of the relevant signal for the default hashtag list.
+| Source | Endpoint pattern | Parsing |
+|---|---|---|
+| Hacker News (Algolia) | `hn.algolia.com/api/v1/search_by_date?query={tag}&tags=story&hitsPerPage=30` | `response.json()` |
+| Google News RSS | `news.google.com/rss/search?q={tag}+when:1d&hl=en-US&gl=US&ceid=US:en` | `fast-xml-parser` |
+| Reddit | `reddit.com/search.json?q={tag}&t=day&sort=top&limit=25` | `response.json()` — requires `User-Agent: news-digest/1.0` header |
+
+### Dynamic tag-specific source discovery
+
+When a user selects a tag (default or custom), the system discovers authoritative first-party feeds for it. Example: selecting `#cloudflare` discovers `blog.cloudflare.com/rss/` and `developers.cloudflare.com/changelog/index.xml`. Selecting `#langchain` discovers `blog.langchain.dev/rss/`. No hardcoded tag→source map is maintained.
+
+### Discovery flow
+
+```
+When users.hashtags_json changes (onboarding submit, settings save):
+  For each tag that doesn't exist in KV key `sources:{tag}`:
+    Enqueue a discovery job to the 'source-discovery' Queue with { tag }.
+
+Discovery consumer:
+  1. Ask an LLM (same model pool as digest generation, default
+     llama-3.1-8b-instruct-fp8-fast for cost):
+     System: "You suggest authoritative, stable, publicly accessible
+              RSS/Atom/JSON feed URLs for a given technology or topic.
+              Only real feeds you are confident exist. Return strict JSON."
+     User:   "Topic: '#{tag}'. Return up to 5 feeds as
+              [{ name, url, kind: 'rss'|'atom'|'json' }].
+              Prefer official blogs, release notes, changelogs over news sites."
+  2. For each suggested URL: validate with a GET (5s timeout, 1MB cap):
+     - HTTP 200
+     - Content-Type matches kind (xml/atom for rss/atom, json for json)
+     - Parse succeeds (fast-xml-parser or JSON.parse)
+     - ≥1 item with a title and URL
+     URLs failing any check are discarded.
+  3. Store validated feeds as `sources:{tag}` in KV, 30-day TTL.
+     Shape: [{ name, url, kind }, ...].
+  4. If all suggestions fail: store an empty array with 7-day TTL (don't
+     hammer the LLM for a stubborn tag; retry after a week).
+```
+
+Discovery is **eventual**. A brand-new tag's first digest uses generic sources only; by the next digest (next day for scheduled, or within minutes for an immediate discovery run), tag-specific feeds are included. This avoids delaying the first-run UX.
+
+### Seed at deploy time (optional)
+
+To avoid cold-start latency on the 20 default tags, a one-time `npm run seed-sources` script enqueues discovery jobs for them at deploy time. Fully optional — the system works without seeding.
+
+### Generation pipeline consumes both
+
+For each user tag, the digest consumer fetches from both pools in parallel:
+- Generic sources (always)
+- `KV.get('sources:{tag}')` — if present, fan out to those feeds too
+
+Per-hashtag item cap 30 per source (generics) and 20 per source (tag-specific), canonical-URL dedupe across the combined pool. Total headlines sent to the LLM: capped at **300** (prioritizing tag-specific sources first, then generics).
+
+### KV keys
+
+| Key | Value | TTL |
+|---|---|---|
+| `sources:{tag}` | `[{ name, url, kind }]` validated feeds | 30 days (7 days if empty) |
+
+### Security note on discovered URLs
+
+The same canonicalization rules apply to discovered feed URLs as to article URLs: HTTPS only, reject IP literals / private ranges / localhost during validation. The LLM cannot coerce us to fetch internal addresses because the validation runs before any URL is stored.
 
 Results are canonicalized and deduplicated (see URL canonicalization below), then a single LLM call ranks the top 10 across all hashtags and writes the one-line + longer summary for each. The LLM is also asked to return which hashtag(s) matched each article — stored on the article row and shown subtly in the card for transparency.
 
@@ -520,11 +577,13 @@ For each message:
    mechanism.
 2. Idempotency check: if message.trigger='scheduled' AND
    users.last_generated_local_date == message.local_date → ack and exit.
-3. For each hashtag in users.hashtags_json, fan out 2 queries in parallel
-   (Google News RSS, HN Algolia). Per-source concurrency cap 4, 5s timeout
-   each, response body capped at 1MB, items capped at 25 per source
-   (max 50 per hashtag, 50 * tag_count total after fan-out — canonical
-   dedupe brings the combined pool down significantly).
+3. For each hashtag in users.hashtags_json, fan out in parallel:
+   - All generic sources (HN, Google News, Reddit) queried with the tag
+   - All feeds cached under KV key `sources:{tag}` (validated discovery output)
+   Per-source 5s timeout, 1MB body cap, 30 items per generic source, 20 per
+   tag-specific feed. Global concurrency cap 10 across all fetches to prevent
+   burst throttling. After canonical-URL dedupe, cap the pool sent to the
+   LLM at 300 headlines (prioritize tag-specific first, then generics).
 4. Canonicalize and dedupe URLs (see URL canonicalization below).
 5. Single Workers AI call with users.model_id, structured as:
    - system message: "You curate tech news. Return strict JSON only.
@@ -912,4 +971,4 @@ Internal error details (exception messages, response bodies) are logged at `leve
 
 ## Deployment
 
-Cloudflare Workers. Hourly Cron Trigger configured in `wrangler.toml` (`crons = ["0 * * * *"]`). D1, KV (model catalog + resolved-URL cache), and a single Queue `digest-jobs` (no DLQ; default 3-retry) bindings provisioned via `wrangler`. GitHub OAuth client ID/secret, `OAUTH_JWT_SECRET`, and Cloudflare API token configured as Worker secrets. Schema migrations applied with `wrangler d1 migrations apply`.
+Cloudflare Workers. Hourly Cron Trigger configured in `wrangler.toml` (`crons = ["0 * * * *"]`). D1, KV (discovered sources cache), and two Queues (`digest-jobs` and `source-discovery`, no DLQ; default 3-retry) bindings provisioned via `wrangler`. GitHub OAuth client ID/secret, `OAUTH_JWT_SECRET`, `RESEND_API_KEY`, `RESEND_FROM`, and `APP_URL` configured as Worker secrets. Schema migrations applied with `wrangler d1 migrations apply`.
