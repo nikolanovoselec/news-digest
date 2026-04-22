@@ -26,16 +26,17 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 
 ### REQ-SET-002: Hashtag curation
 
-**Intent:** Users choose the interests that drive every subsequent source fetch and LLM ranking decision.
+**Intent:** Users choose the interests that drive every subsequent source fetch and LLM ranking decision, editing them inline wherever they read their digest rather than in a separate settings form.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. The settings form shows 20 pre-defined hashtag chips covering common tech topics, each toggleable on/off with clear visual state.
-2. A custom text input accepts user-entered hashtags; on submit they are lowercased and stripped of leading `#`.
-3. Each hashtag must be 2–32 characters long and contain only characters in `[a-z0-9-]`; other characters are stripped server-side before storage.
-4. At least one hashtag is required to save; a maximum of 20 total hashtags is enforced server-side.
-5. Duplicate hashtags are collapsed before storage.
+1. A hashtag strip renders at the top of the reading surface and is the sole place where users add, remove, or view their tags; the settings form no longer contains any hashtag controls.
+2. Each existing tag appears as a chip with a remove affordance; activating the affordance deletes that tag from the user's selection without leaving the page.
+3. An add affordance at the end of the strip expands inline into a single text input; submitting the input appends a new tag to the selection.
+4. Every add or remove persists immediately via the dedicated tags write endpoint with no form submit required; the user's tag list updates visibly on success.
+5. Each hashtag must be 2–32 characters long, is normalised to lowercase with any leading `#` stripped, and may contain only characters in `[a-z0-9-]`; other characters are stripped server-side before storage.
+6. At least one hashtag is required for a digest to generate, a maximum of 20 total hashtags is enforced server-side, and duplicates are collapsed before storage.
 
 **Constraints:** None
 **Priority:** P0
@@ -109,15 +110,15 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 
 ### REQ-SET-006: Settings-incomplete gate
 
-**Intent:** Users who have not yet completed minimum configuration cannot navigate to the reading surface, preventing empty-state confusion.
+**Intent:** Users who have not yet chosen a scheduled digest time cannot navigate to the reading surface, preventing empty-state confusion. Hashtags are NOT part of the gate because they are edited on the reading surface itself — a user with no tags yet still reaches the digest page and is prompted there to add their first one.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. Any authenticated request to a path other than `/settings`, `/api/auth/*`, or `/api/settings` with `hashtags_json IS NULL` or `digest_hour IS NULL` is redirected to `/settings?first_run=1`.
-2. Once both columns are non-null, visiting `/settings?first_run=1` redirects to `/settings` (edit mode).
-3. The gate keys on "settings incomplete", not on whether the first digest has generated; a user whose first digest fails is not trapped.
-4. While the gate is active, the header navigation hides entries that lead to gated routes (History icon, user menu items other than Log out), so the user sees only the Settings destination and cannot tap into a dead-end redirect.
+1. Any authenticated request to a path other than the settings page and the authentication/settings APIs, made by a user whose scheduled-digest time is not yet set, is redirected to the first-run settings view.
+2. Once the scheduled-digest time is set, visiting the first-run settings view redirects to the steady-state settings view.
+3. The gate keys only on "scheduled time not yet set" — having no hashtags selected does NOT trip the gate, and a user whose first digest fails is not trapped.
+4. While the gate is active, the global navigation hides entries that lead to gated routes so the user sees only the Settings destination and cannot tap into a dead-end redirect.
 
 **Constraints:** None
 **Priority:** P0

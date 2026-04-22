@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-22
 
+- REQ-SET-002 (hashtag curation) rewritten: tag editing moves out of the settings form and into an inline strip at the top of the reading surface, with an always-visible remove control per tag and an add affordance that expands inline into an input. Every add or remove persists immediately via a dedicated tags write endpoint — no form submit.
+- REQ-SET-006 (settings-incomplete gate) narrows: the gate now fires only when the scheduled digest time is not yet set. Having no hashtags no longer blocks the reading surface, because users add their first tag directly on the digest page.
 - REQ-SET-003 (scheduled digest time with timezone) updates: the explicit "change" button and dropdown of common zones are removed in favor of fully automatic browser-based timezone detection that also re-syncs on revisit. Server-side contracts (`POST /api/auth/set-tz`, `PUT /api/settings`) are unchanged — only the settings UI control changed.
 - REQ-PWA-003 (mobile-first layout) reshaped: the bottom tab bar and left sidebar are removed; all navigation now lives in the header (brand, theme toggle, History icon, avatar user menu) on every viewport. Cleaner on both mobile and desktop.
 - REQ-DES-002 (light and dark mode) now requires the server to render the chosen theme on every request so the first byte already carries the correct theme, removing the visible theme flash that appeared on slow connections and preserved-element view transitions.
