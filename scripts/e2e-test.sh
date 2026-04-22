@@ -165,9 +165,11 @@ check POST /api/auth/set-tz 200 -H 'Content-Type: application/json' --data "$RES
 # proves the route is alive.
 check POST /api/digest/refresh 202\|409\|429 -H 'Content-Type: application/json' --data '{}'
 
-# POST /api/discovery/retry — retries any failed discoveries. 200 on
-# success (noop if none failed) or 404 if no pending.
-check POST /api/discovery/retry 200\|404 -H 'Content-Type: application/json' --data '{}'
+# POST /api/discovery/retry — requeue a specific tag. Needs a valid tag
+# from the user's hashtags_json. "llm" was just set via /api/tags above.
+check POST /api/discovery/retry 200 -H 'Content-Type: application/json' --data '{"tag":"llm"}'
+# Unknown tag → 400 unknown_tag.
+check POST /api/discovery/retry 400 -H 'Content-Type: application/json' --data '{"tag":"not-a-user-tag-xyz"}'
 
 # /api/auth/github/logout — signing out should 303 back to `/`.
 check POST /api/auth/github/logout 303 -H 'Content-Type: application/json'

@@ -285,11 +285,19 @@ export async function generateDigest(
         'llm_invalid_json',
         startedAtMs,
       );
+      // Log a short fingerprint of the raw response so we can diagnose
+      // why the parser rejected it. Truncate to keep structured-log
+      // payload small and avoid dumping user data into stdout.
+      const rawResponse =
+        typeof aiResult.response === 'string' ? aiResult.response : '';
+      const sample = rawResponse.slice(0, 300);
       log('warn', 'digest.generation', {
         user_id: user.id,
         digest_id: resolvedDigestId,
         trigger,
         status: 'llm_invalid_json',
+        raw_length: rawResponse.length,
+        raw_sample: sample,
       });
       return {
         digestId: resolvedDigestId,
@@ -512,19 +520,82 @@ function extractFeeds(parsed: unknown): DiscoveredFeed[] {
 }
 
 /** Parse the LLM response body as `{ articles: [...] }`. Returns the parsed
- * payload on success or null on any JSON error. */
+ * payload on success or null on any JSON error.
+ *
+ * Tolerant of common LLM deviations even when `response_format: json_object`
+ * is requested: leading/trailing whitespace, ```json fences, a prose
+ * preamble like "Here is the JSON:", or a trailing comment block. Falls
+ * back to extracting the first brace-balanced object in the string when
+ * a direct parse fails. */
 function parseLLMPayload(response: unknown): LLMDigestPayload | null {
   if (typeof response !== 'string' || response === '') return null;
+
+  const cleaned = stripFencesAndPreamble(response);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(response);
+    parsed = JSON.parse(cleaned);
   } catch {
-    return null;
+    const candidate = extractFirstJsonObject(cleaned);
+    if (candidate === null) return null;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      return null;
+    }
   }
   if (parsed === null || typeof parsed !== 'object') return null;
   const articles = (parsed as LLMDigestPayload).articles;
   if (!Array.isArray(articles)) return null;
   return parsed as LLMDigestPayload;
+}
+
+/** Strip ```json or ``` fences and any prose preamble before the first
+ * `{`. Leaves everything from the first brace-match opening to the last
+ * closing brace. */
+function stripFencesAndPreamble(raw: string): string {
+  let s = raw.trim();
+  // Remove leading ```json or ``` and trailing ``` fences.
+  s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '');
+  // Cut any prose before the first '{'.
+  const firstBrace = s.indexOf('{');
+  if (firstBrace > 0) s = s.slice(firstBrace);
+  // Cut any trailing text after the last '}'.
+  const lastBrace = s.lastIndexOf('}');
+  if (lastBrace > -1 && lastBrace < s.length - 1) s = s.slice(0, lastBrace + 1);
+  return s.trim();
+}
+
+/** Walk the string and return the first balanced {...} substring.
+ * Respects string literals so a `}` inside a string does not close the
+ * outer object. Returns null when no balanced pair is found. */
+function extractFirstJsonObject(raw: string): string | null {
+  const start = raw.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return raw.slice(start, i + 1);
+    }
+  }
+  return null;
 }
 
 /** Convert a validated LLM payload into a sanitized list of articles ready
