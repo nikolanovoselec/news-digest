@@ -38,12 +38,21 @@ Declared in `wrangler.toml`:
 | `KV` | KV namespace | Edge cache for discovered sources, headlines, source health |
 | `DIGEST_JOBS` | Queue producer | Producer binding used by cron + refresh handler |
 | `AI` | Workers AI | LLM inference for summarization and source discovery |
+| `ASSETS` | Fetcher (static assets) | Cloudflare static-asset binding for serving the Astro-built output; falls back to `new Response('news-digest')` in tests |
 
-Queue consumer binding is configured in the `[[queues.consumers]]` section of `wrangler.toml`, consuming from the same `digest-jobs` queue.
+Queue consumer binding is configured in the `[[queues.consumers]]` section of `wrangler.toml`, consuming from the same `digest-jobs` queue. The consumer runs with `max_batch_size = 1` (one isolate per message) and `max_retries = 3`.
 
 ## Cron
 
 `crons = ["*/5 * * * *"]` — every 5 minutes at minute 0, 5, 10, ..., 55 UTC.
+
+## Compatibility
+
+`compatibility_date = "2026-04-01"` with `compatibility_flags = ["nodejs_compat"]`. The `nodejs_compat` flag is required because some transitive dependencies use Node.js built-ins. The Worker runtime is otherwise web-standard.
+
+## Observability
+
+`[observability] enabled = true` — enables Cloudflare Workers Observability (structured log ingestion from `console.log`). See [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-logging) for the log envelope format.
 
 ## Security Headers
 
