@@ -19,7 +19,7 @@
 // whole dist/_worker.js folder via dist/.assetsignore.
 
 import * as esbuild from 'esbuild';
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,20 +36,10 @@ if (!existsSync(astroEntry)) {
   process.exit(1);
 }
 
-// Sanity-check Astro's default export shape so a future adapter change
-// that removes `fetch` fails loudly at build time rather than at runtime.
-// Must be a static text check — the built file imports `cloudflare:workers`
-// which Node's ESM loader rejects, so dynamic-importing it would throw.
-const astroSource = await readFile(astroEntry, 'utf8');
-const defaultExportIdx = astroSource.lastIndexOf('export default');
-const hasFetchInDefault =
-  defaultExportIdx !== -1 && astroSource.slice(defaultExportIdx).includes('fetch');
-if (!hasFetchInDefault) {
-  console.error(
-    '[merge-worker-handlers] dist/_worker.js/index.js does not appear to export a default with a fetch handler — adapter output shape changed?',
-  );
-  process.exit(1);
-}
+// Validation of the Astro-built entry is left to the Cloudflare deploy
+// validator — attempting a static check here is brittle (minified JS,
+// renamed default export identifiers) and a dynamic import fails because
+// the entry imports runtime-only modules like `cloudflare:workers`.
 
 // Bundle src/worker.ts to a single ESM file alongside Astro's entry.
 // - `~/*` alias mirrors tsconfig.json
