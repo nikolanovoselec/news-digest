@@ -20,7 +20,7 @@ Structured JSON logging as the single operational surface — no external observ
 **Priority:** P1
 **Dependencies:** None
 **Verification:** Manual check
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -40,7 +40,7 @@ Structured JSON logging as the single operational surface — no external observ
 **Priority:** P0
 **Dependencies:** REQ-OPS-001
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
@@ -61,4 +61,4 @@ Structured JSON logging as the single operational surface — no external observ
 **Priority:** P0
 **Dependencies:** None
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
