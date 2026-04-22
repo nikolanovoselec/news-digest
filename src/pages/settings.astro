@@ -45,26 +45,6 @@ const DEFAULT_HASHTAGS: ReadonlyArray<string> = [
   'observability',
 ];
 
-// Common IANA zones shown in the tz dropdown fallback. The client
-// populates the `<select>` with the browser's zone at load time; this
-// list is the server-rendered fallback.
-const COMMON_TIMEZONES: ReadonlyArray<string> = [
-  'UTC',
-  'Europe/Zurich',
-  'Europe/London',
-  'Europe/Paris',
-  'Europe/Berlin',
-  'America/New_York',
-  'America/Chicago',
-  'America/Denver',
-  'America/Los_Angeles',
-  'America/Toronto',
-  'Asia/Tokyo',
-  'Asia/Singapore',
-  'Asia/Shanghai',
-  'Asia/Kolkata',
-  'Australia/Sydney',
-];
 
 const env = Astro.locals.runtime.env;
 if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {

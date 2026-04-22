@@ -53,8 +53,8 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 
 **Acceptance Criteria:**
 1. The form includes a native `<input type="time">` time picker that captures an hour and minute.
-2. The browser-detected IANA timezone is displayed next to the time with a link to override via a dropdown of common zones.
-3. Initial timezone is populated from `Intl.DateTimeFormat().resolvedOptions().timeZone` on first load and saved to the user row.
+2. The browser-detected IANA timezone is displayed next to the time and auto-syncs to the server whenever it differs from the stored value; there is no manual timezone picker in the UI.
+3. Initial timezone is populated from the browser's resolved IANA zone on first load, saved to the user row, and re-synced on every subsequent visit if it changes (e.g., travel).
 4. The saved time is interpreted in the user's stored timezone; DST transitions are handled correctly using `Intl.DateTimeFormat`.
 5. Changing the scheduled time never creates a duplicate digest for a day that has already generated.
 
