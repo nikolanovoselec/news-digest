@@ -54,14 +54,14 @@ The app is installable on iOS, Android, and desktop via a standards web manifest
 
 **Acceptance Criteria:**
 1. The viewport meta tag on every page is `width=device-width, initial-scale=1, viewport-fit=cover`.
-2. The sticky header uses `padding-top: env(safe-area-inset-top)` and the bottom tab bar uses `padding-bottom: env(safe-area-inset-bottom)` to respect iPhone notches and Android gesture bars.
-3. Mobile (<768 px) shows a bottom tab bar with Digest, History, and Settings entries plus a safe-area inset; the header shows only logo and theme toggle.
-4. Desktop (≥1024 px) shows a left sidebar with the same entries plus a logout control at the bottom.
-5. Tap highlights are disabled globally with `-webkit-tap-highlight-color: transparent`; focus and active states are handled by CSS.
+2. The header respects iPhone notches and Android gesture bars via safe-area insets so its controls never sit under system chrome.
+3. Navigation is consolidated into the header on every viewport: brand on the left; theme toggle, a History icon, and an avatar-triggered user menu (Settings, Log out) on the right. No separate sidebar or bottom tab bar.
+4. The digest is the app home; clicking the brand returns to it when signed in.
+5. Tap highlights are disabled globally; focus and active states are handled by CSS.
 
 **Constraints:** CON-A11Y-001
 **Priority:** P1
 **Dependencies:** REQ-DES-001
 **Verification:** Manual check
 **Status:** Partial
-**Notes:** Code exists (safe-area insets in Base.astro, BottomNav.astro, Sidebar.astro) but no test verifies it.
+**Notes:** Code exists (safe-area insets in Base.astro, header UserMenu + History icon) but no test verifies it.

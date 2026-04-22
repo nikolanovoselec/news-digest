@@ -6,6 +6,7 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-22
 
+- REQ-PWA-003 (mobile-first layout) reshaped: the bottom tab bar and left sidebar are removed; all navigation now lives in the header (brand, theme toggle, History icon, avatar user menu) on every viewport. Cleaner on both mobile and desktop.
 - REQ-DES-002 (light and dark mode) now requires the server to render the chosen theme on every request so the first byte already carries the correct theme, removing the visible theme flash that appeared on slow connections and preserved-element view transitions.
 - REQ-DES-001 (Swiss-minimal visual language) adds a viewport-fill guarantee: short pages fill the mobile viewport and the content surface stays clear of the bottom navigation and device safe-area insets, so the chrome color never dominates the screen.
 - REQ-SET-006 (settings-incomplete gate) now requires the global navigation to hide gated destinations during first-run so the user sees only the Settings entry until onboarding is complete.

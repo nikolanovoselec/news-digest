@@ -7,8 +7,7 @@
 
 import { ClientRouter } from 'astro:transitions';
 import ThemeToggle from '~/components/ThemeToggle.astro';
-import BottomNav from '~/components/BottomNav.astro';
-import Sidebar from '~/components/Sidebar.astro';
+import UserMenu from '~/components/UserMenu.astro';
 import '~/styles/global.css';
 
 interface Props {
@@ -79,15 +78,33 @@ const initialTheme = cookieTheme ?? 'light';
       <a href="/" class="site-header__brand focus-ring">News Digest</a>
       <nav class="site-header__nav" aria-label="Primary">
         <ThemeToggle />
+        {Astro.locals.user && !firstRun && (
+          <a
+            href="/history"
+            class="site-header__history focus-ring"
+            aria-label="History"
+            title="History"
+          >
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              fill="currentColor"
+            >
+              {/* MDI history icon — https://pictogrammers.com/library/mdi/icon/history/ */}
+              <path d="M13.5,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8M13,3C8.03,3 4,7.03 4,12H1L4.96,16.03L9,12H6C6,8.14 9.14,5 13,5C16.86,5 20,8.14 20,12C20,15.86 16.86,19 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,20 10.5,21 13,21C17.97,21 22,16.97 22,12C22,7.03 17.97,3 13,3Z" />
+            </svg>
+          </a>
+        )}
+        {Astro.locals.user && (
+          <UserMenu email={Astro.locals.user.email} login={Astro.locals.user.gh_login} />
+        )}
       </nav>
     </header>
-    <div class="site-shell">
-      <Sidebar firstRun={firstRun} />
-      <main class="site-main safe-x">
-        <slot />
-      </main>
-    </div>
-    <BottomNav firstRun={firstRun} />
+    <main class="site-main safe-x">
+      <slot />
+    </main>
 
     <style>
       .site-header {
@@ -113,28 +130,29 @@ const initialTheme = cookieTheme ?? 'light';
       .site-header__nav {
         display: inline-flex;
         align-items: center;
-        gap: 8px;
+        gap: 4px;
+      }
+
+      .site-header__history {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 44px;
+        min-height: 44px;
+        color: var(--text-muted);
+        border-radius: 9999px;
+        text-decoration: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .site-header__history:hover {
+        color: var(--text);
+        background: var(--surface);
       }
 
       .site-main {
         padding: 16px;
-        /* Extra bottom padding on mobile so the fixed BottomNav (~56px
-           plus safe-area) doesn't hide the last form field or button. */
-        padding-bottom: calc(5rem + env(safe-area-inset-bottom));
-        flex: 1;
-        min-width: 0;
-      }
-      @media (min-width: 1024px) {
-        .site-main {
-          /* Desktop has a sidebar instead of bottom nav — revert padding. */
-          padding-bottom: 16px;
-        }
-      }
-
-      .site-shell {
-        display: flex;
         flex: 1 1 auto;
-        min-height: 0;
+        min-width: 0;
       }
     </style>
 

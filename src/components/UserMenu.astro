@@ -1,0 +1,175 @@
+---
+// Implements REQ-PWA-003
+//
+// Header user menu. Collapsible disclosure (native <details>) containing
+// Settings + Log out. The trigger is a gravatar avatar keyed off the
+// user's GitHub email (SHA-256 hash per gravatar.com's modern API);
+// falls back to the "mystery person" silhouette when no gravatar exists
+// for the address.
+//
+// Used in the top-right of the site header, replacing the previous
+// sidebar + bottom-nav navigation.
+
+interface Props {
+  /** Authenticated user's email. Used to build the gravatar URL. */
+  email: string;
+  /** GitHub login shown in the aria-label for screen readers. */
+  login: string;
+  /** Logout form action. Overridable for tests. */
+  logoutHref?: string;
+}
+
+const { email, login, logoutHref = '/api/auth/github/logout' } = Astro.props;
+
+/**
+ * Hash the normalized email with SHA-256 and return a lowercase hex
+ * string. Gravatar accepts SHA-256 hashes directly since 2020; this
+ * lets us stay on the Web Crypto API (no MD5 needed). Runs in the
+ * Astro frontmatter — resolved at SSR time, not in the browser.
+ */
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const arr = Array.from(new Uint8Array(digest));
+  return arr.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const normalizedEmail = email.trim().toLowerCase();
+const emailHash = await sha256Hex(normalizedEmail);
+// s=80 → 80×80 px (enough for 32px @ 2.5× DPR); d=mp → "mystery person"
+// silhouette fallback when no gravatar is registered for this email.
+const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
+---
+
+<details class="user-menu" data-user-menu>
+  <summary class="user-menu__trigger focus-ring" aria-label={`${login} account menu`}>
+    <img
+      class="user-menu__avatar"
+      src={avatarUrl}
+      alt=""
+      width="32"
+      height="32"
+      loading="lazy"
+      decoding="async"
+      referrerpolicy="no-referrer"
+    />
+  </summary>
+  <div class="user-menu__panel" role="menu">
+    <a class="user-menu__item" role="menuitem" href="/settings">Settings</a>
+    <form class="user-menu__logout" method="post" action={logoutHref}>
+      <button
+        type="submit"
+        class="user-menu__item user-menu__logout-button"
+        role="menuitem"
+      >
+        Log out
+      </button>
+    </form>
+  </div>
+</details>
+
+<style>
+  .user-menu {
+    position: relative;
+  }
+
+  .user-menu__trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 4px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 9999px;
+    cursor: pointer;
+    list-style: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Strip the default triangle arrow on the <summary>. */
+  .user-menu__trigger::-webkit-details-marker {
+    display: none;
+  }
+  .user-menu__trigger::marker {
+    content: '';
+  }
+  .user-menu__trigger:hover,
+  .user-menu[open] .user-menu__trigger {
+    border-color: var(--border);
+  }
+
+  .user-menu__avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 9999px;
+    background: var(--surface);
+    display: block;
+  }
+
+  .user-menu__panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 180px;
+    padding: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 60;
+  }
+
+  .user-menu__item {
+    display: flex;
+    align-items: center;
+    min-height: 40px;
+    padding: 8px 12px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text);
+    text-decoration: none;
+    font-size: var(--text-sm);
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+  }
+  .user-menu__item:hover {
+    background: var(--surface);
+  }
+
+  .user-menu__logout {
+    margin: 0;
+    padding: 0;
+  }
+</style>
+
+<script>
+  // Close the <details> menu when clicking outside or pressing Escape.
+  function init(): void {
+    const menus = document.querySelectorAll<HTMLDetailsElement>('[data-user-menu]');
+    menus.forEach((menu) => {
+      if (menu.dataset['bound'] === '1') return;
+      menu.dataset['bound'] = '1';
+
+      document.addEventListener('click', (e) => {
+        if (!menu.open) return;
+        if (e.target instanceof Node && menu.contains(e.target)) return;
+        menu.open = false;
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && menu.open) {
+          menu.open = false;
+        }
+      });
+    });
+  }
+  init();
+  document.addEventListener('astro:page-load', init);
+</script>

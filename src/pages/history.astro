@@ -63,6 +63,7 @@ if (session === null) {
 }
 
 const user = session.user;
+Astro.locals.user = user;
 const tz = user.tz === '' ? DEFAULT_TZ : user.tz;
 
 // REQ-HIST-001 AC 1 — /history fetches from /api/history?offset=0.
