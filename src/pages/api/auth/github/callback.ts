@@ -92,9 +92,21 @@ function errorRedirect(
  */
 function invalidStateResponse(origin: string, extraHeaders: Headers): Response {
   const headers = new Headers(extraHeaders);
-  headers.set('Location', `${origin}/?error=invalid_state`);
-  // REQ-AUTH-004 AC 3 — HTTP 403 with invalid_state, not a generic 303.
-  return new Response(null, { status: 403, headers });
+  const target = `${origin}/?error=invalid_state`;
+  headers.set('Location', target);
+  headers.set('Content-Type', 'text/html; charset=utf-8');
+  // REQ-AUTH-004 AC 3 — HTTP 403 with invalid_state. Browsers do not
+  // auto-follow Location headers on 4xx responses, so we also emit a
+  // tiny HTML body with a meta-refresh so the user lands on the friendly
+  // error page instead of the Cloudflare generic 403. The 403 status is
+  // preserved: the CSRF failure remains visible in server logs and to
+  // any programmatic caller, and the browser does not treat this as a
+  // successful redirect.
+  const body = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sign-in incomplete</title>
+<meta http-equiv="refresh" content="0;url=${target}"></head>
+<body><p>Sign-in did not complete. <a href="${target}">Return to the landing page</a> and try again.</p></body></html>`;
+  return new Response(body, { status: 403, headers });
 }
 
 /**
