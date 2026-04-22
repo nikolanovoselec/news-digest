@@ -1,7 +1,7 @@
 name = "ai-news-digest"
 compatibility_date = "2026-04-01"
 compatibility_flags = ["nodejs_compat"]
-main = "./dist/_worker.js/index.js"
+main = "./dist/_worker.js/_merged.mjs"
 assets = { directory = "./dist", binding = "ASSETS" }
 
 [observability]

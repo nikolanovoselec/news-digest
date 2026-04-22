@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "astro build && node scripts/merge-worker-handlers.mjs",
     "preview": "wrangler dev",
     "deploy": "astro build && wrangler deploy",
     "typecheck": "astro check && tsc --noEmit",
@@ -28,6 +28,7 @@
     "@cloudflare/workers-types": "^4.20260422.1",
     "@types/node": "^25.6.0",
     "@vite-pwa/astro": "^1.2.0",
+    "esbuild": "^0.28.0",
     "knip": "^6.6.1",
     "oxlint": "^1.61.0",
     "typescript": "^5.7.1",

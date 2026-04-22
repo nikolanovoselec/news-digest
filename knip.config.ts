@@ -11,7 +11,8 @@ const config: KnipConfig = {
     'src/worker.ts',
     'src/queue/digest-consumer.ts',
     'src/scripts/**/*.ts', // imported from .astro <script> tags which knip can't trace
-    'public/theme-init.js'
+    'public/theme-init.js',
+    'scripts/merge-worker-handlers.mjs' // invoked by package.json "build" script
   ],
   project: ['src/**/*.{ts,astro}'],
   ignoreDependencies: [

@@ -11,9 +11,12 @@ export default defineConfig({
       enabled: true
     }
     // scheduled + queue handlers are merged into the built worker by
-    // scripts/merge-worker-handlers.mjs (runs post-build). The adapter's
+    // scripts/merge-worker-handlers.mjs, which runs after `astro build`
+    // (see the `build` script in package.json). It bundles src/worker.ts
+    // with esbuild and writes dist/_worker.js/_merged.mjs — which is
+    // what wrangler deploys (see `main` in wrangler.toml). The adapter's
     // workerEntryPoint option produced an invalid merged worker, so we
-    // post-process dist/_worker.js/index.js ourselves instead.
+    // compose the handlers ourselves instead.
   }),
   integrations: [
     AstroPWA({
