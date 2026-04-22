@@ -117,6 +117,7 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 1. Any authenticated request to a path other than `/settings`, `/api/auth/*`, or `/api/settings` with `hashtags_json IS NULL` or `digest_hour IS NULL` is redirected to `/settings?first_run=1`.
 2. Once both columns are non-null, visiting `/settings?first_run=1` redirects to `/settings` (edit mode).
 3. The gate keys on "settings incomplete", not on whether the first digest has generated; a user whose first digest fails is not trapped.
+4. While the gate is active, the global navigation (sidebar and bottom nav) hides entries that lead to gated routes, so the user sees only the Settings destination and cannot tap into a dead-end redirect.
 
 **Constraints:** None
 **Priority:** P0

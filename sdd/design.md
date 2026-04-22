@@ -1,6 +1,6 @@
 # Design System
 
-Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral palette with one accent, no gradients or drop shadows. Light and dark mode toggled with a single click, persisted in `localStorage`, with a no-FOUC external theme-init script. Motion is deliberate, single-curve, and always respects `prefers-reduced-motion`.
+Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral palette with one accent, no gradients or drop shadows. Light and dark mode toggled with a single click, persisted for the browser, and server-rendered on every request so the first byte always carries the correct theme. Motion is deliberate, single-curve, and always respects `prefers-reduced-motion`.
 
 ---
 
@@ -16,6 +16,7 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 3. Inputs render with a minimum 16 px font size to prevent iOS zoom-on-focus.
 4. Every interactive element shows a visible focus ring on keyboard focus.
 5. All interactive elements have a minimum 44 × 44 pixel touch target.
+6. Every page fills the mobile viewport, even when content is shorter than the viewport, so the chrome color never dominates the screen; the bottom of the content surface stays clear of the fixed bottom navigation and device safe-area insets.
 
 **Constraints:** CON-A11Y-001
 **Priority:** P0
@@ -33,10 +34,10 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 
 **Acceptance Criteria:**
 1. The header shows a single theme toggle button with sun and moon icons for the two states.
-2. Clicking the toggle toggles `data-theme` on `<html>` between `light` and `dark` and persists the choice to `localStorage.theme`.
-3. First-paint theme is resolved by an external `/theme-init.js` loaded with `defer` in the document head before any stylesheet.
-4. When no `localStorage.theme` is set, the theme follows `prefers-color-scheme`.
-5. CSS custom properties define color tokens per theme: `--bg`, `--surface`, `--text`, `--text-muted`, `--border`, `--accent`.
+2. Clicking the toggle toggles the theme between `light` and `dark`, persists the choice for the current browser, and propagates the choice to the server so subsequent navigations render the correct theme in the first byte.
+3. On every authenticated or anonymous request, the server renders the document root with the user's chosen theme already applied, so the first paint is never the wrong theme even on slow connections or when client-side scripts are deferred.
+4. When the user has not yet expressed a preference, the theme follows `prefers-color-scheme`.
+5. The theme system exposes a consistent set of color tokens per theme (background, surface, text, muted text, border, accent) as CSS custom properties.
 
 **Constraints:** CON-A11Y-001, CON-SEC-001
 **Priority:** P0
