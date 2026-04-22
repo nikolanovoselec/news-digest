@@ -46,16 +46,21 @@ When a user selects a tag (default or custom), the system discovers authoritativ
 
 ### Discovery flow
 
-Discovery runs **synchronously** inside the `PUT /api/settings` handler (and the onboarding first-save). The user waits a few seconds on save but lands on a first digest that already includes the discovered sources.
+Discovery runs **asynchronously via `ctx.waitUntil`** after the settings save returns. The save itself is instant — tags are stored immediately. Discovery runs in the background; the UI shows a subtle "Discovering sources for #langchain, #rust…" indicator on `/digest` until it completes (polls the settings `sources_discovery_status` field every 5s).
 
 ```
 On settings save (onboarding or edit):
-  For each tag in the submitted hashtags that does NOT have a KV entry
-  `sources:{tag}`:
-    Run discovery inline (with a 15s budget per tag — one LLM call +
-    up to 5 validation GETs). If the budget blows on a specific tag,
-    that tag is stored with an empty sources list (retryable via
-    manual 're-discover'); save still succeeds.
+  1. Validate + UPDATE users row with new hashtags_json (instant, < 100ms).
+  2. Return 200 { ok: true, discovering: [tag1, tag2, ...] } listing any
+     tags that don't yet have KV entries.
+  3. ctx.waitUntil(discoverSources(newTags)) — background LLM + validation.
+     Each tag has a 15s budget; discovery runs sequentially (not parallel)
+     to avoid OOM and rate limits.
+  4. As each tag completes, write to KV `sources:{tag}`. The UI polls
+     and updates the indicator.
+```
+
+Avoids the 60s browser/proxy timeout risk of synchronous discovery while still giving the user immediate feedback that discovery is happening. Failed-budget tags are stored with an empty sources list (retryable via manual 're-discover').
 
 Discovery procedure:
   1. Ask an LLM (default llama-3.1-8b-instruct-fp8-fast for cost):
@@ -536,21 +541,25 @@ One function, `generateDigest(user, trigger)`, called from two places: the cron 
 Cron runs every 5 minutes. Each invocation scans for users whose `digest_hour:digest_minute` falls in the current 5-min window and who haven't generated today.
 
 ```
-1. Cron fires at HH:MM where MM % 5 == 0.
-2. Compute now_local_hm_set = set of (tz, HH:MM) tuples matching the
-   current UTC time for each distinct tz in the users table (usually 1-5
-   timezones in practice). This avoids a cross-join — for each distinct
-   tz, compute the local HH:MM at now_utc, then query:
-   
-   SELECT * FROM users
-   WHERE hashtags_json IS NOT NULL
-     AND tz = ? AND digest_hour = ? AND digest_minute BETWEEN ? AND ?
-     AND (last_generated_local_date IS NULL
-          OR last_generated_local_date != ?)  -- today's local_date in this tz
-   
-   (minute window is ±2 to absorb cron jitter)
+1. Cron fires at HH:MM where MM % 5 == 0 (00, 05, 10, ..., 55 UTC).
+2. For each distinct tz in the users table (usually <10 in practice):
+   a. Compute local_time = now_utc converted to this tz.
+   b. Compute window_minute_lo = floor(local_time.minute / 5) * 5.
+      Window is [window_minute_lo, window_minute_lo + 5) — half-open,
+      5 distinct minute values, non-overlapping between cron runs.
+   c. Query:
+      SELECT * FROM users
+      WHERE hashtags_json IS NOT NULL
+        AND tz = ?
+        AND digest_hour = ?  -- local_time.hour
+        AND digest_minute >= ? AND digest_minute < ?  -- [lo, lo+5)
+        AND (last_generated_local_date IS NULL
+             OR last_generated_local_date != ?)  -- today's local date
 3. For each matched user: await generateDigest(user, 'scheduled').
 4. Parallelize with Promise.all, concurrency cap 5.
+5. Before scheduling work (step 2), run the stuck-digest sweeper:
+   UPDATE digests SET status='failed', error_code='generation_stalled'
+   WHERE status='in_progress' AND generated_at < (now - 600).
 ```
 
 No 15-min polling. Each user gets exactly one scheduled job per day, delivered at their local hour.
@@ -592,11 +601,14 @@ Handler returns immediately with `202 { digest_id }`; generation continues in th
    collapse whitespace on title, one_liner, and each bullet in details.
    Store bullets as JSON array in articles.details_json. Client renders
    as <ul><li>{bullet}</li></ul> with textContent — XSS-safe by construction.
-7. INSERT articles rows.
-8. UPDATE digests SET status='ready', execution_ms, tokens_in, tokens_out,
-   estimated_cost_usd WHERE id=? AND status='in_progress'.
-9. UPDATE users SET last_generated_local_date=today_local_date
-   (both trigger types — one digest per local day; manual consumes the slot).
+7-9. Atomic final write via `db.batch([...])` — D1 runs all statements
+   in a single transaction. One call, all-or-nothing:
+   - INSERT articles (one statement per article, prepared in bulk)
+   - UPDATE digests SET status='ready', execution_ms, tokens_in, tokens_out,
+     estimated_cost_usd WHERE id=? AND status='in_progress'
+   - UPDATE users SET last_generated_local_date=today_local_date
+   All succeed together or none are applied. No interactive transactions
+   (D1 doesn't support them over its HTTP API).
 10. If trigger='scheduled' AND user.email_enabled: send Resend email.
 11. All steps wrapped in try/catch. On exception: UPDATE digests
     SET status='failed', error_code=<sanitized> WHERE id=?. Log full error
@@ -1062,12 +1074,23 @@ Internal error details (exception messages, response bodies) are logged at `leve
 
 Cloudflare Workers. Cron Trigger every 5 minutes in `wrangler.toml` (`crons = ["*/5 * * * *"]`). D1 and KV (discovered sources cache + source_health counters) bindings provisioned via `wrangler`. No Queues. GitHub OAuth client ID/secret, `OAUTH_JWT_SECRET`, `RESEND_API_KEY`, `RESEND_FROM`, and `APP_URL` configured as Worker secrets. Schema migrations applied with `wrangler d1 migrations apply`.
 
+## Known tradeoffs (accept for MVP, revisit at scale)
+
+These are conscious decisions that optimize for simplicity/time-to-ship at the cost of scale-time robustness. Each has a well-bounded migration path if the product needs it later.
+
+| Tradeoff | Why it's fine for MVP | Migration path when it isn't |
+|---|---|---|
+| No Queues — scheduled generation runs inline in cron | Solo/small user base; concurrency cap 5 keeps memory bounded; 15-min cron wall time is plenty for a few users | Wrap `generateDigest` as a Queue consumer; cron enqueues instead of calling directly. Bounded change. |
+| Reddit + Google News from Cloudflare IPs | Some requests may be blocked/throttled; we have 3 generic sources + per-tag discovery, so partial coverage is still useful. Logs track `source.fetch.failed`. | Switch those two sources to an authenticated SERP API (Tavily, Exa, SerpAPI). One-file change in `src/lib/sources.ts`. |
+| No durable retry on mid-flight crashes | Workers isolate eviction is rare; stuck-sweeper catches orphans within 10 min; user can click Refresh | Queues give at-least-once delivery — same migration as the first row. |
+| Cron fan-out concurrency cap 5 | Fits 128MB isolate. Can still handle tens of users per 5-min window. | Queue-based consumer handles hundreds concurrently with per-message isolation. |
+
 ## Scaffolding order
 
 When implementation starts, build in this order — each layer unblocks the next:
 
 1. `migrations/0001_initial.sql` — the D1 schema from the Data model section
-2. `src/lib/db.ts` — D1 wrapper with `PRAGMA foreign_keys=ON`, prepared statements, a `transaction()` helper
+2. `src/lib/db.ts` — D1 wrapper with `PRAGMA foreign_keys=ON`, prepared statements, a `batch()` helper for atomic multi-statement writes (D1 does NOT support interactive transactions — use `db.batch([stmt1, stmt2])` for atomicity)
 3. `src/lib/models.ts` — MODELS constant + DEFAULT_MODEL_ID
 4. `src/lib/prompts.ts` — DIGEST_SYSTEM, DISCOVERY_SYSTEM, helper functions, LLM_PARAMS
 5. `src/lib/session-jwt.ts` — HMAC-SHA256 sign/verify (lift from codeflare)
