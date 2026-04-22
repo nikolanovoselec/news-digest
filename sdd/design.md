@@ -16,7 +16,7 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 3. Inputs render with a minimum 16 px font size to prevent iOS zoom-on-focus.
 4. Every interactive element shows a visible focus ring on keyboard focus.
 5. All interactive elements have a minimum 44 × 44 pixel touch target.
-6. Every page fills the mobile viewport, even when content is shorter than the viewport, so the chrome color never dominates the screen; the bottom of the content surface stays clear of the fixed bottom navigation and device safe-area insets.
+6. Every page fills the mobile viewport, even when content is shorter than the viewport, so the chrome color never dominates the screen; the top of the content surface stays clear of the header and the bottom stays clear of device safe-area insets.
 
 **Constraints:** CON-A11Y-001
 **Priority:** P0

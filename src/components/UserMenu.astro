@@ -55,6 +55,15 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     />
   </summary>
   <div class="user-menu__panel" role="menu">
+    <button
+      type="button"
+      class="user-menu__item user-menu__theme"
+      role="menuitem"
+      data-theme-toggle
+      aria-label="Toggle color theme"
+    >
+      <span class="user-menu__theme-label" data-theme-label>Theme: system</span>
+    </button>
     <a class="user-menu__item" role="menuitem" href="/settings">Settings</a>
     <form class="user-menu__logout" method="post" action={logoutHref}>
       <button
@@ -147,11 +156,35 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     margin: 0;
     padding: 0;
   }
+
+  .user-menu__theme {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .user-menu__theme-label {
+    color: var(--text-muted);
+    text-transform: capitalize;
+  }
 </style>
 
 <script>
   // Close the <details> menu when clicking outside or pressing Escape.
+  // Also keep the "Theme: light/dark" label in sync with the current theme
+  // so the user sees the active state without a second click.
+  function syncThemeLabel(): void {
+    const current = document.documentElement.dataset['theme'] === 'dark'
+      ? 'Dark'
+      : 'Light';
+    document.querySelectorAll<HTMLElement>('[data-theme-label]').forEach((el) => {
+      el.textContent = `Theme: ${current}`;
+    });
+  }
+
   function init(): void {
+    syncThemeLabel();
+
     const menus = document.querySelectorAll<HTMLDetailsElement>('[data-user-menu]');
     menus.forEach((menu) => {
       if (menu.dataset['bound'] === '1') return;
@@ -169,6 +202,15 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
         }
       });
     });
+
+    // Update the label whenever data-theme changes on <html>.
+    if (!document.documentElement.dataset['userMenuObserverBound']) {
+      document.documentElement.dataset['userMenuObserverBound'] = '1';
+      new MutationObserver(syncThemeLabel).observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['data-theme'],
+      });
+    }
   }
   init();
   document.addEventListener('astro:page-load', init);

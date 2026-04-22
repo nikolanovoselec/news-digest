@@ -1,6 +1,6 @@
 # PWA & Mobile
 
-The app is installable on iOS, Android, and desktop via a standards web manifest. A service worker caches the last viewed digest for offline reading. Mobile layout respects safe-area insets for the iPhone notch and Android gesture bars, with a bottom tab bar on mobile and a left sidebar on desktop.
+The app is installable on iOS, Android, and desktop via a standards web manifest. A service worker caches the last viewed digest for offline reading. Mobile layout respects safe-area insets for the iPhone notch and Android gesture bars. Navigation is consolidated into the header on every viewport — no separate sidebar or bottom tab bar.
 
 ---
 

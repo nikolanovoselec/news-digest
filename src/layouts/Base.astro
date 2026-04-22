@@ -77,7 +77,11 @@ const initialTheme = cookieTheme ?? 'light';
     <header class="site-header safe-top safe-x">
       <a href="/" class="site-header__brand focus-ring">News Digest</a>
       <nav class="site-header__nav" aria-label="Primary">
-        <ThemeToggle />
+        {/* Anonymous pages (landing, logged-out error pages) keep the
+            standalone toggle so signed-out users can still flip themes.
+            Authenticated pages move the toggle into the UserMenu below
+            to keep the header minimal (brand / history / avatar). */}
+        {!Astro.locals.user && <ThemeToggle />}
         {Astro.locals.user && !firstRun && (
           <a
             href="/history"
