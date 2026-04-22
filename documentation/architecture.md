@@ -125,8 +125,12 @@ news-digest is a single Cloudflare Worker serving an Astro-rendered app. Every 5
 
 | Path | Responsibility | Implements |
 |---|---|---|
-| `src/worker.ts` | Entry point + cron handler | [REQ-GEN-001](../sdd/generation.md#req-gen-001-scheduled-generation-via-cron-dispatcher), [REQ-GEN-007](../sdd/generation.md#req-gen-007-stuck-digest-sweeper) |
+| `src/worker.ts` | Cron + queue handlers (source for post-build bundle) | [REQ-GEN-001](../sdd/generation.md#req-gen-001-scheduled-generation-via-cron-dispatcher), [REQ-GEN-007](../sdd/generation.md#req-gen-007-stuck-digest-sweeper) |
 | `src/queue/digest-consumer.ts` | Queue handler that invokes `generateDigest` | [REQ-GEN-001](../sdd/generation.md#req-gen-001-scheduled-generation-via-cron-dispatcher), [REQ-GEN-002](../sdd/generation.md#req-gen-002-manual-refresh-with-rate-limiting) |
+| `scripts/merge-worker-handlers.mjs` | Post-build esbuild shim — bundles `src/worker.ts` then writes `dist/_worker.js/_merged.mjs`, which re-exports Astro's `fetch` handler alongside the `scheduled` and `queue` exports; this file is what `wrangler.toml main` points at | (build tooling) |
+| `dist/_worker.js/_merged.mjs` | Generated wrangler entry (`main` in `wrangler.toml`); auto-generated, not committed | (build artifact) |
+
+**Build flow:** `astro build` produces `dist/_worker.js/index.js` (fetch-only). The npm `build` script then runs `merge-worker-handlers.mjs`, which uses esbuild to bundle `src/worker.ts` into `dist/_worker.js/handlers-bundle.mjs` and writes `_merged.mjs` that merges both. Wrangler deploys `_merged.mjs`. The `@astrojs/cloudflare` adapter's `workerEntryPoint` option was not used because it produced an invalid merged worker (Cloudflare validator error 10021).
 
 ## Request Lifecycle
 
