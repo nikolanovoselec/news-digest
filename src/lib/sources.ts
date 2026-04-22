@@ -95,7 +95,7 @@ const GOOGLE_NEWS: SourceAdapter = {
   name: 'googlenews',
   kind: 'rss',
   url: (tag) =>
-    `https://news.google.com/rss/search?q=${q(tag)}+when:1d&hl=en-US&gl=US&ceid=US:en`,
+    `https://news.google.com/rss/search?q=${q(tag)}+when%3A1d&hl=en-US&gl=US&ceid=US:en`,
   extract: (parsed) => extractRssItems(parsed, 'googlenews'),
 };
 
