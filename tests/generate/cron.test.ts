@@ -27,40 +27,45 @@ function makeDb(responses: {
   pendingDiscoveriesResults?: Array<{ tag: string }>;
 }): { db: D1Database; calls: SqlCall[] } {
   const calls: SqlCall[] = [];
-  const prepare = vi.fn().mockImplementation((sql: string) => ({
-    bind: (...params: unknown[]) => ({
-      run: vi.fn().mockImplementation(async () => {
-        calls.push({ sql, params, kind: 'run' });
-        if (sql.startsWith('UPDATE digests')) {
-          return {
-            success: true,
-            meta: { changes: responses.updateDigestsResult?.changes ?? 0 },
-          };
-        }
-        return { success: true, meta: { changes: 0 } };
-      }),
-      all: vi.fn().mockImplementation(async () => {
-        calls.push({ sql, params, kind: 'all' });
-        if (sql.includes('SELECT DISTINCT tz')) {
-          return { success: true, results: responses.distinctTzResults ?? [] };
-        }
-        if (sql.includes('SELECT id FROM users')) {
-          return { success: true, results: responses.dueUsersResults ?? [] };
-        }
-        if (sql.startsWith('SELECT tag FROM pending_discoveries')) {
-          return {
-            success: true,
-            results: responses.pendingDiscoveriesResults ?? [],
-          };
-        }
-        return { success: true, results: [] };
-      }),
-      first: vi.fn().mockImplementation(async () => {
-        calls.push({ sql, params, kind: 'first' });
-        return null;
-      }),
+  const makeStmtMethods = (sql: string, params: unknown[]) => ({
+    run: vi.fn().mockImplementation(async () => {
+      calls.push({ sql, params, kind: 'run' });
+      if (sql.startsWith('UPDATE digests')) {
+        return {
+          success: true,
+          meta: { changes: responses.updateDigestsResult?.changes ?? 0 },
+        };
+      }
+      return { success: true, meta: { changes: 0 } };
     }),
-  }));
+    all: vi.fn().mockImplementation(async () => {
+      calls.push({ sql, params, kind: 'all' });
+      if (sql.includes('SELECT DISTINCT tz')) {
+        return { success: true, results: responses.distinctTzResults ?? [] };
+      }
+      if (sql.includes('SELECT id FROM users')) {
+        return { success: true, results: responses.dueUsersResults ?? [] };
+      }
+      if (sql.startsWith('SELECT tag FROM pending_discoveries')) {
+        return {
+          success: true,
+          results: responses.pendingDiscoveriesResults ?? [],
+        };
+      }
+      return { success: true, results: [] };
+    }),
+    first: vi.fn().mockImplementation(async () => {
+      calls.push({ sql, params, kind: 'first' });
+      return null;
+    }),
+  });
+  const prepare = vi.fn().mockImplementation((sql: string) => {
+    const noBindMethods = makeStmtMethods(sql, []);
+    return {
+      ...noBindMethods,
+      bind: (...params: unknown[]) => makeStmtMethods(sql, params),
+    };
+  });
   const db = { prepare } as unknown as D1Database;
   return { db, calls };
 }
