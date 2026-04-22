@@ -74,21 +74,50 @@ Shown as toggleable chips on `/settings` (the same route handles first-run onboa
 
 ## Model selection
 
-The settings page renders a dropdown populated from the Cloudflare API:
+The settings page renders a dropdown populated from a hardcoded list in `src/lib/models.ts`. No runtime fetch, no KV cache, no Cloudflare API token needed. Updating the list is a code edit + deploy.
 
+### Shape
+
+```ts
+// src/lib/models.ts
+export type ModelOption = {
+  id: string;                       // Workers AI model id
+  name: string;                     // Display name
+  description: string;              // One-line blurb for the dropdown
+  inputPricePerMtok: number;        // USD per million input tokens
+  outputPricePerMtok: number;       // USD per million output tokens
+  category: 'featured' | 'budget';
+};
+
+export const DEFAULT_MODEL_ID = '@cf/meta/llama-3.1-8b-instruct-fp8-fast';
+
+export const MODELS: ModelOption[] = [
+  // Featured — quality first
+  { id: '@cf/moonshotai/kimi-k2.6', name: 'Kimi K2.6', description: 'Frontier-scale MoE (1T params, 32B active) from Moonshot AI', inputPricePerMtok: 0, outputPricePerMtok: 0, category: 'featured' },
+  { id: '@cf/moonshotai/kimi-k2.5', name: 'Kimi K2.5', description: 'Open-source 256k-context large model', inputPricePerMtok: 0, outputPricePerMtok: 0, category: 'featured' },
+  { id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', name: 'Llama 3.3 70B', description: 'Strongest Meta model, fast FP8 variant', inputPricePerMtok: 0.293, outputPricePerMtok: 2.253, category: 'featured' },
+  { id: '@cf/meta/llama-3.1-8b-instruct-fp8-fast', name: 'Llama 3.1 8B Fast', description: 'Default. Good quality at low cost.', inputPricePerMtok: 0.045, outputPricePerMtok: 0.384, category: 'featured' },
+  // Budget — cheapest viable options
+  { id: '@cf/meta/llama-3.2-1b-instruct', name: 'Llama 3.2 1B', description: 'Cheapest option. Short summaries only.', inputPricePerMtok: 0.027, outputPricePerMtok: 0.201, category: 'budget' },
+  { id: '@cf/mistral/mistral-7b-instruct-v0.1', name: 'Mistral 7B', description: 'Balanced small model', inputPricePerMtok: 0.110, outputPricePerMtok: 0.190, category: 'budget' },
+  { id: '@cf/meta/llama-3.2-3b-instruct', name: 'Llama 3.2 3B', description: 'Small Meta model', inputPricePerMtok: 0.051, outputPricePerMtok: 0.335, category: 'budget' },
+  { id: '@cf/meta/llama-3.2-11b-vision-instruct', name: 'Llama 3.2 11B', description: 'Mid-size Meta model', inputPricePerMtok: 0.049, outputPricePerMtok: 0.676, category: 'budget' },
+  { id: '@cf/meta/llama-3.1-70b-instruct-fp8-fast', name: 'Llama 3.1 70B', description: 'Large Meta model, fast FP8', inputPricePerMtok: 0.293, outputPricePerMtok: 2.253, category: 'budget' },
+  { id: '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b', name: 'DeepSeek R1 32B', description: 'Reasoning-distilled model', inputPricePerMtok: 0.497, outputPricePerMtok: 4.881, category: 'budget' }
+];
 ```
-GET https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/models/search?task=Text+Generation
-```
 
-The result is cached in KV for one hour. The dropdown displays each model's name and description; the selected model ID is stored on the user row. The model used for each digest is also stored on the digest row, so the history view shows which model produced each result.
+### UI
 
-**Default**: `@cf/meta/llama-3.1-8b-instruct-fast`.
+Dropdown groups by category: "Featured" at top, "Budget" below. Each option shows name, short description, and estimated per-digest cost (based on typical prompt size). Default selection = `DEFAULT_MODEL_ID`.
 
-**Validation on write**: the `model_id` submitted by the client is accepted if EITHER:
-- It appears in a hardcoded `ALWAYS_VALID_MODELS` constant in the Worker source (3 curated options: `@cf/meta/llama-3.1-8b-instruct-fast`, `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, `@cf/meta/llama-3.1-8b-instruct`). These are guaranteed valid regardless of catalog state.
-- OR it appears in the KV-cached catalog.
+### Validation
 
-If neither condition holds, reject with 400. This removes the catalog-cold-start deadlock: users can always save with the default model even if the catalog fetch is failing. The KV entry uses a 1h TTL; on cache miss, fetch the catalog fresh.
+Server-side validation: `model_id` submitted by the client must appear in `MODELS` — reject 400 otherwise. No catalog fetch, no cold-start path, no 503. The list IS the source of truth.
+
+### Maintenance
+
+To add a model: grab the ID from Cloudflare's Workers AI catalog, check pricing at [the pricing page](https://developers.cloudflare.com/workers-ai/platform/pricing/), add an entry to the array, deploy. Kimi K2 prices are not yet published in Cloudflare's per-token table at the time of this spec — set from the changelog / documentation when available.
 
 ## Pages
 
@@ -116,7 +145,7 @@ Swiss-minimal aesthetic. Generous whitespace, restricted palette, no gradients, 
 
 Single button in the header (sun icon in light, moon in dark). One click toggles the `data-theme` attribute on `<html>` and persists to `localStorage.theme`. Default follows `prefers-color-scheme`.
 
-**No flash of wrong theme**: a tiny inline `<script>` is injected as the **first child of `<head>`**, before any CSS link. It reads `localStorage.theme` (falling back to `matchMedia('(prefers-color-scheme: dark)')`) and sets `document.documentElement.dataset.theme` synchronously. Because it runs before stylesheets resolve, the correct theme is applied in the same render tick — no FOUC.
+**Theme init**: `/theme-init.js` loaded in `<head>` with `defer`. Reads `localStorage.theme` (fallback to `matchMedia('(prefers-color-scheme: dark)')`) and sets `document.documentElement.dataset.theme`. A ~50ms theme flash is possible on first page load; trade-off accepted to keep the CSP strict (no inline scripts, no nonce plumbing).
 
 ## PWA & offline
 
@@ -156,7 +185,7 @@ Provided by `@vite-pwa/astro` (Workbox under the hood). Caching strategies:
 
 The last viewed digest and its article detail pages remain readable offline. `/settings` and the refresh button show an "offline" banner when `navigator.onLine === false`.
 
-**Logout cache clear**: the logout response is an HTML page with an inline nonce-scripted `caches.delete('digest-cache-v1')` call followed by `window.location='/'`. Direct cache deletion from the page is reliable; the earlier spec using `postMessage` to the service worker is not used because SWs may be terminated at the moment of the message.
+**Logout cache clear**: the logout handler redirects to `/?logged_out=1`. The landing page's external script checks for this query param on load and calls `caches.delete('digest-cache-v1')` before rendering. No inline scripts, no postMessage unreliability.
 
 ### iOS / Apple meta tags
 
@@ -210,12 +239,11 @@ No dedicated `/onboarding` route. `/settings` IS the onboarding — the same for
    b. Schedule — HH:MM time picker (native <input type="time">). Timezone
       shown with a link "detected Europe/Zurich — change" that opens an
       IANA zone dropdown.
-   c. Model — Workers AI model dropdown, populated from `/api/models`
-      (validated against KV catalog on submit), default pre-selected,
-      collapsible "Advanced" disclosure. If the catalog fetch fails
-      on page load, the dropdown renders as a disabled field showing
-      "Model catalog unavailable — using default" and the hidden input
-      carries the default model_id; the user can still save other fields.
+   c. Model — dropdown populated from the `MODELS` constant (grouped
+      "Featured" / "Budget"), default pre-selected, collapsible "Advanced"
+      disclosure hides this by default.
+   d. Email notifications — a single toggle "Email me when my daily digest
+      is ready" (default on), collapsible "Advanced" section along with Model.
 6. On submit: server validates every field (tz in IANA list, model_id in
    cached catalog, hashtags against regex). UPDATE users. For first-run,
    trigger the digest pipeline immediately (out-of-band) and redirect to
@@ -250,8 +278,8 @@ CREATE TABLE users (
   digest_hour                 INTEGER,                -- 0-23 local time
   digest_minute               INTEGER NOT NULL DEFAULT 0,  -- 0-59 local time
   hashtags_json               TEXT,                   -- JSON array of strings
-  model_id                    TEXT,                   -- Workers AI model id (validated against catalog)
-  next_due_at                 INTEGER,                -- unix ts, for cron scan
+  model_id                    TEXT,                   -- Workers AI model id (validated against MODELS list)
+  email_enabled               INTEGER NOT NULL DEFAULT 1,  -- 0=off, 1=on; user can opt out of email notifications
   last_generated_local_date   TEXT,                   -- YYYY-MM-DD in user tz; dedup key for scheduled runs
   last_refresh_at             INTEGER,                -- unix ts of most recent manual refresh (NULL if never)
   refresh_window_start        INTEGER NOT NULL DEFAULT 0,  -- start of current rolling 24h window (0 = never opened)
@@ -259,7 +287,6 @@ CREATE TABLE users (
   session_version             INTEGER NOT NULL DEFAULT 1,  -- bumped on logout/delete to revoke outstanding JWTs
   created_at                  INTEGER NOT NULL
 );
-CREATE INDEX idx_users_next_due ON users(next_due_at);
 
 CREATE TABLE digests (
   id                    TEXT PRIMARY KEY,
@@ -287,7 +314,7 @@ CREATE TABLE articles (
   source_url      TEXT NOT NULL,                      -- canonical, post-resolution URL
   title           TEXT NOT NULL,
   one_liner       TEXT NOT NULL,                      -- <=120 chars, sanitized
-  detail_html     TEXT NOT NULL,                      -- longer summary, server-sanitized HTML (see markdown handling)
+  details_json    TEXT NOT NULL,                      -- JSON array of plaintext bullet strings (typically 3 bullets)
   source_name     TEXT,                               -- 'Google News' | 'Hacker News' | 'Reddit' | 'arXiv'
   published_at    INTEGER,
   rank            INTEGER NOT NULL,
@@ -297,9 +324,8 @@ CREATE UNIQUE INDEX idx_articles_digest_slug ON articles(digest_id, slug);
 CREATE INDEX idx_articles_digest_rank ON articles(digest_id, rank);
 CREATE INDEX idx_articles_read ON articles(digest_id, read_at);  -- supports "articles read" stats
 
--- Resolved URL cache lives in KV only (key: source_url, value: canonical_url, TTL 24h).
--- No D1 mirror: KV is sufficient and one source of truth is simpler.
 -- no sessions table: sessions are stateless JWTs in HttpOnly cookies
+-- no resolved-URL cache: we never fetch article pages, so no resolution needed
 ```
 
 **Query discipline**: every query against `digests` and `articles` MUST include `AND user_id = :session_user_id` (or a JOIN that enforces it via `digests.user_id`). This is the only defense against IDOR if a future change introduces a query path that forgets it. Code review must flag any query touching these tables that doesn't scope by user_id.
@@ -355,9 +381,10 @@ validates it against Intl.supportedValuesOf('timeZone') and UPDATEs users.tz.
      (invalidates every outstanding JWT for this user, including any stolen
      one — a single DB write is the revocation mechanism).
   2. Clear __Host-news_digest_session cookie (Max-Age=0).
-  3. Return an HTML page with an inline script that calls
-     caches.delete('digest-cache-v1') then window.location='/' (direct from
-     page is reliable; service worker postMessage is not).
+  3. Redirect to /?logged_out=1. The landing page's own script calls
+     caches.delete('digest-cache-v1') on load when that query param is
+     present. Uses the external /theme-init.js sibling file; no inline
+     scripts needed.
 ```
 
 ### Cookie hardening
@@ -416,7 +443,6 @@ Deployed via `wrangler secret put`:
 | `OAUTH_CLIENT_ID` | GitHub OAuth App client ID |
 | `OAUTH_CLIENT_SECRET` | GitHub OAuth App client secret |
 | `OAUTH_JWT_SECRET` | Random 32+ char string for HMAC signing |
-| `CLOUDFLARE_AI_READ_TOKEN` | For the Workers AI models catalog lookup. **Scope: `AI: Read` only** — no account edit, no Worker deploy permissions. The deployment token (`CLOUDFLARE_API_TOKEN` in CI) is separate and is never stored as a Worker secret. |
 | `RESEND_API_KEY` | Resend API key (starts with `re_`) for sending digest-ready notification emails |
 | `RESEND_FROM` | Sender address for Resend, e.g., `News Digest <digest@yourdomain.com>` — must match a verified domain |
 | `APP_URL` | Canonical app URL (e.g., `https://digest.yourdomain.com`) — used in email CTAs |
@@ -476,26 +502,22 @@ For each message:
    (max 100 total after fan-out, regardless of hashtag count).
 4. Canonicalize and dedupe URLs (see URL canonicalization below).
 5. Single Workers AI call with users.model_id, structured as:
-   - system message: "You curate tech news. Return strict JSON. Do not
-     include any HTML tags. Do not use Markdown links; use plain URLs."
+   - system message: "You curate tech news. Return strict JSON only.
+     All strings are plaintext — no HTML, no Markdown, no links inside text."
    - user message: "User interests: <fenced hashtag list>. Headlines:
-     <fenced JSON array of {title, url} objects>. Return top 10 as
-     {title, url, one_liner, detail} — one_liner <=120 chars plaintext,
-     detail is 3 plaintext bullets separated by newlines."
-   Fencing (e.g., triple backticks) around user-controlled content limits
+     <fenced JSON array of {title, url, snippet} objects>. Return top 10 as
+     { articles: [{ title, url, one_liner, details }] } where one_liner is
+     <=120 chars plaintext and details is an array of exactly 3 plaintext
+     bullets (each a complete sentence, no leading bullet characters)."
+   Fencing (triple backticks) around user-controlled content limits
    prompt-injection blast radius.
 6. Parse the LLM JSON response strictly (reject on parse error).
-7. For each article:
-   - Sanitize title and one_liner to plaintext (strip all HTML and control chars).
-   - Convert the LLM's detail markdown to safe HTML server-side ONCE before
-     storage: parse with `marked` configured with `{ async: false }` and raw
-     HTML disabled, then sanitize with a Workers-compatible HTML sanitizer
-     (e.g., `sanitize-html` or `xss`) allowing only tags `p, ul, ol, li,
-     strong, em, code, br` and attributes `href` on `a` (none emitted by
-     default since raw HTML is disabled). Strip any `javascript:`, `data:`,
-     `vbscript:` URLs.
-   - Stored in `articles.detail_html`. Client renders with `innerHTML` — no
-     client-side markdown parsing, one sanitization code path.
+7. For each article: sanitize title, one_liner, and each bullet in the
+   details array to plaintext (strip all HTML tags, strip control chars,
+   collapse whitespace). Store the bullets as JSON array in
+   `articles.details_json`. Client renders as `<ul><li>{bullet}</li></ul>`
+   with `textContent` — no markdown parser, no HTML sanitizer dependency,
+   XSS-safe by construction.
 8. If LLM call or parsing fails: mark digest status='failed' with
    sanitized error_code ('llm_timeout'|'llm_invalid_json'|'all_sources_failed').
    Queue default retry (3 attempts) handles transient errors — no custom
@@ -568,6 +590,10 @@ These are first-class design surfaces, not afterthoughts. Generation takes 2–1
 
 **First-run loading**: identical to above but with a welcome message above the rail — "Welcome, @gh_login. Your first digest is on the way."
 
+**Pending-today state** (user opens `/digest` before today's scheduled time, no live generation in progress): page shows the most recent completed digest (usually yesterday's) with a subtle banner at top: "Next digest scheduled at 08:00 — in 3h 12m. You can also [refresh now]." Banner derives from `/api/digest/today` `next_scheduled_at`. This avoids the silently-bad UX of showing yesterday's content with no indication that today's is coming.
+
+**No stories today**: defined as the LLM returning fewer than 3 articles (post-parsing, post-sanitization). Triggers the "No stories today — try broader hashtags" error page. 3 articles is the minimum threshold because a digest with 1–2 articles looks broken.
+
 **Error pages**: dedicated Astro route components, not inline banners. Every error state uses the same layout (centered content, one-line headline, short explanation, one primary action, one secondary action) for consistency.
 
 | Scenario | Headline | Explanation | Primary action | Secondary action |
@@ -589,7 +615,7 @@ After every successful scheduled digest (not manual refreshes — the user alrea
 
 ### When it fires
 
-Immediately after the consumer commits `status='ready'` for a `trigger='scheduled'` digest. Manual refreshes do not trigger email. Failed digests do not trigger email.
+Immediately after the consumer commits `status='ready'` for a `trigger='scheduled'` digest AND `users.email_enabled=1`. Manual refreshes do not trigger email. Failed digests do not trigger email. Users who toggle email off in settings never receive one.
 
 Email sending is best-effort: if the Resend API call fails, log the error and continue. The digest itself is still available in the app — email is convenience, not core functionality.
 
@@ -769,18 +795,16 @@ All mutating endpoints require an authenticated session (valid `__Host-news_dige
 
 | Method | Path | Request | Response | Errors |
 |---|---|---|---|---|
-| GET | `/api/settings` | — | `{ hashtags: string[], digest_hour: int, digest_minute: int, tz: string, model_id: string, first_run: bool }` | 401 |
-| PUT | `/api/settings` | `{ hashtags, digest_hour, digest_minute, model_id }` | `{ ok: true }` | 400 `invalid_hashtags` \| `invalid_time` \| `invalid_model_id`; 401; 503 `catalog_cold` |
-| GET | `/api/models` | — | `{ models: [{ id, name, description }] }` (served from KV cache; refreshed on miss) | 401; 503 `catalog_cold` |
+| GET | `/api/settings` | — | `{ hashtags: string[], digest_hour: int, digest_minute: int, tz: string, model_id: string, email_enabled: bool, first_run: bool }` | 401 |
+| PUT | `/api/settings` | `{ hashtags, digest_hour, digest_minute, model_id, email_enabled }` | `{ ok: true }` | 400 `invalid_hashtags` \| `invalid_time` \| `invalid_model_id` \| `invalid_email_enabled`; 401 |
 
 ### Digest and refresh
 
 | Method | Path | Request | Response | Errors |
 |---|---|---|---|---|
-| GET | `/api/digest/today` | — | `{ digest: { id, generated_at, status, execution_ms, tokens_in, tokens_out, estimated_cost_usd, model_id }, articles: [...], live?: boolean }` | 401; 404 `no_digest_yet` |
+| GET | `/api/digest/today` | — | `{ digest: {...} \| null, articles: [...], live: bool, next_scheduled_at: int \| null }` — returns the newest digest for today's local_date (or yesterday's if today hasn't generated yet); `live=true` when a digest is currently in_progress; `next_scheduled_at` is the unix ts of the next scheduled run when today's has not yet happened | 401 |
 | GET | `/api/digest/:id` | — | Same shape as `/today`, for a specific digest | 401; 403 `not_yours` (shouldn't happen — filtered by query); 404 |
 | POST | `/api/digest/refresh` | — | `202 { digest_id, status: 'in_progress' }` — handler INSERTs the digest row with status='in_progress' BEFORE enqueuing the job, so the client has an id to poll immediately | 401; 429 `rate_limited` `{ retry_after_seconds, reason: 'cooldown' \| 'daily_cap' }`; 409 `already_in_progress` |
-| POST | `/api/articles/:id/read` | — | `200 { ok: true }` (idempotent; sets `read_at` if NULL) | 401; 404 |
 
 ### History and stats
 
@@ -810,9 +834,9 @@ All stats queries are returned by a single `GET /api/stats` that runs these quer
 
 ### Tracking "read"
 
-Add `read_at INTEGER` (nullable) to the articles table. An article is marked read when the user opens its detail page (`/digest/:id/:slug`) — the server sets `read_at = now()` on first view via `UPDATE articles SET read_at = :now WHERE id = :id AND digest_id IN (SELECT id FROM digests WHERE user_id = :session_user_id) AND read_at IS NULL`. The scoped subquery enforces user_id — IDOR-safe.
+Add `read_at INTEGER` (nullable) to the articles table. The `/digest/:id/:slug` Astro page loader marks read directly in its server-side fetch: the same query that loads the article also runs `UPDATE articles SET read_at = :now WHERE id = :id AND digest_id IN (SELECT id FROM digests WHERE user_id = :session_user_id) AND read_at IS NULL`. No separate API endpoint. The scoped subquery enforces user_id — IDOR-safe.
 
-Clicking the source link does NOT mark read, because many users open the source in a new tab and never look at the summary. Opening the detail view is the signal that the user engaged with the app's content.
+Clicking the source link does NOT mark read — only opening the detail view counts as engagement.
 
 ### Widget implementation
 
@@ -830,13 +854,13 @@ Every response includes these headers, set by a Cloudflare Worker response middl
 
 | Header | Value |
 |---|---|
-| `Content-Security-Policy` | `default-src 'self'; script-src 'self' 'nonce-{NONCE}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.github.com; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com` |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com` |
 | `Strict-Transport-Security` | `max-age=63072000; includeSubDomains; preload` |
 | `X-Content-Type-Options` | `nosniff` |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` |
 | `Permissions-Policy` | `geolocation=(), microphone=(), camera=(), payment=(), clipboard-read=()` |
 
-**Nonce-based script CSP**: Astro middleware generates a fresh random nonce per request (base64url of 16 bytes from `crypto.getRandomValues`). Both the CSP header and every inline `<script>` tag get the nonce. This allows the theme-init inline script (which runs before CSS loads to prevent FOUC) without opening the door to injected scripts. `'unsafe-inline'` remains on `style-src` because Astro's component styles use it; acceptable risk given that CSS injection is low-severity and sanitized markdown blocks `<style>` elements anyway.
+**No inline scripts**: the theme-init script is served as an external file `/theme-init.js` with `defer` in the `<head>`. A small flash of the wrong theme is possible on first paint; it's a ~50ms visual blip, acceptable in exchange for a strict no-inline-scripts CSP. All client code lives in external modules served from `'self'`. `'unsafe-inline'` remains on `style-src` because Astro's scoped component styles require it; CSS injection is low-severity and there is no client-side HTML rendering to amplify it.
 
 `X-Frame-Options: DENY` is not emitted; CSP `frame-ancestors 'none'` supersedes it in all modern browsers.
 
