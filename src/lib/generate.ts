@@ -559,8 +559,9 @@ function sanitizeArticles(payload: LLMDigestPayload): GeneratedArticle[] {
 export function sanitizeText(value: unknown): string {
   if (typeof value !== 'string') return '';
   // Step 1: strip HTML tags (non-greedy, matches across newlines since `.`
-  // in a bracket set `[^>]` naturally spans them).
-  const withoutTags = value.replace(/<[^>]*>/g, '');
+  // in a bracket set `[^>]` naturally spans them). Replace with a space
+  // so adjacent words don't concatenate (e.g. "before<br/>after" → "before after").
+  const withoutTags = value.replace(/<[^>]*>/g, ' ');
   // Step 2: strip ASCII/C0 control chars (0x00-0x1F + 0x7F) and C1 (0x80-0x9F).
   // Keep tab/LF/CR handling to the whitespace-collapse step so tokens like
   // "line1\nline2" don't concatenate without a space.
