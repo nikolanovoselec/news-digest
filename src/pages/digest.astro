@@ -162,21 +162,23 @@ if (isReadyToday && articles.length < 3) {
 
     <header class="digest-page__header">
       <h1 class="digest-page__title">Today's digest</h1>
-      <form
-        class="digest-page__refresh"
-        data-refresh-form
-        action="/api/digest/refresh"
-        method="post"
+      {/*
+        A plain <button>, NOT a <form action="/api/digest/refresh">. If
+        JS is slow to hydrate and the user clicks early, we used to see
+        a full-page POST navigate to /api/digest/refresh — which the
+        service worker's /api/* NetworkFirst rule then turned into a
+        generic 404 on cache miss. The button-only variant means a click
+        without JS is simply a no-op; the JS click handler fires fetch()
+        and handles all response codes.
+      */}
+      <button
+        type="button"
+        class="digest-page__refresh-button"
+        data-refresh-button
+        disabled={isLive}
       >
-        <button
-          type="submit"
-          class="digest-page__refresh-button"
-          data-refresh-button
-          disabled={isLive}
-        >
-          Refresh now
-        </button>
-      </form>
+        Refresh now
+      </button>
     </header>
 
     {
@@ -275,10 +277,7 @@ if (isReadyToday && articles.length < 3) {
     retry_after_seconds?: number;
   }
 
-  async function handleRefresh(
-    form: HTMLFormElement,
-    button: HTMLButtonElement,
-  ): Promise<void> {
+  async function handleRefresh(button: HTMLButtonElement): Promise<void> {
     button.disabled = true;
     let res: Response;
     try {
@@ -319,14 +318,12 @@ if (isReadyToday && articles.length < 3) {
   }
 
   function wireRefresh(): void {
-    const form = document.querySelector<HTMLFormElement>('[data-refresh-form]');
     const button = document.querySelector<HTMLButtonElement>('[data-refresh-button]');
-    if (form === null || button === null) return;
-    if (form.dataset['bound'] === '1') return;
-    form.dataset['bound'] = '1';
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      void handleRefresh(form, button);
+    if (button === null) return;
+    if (button.dataset['bound'] === '1') return;
+    button.dataset['bound'] = '1';
+    button.addEventListener('click', () => {
+      void handleRefresh(button);
     });
   }
 
@@ -443,10 +440,6 @@ if (isReadyToday && articles.length < 3) {
     font-size: var(--text-2xl);
     font-weight: 600;
     color: var(--text);
-  }
-
-  .digest-page__refresh {
-    margin: 0;
   }
 
   .digest-page__refresh-button {

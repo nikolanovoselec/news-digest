@@ -53,14 +53,17 @@ const errorCode =
       or adjust your sources and schedule in settings.
     </p>
     <div class="failure-page__actions">
-      <form
-        class="failure-page__retry"
-        data-retry-form
-        action="/api/digest/refresh"
-        method="post"
+      {/* Plain button — JS hydrates it into the fetch flow. A form with
+          action="/api/digest/refresh" + method="post" caused a 404 when
+          the user clicked before JS hydrated (the SW /api/* rule turned
+          the POST navigate into a 404 on cache miss). */}
+      <button
+        type="button"
+        class="failure-page__retry-button"
+        data-retry-button
       >
-        <button type="submit" class="failure-page__retry-button">Try again</button>
-      </form>
+        Try again
+      </button>
       <a class="failure-page__settings-link" href="/settings">Go to settings</a>
     </div>
     <footer class="failure-page__code">
@@ -77,10 +80,7 @@ const errorCode =
     retry_after_seconds?: number;
   }
 
-  async function handleRetry(
-    form: HTMLFormElement,
-    button: HTMLButtonElement,
-  ): Promise<void> {
+  async function handleRetry(button: HTMLButtonElement): Promise<void> {
     button.disabled = true;
     let res: Response;
     try {
@@ -113,15 +113,12 @@ const errorCode =
   }
 
   function init(): void {
-    const form = document.querySelector<HTMLFormElement>('[data-retry-form]');
-    if (form === null) return;
-    if (form.dataset['bound'] === '1') return;
-    form.dataset['bound'] = '1';
-    const button = form.querySelector<HTMLButtonElement>('button');
+    const button = document.querySelector<HTMLButtonElement>('[data-retry-button]');
     if (button === null) return;
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      void handleRetry(form, button);
+    if (button.dataset['bound'] === '1') return;
+    button.dataset['bound'] = '1';
+    button.addEventListener('click', () => {
+      void handleRetry(button);
     });
   }
 

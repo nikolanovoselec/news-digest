@@ -276,6 +276,27 @@ const primaryCta = isFirstRun ? 'Generate my first digest' : 'Save';
     return tags;
   }
 
+  /**
+   * Toggle chip selection on click. Binds every [data-hashtag-chip] in
+   * the DOM. Idempotent — safe to call on every page-load event. Kept
+   * in this page's script (not in HashtagChip.astro) because Astro's
+   * component-script bundler occasionally drops it when the same
+   * component renders many times inside a page.
+   */
+  function wireHashtagChips(): void {
+    const chips = document.querySelectorAll<HTMLButtonElement>('[data-hashtag-chip]');
+    chips.forEach((chip) => {
+      if (chip.dataset['chipBound'] === '1') return;
+      chip.dataset['chipBound'] = '1';
+      chip.addEventListener('click', () => {
+        const nowSelected = chip.dataset['selected'] !== '1';
+        chip.dataset['selected'] = nowSelected ? '1' : '0';
+        chip.setAttribute('aria-pressed', nowSelected ? 'true' : 'false');
+        chip.classList.toggle('is-selected', nowSelected);
+      });
+    });
+  }
+
   function addCustomTag(input: HTMLInputElement, grid: HTMLElement): void {
     const normalized = normalizeTag(input.value);
     if (normalized.length < 2 || normalized.length > 32) {
@@ -426,6 +447,10 @@ const primaryCta = isFirstRun ? 'Generate my first digest' : 'Save';
   }
 
   function init(): void {
+    // Chip toggles are always safe to (re-)wire, even if the main form
+    // is on a repeat navigation. Idempotent.
+    wireHashtagChips();
+
     const form = document.querySelector<HTMLFormElement>('[data-settings-form]');
     if (form === null) return;
     if (form.dataset['bound'] === '1') return;

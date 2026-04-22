@@ -36,33 +36,13 @@ const { tag, selected = false } = Astro.props;
   <span class="hashtag-chip__label">{tag}</span>
 </button>
 
-<script>
-  // Implements REQ-SET-002 — toggle chip selection on click / Space / Enter.
-  // Kept deliberately small and framework-free. The parent form reads the
-  // final selected set from the DOM on submit via `[data-hashtag-chip][data-selected="1"]`.
-
-  function initChips(): void {
-    const chips = document.querySelectorAll<HTMLButtonElement>('[data-hashtag-chip]');
-    chips.forEach((chip) => {
-      if (chip.dataset['bound'] === '1') return;
-      chip.dataset['bound'] = '1';
-      chip.addEventListener('click', () => {
-        const nowSelected = chip.dataset['selected'] !== '1';
-        chip.dataset['selected'] = nowSelected ? '1' : '0';
-        chip.setAttribute('aria-pressed', nowSelected ? 'true' : 'false');
-        chip.classList.toggle('is-selected', nowSelected);
-      });
-    });
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initChips, { once: true });
-  } else {
-    initChips();
-  }
-  // Re-bind on Astro view-transition navigations.
-  document.addEventListener('astro:page-load', initChips);
-</script>
+{/*
+  Click-binding logic for [data-hashtag-chip] lives in settings.astro's
+  page-level script so Astro reliably bundles it alongside the form's
+  submit and custom-tag-add handlers. Keeping it here as a component-
+  level <script> tripped a bundling edge case that shipped the chip
+  markup without its event handler.
+*/}
 
 <style>
   .hashtag-chip {
