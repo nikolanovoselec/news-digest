@@ -45,11 +45,12 @@ npx wrangler d1 migrations apply DB --remote
 npx wrangler deploy
 ```
 
-Or via GitHub Actions (see `.github/workflows/deploy.yml` once created) which:
+Or via GitHub Actions (`.github/workflows/deploy.yml`), which:
 1. Runs tests.
 2. Applies D1 migrations against the production database.
 3. Pushes Worker secrets (Resend credentials, etc.) via `wrangler secret put`.
 4. Deploys the Worker.
+5. Smoke-tests `GET /` against the `*.workers.dev` URL parsed from wrangler deploy output (falls back to `APP_URL` secret if the parse fails). Accepts `200` or `303` as passing.
 
 ### Environment-specific configuration
 
