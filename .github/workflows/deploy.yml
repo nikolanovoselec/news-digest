@@ -84,12 +84,34 @@ jobs:
             exit 0
           fi
           # Extract hostname from APP_URL (strip scheme + path + port).
-          HOST=$(printf '%s' "$APP_URL" | sed -E 's|^[a-z]+://||; s|/.*$||; s|:.*$||')
+          # Case-insensitive scheme match so HTTPS:// / MIXED-case works too.
+          HOST=$(printf '%s' "$APP_URL" | sed -E 's|^[A-Za-z]+://||; s|/.*$||; s|:.*$||')
           if [ -z "$HOST" ]; then
             echo "Could not extract hostname from APP_URL; skipping"
             exit 0
           fi
+          # Require a fully-qualified domain (at least one dot). A single-label
+          # APP_URL like `localhost` has no Cloudflare zone and isn't a valid
+          # custom-domain target.
+          case "$HOST" in
+            *.*) : ;;
+            *)
+              echo "APP_URL hostname '$HOST' is not fully-qualified (needs at least one dot); skipping bind"
+              exit 0
+              ;;
+          esac
           echo "Binding Worker to custom domain: $HOST"
+
+          # Derive the Worker service name from wrangler.toml so a fork that
+          # renames the worker doesn't end up binding the zone to a
+          # non-existent service.
+          SERVICE=$(grep -E '^name[[:space:]]*=' wrangler.toml | head -1 \
+            | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$SERVICE" ]; then
+            echo "Could not parse 'name = ...' from wrangler.toml"
+            exit 1
+          fi
+          echo "Worker service: $SERVICE"
 
           # Find the Cloudflare zone for the hostname by trying progressively
           # shorter parent domains (host → ...rest.of.host → apex).
@@ -112,15 +134,20 @@ jobs:
             exit 1
           fi
 
+          # Build the JSON body via jq so hostname/service values can't break
+          # out of the JSON string context (cheap safety for a secret-sourced value).
+          BODY=$(jq -cn \
+            --arg z "$ZONE_ID" --arg h "$HOST" --arg s "$SERVICE" \
+            '{zone_id:$z, hostname:$h, service:$s, environment:"production"}')
+
           # Idempotent attach: Cloudflare's PUT endpoint creates-or-updates
           # the binding between this hostname and the Worker.
-          SERVICE="ai-news-digest"
           RESP=$(mktemp)
           HTTP_CODE=$(curl -sS -o "$RESP" -w "%{http_code}" -X PUT \
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"zone_id\":\"$ZONE_ID\",\"hostname\":\"$HOST\",\"service\":\"$SERVICE\",\"environment\":\"production\"}")
+            -d "$BODY")
           SUCCESS=$(jq -r '.success' < "$RESP" 2>/dev/null || echo "")
           if [ "$HTTP_CODE" != "200" ] || [ "$SUCCESS" != "true" ]; then
             echo "Custom-domain bind failed (HTTP $HTTP_CODE):"
