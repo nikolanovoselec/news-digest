@@ -65,7 +65,7 @@ export function log(
   // Build the record with envelope keys last so callers cannot override them
   // by accident. Spread first, then stamp ts/level/event on top.
   const record: LogRecord = {
-    ...(fields ?? {}),
+    ...fields,
     ts: Date.now(),
     level,
     event,
