@@ -30,6 +30,10 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Create .assetsignore (exclude _worker.js from asset upload)
+        run: |
+          printf '_worker.js\n_routes.json\n' > dist/.assetsignore
+
       - name: Apply D1 migrations
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
