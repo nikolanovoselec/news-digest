@@ -25,8 +25,6 @@ news-digest is a single Cloudflare Worker serving an Astro-rendered app. Every 5
 
 ## Source Modules
 
-Modules shipped as of Phase 2 (auth + design + PWA + observability). Further modules will be added as phases complete.
-
 ### Middleware
 
 | Path | Responsibility | Implements |
@@ -40,16 +38,24 @@ Modules shipped as of Phase 2 (auth + design + PWA + observability). Further mod
 
 | Path | Responsibility | Implements |
 |---|---|---|
+| `src/lib/canonical-url.ts` | URL canonicalization for cross-source article dedupe — normalizes scheme, strips tracking params, lowercases host | [REQ-GEN-004](../sdd/generation.md#req-gen-004-article-deduplication) |
 | `src/lib/db.ts` | D1 wrapper with `PRAGMA foreign_keys=ON`, prepared statements, `batch()` helper | (shared, not REQ-specific) |
+| `src/lib/email.ts` | Resend client; `sendDigestEmail()`, `renderDigestEmailHtml()`, `renderDigestEmailText()` — best-effort, never re-throws | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email), [REQ-MAIL-002](../sdd/email.md#req-mail-002-email-failure-handling) |
 | `src/lib/errors.ts` | Closed `ErrorCode` enum + `USER_FACING_MESSAGES` map + `errorResponse()` builder — ensures every API error carries a sanitized code and generic message | [REQ-OPS-002](../sdd/observability.md#req-ops-002-sanitized-error-surfaces) |
+| `src/lib/generate.ts` | The single `generateDigest(env, user, trigger, digestId?)` function — claims the digest row, fans out sources, runs one LLM call, writes articles atomically, sends email | [REQ-GEN-001](../sdd/generation.md#req-gen-001-scheduled-generation-via-cron-dispatcher), [REQ-GEN-002](../sdd/generation.md#req-gen-002-manual-refresh-with-rate-limiting), [REQ-GEN-003](../sdd/generation.md#req-gen-003-source-fan-out-with-caching), [REQ-GEN-004](../sdd/generation.md#req-gen-004-article-deduplication), [REQ-GEN-005](../sdd/generation.md#req-gen-005-single-call-llm-summarization), [REQ-GEN-006](../sdd/generation.md#req-gen-006-article-slugs-and-ulids), [REQ-GEN-008](../sdd/generation.md#req-gen-008-cost-transparency-footer) |
+| `src/lib/headline-cache.ts` | KV-backed 10-minute shared cache for per-source/per-tag headline fetches; key `headlines:{source}:{tag}`, TTL 600 s | [REQ-GEN-003](../sdd/generation.md#req-gen-003-source-fan-out-with-caching) |
 | `src/lib/log.ts` | `log(level, event, fields)` — emits `JSON.stringify({ ts, level, event, ...fields })` to `console.log`; `LogEvent` is a closed enum preventing log injection | [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-logging) |
-| `src/lib/models.ts` | Hardcoded `MODELS` list + `DEFAULT_MODEL_ID` | [REQ-SET-004](../sdd/settings.md#req-set-004-model-selection) |
+| `src/lib/models.ts` | Hardcoded `MODELS` list + `DEFAULT_MODEL_ID` + `estimateCost()` | [REQ-SET-004](../sdd/settings.md#req-set-004-model-selection), [REQ-GEN-008](../sdd/generation.md#req-gen-008-cost-transparency-footer) |
 | `src/lib/oauth-errors.ts` | `OAUTH_ERROR_CODES` allowlist + `mapOAuthError()` sanitizer + `isKnownOAuthErrorCode()` — collapses unknown GitHub error strings to `oauth_error` | [REQ-AUTH-004](../sdd/authentication.md#req-auth-004-oauth-error-surfacing) |
 | `src/lib/prompts.ts` | `DIGEST_SYSTEM`, `DISCOVERY_SYSTEM`, prompt builders, `LLM_PARAMS` | [REQ-GEN-005](../sdd/generation.md#req-gen-005-single-call-llm-summarization), [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery) |
 | `src/lib/session-jwt.ts` | HMAC-SHA256 sign/verify for session cookies; `shouldRefreshJWT()` for near-expiry detection | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-session-cookie-and-instant-revocation) |
-| `src/lib/sources.ts` | Generic source adapters + discovered-feed fetcher | [REQ-GEN-003](../sdd/generation.md#req-gen-003-source-fan-out-with-caching), [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery) |
-| `src/lib/generate.ts` | The single `generateDigest(user, trigger, digestId?)` function | [REQ-GEN-001](../sdd/generation.md#req-gen-001-scheduled-generation-via-cron-dispatcher) |
-| `src/lib/email.ts` | Resend client + "digest ready" template | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email) |
+| `src/lib/slug.ts` | `slugify(title)` + `deduplicateSlug(slug, existing)` — deterministic ASCII slug generation with collision suffix | [REQ-GEN-006](../sdd/generation.md#req-gen-006-article-slugs-and-ulids) |
+| `src/lib/sources.ts` | Generic source adapters + discovered-feed fetcher; `fanOutForTags()` + `adaptersForDiscoveredFeeds()` | [REQ-GEN-003](../sdd/generation.md#req-gen-003-source-fan-out-with-caching), [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery) |
+| `src/lib/ssrf.ts` | `isUrlSafe(url)` — SSRF filter for LLM-suggested URLs; rejects non-HTTPS, private IPv4/IPv6 ranges, loopback, CGNAT, metadata hosts | [REQ-DISC-005](../sdd/discovery.md#req-disc-005-ssrf-protection-for-feed-validation), [REQ-GEN-003](../sdd/generation.md#req-gen-003-source-fan-out-with-caching) |
+| `src/lib/types.ts` | Shared cross-module types: `AuthenticatedUser`, `Headline`, `GeneratedArticle`, `DiscoveredFeed`, `SourcesCacheValue` | (shared, not REQ-specific) |
+| `src/lib/tz.ts` | `localDateInTz()`, `localHourMinuteInTz()` — IANA timezone helpers via `Intl.DateTimeFormat`; `DEFAULT_TZ`, `isValidTz()` | [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone), [REQ-GEN-001](../sdd/generation.md#req-gen-001-scheduled-generation-via-cron-dispatcher) |
+| `src/lib/ulid.ts` | `generateUlid()` — 26-char Crockford base32 ULID; lexicographically sortable by time; Web-standard crypto only | [REQ-GEN-006](../sdd/generation.md#req-gen-006-article-slugs-and-ulids) |
+| `src/lib/discovery.ts` | `discoverTag(tag, env)` — one-shot LLM discovery pipeline with SSRF+parse validation; `processPendingDiscoveries(env, limit)` — cron hook, drains pending rows and writes `sources:{tag}` KV | [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-feed-health-tracking-and-auto-eviction), [REQ-DISC-005](../sdd/discovery.md#req-disc-005-ssrf-protection-for-feed-validation) |
 
 ### API Routes
 
@@ -60,15 +66,27 @@ Modules shipped as of Phase 2 (auth + design + PWA + observability). Further mod
 | `src/pages/api/auth/github/logout.ts` | `POST /api/auth/github/logout` — bumps `session_version`, clears session cookie, redirects to `/?logged_out=1` | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-session-cookie-and-instant-revocation), [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints) |
 | `src/pages/api/auth/set-tz.ts` | `POST /api/auth/set-tz` — validates IANA timezone via `Intl.supportedValuesOf`, persists to `users.tz` | [REQ-SET-007](../sdd/settings.md#req-set-007-timezone-change-detection), [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints) |
 | `src/pages/api/auth/account.ts` | `DELETE /api/auth/account` — requires `{ confirm: "DELETE" }`, deletes user row (FK cascade), paginates and deletes KV entries keyed by `user:{id}:*`, clears cookie | [REQ-AUTH-005](../sdd/authentication.md#req-auth-005-account-deletion) |
-| `src/pages/api/settings.ts` | GET/PUT handlers for user settings | [REQ-SET-001](../sdd/settings.md#req-set-001-unified-first-run-and-edit-flow) |
-| `src/pages/api/digest/*.ts` | Refresh, today, by-id, article read | [REQ-GEN-002](../sdd/generation.md#req-gen-002-manual-refresh-with-rate-limiting), [REQ-READ-005](../sdd/reading.md#req-read-005-pending-today-banner) |
-| `src/pages/api/discovery/*.ts` | Status, retry | [REQ-DISC-002](../sdd/discovery.md#req-disc-002-discovery-progress-visibility), [REQ-DISC-004](../sdd/discovery.md#req-disc-004-manual-re-discover) |
+| `src/pages/api/settings.ts` | `GET /api/settings`, `PUT /api/settings` — user settings snapshot and update; queues new tags for discovery via `pending_discoveries` | [REQ-SET-001](../sdd/settings.md#req-set-001-unified-first-run-and-edit-flow), [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation), [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone), [REQ-SET-004](../sdd/settings.md#req-set-004-model-selection), [REQ-SET-005](../sdd/settings.md#req-set-005-email-notification-preference), [REQ-SET-006](../sdd/settings.md#req-set-006-settings-incomplete-gate) |
+| `src/pages/api/digest/today.ts` | `GET /api/digest/today` — most recent digest + articles + `live` flag + `next_scheduled_at` | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-READ-005](../sdd/reading.md#req-read-005-pending-today-banner) |
+| `src/pages/api/digest/[id].ts` | `GET /api/digest/:id` — user-scoped digest by id; IDOR-safe | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-READ-004](../sdd/reading.md#req-read-004-live-generation-state) |
+| `src/pages/api/digest/refresh.ts` | `POST /api/digest/refresh` — manual refresh; atomic rate-limit + conditional INSERT; enqueues to `digest-jobs` | [REQ-GEN-002](../sdd/generation.md#req-gen-002-manual-refresh-with-rate-limiting) |
+| `src/pages/api/history.ts` | `GET /api/history?offset=N` — paginated digest history, 30/page with `has_more`; enriches rows with `model_name` | [REQ-HIST-001](../sdd/history.md#req-hist-001-paginated-past-digests) |
+| `src/pages/api/stats.ts` | `GET /api/stats` — four user-scoped aggregates (digests, articles read/total, tokens, cost) via parallel D1 queries | [REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget) |
+| `src/pages/api/discovery/status.ts` | `GET /api/discovery/status` — pending discovery tags for the session user | [REQ-DISC-002](../sdd/discovery.md#req-disc-002-discovery-progress-visibility) |
+| `src/pages/api/discovery/retry.ts` | `POST /api/discovery/retry` — clears `sources:{tag}` and `discovery_failures:{tag}` KV, re-queues in `pending_discoveries` | [REQ-DISC-004](../sdd/discovery.md#req-disc-004-manual-re-discover) |
 
 ### Pages
 
 | Path | Responsibility | Implements |
 |---|---|---|
-| `src/pages/*.astro` | Landing, settings, digest, article detail, history | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-SET-001](../sdd/settings.md#req-set-001-unified-first-run-and-edit-flow) |
+| `src/pages/digest.astro` | `/digest` overview grid — fetches `GET /api/digest/today`, renders `DigestCard` grid or `LoadingSkeleton` when `live=true`, shows `PendingBanner` when `next_scheduled_at` is set | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-READ-004](../sdd/reading.md#req-read-004-live-generation-state), [REQ-READ-005](../sdd/reading.md#req-read-005-pending-today-banner) |
+| `src/pages/digest/[id]/` | Article detail page — renders full article with `transition:name` matching `DigestCard` for shared-element morph; marks `read_at` via `PATCH /api/digest/:id/:slug` | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-page), [REQ-READ-003](../sdd/reading.md#req-read-003-read-state-tracking) |
+| `src/pages/digest/failed.astro` | Error page shown when digest `status='failed'` — surfaces the `error_code` with a retry option | [REQ-READ-004](../sdd/reading.md#req-read-004-live-generation-state) |
+| `src/pages/digest/no-stories.astro` | Empty-state page shown when the digest completed with zero articles | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) |
+| `src/pages/history.astro` | `/history` — SSR-fetches `GET /api/history?offset=0`, renders paginated digest rows; "Load more" button appends further pages via client-side fetch | [REQ-HIST-001](../sdd/history.md#req-hist-001-paginated-past-digests) |
+| `src/pages/settings.astro` | `/settings` — unified first-run and edit flow; includes `StatsWidget`, `HashtagChip`, `ModelSelect` | [REQ-SET-001](../sdd/settings.md#req-set-001-unified-first-run-and-edit-flow) |
+| `src/pages/offline.astro` | Service-worker fallback page served from Cache Storage when the network is unavailable | [REQ-PWA-002](../sdd/pwa.md#req-pwa-002-offline-reading-of-the-last-digest) |
+| `src/pages/rate-limited.astro` | User-facing rate-limited error page shown when `POST /api/digest/refresh` returns 429 | [REQ-GEN-002](../sdd/generation.md#req-gen-002-manual-refresh-with-rate-limiting), [REQ-READ-006](../sdd/reading.md#req-read-006-manual-refresh-ui) |
 | `src/layouts/Base.astro` | Root HTML shell — manifest link, Apple PWA meta tags, `defer`-loaded `theme-init.js`, View Transitions (`ClientRouter`), `ThemeToggle` in header | [REQ-DES-001](../sdd/design.md#req-des-001-swiss-minimal-visual-language), [REQ-DES-002](../sdd/design.md#req-des-002-light-and-dark-mode-with-no-flash), [REQ-DES-003](../sdd/design.md#req-des-003-deliberate-motion-system), [REQ-PWA-001](../sdd/pwa.md#req-pwa-001-installable-pwa-manifest), [REQ-PWA-003](../sdd/pwa.md#req-pwa-003-mobile-first-responsive-layout) |
 
 ### Components
@@ -79,6 +97,20 @@ Modules shipped as of Phase 2 (auth + design + PWA + observability). Further mod
 | `src/components/BottomNav.astro` | Fixed bottom tab bar (Digest, History, Settings) visible below 768 px; `env(safe-area-inset-bottom)` padding; hides at ≥1024 px | [REQ-PWA-003](../sdd/pwa.md#req-pwa-003-mobile-first-responsive-layout) |
 | `src/components/Sidebar.astro` | Left sidebar (Digest, History, Settings + logout form) visible at ≥1024 px; `env(safe-area-inset-top/bottom)` padding | [REQ-PWA-003](../sdd/pwa.md#req-pwa-003-mobile-first-responsive-layout) |
 | `src/components/InstallPrompt.astro` | Cross-platform install prompt — defers `beforeinstallprompt` on Android/Chrome; renders one-time iOS share-icon note via UA sniff; hidden when already in standalone mode | [REQ-PWA-001](../sdd/pwa.md#req-pwa-001-installable-pwa-manifest) |
+| `src/components/DigestCard.astro` | Article card for the digest grid — title, 120-char one-liner, source badge; carries `transition:name` for shared-element morph into the detail page; stagger animation (40 ms/card, capped at 10) | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-page) |
+| `src/components/LoadingSkeleton.astro` | Single skeleton card matching `DigestCard` dimensions with 1.4 s shimmer; disabled under `prefers-reduced-motion` | [REQ-READ-004](../sdd/reading.md#req-read-004-live-generation-state) |
+| `src/components/CostFooter.astro` | Digest footer: "Generated HH:MM TZ · Xs · N tokens · ~$C · model_name"; supports `estimated` flag that prefixes `~` to token count and cost | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-GEN-008](../sdd/generation.md#req-gen-008-cost-transparency-footer) |
+| `src/components/PendingBanner.astro` | Scheduled-digest countdown banner — "Next digest at HH:MM — in Xh Ym"; live client-side tick every 60 s via `data-next-at` unix ts | [REQ-READ-005](../sdd/reading.md#req-read-005-pending-today-banner) |
+| `src/components/StatsWidget.astro` | Four-tile stats widget (digests generated, articles read/total, tokens consumed, cost to date); SSR-fetches `GET /api/stats` on every page load | [REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget) |
+| `src/components/HashtagChip.astro` | Selectable hashtag toggle chip for the settings form; state carried in `aria-pressed` + `data-selected` | [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation) |
+| `src/components/ModelSelect.astro` | `<select>` dropdown populated from the `MODELS` catalog; groups options by category using `<optgroup>`; shows per-model cost estimate | [REQ-SET-004](../sdd/settings.md#req-set-004-model-selection) |
+
+### Client Scripts
+
+| Path | Responsibility | Implements |
+|---|---|---|
+| `src/scripts/digest-poll.ts` | 5 s polling loop for `GET /api/digest/:id`; stops when `status != 'in_progress'`; triggers `astro:page-load` navigation on `ready` | [REQ-READ-004](../sdd/reading.md#req-read-004-live-generation-state) |
+| `src/scripts/theme-toggle.ts` | `initThemeToggle` — reads/writes `localStorage.theme`, toggles `data-theme` on `<html>`, re-wires on View Transitions | [REQ-DES-002](../sdd/design.md#req-des-002-light-and-dark-mode-with-no-flash) |
 
 ### Styles and Static Assets
 
