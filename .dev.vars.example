@@ -1,0 +1,7 @@
+# Copy to .dev.vars for local development. NEVER commit .dev.vars.
+OAUTH_CLIENT_ID=your-github-oauth-app-client-id
+OAUTH_CLIENT_SECRET=your-github-oauth-app-client-secret
+OAUTH_JWT_SECRET=local-dev-secret-32-chars-minimum-abcdef
+RESEND_API_KEY=re_xxxxxxxx
+RESEND_FROM=News Digest <digest@localhost>
+APP_URL=http://localhost:4321

@@ -1,0 +1,74 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare Workers
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    needs: []
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Apply D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler d1 migrations apply DB --remote
+
+      - name: Push Worker secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          OAUTH_JWT_SECRET: ${{ secrets.OAUTH_JWT_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM }}
+          APP_URL: ${{ secrets.APP_URL }}
+        run: |
+          set -e
+          for name in OAUTH_CLIENT_ID OAUTH_CLIENT_SECRET OAUTH_JWT_SECRET RESEND_API_KEY RESEND_FROM APP_URL; do
+            TMP=$(mktemp)
+            printf '%s' "${!name}" > "$TMP"
+            npx --yes wrangler secret put "$name" < "$TMP"
+            rm "$TMP"
+          done
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler deploy
+
+      - name: Smoke test
+        run: |
+          URL="${{ secrets.APP_URL }}"
+          if [ -z "$URL" ]; then
+            echo "APP_URL secret not set; skipping smoke test"
+            exit 0
+          fi
+          curl -fsS -o /dev/null -w "HTTP %{http_code}\n" "$URL/" || exit 1

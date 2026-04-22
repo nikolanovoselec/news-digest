@@ -1,0 +1,36 @@
+name = "news-digest"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+main = "./dist/_worker.js/index.js"
+assets = { directory = "./dist", binding = "ASSETS" }
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "news-digest"
+database_id = "placeholder"  # replaced at deploy time via `wrangler d1 create`
+migrations_dir = "./migrations"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "placeholder"  # replaced at deploy time via `wrangler kv namespace create`
+
+[[queues.producers]]
+binding = "DIGEST_JOBS"
+queue = "digest-jobs"
+
+[[queues.consumers]]
+queue = "digest-jobs"
+max_batch_size = 1
+max_retries = 3
+
+[ai]
+binding = "AI"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+# APP_URL is set as a Worker secret (different per deployment target)
