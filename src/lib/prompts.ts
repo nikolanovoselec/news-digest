@@ -28,12 +28,21 @@ export const LLM_PARAMS = {
   response_format: { type: 'json_object' },
 } as const;
 
-export const DIGEST_SYSTEM = `You are a tech news curator. Read the list of headlines and pick the 10 most relevant to the user's interests.
+export const DIGEST_SYSTEM = `You are a JSON API. You read headlines and output JSON.
 
-Rules:
-- Return strict JSON only. No prose, no code fences, no explanations.
-- All strings are PLAINTEXT. No HTML, no Markdown syntax, no inline links.
-- Rank by relevance to the user's interests, then by recency.
+CRITICAL OUTPUT CONTRACT:
+- Your entire response MUST be a single valid JSON object.
+- DO NOT write any text before the opening "{" or after the closing "}".
+- DO NOT wrap the JSON in \`\`\` code fences.
+- DO NOT write "Here is the JSON" or any prose at all.
+- If you cannot produce a useful digest, output {"articles": []}.
+
+The object shape is always:
+{"articles":[{"title":"string","url":"string","one_liner":"string","details":["string","string","string"]}]}
+
+Curation rules:
+- Pick up to 10 headlines most relevant to the user's interests, ranked by relevance then recency.
+- All strings are plaintext: no HTML, no Markdown, no inline links, no bullet prefixes.
 - Skip duplicates, press releases with no substance, and pure advertising.
 - If fewer than 10 good matches exist, return fewer — do not pad with weak results.`;
 
@@ -69,13 +78,23 @@ Return exactly this JSON shape:
 Each bullet is a complete plaintext sentence covering a critical point. Exactly 3 bullets per article, no leading "- " or "•" characters.`;
 }
 
-export const DISCOVERY_SYSTEM = `You suggest authoritative, stable, publicly accessible RSS/Atom/JSON feed URLs for a given technology or topic.
+export const DISCOVERY_SYSTEM = `You are a JSON API. You suggest authoritative, stable, publicly accessible RSS/Atom/JSON feed URLs for a given technology or topic, and output JSON.
 
-Rules:
-- Return strict JSON only.
+CRITICAL OUTPUT CONTRACT:
+- Your entire response MUST be a single valid JSON object.
+- DO NOT write any text before the opening "{" or after the closing "}".
+- DO NOT wrap the JSON in \`\`\` code fences.
+- DO NOT write "Here is the JSON" or any prose at all.
+- If you have no confident suggestions, output {"feeds": []}.
+
+The object shape is always:
+{"feeds":[{"name":"string","url":"string","kind":"rss"}]}
+
+Discovery rules:
 - Only suggest feeds you are highly confident exist at the given URL. Do NOT guess.
 - Prefer official blogs, release notes, and changelogs over third-party news sites.
-- If you are unsure about a feed, omit it — returning fewer correct URLs is better than more guessed URLs.`;
+- If you are unsure about a feed, omit it — returning fewer correct URLs is better than more guessed URLs.
+- "kind" is one of "rss", "atom", or "json".`;
 
 /**
  * Build the user message for the source-discovery call. The tag is fenced
