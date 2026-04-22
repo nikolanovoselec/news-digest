@@ -1,14 +1,11 @@
 import type { KnipConfig } from 'knip';
 
-// Phase 0 scaffold: several planned deps and types are not yet consumed by
-// code. They are ignored here and the ignores will be removed as phases add
-// the corresponding imports.
+// Production entry points + test/config files Knip should treat as root.
+// Phase-scaffold tolerances were removed once the corresponding code was
+// imported by real entry points.
 
 const config: KnipConfig = {
   entry: [
-    'astro.config.mjs',
-    'vitest.config.ts',
-    'src/env.d.ts',
     'src/pages/**/*.{astro,ts}',
     'src/middleware/index.ts',
     'src/worker.ts',
@@ -17,24 +14,10 @@ const config: KnipConfig = {
   ],
   project: ['src/**/*.{ts,astro}'],
   ignoreDependencies: [
-    'fast-xml-parser', // consumed by src/lib/sources.ts in Phase 5
-    'zod', // consumed by validation schemas added in Phase 2+
-    '@vite-pwa/astro', // Astro integration, loaded via astro.config.mjs
-    'tailwindcss', // resolved transitively via @tailwindcss/vite plugin
-    '@astrojs/check' // used by `astro check` CLI
+    'tailwindcss' // resolved transitively via @tailwindcss/vite plugin
   ],
   ignoreExportsUsedInFile: true,
-  ignore: [
-    '**/*.test.ts',
-    'src/lib/types.ts',
-    // Phase 2+Track B surfaces — consumed by Phase 3-8 pages that don't exist yet
-    'src/components/**',
-    'src/layouts/**',
-    'src/scripts/**',
-    'src/lib/log.ts',
-    'src/lib/errors.ts',
-    'src/lib/oauth-errors.ts'
-  ]
+  ignore: []
 };
 
 export default config;

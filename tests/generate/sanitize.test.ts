@@ -39,8 +39,10 @@ describe('sanitizeText', () => {
   it('REQ-GEN-006: handles malformed / unbalanced tags', () => {
     // A complete `<b>` is stripped; the content "bold" survives.
     expect(sanitizeText('<b>bold')).toBe('bold');
-    // Once a `>` closes the tag, the surrounding text survives.
-    expect(sanitizeText('a<x>b</x>c')).toBe('abc');
+    // Tag replacement inserts a space to avoid word-concatenation
+    // ("before<br/>after" → "before after", not "beforeafter").
+    // Multiple collapsing spaces normalise to one.
+    expect(sanitizeText('a<x>b</x>c')).toBe('a b c');
     // A `<` with NO `>` anywhere later in the string is preserved — the
     // regex matches only a complete `<...>` pair.
     expect(sanitizeText('5 < 10 and x is bigger')).toBe(

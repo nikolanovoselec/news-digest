@@ -5,14 +5,11 @@
 // of the token contract (e.g. a refactor that drops --accent).
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { join, dirname } from 'node:path';
-
-const cssSource = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), '../../src/styles/global.css'),
-  'utf-8',
-);
+// The Workers test pool doesn't ship public/ + src/ as a filesystem. Vite's
+// `?raw` suffix inlines the file as a module export at build time, which
+// bypasses both the Tailwind transform AND the missing-fs issue.
+// eslint-disable-next-line import/no-unresolved
+import cssSource from '../../src/styles/global.css?raw';
 
 describe('design tokens in global.css', () => {
   it('REQ-DES-001: declares the five type-scale sizes (12, 14, 16, 20, 32 px)', () => {

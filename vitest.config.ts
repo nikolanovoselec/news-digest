@@ -17,6 +17,9 @@ export default defineConfig({
     }
   },
   test: {
-    include: ['tests/**/*.test.ts']
+    include: ['tests/**/*.test.ts'],
+    // Suppress structured-log noise from src/lib/log.ts during tests.
+    // Real failures still print via vitest's own reporter.
+    silent: true
   }
 });
