@@ -4,7 +4,7 @@
 // reduce collapses to instant state changes).
 
 import { describe, it, expect } from 'vitest';
-import globalCss from '../../src/styles/global.css?raw-css';
+import { GLOBAL_CSS as globalCss } from '../fixtures/global-css';
 import baseAstro from '../../src/layouts/Base.astro?raw';
 
 describe('REQ-DES-003: Deliberate motion system', () => {

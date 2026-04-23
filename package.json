@@ -8,9 +8,10 @@
     "build": "astro build && node scripts/merge-worker-handlers.mjs",
     "preview": "wrangler dev",
     "deploy": "astro build && wrangler deploy",
-    "typecheck": "astro check && tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "fixtures": "node scripts/generate-test-fixtures.mjs",
+    "typecheck": "npm run fixtures && astro check && tsc --noEmit",
+    "test": "npm run fixtures && vitest run",
+    "test:watch": "npm run fixtures && vitest",
     "lint": "oxlint src/ tests/ --deny-warnings --ignore-pattern '**/*.astro'",
     "lint:fix": "oxlint src/ tests/ --fix --ignore-pattern '**/*.astro'",
     "knip": "knip"

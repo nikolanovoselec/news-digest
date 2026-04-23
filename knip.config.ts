@@ -12,12 +12,12 @@ const config: KnipConfig = {
     'src/queue/digest-consumer.ts',
     'src/scripts/**/*.ts', // imported from .astro <script> tags which knip can't trace
     'public/theme-init.js',
-    'scripts/merge-worker-handlers.mjs' // invoked by package.json "build" script
+    'scripts/merge-worker-handlers.mjs', // invoked by package.json "build" script
+    'scripts/generate-test-fixtures.mjs' // invoked by package.json "fixtures" script
   ],
   project: ['src/**/*.{ts,astro}'],
   ignoreDependencies: [
-    'tailwindcss', // resolved transitively via @tailwindcss/vite plugin
-    'vite' // transitive peer of vitest; used for Plugin type in vitest.config.ts
+    'tailwindcss' // resolved transitively via @tailwindcss/vite plugin
   ],
   ignoreExportsUsedInFile: true,
   ignore: []
