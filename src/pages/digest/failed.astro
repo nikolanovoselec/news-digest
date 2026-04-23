@@ -147,24 +147,54 @@ const errorCode =
     button.disabled = false;
   }
 
-  // Delegated click binding on <document>. The previous per-element
-  // binding inside init() could miss the button when View Transitions
-  // swapped the DOM before init() ran. Capture-phase delegation fires
-  // for any click that bubbles through a [data-retry-button], no
-  // matter when it enters the tree.
+  // Retry binding — ultra-defensive because a prior version silently
+  // failed on a subset of browsers where the button's own click handler
+  // never attached in time. We now bind THREE paths to guarantee one
+  // fires:
+  //   1. document, capture-phase  — fires first, beats any stop-
+  //                                  propagation a library might do.
+  //   2. document, bubble-phase   — fallback if capture gets clobbered.
+  //   3. direct per-button listener — rebound on every init() call so
+  //                                   a fresh button (post-View-
+  //                                   Transitions) always has it.
+  // Whichever path wins, `handleRetry` paints a status message
+  // synchronously before awaiting fetch, so the user sees immediate
+  // feedback even on a slow network.
+  const BOUND_FLAG = 'retryBound2';
+
+  function onClick(e: Event): void {
+    // All three paths (capture, bubble, direct) point at the same
+    // handler; use a per-event flag to ensure handleRetry runs exactly
+    // once no matter which path fires first.
+    const ev = e as Event & { __retryHandled?: boolean };
+    if (ev.__retryHandled === true) return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest<HTMLButtonElement>('[data-retry-button]');
+    if (button === null) return;
+    const status = document.querySelector<HTMLElement>('[data-retry-status]');
+    if (status === null) return;
+    ev.__retryHandled = true;
+    e.preventDefault();
+    // Synchronous feedback BEFORE fetch so the user always sees the
+    // click land even if the network is slow or the fetch fails.
+    status.textContent = 'Retrying…';
+    button.disabled = true;
+    void handleRetry(button, status);
+  }
+
   function init(): void {
-    if (document.documentElement.dataset['retryBound'] === '1') return;
-    document.documentElement.dataset['retryBound'] = '1';
-    document.addEventListener('click', (e) => {
-      const target = e.target;
-      if (!(target instanceof Element)) return;
-      const button = target.closest<HTMLButtonElement>('[data-retry-button]');
-      if (button === null) return;
-      const status = document.querySelector<HTMLElement>('[data-retry-status]');
-      if (status === null) return;
-      e.preventDefault();
-      void handleRetry(button, status);
-    });
+    // Always rebind direct listener on the button since View Transitions
+    // may have replaced it.
+    const button = document.querySelector<HTMLButtonElement>('[data-retry-button]');
+    if (button !== null && button.dataset['retryBound'] !== '1') {
+      button.dataset['retryBound'] = '1';
+      button.addEventListener('click', onClick);
+    }
+    if (document.documentElement.dataset[BOUND_FLAG] === '1') return;
+    document.documentElement.dataset[BOUND_FLAG] = '1';
+    document.addEventListener('click', onClick, true); // capture
+    document.addEventListener('click', onClick); // bubble fallback
   }
 
   init();
