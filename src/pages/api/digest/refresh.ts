@@ -93,8 +93,28 @@ export async function POST(context: APIContext): Promise<Response> {
     return originResult.response!;
   }
 
+  // Detect a plain HTML <form> submission vs a JSON fetch(). A form
+  // submission always carries application/x-www-form-urlencoded (or
+  // multipart/form-data) so we branch all response paths on this bit:
+  // forms get a 303 redirect the browser can follow natively, fetches
+  // get the JSON contract used by the digest-poll client. This lets
+  // the failed.astro Try-again button work with JS disabled, broken,
+  // or shadowed by a stale bundle — the native <form> POSTs and the
+  // browser follows the 303 to /digest unconditionally.
+  const contentType =
+    context.request.headers.get('content-type')?.toLowerCase() ?? '';
+  const isFormSubmit =
+    contentType.startsWith('application/x-www-form-urlencoded') ||
+    contentType.startsWith('multipart/form-data');
+
   const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
   if (session === null) {
+    if (isFormSubmit) {
+      return new Response(null, {
+        status: 303,
+        headers: { Location: '/api/auth/github/login' },
+      });
+    }
     return errorResponse('unauthorized');
   }
 
@@ -156,6 +176,19 @@ export async function POST(context: APIContext): Promise<Response> {
       reason,
       retry_after_seconds: retryAfterSeconds,
     });
+    if (isFormSubmit) {
+      // Surface the rate-limit reason in the URL so /digest/failed can
+      // render a friendly countdown without any client-side JS.
+      const params = new URLSearchParams({
+        code: 'rate_limited',
+        reason,
+        retry_after: String(retryAfterSeconds),
+      });
+      return new Response(null, {
+        status: 303,
+        headers: { Location: `/digest/failed?${params.toString()}` },
+      });
+    }
     return errorResponse('rate_limited', {
       retry_after_seconds: retryAfterSeconds,
       reason,
@@ -195,6 +228,14 @@ export async function POST(context: APIContext): Promise<Response> {
       user_id: userId,
       reason: 'already_in_progress',
     });
+    if (isFormSubmit) {
+      // Already-in-progress isn't a failure — an older click won
+      // the race and the user should land on /digest to watch it.
+      return new Response(null, {
+        status: 303,
+        headers: { Location: '/digest' },
+      });
+    }
     return errorResponse('already_in_progress');
   }
 
@@ -218,10 +259,15 @@ export async function POST(context: APIContext): Promise<Response> {
     return errorResponse('internal_error');
   }
 
-  const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
+  const headers = new Headers();
   if (session.refreshCookie !== null) {
     headers.append('Set-Cookie', session.refreshCookie);
   }
+  if (isFormSubmit) {
+    headers.set('Location', '/digest');
+    return new Response(null, { status: 303, headers });
+  }
+  headers.set('Content-Type', 'application/json; charset=utf-8');
   return new Response(
     JSON.stringify({ digest_id: digestId, status: 'in_progress' }),
     { status: 202, headers },

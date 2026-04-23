@@ -40,9 +40,18 @@ const ALLOWED_CODES = new Set<string>([
   'all_sources_failed',
   'generation_stalled',
   'user_cancelled',
+  'rate_limited',
 ]);
 const errorCode =
   rawCode !== null && ALLOWED_CODES.has(rawCode) ? rawCode : 'llm_failed';
+
+// Rate-limit metadata forwarded from /api/digest/refresh's 303 redirect.
+const rateLimitReason = url.searchParams.get('reason');
+const retryAfterRaw = url.searchParams.get('retry_after');
+const retryAfterSeconds =
+  retryAfterRaw !== null && /^\d+$/.test(retryAfterRaw)
+    ? Number.parseInt(retryAfterRaw, 10)
+    : null;
 ---
 
 <Base title="Digest failed">
@@ -53,24 +62,45 @@ const errorCode =
       or adjust your sources and schedule in settings.
     </p>
     <div class="failure-page__actions">
-      {/* Plain button — JS hydrates it into the fetch flow. A form with
-          action="/api/digest/refresh" + method="post" caused a 404 when
-          the user clicked before JS hydrated (the SW /api/* rule turned
-          the POST navigate into a 404 on cache miss). */}
-      <button
-        type="button"
-        class="failure-page__retry-button"
-        data-retry-button
+      {/*
+        Native <form> POST to /api/digest/refresh. The endpoint detects
+        the form content-type and responds with a 303 redirect that the
+        browser follows automatically — so Try-again works even when
+        JavaScript is disabled, broken, or shadowed by a stale bundle.
+        The client-side JS below is a pure progressive enhancement that
+        updates the inline status region before the browser navigates.
+      */}
+      <form
+        class="failure-page__retry-form"
+        method="post"
+        action="/api/digest/refresh"
+        data-retry-form
       >
-        Try again
-      </button>
+        <button
+          type="submit"
+          class="failure-page__retry-button"
+          data-retry-button
+        >
+          Try again
+        </button>
+      </form>
     </div>
     <p
       class="failure-page__status"
       data-retry-status
       role="status"
       aria-live="polite"
-    ></p>
+    >
+      {
+        errorCode === 'rate_limited' && (
+          <span>
+            {rateLimitReason === 'daily_cap'
+              ? `Daily refresh limit reached${retryAfterSeconds !== null ? ` — try again in ${Math.ceil(retryAfterSeconds / 60)} min` : ''}.`
+              : `Please wait${retryAfterSeconds !== null ? ` ${retryAfterSeconds} s` : ' a moment'} before retrying.`}
+          </span>
+        )
+      }
+    </p>
     <footer class="failure-page__code">
       <code>{errorCode}</code>
     </footer>
@@ -78,126 +108,35 @@ const errorCode =
 </Base>
 
 <script>
-  // Wire the Try-again button to POST /api/digest/refresh; on 202 we
-  // reload the main /digest view so the poll loop resumes.
-
-  interface RefreshResponse {
-    retry_after_seconds?: number;
-    reason?: 'cooldown' | 'daily_cap';
-    error?: string;
-  }
-
-  function formatDuration(seconds: number): string {
-    if (seconds < 60) return `${Math.ceil(seconds)}s`;
-    if (seconds < 3600) return `${Math.ceil(seconds / 60)}m`;
-    return `${Math.ceil(seconds / 3600)}h`;
-  }
-
-  async function handleRetry(
-    button: HTMLButtonElement,
-    status: HTMLElement,
-  ): Promise<void> {
-    button.disabled = true;
-    status.textContent = 'Retrying…';
-    let res: Response;
-    try {
-      res = await fetch('/api/digest/refresh', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-      });
-    } catch {
-      status.textContent = 'Network error. Please try again in a moment.';
-      button.disabled = false;
-      return;
-    }
-    if (res.status === 429) {
-      let body: RefreshResponse = {};
-      try {
-        body = (await res.json()) as RefreshResponse;
-      } catch {
-        /* ignore */
-      }
-      const seconds =
-        typeof body.retry_after_seconds === 'number' ? body.retry_after_seconds : 300;
-      const label = formatDuration(seconds);
-      status.textContent =
-        body.reason === 'daily_cap'
-          ? `Daily limit reached. Try again in ${label}.`
-          : `Please wait ${label} before retrying.`;
-      // Keep the user on the failure page (no surprise nav) so they can
-      // read the reason. /rate-limited is still reachable via the link.
-      button.disabled = false;
-      return;
-    }
-    if (res.status === 202 || res.status === 409) {
-      status.textContent = 'Generating…';
-      window.location.assign('/digest');
-      return;
-    }
-    // Any other non-OK response → surface the error code.
-    let body: RefreshResponse = {};
-    try {
-      body = (await res.json()) as RefreshResponse;
-    } catch {
-      /* ignore */
-    }
-    status.textContent =
-      body.error ?? `Retry failed (HTTP ${res.status}). Please try again.`;
-    button.disabled = false;
-  }
-
-  // Retry binding — ultra-defensive because a prior version silently
-  // failed on a subset of browsers where the button's own click handler
-  // never attached in time. We now bind THREE paths to guarantee one
-  // fires:
-  //   1. document, capture-phase  — fires first, beats any stop-
-  //                                  propagation a library might do.
-  //   2. document, bubble-phase   — fallback if capture gets clobbered.
-  //   3. direct per-button listener — rebound on every init() call so
-  //                                   a fresh button (post-View-
-  //                                   Transitions) always has it.
-  // Whichever path wins, `handleRetry` paints a status message
-  // synchronously before awaiting fetch, so the user sees immediate
-  // feedback even on a slow network.
-  const BOUND_FLAG = 'retryBound2';
-
-  function onClick(e: Event): void {
-    // All three paths (capture, bubble, direct) point at the same
-    // handler; use a per-event flag to ensure handleRetry runs exactly
-    // once no matter which path fires first.
-    const ev = e as Event & { __retryHandled?: boolean };
-    if (ev.__retryHandled === true) return;
-    const target = e.target;
-    if (!(target instanceof Element)) return;
-    const button = target.closest<HTMLButtonElement>('[data-retry-button]');
-    if (button === null) return;
-    const status = document.querySelector<HTMLElement>('[data-retry-status]');
-    if (status === null) return;
-    ev.__retryHandled = true;
-    e.preventDefault();
-    // Synchronous feedback BEFORE fetch so the user always sees the
-    // click land even if the network is slow or the fetch fails.
-    status.textContent = 'Retrying…';
-    button.disabled = true;
-    void handleRetry(button, status);
-  }
-
+  // Light progressive enhancement on top of the native <form> POST:
+  //   * paint a 'Retrying…' status line synchronously when the form
+  //     submits, so the user gets feedback during the ~1s POST round-
+  //     trip before the browser follows the 303 redirect,
+  //   * disable the submit button to prevent double-clicks.
+  //
+  // If this script never runs (bundle blocked, CSP hiccup, stale SW
+  // etc.) the native form submission still works — the server
+  // responds with a 303 that the browser follows without any JS.
   function init(): void {
-    // Always rebind direct listener on the button since View Transitions
-    // may have replaced it.
-    const button = document.querySelector<HTMLButtonElement>('[data-retry-button]');
-    if (button !== null && button.dataset['retryBound'] !== '1') {
-      button.dataset['retryBound'] = '1';
-      button.addEventListener('click', onClick);
-    }
-    if (document.documentElement.dataset[BOUND_FLAG] === '1') return;
-    document.documentElement.dataset[BOUND_FLAG] = '1';
-    document.addEventListener('click', onClick, true); // capture
-    document.addEventListener('click', onClick); // bubble fallback
+    const form = document.querySelector<HTMLFormElement>('[data-retry-form]');
+    if (form === null) return;
+    if (form.dataset['bound'] === '1') return;
+    form.dataset['bound'] = '1';
+    form.addEventListener('submit', () => {
+      const button = form.querySelector<HTMLButtonElement>('[data-retry-button]');
+      const status = document.querySelector<HTMLElement>('[data-retry-status]');
+      if (button !== null) button.disabled = true;
+      if (status !== null) status.textContent = 'Retrying…';
+      // Fall through — don't call preventDefault(). The native POST
+      // navigates to the 303 Location the endpoint returned.
+    });
   }
 
-  init();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+  } else {
+    init();
+  }
   document.addEventListener('astro:page-load', init);
 </script>
 
