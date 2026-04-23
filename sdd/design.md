@@ -33,7 +33,7 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. The header shows a single theme toggle button with sun and moon icons for the two states.
+1. The user menu contains a single theme toggle control that labels the *target* mode — when the current theme is light it reads "Dark Mode" and shows a moon icon; when dark it reads "Light Mode" and shows a sun icon. Clicking it performs that switch.
 2. Clicking the toggle toggles the theme between `light` and `dark`, persists the choice for the current browser, and propagates the choice to the server so subsequent navigations render the correct theme in the first byte.
 3. On every authenticated or anonymous request, the server renders the document root with the user's chosen theme already applied, so the first paint is never the wrong theme even on slow connections or when client-side scripts are deferred.
 4. When the user has not yet expressed a preference, the theme follows `prefers-color-scheme`.
