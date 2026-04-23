@@ -1,4 +1,5 @@
 -- 0002_article_tags.sql
+-- Implements REQ-GEN-005, REQ-GEN-006
 -- Adds a `tags_json` column to the articles table so each article can
 -- record which of the user's hashtags it belongs to. Used by the
 -- reading-surface filter (click a tag in the strip to show only

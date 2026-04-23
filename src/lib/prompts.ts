@@ -1,4 +1,6 @@
-// Implements REQ-GEN-005, REQ-DISC-001, REQ-DISC-005
+// Implements REQ-GEN-005
+// Implements REQ-DISC-001
+// Implements REQ-DISC-005
 //
 // Centralised LLM prompts for the two calls the product makes:
 //   1. Digest generation — rank + summarise up to 100 candidate headlines.

@@ -121,7 +121,7 @@ A single `generateDigest` function called from two places: the cron dispatcher (
 2. The digest status update uses `WHERE id = ? AND status = 'in_progress'` so a row externally marked `failed` (e.g., by the stuck-sweeper) is never overwritten.
 3. `last_generated_local_date` is updated for both scheduled and manual triggers — a manual refresh consumes today's slot so the scheduled run naturally skips.
 4. Article plaintext (title, one_liner, each bullet in details) is sanitized by stripping HTML tags, stripping control characters, and collapsing whitespace before the insert.
-5. Each article row persists its validated tag list as JSON in the `tags_json` column so the reading surface can filter by tag without consulting the digest generator. Rows written before the column existed are treated as an empty list.
+5. Each article row persists its validated tag list alongside the article so the reading surface can filter by tag without consulting the digest generator. Rows written before tags were captured are treated as an empty list.
 
 **Constraints:** CON-DATA-001, CON-SEC-003
 **Priority:** P0

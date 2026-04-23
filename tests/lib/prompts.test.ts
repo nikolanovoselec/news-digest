@@ -41,8 +41,8 @@ describe('DIGEST_SYSTEM', () => {
 
 describe('digestUserPrompt', () => {
   const sampleHeadlines: Headline[] = [
-    { title: 'Example', url: 'https://example.com/a', source_name: 'hn' },
-    { title: 'Another', url: 'https://example.com/b', source_name: 'rss' },
+    { title: 'Example', url: 'https://example.com/a', source_name: 'hn', source_tags: ['cloudflare'] },
+    { title: 'Another', url: 'https://example.com/b', source_name: 'rss', source_tags: ['cloudflare', 'ai'] },
   ];
 
   it('REQ-GEN-005: digestUserPrompt fences hashtags with triple backticks', () => {
@@ -54,10 +54,18 @@ describe('digestUserPrompt', () => {
 
   it('REQ-GEN-005: digestUserPrompt fences headlines with triple backticks', () => {
     const prompt = digestUserPrompt(['cloudflare'], sampleHeadlines);
-    // JSON.stringify output for the headlines array must appear inside a fenced block.
-    const serialized = JSON.stringify(sampleHeadlines);
+    // The prompt rebuilds a pruned candidate-headline shape (title, url,
+    // source_name, source_tags) before stringifying, so internal-only
+    // fields like snippet don't leak to the model. The test asserts the
+    // pruned form lands inside a triple-backtick fence.
+    const candidateHeadlines = sampleHeadlines.map((h) => ({
+      title: h.title,
+      url: h.url,
+      source_name: h.source_name,
+      source_tags: h.source_tags ?? [],
+    }));
+    const serialized = JSON.stringify(candidateHeadlines);
     expect(prompt).toContain(serialized);
-    // Generic triple-backtick fence containing the serialized JSON.
     const fenceRe = new RegExp(
       '```[\\s\\S]*?' +
         serialized.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&') +
@@ -75,10 +83,47 @@ describe('digestUserPrompt', () => {
 
   it('REQ-GEN-005: digestUserPrompt documents the expected JSON response shape', () => {
     const prompt = digestUserPrompt(['a'], sampleHeadlines);
-    // The prompt must tell the model what to return.
+    // The prompt must tell the model what to return — including the
+    // per-article tags field introduced by REQ-GEN-005 AC 6.
     expect(prompt).toContain('articles');
     expect(prompt).toContain('one_liner');
     expect(prompt).toContain('details');
+    expect(prompt).toContain('tags');
+    expect(prompt).toContain('source_tags');
+  });
+
+  it('REQ-GEN-005: digestUserPrompt strips internal-only fields (snippet) before stringifying', () => {
+    const headlinesWithSnippet: Headline[] = [
+      {
+        title: 'Example',
+        url: 'https://example.com/a',
+        source_name: 'hn',
+        snippet: 'internal-only content',
+        source_tags: ['ai'],
+      },
+    ];
+    const prompt = digestUserPrompt(['ai'], headlinesWithSnippet);
+    expect(prompt).not.toContain('internal-only content');
+    expect(prompt).not.toContain('"snippet"');
+  });
+});
+
+describe('DIGEST_SYSTEM — REQ-GEN-005 AC 5/6/7', () => {
+  it('REQ-GEN-005 AC 7: asks the model to write NYT-style titles in roughly 45–80 characters', () => {
+    // Title-rewrite instruction must appear in the system prompt so
+    // model outputs are consistent across our supported models.
+    expect(DIGEST_SYSTEM).toContain('tags');
+    // Acceptable character-range shorthand — the prompt mentions an
+    // explicit lower and upper bound.
+    expect(DIGEST_SYSTEM).toMatch(/45\s*–\s*80/);
+    expect(DIGEST_SYSTEM.toLowerCase()).toContain('new-york-times');
+  });
+
+  it('REQ-GEN-005 AC 6: instructs the model to emit validated tags', () => {
+    // The system prompt must describe the tags-subset contract so the
+    // model does not hallucinate tags outside the user's hashtag list.
+    expect(DIGEST_SYSTEM).toContain('tags');
+    expect(DIGEST_SYSTEM).toContain("user's interest hashtags");
   });
 });
 
