@@ -48,9 +48,9 @@ describe('renderDigestReadyEmail — REQ-MAIL-001', () => {
     const { text } = renderDigestReadyEmail(
       makeParams({ appUrl: 'https://news-digest.example.com' }),
     );
-    const matches = text.match(/https:\/\/news-digest\.example\.com\/digest/g);
-    expect(matches).not.toBeNull();
-    expect(matches).toHaveLength(1);
+    const link = 'https://news-digest.example.com/digest';
+    const occurrences = text.split(link).length - 1;
+    expect(occurrences).toBe(1);
   });
 
   it('REQ-MAIL-001: text body trims trailing slashes from appUrl', () => {
