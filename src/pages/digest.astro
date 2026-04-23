@@ -88,6 +88,12 @@ const sortedUserTags = [...userTags].sort((a, b) => {
 
 <Base title="Today's digest">
   <section class="digest-page" data-digest-page>
+    {/* a11y: the visible "Today's digest" headline was removed in
+        favour of the brand wordmark carrying the page-header role,
+        but screen readers still need a single h1 per page so skip-
+        to-heading navigation has somewhere to land. Visually hidden
+        but exposed to the a11y tree. */}
+    <h1 class="digest-page__a11y-title">Today's digest</h1>
     <div
       class="digest-page__offline"
       data-offline-banner
@@ -593,6 +599,21 @@ const sortedUserTags = [...userTags].sort((a, b) => {
 
   .digest-page__offline[hidden] {
     display: none;
+  }
+
+  /* Visually-hidden h1 for screen readers + skip-to-heading keyboard
+     nav. Standard "sr-only" utility pattern: clipped to 1×1 but
+     still in the accessibility tree. */
+  .digest-page__a11y-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   /* REQ-READ-001 — countdown-only header now that the title is gone.
