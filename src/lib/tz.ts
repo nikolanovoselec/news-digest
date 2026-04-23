@@ -1,4 +1,4 @@
-// Implements REQ-SET-003, REQ-GEN-001
+// Implements REQ-SET-003
 // Timezone helpers for the cron dispatcher's local-time matching and the
 // daily per-user local_date bookkeeping. All conversions use the runtime's
 // built-in IANA tz database via Intl.DateTimeFormat — no tz data is bundled
@@ -15,9 +15,6 @@ export const DEFAULT_TZ = 'UTC';
  * Return the local date in {@link tz} as `YYYY-MM-DD` for the given
  * Unix timestamp (seconds). Uses Intl.DateTimeFormat so DST transitions
  * are handled correctly — no manual offset math.
- *
- * REQ-GEN-001 uses this to key the per-user "already generated today"
- * flag (`last_generated_local_date`).
  */
 export function localDateInTz(unixSeconds: number, tz: string): string {
   const ms = unixSeconds * 1000;
@@ -45,9 +42,6 @@ export function localDateInTz(unixSeconds: number, tz: string): string {
 /**
  * Return the local hour/minute in {@link tz} for the given Unix timestamp.
  * Hour is 0-23 (not 24), minute is 0-59.
- *
- * REQ-GEN-001 uses this to match users whose `digest_hour:digest_minute`
- * falls inside the current 5-minute window.
  */
 export function localHourMinuteInTz(
   unixSeconds: number,

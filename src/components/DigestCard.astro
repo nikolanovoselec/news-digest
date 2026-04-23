@@ -32,7 +32,7 @@ interface Props {
    * fallback when sourceName is null so the card never renders
    * without any source attribution. */
   sourceUrl?: string | null;
-  /** Article tag list (REQ-GEN-005 AC 6). Empty array when no tags. */
+  /** Article tag list validated against the system allowlist. Empty array when no tags. */
   tags?: string[];
   /** Initial star state for the session user. Drives the button's
    *  glyph (filled vs outline) and aria-pressed attribute on first

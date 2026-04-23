@@ -10,8 +10,8 @@
 //
 // The fan-out runs every {tag × source} pair through a semaphore-backed
 // concurrency cap of 10. A per-pair fetch failure is logged via
-// `source.fetch.failed` but never propagates up — the caller (generate.ts)
-// decides whether `all sources failed` triggers `error_code='all_sources_failed'`.
+// `source.fetch.failed` but never propagates up — the caller decides
+// whether `all sources failed` is a terminal condition.
 // URLs are canonicalised with `~/lib/canonical-url` and deduplicated on
 // the canonical form, with tag-specific feeds given priority so they
 // land first when the 100-item cap is applied upstream.
@@ -31,9 +31,9 @@ import { log } from '~/lib/log';
  * just means a tighter candidate pool, which raises the bar for what
  * gets summarized. */
 const MAX_COMBINED_HEADLINES = 100;
-/** 5-second per-fetch timeout (REQ-GEN-003, AC #4). */
+/** 5-second per-fetch timeout. */
 const FETCH_TIMEOUT_MS = 5_000;
-/** 1 MB cap on the response body (REQ-GEN-003, AC #4). */
+/** 1 MB cap on the response body. */
 const FETCH_MAX_BYTES = 1_024 * 1_024;
 /** Global concurrency cap across every {tag × source} pair. */
 const GLOBAL_CONCURRENCY = 10;
@@ -251,7 +251,7 @@ export async function fetchFromSource(
  * occurrences of a canonical URL, and they also come first in the
  * returned array so upstream 100-cap truncation keeps them.
  *
- * Returned headlines are deduplicated by canonical URL (REQ-GEN-004)
+ * Returned headlines are deduplicated by canonical URL
  * and truncated to {@link MAX_COMBINED_HEADLINES}.
  */
 export async function fanOutForTags(
@@ -373,7 +373,7 @@ export function adaptersForDiscoveredFeeds(
           feed.kind === 'json'
             ? extractJsonFeed(parsed, sourceName)
             : extractRssItems(parsed, sourceName);
-        // Per-feed cap of 20 items for tag-specific sources (REQ-GEN-003).
+        // Per-feed cap of 20 items for tag-specific sources.
         return all.slice(0, DISCOVERED_FEED_ITEM_CAP);
       },
     });

@@ -8,7 +8,7 @@
 //
 // Key format:  `headlines:{source_name}:{tag}`
 // Value:       JSON-serialised `Headline[]`
-// TTL:         600 seconds (REQ-GEN-003, AC #3)
+// TTL:         600 seconds (10-minute amortisation window)
 //
 // Contracts:
 //  - `readCachedHeadlines` returns `null` on miss, on corrupt JSON, or

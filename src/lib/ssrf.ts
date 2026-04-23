@@ -1,4 +1,4 @@
-// Implements REQ-DISC-005, REQ-GEN-003
+// Implements REQ-DISC-005
 // SSRF-safe URL validator for LLM-suggested feed URLs and user-provided
 // article references. Pure string/IP parsing — no network calls.
 //
