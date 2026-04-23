@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import baseSource from '../../src/layouts/Base.astro?raw';
 import userMenuSource from '../../src/components/UserMenu.astro?raw';
+import headerThemeToggleSource from '../../src/components/HeaderThemeToggle.astro?raw';
 // The cloudflare vitest pool can't raw-import .css, so the project
 // generates tests/fixtures/global-css.ts via `npm run fixtures` at
 // pretest time. Use that fixture instead of `?raw` on global.css.
@@ -65,14 +66,39 @@ describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
     expect(baseSource).not.toContain('sidebar');
   });
 
-  it('REQ-PWA-003: UserMenu contains Theme toggle, History, Starred, Settings, Log out', () => {
-    // AC 3 lists the menu entries explicitly. Starred was added in
-    // REQ-STAR-003; the two together give the complete inventory.
-    expect(userMenuSource).toMatch(/data-theme-toggle|user-menu__theme/);
+  it('REQ-PWA-003: UserMenu dropdown contains History, Starred, Settings, Log out', () => {
+    // AC 3 lists the entries that remain inside the dropdown. The
+    // theme toggle moved OUT of the dropdown and into the header as a
+    // standalone sun/moon icon (HeaderThemeToggle) — that assertion
+    // lives in the next test so a regression would point at the right
+    // component.
     expect(userMenuSource).toMatch(/href="\/history"/);
     expect(userMenuSource).toMatch(/href="\/starred"/);
     expect(userMenuSource).toMatch(/href="\/settings"/);
     expect(userMenuSource).toMatch(/action=.*\/api\/auth\/github\/logout|Log out/);
+    // Regression guard: dark mode must NOT reappear inside the menu.
+    expect(userMenuSource).not.toMatch(/>Dark Mode</);
+    expect(userMenuSource).not.toMatch(/user-menu__theme\b/);
+  });
+
+  it('REQ-DES-002 / REQ-PWA-003: HeaderThemeToggle renders a [data-theme-toggle] button with sun + moon glyphs', () => {
+    // Dark mode is a single-tap header control, not a dropdown item.
+    // The HeaderThemeToggle component must ship both SVGs so the CSS
+    // [data-theme] swap has something to show in each mode.
+    expect(headerThemeToggleSource).toMatch(/data-theme-toggle/);
+    expect(headerThemeToggleSource).toMatch(/header-theme-toggle__icon--sun/);
+    expect(headerThemeToggleSource).toMatch(/header-theme-toggle__icon--moon/);
+    expect(headerThemeToggleSource).toMatch(/aria-label="Toggle color theme"/);
+  });
+
+  it('REQ-DES-002 / REQ-PWA-003: Base.astro renders HeaderThemeToggle BEFORE UserMenu for authenticated users (avatar on the right, toggle to its left)', () => {
+    // Left-of-avatar positioning is the entire point of the move — if
+    // a future edit swaps the order, this test catches it.
+    const htt = baseSource.indexOf('HeaderThemeToggle');
+    const um = baseSource.indexOf('<UserMenu');
+    expect(htt).toBeGreaterThan(-1);
+    expect(um).toBeGreaterThan(-1);
+    expect(htt).toBeLessThan(um);
   });
 
   it('REQ-PWA-003: header brand link points at /digest (the app home) for authed users', () => {

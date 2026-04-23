@@ -1,0 +1,107 @@
+---
+// Implements REQ-DES-002
+//
+// Compact sun/moon icon button for the authenticated site header. Sits
+// to the left of the UserMenu avatar so dark mode is a single-tap
+// control, not a dropdown item. Two-SVG pattern — sun is shown in dark
+// mode (click goes to light), moon in light mode — with visibility
+// driven purely by CSS `[data-theme]` selectors so no client JS has to
+// sync icons on every change.
+//
+// The click handler is provided by UserMenu.astro's document-level
+// delegated listener (it catches any `[data-theme-toggle]` button
+// anywhere on the page). This component ships no JS of its own so
+// ThemeToggle.astro's per-button `initThemeToggle` direct binding
+// can't double-fire if both components happen to render.
+---
+
+<button
+  type="button"
+  class="header-theme-toggle focus-ring"
+  aria-label="Toggle color theme"
+  data-theme-toggle
+>
+  <span class="header-theme-toggle__icon header-theme-toggle__icon--sun" aria-hidden="true">
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <circle cx="12" cy="12" r="4"></circle>
+      <path d="M12 2v2"></path>
+      <path d="M12 20v2"></path>
+      <path d="m4.93 4.93 1.41 1.41"></path>
+      <path d="m17.66 17.66 1.41 1.41"></path>
+      <path d="M2 12h2"></path>
+      <path d="M20 12h2"></path>
+      <path d="m6.34 17.66-1.41 1.41"></path>
+      <path d="m19.07 4.93-1.41 1.41"></path>
+    </svg>
+  </span>
+  <span class="header-theme-toggle__icon header-theme-toggle__icon--moon" aria-hidden="true">
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>
+    </svg>
+  </span>
+</button>
+
+<style>
+  /* Match the UserMenu avatar trigger geometry (44px tap target, 32px
+     visual circle, transparent border that becomes visible on hover)
+     so the two controls read as a paired set. */
+  .header-theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 4px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 9999px;
+    color: var(--text);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .header-theme-toggle:hover {
+    border-color: var(--border);
+  }
+
+  .header-theme-toggle__icon {
+    display: none;
+    line-height: 0;
+  }
+  /* Light theme → show moon (click = go dark). Dark theme → show sun
+     (click = go light). Pure CSS swap keyed off the [data-theme]
+     attribute on <html>. */
+  :global([data-theme='light']) .header-theme-toggle__icon--moon {
+    display: inline-flex;
+  }
+  :global([data-theme='dark']) .header-theme-toggle__icon--sun {
+    display: inline-flex;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .header-theme-toggle {
+      transition:
+        color var(--duration-fast) var(--ease),
+        border-color var(--duration-fast) var(--ease);
+    }
+  }
+</style>

@@ -55,55 +55,9 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     />
   </summary>
   <div class="user-menu__panel" role="menu">
-    <button
-      type="button"
-      class="user-menu__item user-menu__theme"
-      role="menuitem"
-      data-theme-toggle
-      aria-label="Toggle color theme"
-    >
-      <span class="user-menu__theme-label" data-theme-label>Dark Mode</span>
-      <span class="user-menu__theme-icon" aria-hidden="true">
-        <svg
-          class="user-menu__theme-svg user-menu__theme-svg--sun"
-          data-theme-icon="sun"
-          xmlns="http://www.w3.org/2000/svg"
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <circle cx="12" cy="12" r="4"></circle>
-          <path d="M12 2v2"></path>
-          <path d="M12 20v2"></path>
-          <path d="m4.93 4.93 1.41 1.41"></path>
-          <path d="m17.66 17.66 1.41 1.41"></path>
-          <path d="M2 12h2"></path>
-          <path d="M20 12h2"></path>
-          <path d="m6.34 17.66-1.41 1.41"></path>
-          <path d="m19.07 4.93-1.41 1.41"></path>
-        </svg>
-        <svg
-          class="user-menu__theme-svg user-menu__theme-svg--moon"
-          data-theme-icon="moon"
-          xmlns="http://www.w3.org/2000/svg"
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>
-        </svg>
-      </span>
-    </button>
+    {/* REQ-DES-002 — Theme toggle moved to the HeaderThemeToggle
+        component (sits to the LEFT of the avatar). Dark mode is no
+        longer buried in this dropdown. */}
     <a
       class="user-menu__item user-menu__row"
       role="menuitem"
@@ -226,36 +180,54 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     display: block;
   }
 
+  /* Mobile (default) sizing — bigger panel, taller rows, base font so
+     the menu is comfortably tappable. Desktop (≥768px) tightens back
+     to the compact variant where the pointer is precise. */
   .user-menu__panel {
     position: absolute;
     top: calc(100% + 8px);
     right: 0;
-    min-width: 200px;
-    padding: 4px;
+    min-width: 260px;
+    padding: 6px;
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 10px;
     display: flex;
     flex-direction: column;
     gap: 2px;
     z-index: 60;
   }
+  @media (min-width: 768px) {
+    .user-menu__panel {
+      min-width: 200px;
+      padding: 4px;
+      border-radius: 8px;
+    }
+  }
 
   .user-menu__item {
     display: flex;
     align-items: center;
-    min-height: 40px;
-    padding: 8px 12px;
+    min-height: 48px;
+    padding: 12px 16px;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     color: var(--text);
     text-decoration: none;
-    font-size: var(--text-sm);
+    font-size: var(--text-base);
     font-family: inherit;
     text-align: left;
     cursor: pointer;
     width: 100%;
+  }
+  @media (min-width: 768px) {
+    .user-menu__item {
+      min-height: 40px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: var(--text-sm);
+    }
   }
   .user-menu__item:hover {
     background: var(--surface);
@@ -266,7 +238,6 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     padding: 0;
   }
 
-  .user-menu__theme,
   .user-menu__row {
     display: flex;
     align-items: center;
@@ -278,28 +249,17 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     align-items: center;
     color: var(--text);
   }
-  .user-menu__theme-label {
-    /* Match Settings / Log out colour — not muted. */
-    color: var(--text);
+  /* Row-icon glyphs — slightly larger on mobile to match the bumped
+     row height and font size. */
+  .user-menu__row-icon svg {
+    width: 22px;
+    height: 22px;
   }
-  .user-menu__theme-icon {
-    display: inline-flex;
-    align-items: center;
-    color: var(--text);
-  }
-  .user-menu__theme-svg {
-    display: inline-flex;
-  }
-  /* Default visibility: assume light theme until syncThemeLabel runs.
-     When light, the button offers "Dark Mode" → show the moon. */
-  .user-menu__theme-svg--sun {
-    display: none;
-  }
-  :global([data-theme='dark']) .user-menu__theme-svg--sun {
-    display: inline-flex;
-  }
-  :global([data-theme='dark']) .user-menu__theme-svg--moon {
-    display: none;
+  @media (min-width: 768px) {
+    .user-menu__row-icon svg {
+      width: 18px;
+      height: 18px;
+    }
   }
 </style>
 
@@ -324,38 +284,18 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
   }
 
   // Close the <details> menu when clicking outside or pressing Escape.
-  // Also keep the "Theme: light/dark" label in sync with the current theme
-  // so the user sees the active state without a second click.
-  /**
-   * The menu item shows the *target* mode — what the user will get if
-   * they click. When currently dark, the button should read "Light Mode"
-   * (and show the sun); when currently light, "Dark Mode" (and show the
-   * moon). Sync the label text + which icon is visible whenever
-   * data-theme flips.
-   */
-  function syncThemeLabel(): void {
-    const isDark = document.documentElement.dataset['theme'] === 'dark';
-    const target = isDark ? 'Light Mode' : 'Dark Mode';
-    document.querySelectorAll<HTMLElement>('[data-theme-label]').forEach((el) => {
-      el.textContent = target;
-    });
-    document.querySelectorAll<HTMLElement>('[data-theme-icon="sun"]').forEach((el) => {
-      el.style.display = isDark ? 'inline-flex' : 'none';
-    });
-    document.querySelectorAll<HTMLElement>('[data-theme-icon="moon"]').forEach((el) => {
-      el.style.display = isDark ? 'none' : 'inline-flex';
-    });
-  }
+  // Icon swapping on HeaderThemeToggle is pure CSS keyed off the
+  // [data-theme] attribute on <html>, so no JS sync is needed.
 
   function init(): void {
-    syncThemeLabel();
-
     // Bind the outside-click / Escape / theme-toggle handlers exactly
     // ONCE per page, regardless of how many UserMenu components mount.
     if (!document.documentElement.dataset['userMenuGlobalBound']) {
       document.documentElement.dataset['userMenuGlobalBound'] = '1';
       // Theme toggle first (capture-phase so it runs before the
-      // outside-click menu-close handler).
+      // outside-click menu-close handler). Catches the
+      // [data-theme-toggle] button the HeaderThemeToggle component
+      // renders next to the avatar.
       document.addEventListener('click', handleThemeClick, true);
       document.addEventListener('click', (e) => {
         document
@@ -372,15 +312,6 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
           .forEach((menu) => {
             menu.open = false;
           });
-      });
-    }
-
-    // Update the label whenever data-theme changes on <html>.
-    if (!document.documentElement.dataset['userMenuObserverBound']) {
-      document.documentElement.dataset['userMenuObserverBound'] = '1';
-      new MutationObserver(syncThemeLabel).observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ['data-theme'],
       });
     }
   }

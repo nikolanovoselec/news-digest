@@ -8,6 +8,7 @@
 import { ClientRouter } from 'astro:transitions';
 import ThemeToggle from '~/components/ThemeToggle.astro';
 import UserMenu from '~/components/UserMenu.astro';
+import HeaderThemeToggle from '~/components/HeaderThemeToggle.astro';
 import '~/styles/global.css';
 
 interface Props {
@@ -192,16 +193,19 @@ const initialTheme = cookieTheme ?? 'light';
       </a>
       <nav class="site-header__nav" aria-label="Primary">
         {/* Anonymous pages (landing, logged-out error pages) keep the
-            standalone toggle so signed-out users can still flip themes.
-            Authenticated pages move theme toggle + History into the
-            UserMenu dropdown to keep the header minimal (brand /
-            avatar only). */}
+            standalone ThemeToggle because there's no UserMenu on those
+            pages to provide the delegated click handler.
+            Authenticated pages get a compact HeaderThemeToggle to the
+            LEFT of the avatar — the sun/moon icon is a single-tap
+            control; dark mode is no longer buried in the UserMenu
+            dropdown. */}
         {!Astro.locals.user && <ThemeToggle />}
         {/* UserMenu is NOT hidden during firstRun — the user still needs
             a way to log out if they change their mind about onboarding,
             and the Settings link inside the menu points at the page
             they're already on (harmless). REQ-SET-006 gates navigation
             to other destinations; user identity controls are exempt. */}
+        {Astro.locals.user && <HeaderThemeToggle />}
         {Astro.locals.user && (
           <UserMenu email={Astro.locals.user.email} login={Astro.locals.user.gh_login} />
         )}
@@ -307,16 +311,18 @@ const initialTheme = cookieTheme ?? 'light';
       /* Scramble target uses a ghost/live pair so the scrambling
          never perturbs the surrounding footer layout:
            - .ghost renders the target word ("Codeflare") in the
-             footer's natural (proportional) font and is the ONLY
-             element that occupies layout width.
+             footer's natural font and is the ONLY element that
+             occupies layout width.
            - .live sits absolute on top of .ghost with visibility,
              takes up zero layout space, and receives the scramble
              text via textContent from /scramble.js.
-         The live layer uses a monospace stack so the moving chars
-         each occupy a uniform horizontal slot and don't shift
-         within the fixed ghost width. overflow:visible on the wrapper
-         lets marginally-wider chars (W, M) paint past the ghost
-         without re-flowing the parent's baseline. */
+         The live layer INHERITS font-family/weight/letter-spacing
+         from the surrounding footer copy so "Codeflare" reads as
+         part of the same sentence — previously it was rendered in
+         monospace and stuck out visually against the sans-serif
+         uppercase footer. The ghost's reserved width still prevents
+         any char-width wobble during the animation from reflowing
+         the '©' and 'Gray Matter GmbH' to its right. */
       .site-footer__scramble {
         position: relative;
         display: inline-block;
@@ -324,16 +330,21 @@ const initialTheme = cookieTheme ?? 'light';
       }
       .site-footer__scramble-ghost {
         /* Invisible but lays out — this is what reserves "Codeflare"'s
-           width in the footer's natural font so '·' and '©' never
-           shift regardless of what the scrambler paints. */
+           width in the footer's natural font so '©' never shifts
+           regardless of what the scrambler paints. */
         visibility: hidden;
       }
       .site-footer__scramble-live {
         position: absolute;
         inset: 0;
         display: inline-block;
-        font-family:
-          ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        /* Inherit font stack + weight + letter-spacing from the
+           surrounding .site-footer rule so this reads as the same
+           text as "Built with" / "Gray Matter GmbH". */
+        font-family: inherit;
+        font-weight: inherit;
+        letter-spacing: inherit;
+        text-transform: inherit;
         text-align: left;
         white-space: pre;
         overflow: hidden;
