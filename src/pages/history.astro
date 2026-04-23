@@ -126,9 +126,9 @@ function formatHourMinute(unixSeconds: number): string {
         <input
           type="search"
           class="history__search-input"
-          placeholder="Search coming soon…"
+          placeholder="Search titles and summaries…"
           data-history-search
-          disabled
+          autocomplete="off"
         />
       </label>
     </header>
@@ -203,6 +203,116 @@ function formatHourMinute(unixSeconds: number): string {
     }
   </section>
 </Base>
+
+<script>
+  // Client-side search for the history page.
+  //
+  // The day-grouped list already renders every article's title +
+  // excerpt into the DOM (the server sends all 7 days at once), so a
+  // real search is a simple visibility filter — no network, no
+  // indexing service, no debounce needed for the size of the dataset
+  // (typical: 7 days × ~30 articles/day = ~210 rows).
+  //
+  // Behaviour:
+  //   - Empty query → show every row, auto-open every <details>
+  //     collapses stay where the user left them.
+  //   - Non-empty query → case-insensitive substring match against
+  //     each article's title + visible excerpt. Articles that match
+  //     stay visible; others get hidden via a data-attribute so CSS
+  //     can pick up the toggle.
+  //   - Day wrappers that end up with zero visible articles hide too,
+  //     so the user doesn't see empty day headers.
+  //   - While searching, we auto-expand every <details> so matches
+  //     anywhere in the 7-day window surface without the user having
+  //     to click each day open.
+  //
+  // Tear down on astro:before-swap so the listener doesn't leak
+  // across View Transition navigations.
+  function initHistorySearch(): () => void {
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-history-search]',
+    );
+    if (input === null) return () => {};
+    const days = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-history-day]'),
+    );
+    type CardEntry = { el: HTMLElement; haystack: string };
+    const cards: CardEntry[] = [];
+    for (const day of days) {
+      const dayCards = day.querySelectorAll<HTMLElement>('[data-digest-card]');
+      for (const card of Array.from(dayCards)) {
+        const title =
+          card.querySelector('.digest-card__title')?.textContent ?? '';
+        const excerpt =
+          card.querySelector('.digest-card__one-liner')?.textContent ?? '';
+        cards.push({ el: card, haystack: (title + ' ' + excerpt).toLowerCase() });
+      }
+    }
+    const originalOpenState = days.map((day) => {
+      const details = day.querySelector('details');
+      return details?.hasAttribute('open') ?? false;
+    });
+
+    const apply = (): void => {
+      const q = input.value.trim().toLowerCase();
+      const searching = q !== '';
+      for (const { el, haystack } of cards) {
+        const match = searching ? haystack.includes(q) : true;
+        el.hidden = !match;
+      }
+      days.forEach((day, idx) => {
+        const visible = day.querySelectorAll<HTMLElement>(
+          '[data-digest-card]:not([hidden])',
+        ).length;
+        day.hidden = searching && visible === 0;
+        const details = day.querySelector<HTMLDetailsElement>('details');
+        if (details !== null) {
+          if (searching) {
+            details.open = visible > 0;
+          } else {
+            details.open = originalOpenState[idx] ?? false;
+          }
+        }
+      });
+      const anyVisibleDay = days.some((d) => !d.hidden);
+      const empty = document.querySelector<HTMLElement>('[data-history-empty]');
+      if (empty !== null) {
+        // The server-rendered empty state (no rows at all) should
+        // stay as-is; this branch only creates a transient search-
+        // empty message when the user's query returns nothing.
+        let noMatchEl = document.querySelector<HTMLElement>(
+          '[data-search-nomatch]',
+        );
+        if (searching && !anyVisibleDay && cards.length > 0) {
+          if (noMatchEl === null) {
+            noMatchEl = document.createElement('p');
+            noMatchEl.className = 'history__empty';
+            noMatchEl.setAttribute('data-search-nomatch', '');
+            const list = document.querySelector('[data-history-list]');
+            list?.parentElement?.appendChild(noMatchEl);
+          }
+          noMatchEl.textContent = `No articles match "${input.value.trim()}".`;
+          noMatchEl.hidden = false;
+        } else if (noMatchEl !== null) {
+          noMatchEl.hidden = true;
+        }
+      }
+    };
+
+    input.addEventListener('input', apply);
+    return () => {
+      input.removeEventListener('input', apply);
+    };
+  }
+
+  let teardown = initHistorySearch();
+  document.addEventListener('astro:before-swap', () => {
+    teardown();
+  }, { once: true });
+  document.addEventListener('astro:page-load', () => {
+    teardown = initHistorySearch();
+  });
+</script>
 
 <style>
   .history {

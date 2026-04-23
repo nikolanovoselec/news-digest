@@ -172,10 +172,10 @@ const displaySourceName = resolveDisplaySource();
               type="button"
               class="digest-card__tag-trigger"
               data-tag-trigger
-              aria-label={`Show tags for ${title}`}
+              aria-label={`Show ${tags.length} tag${tags.length === 1 ? '' : 's'} for ${title}`}
               aria-expanded="false"
             >
-              #
+              #{tags.length > 1 ? tags.length : ''}
             </button>
             <div class="digest-card__tag-popover" role="region">
               {tags.map((t) => (
