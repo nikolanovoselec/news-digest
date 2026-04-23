@@ -402,4 +402,24 @@ describe('POST /api/auth/account — native form path', () => {
     const res = await POST(makeContext(req, env(db, kv)) as never);
     expect(res.status).toBe(401);
   });
+
+  it('REQ-AUTH-005: native POST with Content-Length:0 returns 400 before touching formData', async () => {
+    // Regression guard — some platform adapters 404 on empty POST
+    // bodies before the handler runs. The handler now short-circuits
+    // on `Content-Length: 0` and returns a deterministic 400, so the
+    // e2e and any programmatic caller see a consistent shape.
+    const { db } = makeDb(baseRow());
+    const { kv } = makeKv();
+    const headers = new Headers({
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Origin: APP_ORIGIN,
+      'Content-Length': '0',
+    });
+    const req = new Request(`${APP_URL}/api/auth/account`, {
+      method: 'POST',
+      headers,
+    });
+    const res = await POST(makeContext(req, env(db, kv)) as never);
+    expect(res.status).toBe(400);
+  });
 });

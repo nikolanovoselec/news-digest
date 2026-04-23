@@ -148,6 +148,18 @@ export async function POST(context: APIContext): Promise<Response> {
   // redirect so the browser navigates to the landing page with a
   // query param the UI can pick up to show "your account was
   // deleted" confirmation.
+  // Guard: reject an explicitly empty body before touching
+  // formData(). Native browser form POSTs set Content-Length to the
+  // encoded length, so a zero here means a programmatic caller sent
+  // nothing — which can't satisfy the confirmation contract anyway.
+  // Also cheaper than letting formData() throw and catching the
+  // TypeError. Absent header (chunked encoding) passes through and
+  // takes the try/catch path below as before.
+  const contentLength = context.request.headers.get('content-length');
+  if (contentLength === '0') {
+    return errorResponse('bad_request');
+  }
+
   let confirm: FormDataEntryValue | null = null;
   try {
     const form = await context.request.formData();
