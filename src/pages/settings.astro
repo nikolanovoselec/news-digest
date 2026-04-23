@@ -91,8 +91,8 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           src="/swiss-post.svg"
           alt="Swiss Post"
           class="settings__sponsor-logo"
-          width="56"
-          height="56"
+          width="96"
+          height="96"
         />
         <span class="settings__sponsor-caption">
           Powered by Security Architecture @ Swiss Post
@@ -477,18 +477,21 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     gap: 0.5rem;
   }
 
-  /* Sponsor/credit block between hero and stats — small-caps caption
-     to the right of the Swiss Post logo so it reads as chrome-attribution,
-     not a content section. */
+  /* Sponsor/credit block between hero and stats. Logo on top, caption
+     below, both centred horizontally across the settings column so the
+     attribution reads as a deliberate credit plate rather than inline
+     chrome. */
   .settings__sponsor {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 1rem;
-    padding: 0.75rem 0;
+    gap: 0.75rem;
+    padding: 1rem 0;
+    text-align: center;
   }
   .settings__sponsor-logo {
-    width: 48px;
-    height: 48px;
+    width: 96px;
+    height: 96px;
     flex-shrink: 0;
   }
   .settings__sponsor-caption {
