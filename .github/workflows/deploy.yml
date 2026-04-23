@@ -10,6 +10,11 @@ concurrency:
 permissions:
   contents: read
 
+# Opt actions/checkout@v4 + actions/setup-node@v4 into the runner's
+# Node.js 24 interpreter so the Node-20 deprecation warning goes away.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   deploy:
     name: Deploy to Cloudflare Workers

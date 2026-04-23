@@ -1,0 +1,49 @@
+# Dependabot configuration — auto-PR for npm + GitHub Actions updates.
+#
+# Scope:
+#   - npm  root package.json (the whole project's runtime + tooling)
+#   - github-actions in .github/workflows (keeps action pins current
+#     so Node.js 20 / CodeQL v3 style deprecations never silently pile
+#     up again; Dependabot will PR the version bumps automatically).
+#
+# Cadence: weekly, Mondays 06:00 UTC — same window as the CodeQL +
+# Scorecard cron so CI load stays in one predictable slot.
+
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: UTC
+    open-pull-requests-limit: 5
+    # Group dev-deps into a single PR per week so the review surface
+    # stays manageable; runtime updates get individual PRs because
+    # each one should be reviewed for security + behaviour impact.
+    groups:
+      dev-dependencies:
+        dependency-type: development
+    commit-message:
+      prefix: chore
+      prefix-development: chore
+      include: scope
+    labels:
+      - dependencies
+      - npm
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: UTC
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+      include: scope
+    labels:
+      - dependencies
+      - github-actions

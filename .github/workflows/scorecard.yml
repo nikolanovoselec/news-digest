@@ -9,6 +9,13 @@ on:
 
 permissions: read-all
 
+# Opt every JS action in this workflow into Node.js 24 — silences
+# the Node-20 deprecation warning on actions/checkout@v4 +
+# actions/upload-artifact@v4 until those ship a v5 with Node-24
+# bundles of their own.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 concurrency:
   group: scorecard-${{ github.ref }}
   cancel-in-progress: true
@@ -42,6 +49,6 @@ jobs:
           retention-days: 5
 
       - name: Upload to code-scanning
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
