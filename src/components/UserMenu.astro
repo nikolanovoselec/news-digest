@@ -170,16 +170,23 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
 </style>
 
 <script>
-  // Wire every [data-theme-toggle] on the page so the theme toggle inside
-  // UserMenu works even though ThemeToggle.astro is not rendered on
-  // authenticated pages. (Astro component-level scripts are only bundled
-  // when their component renders, so without this the click was a no-op.)
-  import { initThemeToggle } from '~/scripts/theme-toggle';
+  // Theme toggling via delegated click handler on document. Works no
+  // matter when [data-theme-toggle] enters the DOM (e.g., after Astro
+  // view transitions re-render UserMenu), and doesn't depend on the
+  // ThemeToggle.astro component's inline script shipping on pages
+  // where that component isn't rendered.
+  import { toggleTheme } from '~/scripts/theme-toggle';
 
-  function wireThemeButtons(): void {
-    document
-      .querySelectorAll<HTMLButtonElement>('[data-theme-toggle]')
-      .forEach((b) => initThemeToggle(b));
+  function handleThemeClick(e: MouseEvent): void {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest<HTMLButtonElement>('[data-theme-toggle]');
+    if (button === null) return;
+    // Let the <details> stay open so the user can see the Theme: line
+    // flip, but stop propagation so the outside-click close handler
+    // doesn't immediately shut the menu behind us.
+    e.preventDefault();
+    toggleTheme(document, localStorage, (q) => window.matchMedia(q));
   }
 
   // Close the <details> menu when clicking outside or pressing Escape.
@@ -195,14 +202,15 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
   }
 
   function init(): void {
-    wireThemeButtons();
     syncThemeLabel();
 
-    // Bind the outside-click / Escape handlers exactly ONCE per page,
-    // regardless of how many UserMenu components are on it. They close
-    // every open <details data-user-menu> in a single pass.
+    // Bind the outside-click / Escape / theme-toggle handlers exactly
+    // ONCE per page, regardless of how many UserMenu components mount.
     if (!document.documentElement.dataset['userMenuGlobalBound']) {
       document.documentElement.dataset['userMenuGlobalBound'] = '1';
+      // Theme toggle first (capture-phase so it runs before the
+      // outside-click menu-close handler).
+      document.addEventListener('click', handleThemeClick, true);
       document.addEventListener('click', (e) => {
         document
           .querySelectorAll<HTMLDetailsElement>('[data-user-menu][open]')

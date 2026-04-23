@@ -77,10 +77,12 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       <p class="settings__subtitle">{heroBody}</p>
     </header>
 
+    {!isFirstRun && <StatsWidget />}
+
     <form class="settings__form" data-settings-form>
       {/* Interests moved to the top of /digest — the tag strip there is
-          the sole editor for the user's hashtags. Settings now only
-          controls schedule, model, and delivery. */}
+          the sole editor for the user's hashtags. Settings controls
+          schedule, model, and delivery only. */}
       <fieldset class="settings__section">
         <legend class="settings__legend">Schedule</legend>
         <label class="settings__field">
@@ -101,23 +103,21 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
         </div>
       </fieldset>
 
-      <details class="settings__section settings__advanced">
-        <summary class="settings__legend">Advanced</summary>
-        <div class="settings__advanced-body">
-          <label class="settings__field">
-            <span class="settings__field-label">Summary model</span>
-            <ModelSelect selected={currentModelId} />
-          </label>
-          <label class="settings__toggle">
-            <input
-              type="checkbox"
-              data-email-toggle
-              checked={emailEnabled}
-            />
-            <span>Email me when my daily digest is ready</span>
-          </label>
-        </div>
-      </details>
+      <fieldset class="settings__section">
+        <legend class="settings__legend">Summary</legend>
+        <label class="settings__field">
+          <span class="settings__field-label">Model</span>
+          <ModelSelect selected={currentModelId} />
+        </label>
+        <label class="settings__toggle">
+          <input
+            type="checkbox"
+            data-email-toggle
+            checked={emailEnabled}
+          />
+          <span>Email me when my daily digest is ready</span>
+        </label>
+      </fieldset>
 
       <div class="settings__actions">
         <button type="submit" class="settings__submit" data-settings-submit>
@@ -130,7 +130,6 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     {
       !isFirstRun && (
         <section class="settings__secondary">
-          <StatsWidget />
           <InstallPrompt />
           <form
             method="post"
