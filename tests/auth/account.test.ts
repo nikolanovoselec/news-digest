@@ -403,11 +403,15 @@ describe('POST /api/auth/account — native form path', () => {
     expect(res.status).toBe(401);
   });
 
-  it('REQ-AUTH-005: native POST with Content-Length:0 returns 400 before touching formData', async () => {
-    // Regression guard — some platform adapters 404 on empty POST
-    // bodies before the handler runs. The handler now short-circuits
-    // on `Content-Length: 0` and returns a deterministic 400, so the
-    // e2e and any programmatic caller see a consistent shape.
+  it('REQ-AUTH-005: native POST with Content-Length:0 falls through to deleteAccountCore (Origin → session → confirm)', async () => {
+    // Regression guard — an empty POST body (Content-Length:0) must
+    // NOT short-circuit past the Origin + session checks. Prior
+    // revision returned 400 directly on empty body, which leaked a
+    // generic bad_request response for CSRF probes that should
+    // have been 403 forbidden_origin. The refactored handler
+    // tolerates empty body (confirm=null) and lets deleteAccountCore
+    // do ordered validation. With a valid Origin but no session
+    // cookie, the correct response is 401 unauthorized.
     const { db } = makeDb(baseRow());
     const { kv } = makeKv();
     const headers = new Headers({
@@ -420,6 +424,38 @@ describe('POST /api/auth/account — native form path', () => {
       headers,
     });
     const res = await POST(makeContext(req, env(db, kv)) as never);
+    // No session → 401; if we ever regress and short-circuit to 400,
+    // the CSRF-probe-gets-generic-400 bug is back.
+    expect(res.status).toBe(401);
+  });
+
+  it('REQ-AUTH-005: native POST with Content-Length:0 AND a valid session returns 400 confirmation_required', async () => {
+    // With Origin + session both valid, the empty-body path reaches
+    // the confirm check in deleteAccountCore and returns 400
+    // confirmation_required — the documented contract for a
+    // same-origin authenticated caller that forgot to include the
+    // confirm field.
+    const token = await signSession(
+      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
+      JWT_SECRET,
+    );
+    const { db, runCalls } = makeDb(baseRow());
+    const { kv } = makeKv();
+    const headers = new Headers({
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Origin: APP_ORIGIN,
+      Cookie: `${SESSION_COOKIE_NAME}=${token}`,
+      'Content-Length': '0',
+    });
+    const req = new Request(`${APP_URL}/api/auth/account`, {
+      method: 'POST',
+      headers,
+    });
+    const res = await POST(makeContext(req, env(db, kv)) as never);
     expect(res.status).toBe(400);
+    // Must NOT have deleted the user — regression guard that an
+    // empty body can't accidentally trip the cascade.
+    const del = runCalls.find((c) => c.sql.startsWith('DELETE FROM users'));
+    expect(del).toBeUndefined();
   });
 });

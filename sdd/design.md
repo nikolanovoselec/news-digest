@@ -11,7 +11,7 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. Typography uses two system-only font stacks: a sans stack (`-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif`) for body and UI chrome, and an editorial serif stack (`Charter, "Iowan Old Style", Georgia, "Noto Serif", "Source Serif Pro", serif`) for article titles, the dashboard digest headline, and other long-form reading surfaces. Five sizes (12, 14, 16, 20, 32 px) and two weights (400 body, 600 headings and labels) apply to both stacks; no webfont is downloaded.
+1. Typography uses two system-only font stacks: a sans stack (`-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif`) for body and UI chrome, and an editorial serif stack (`Charter, "Iowan Old Style", Georgia, "Noto Serif", "Source Serif Pro", serif`) for article titles and other long-form reading surfaces. Five sizes (12, 14, 16, 20, 32 px) and two weights (400 body, 600 headings and labels) apply to both stacks; no webfont is downloaded.
 2. The palette is restricted to neutral grays with a single accent color per theme; no decorative gradients or drop shadows appear on steady-state UI surfaces. Motion-driven gradients (e.g., skeleton loading shimmer specifically required by another REQ) are exempt.
 3. Inputs render with a minimum 16 px font size to prevent iOS zoom-on-focus.
 4. Every interactive element shows a visible focus ring on keyboard focus.

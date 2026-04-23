@@ -135,7 +135,7 @@ Native-form transport path for account deletion. Accepts a `application/x-www-fo
 }
 ```
 
-Returns up to 30 articles from the global pool filtered by the session user's active hashtags, ordered by `published_at DESC`. `last_scrape_run` is the most recent completed `scrape_runs` row; `next_scrape_at` is `started_at + 3600` (unix seconds). The pool is always populated — no `live` flag or skeleton state.
+Returns up to 50 articles from the global pool filtered by the session user's active hashtags, ordered by `published_at DESC`. `last_scrape_run` is the most recent completed `scrape_runs` row; `next_scrape_at` is `started_at + 3600` (unix seconds). The pool is always populated — no `live` flag or skeleton state.
 
 **Implements:** [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest)
 

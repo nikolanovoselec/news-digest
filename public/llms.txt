@@ -8,7 +8,7 @@ News Digest is a personal-use tool — every surface beyond the landing page req
 
 - Scrapes ~50 curated sources hourly (AI labs, cloud vendors, security, DevOps, databases, languages, community aggregators).
 - Runs a single chunked LLM pass per hour that rewrites titles in NYT-style prose, produces 1–3 paragraph summaries, tags each article against a 20-slug allowlist, and collapses duplicate coverage across sources.
-- Writes everything to a shared global pool (D1). Per-user dashboards are `SELECT ... WHERE tag IN (<user's tags>) ORDER BY published_at DESC LIMIT 30`.
+- Writes everything to a shared global pool (D1). Per-user dashboards are `SELECT ... WHERE tag IN (<user's tags>) ORDER BY published_at DESC LIMIT 50`.
 - Sends at most one daily email per user at their configured local time — a bare notification with a link, no content in the mail.
 
 ## Technology

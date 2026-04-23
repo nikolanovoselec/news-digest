@@ -60,7 +60,7 @@ observability, rust, python, postgres, threat-intel.
 
 1. GitHub OAuth → new account seeded with 20 default tags
 2. Settings: pick local digest-ready time, toggle email, restore-defaults button
-3. Dashboard `/digest`: 30 newest articles matching user's tags, "Last updated at HH:MM · Next update in Xm Ys" countdown
+3. Dashboard `/digest`: 50 newest articles matching user's tags, "Last updated at HH:MM · Next update in Xm Ys" countdown
 4. Per-card: source badge, star button, tag-disclosure
 5. Article detail: title, small-caps metadata, drop-cap body, "Read at source" (single-source direct link; multi-source modal)
 6. `/starred`: user's starred articles (survive the 7-day retention cutoff)
