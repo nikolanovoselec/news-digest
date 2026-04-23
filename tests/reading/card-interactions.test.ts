@@ -176,7 +176,10 @@ describe('handleStarClick — REQ-STAR-001 AC 1', () => {
   });
 
   it('REQ-STAR-001: a button with no data-article-id is a no-op (no fetch)', async () => {
-    const btn = makeStarButton({ articleId: undefined, initiallyPressed: false });
+    // Omit articleId entirely — under exactOptionalPropertyTypes the
+    // call must not pass `undefined`, and the absence of the property
+    // is what DigestCard would actually emit if the id were missing.
+    const btn = makeStarButton({ initiallyPressed: false });
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
