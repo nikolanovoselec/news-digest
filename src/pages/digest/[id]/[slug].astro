@@ -3,10 +3,12 @@
 //
 // Article detail view. Renders the article's title, each details
 // paragraph as a <p>, and a prominent "Read at source" affordance.
-// When the article was clustered from multiple sources (entries in
-// `article_sources`), the affordance becomes a "Read at source (+N)"
-// button that opens the <AltSourcesModal /> dialog; otherwise it
-// stays a direct link to the primary source.
+// The label is ALWAYS "Read at source" (no "(+N)" suffix); the
+// click behaviour branches: when the article was clustered from
+// multiple sources (entries in `article_sources`) the button opens
+// the <AltSourcesModal /> picker so the reader chooses which
+// outlet to open; a single-source article is a direct link to
+// primary_source_url.
 //
 // All text is rendered with Astro's default `{expression}` escaping —
 // the component NEVER sets raw HTML, never runs a markdown parser,
@@ -204,9 +206,13 @@ if (rawSource !== '') {
 }
 
 const altCount = altSources.length;
-const readAtLabel = altCount === 0
-  ? 'Read at source'
-  : `Read at source (+${altCount})`;
+// Label is always plain "Read at source" — whether there's one
+// source or many. Click behaviour diverges: single-source → direct
+// navigation to primary_source_url; multi-source → open the
+// <AltSourcesModal /> picker so the reader chooses which outlet to
+// read. The '+N' count hint was removed per user request (it leaked
+// implementation detail into what should just be a read affordance).
+const readAtLabel = 'Read at source';
 
 // Star/read state exposed to the template so the follow-up star-feature
 // agent can wire the button without another data pass. Referenced

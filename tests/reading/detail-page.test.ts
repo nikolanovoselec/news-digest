@@ -72,10 +72,14 @@ describe('detail page source contract — REQ-READ-002', () => {
     );
   });
 
-  it('REQ-READ-002: button label is "Read at source (+N)" for multi-source', () => {
-    // readAtLabel is the single source of truth for the copy — the
-    // detail-page uses a template literal `Read at source (+${altCount})`.
-    expect(detailSource).toMatch(/Read at source \(\+\$\{altCount\}\)/);
+  it('REQ-READ-002: button label is plain "Read at source" — no (+N) suffix in either branch', () => {
+    // Per user ask: the label never leaks the alt-source count.
+    // Single-source → direct link, multi-source → button that opens
+    // the picker; the *copy* is identical in both branches so the
+    // reader sees the same affordance either way.
+    expect(detailSource).toContain("'Read at source'");
+    expect(detailSource).not.toMatch(/Read at source \(\+\$\{altCount\}\)/);
+    expect(detailSource).not.toMatch(/Read at source \(\+/);
   });
 
   it('REQ-READ-002: header carries transition:name for shared-element morph back to card', () => {

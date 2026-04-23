@@ -142,8 +142,8 @@ const displaySourceName = resolveDisplaySource();
       >
         <svg
           class="digest-card__star-icon digest-card__star-icon--filled"
-          width="14"
-          height="14"
+          width="15"
+          height="15"
           viewBox="0 0 24 24"
           fill="currentColor"
           aria-hidden="true"
@@ -152,8 +152,8 @@ const displaySourceName = resolveDisplaySource();
         </svg>
         <svg
           class="digest-card__star-icon digest-card__star-icon--outline"
-          width="14"
-          height="14"
+          width="15"
+          height="15"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -253,6 +253,9 @@ const displaySourceName = resolveDisplaySource();
   }
   .digest-card__footer-right {
     justify-content: flex-end;
+    /* Small separator between the star pill and the # pill so they
+       read as two discrete controls rather than a joined bar. */
+    gap: 8px;
   }
   .digest-card__footer-center {
     flex: 0 0 auto;
@@ -269,14 +272,17 @@ const displaySourceName = resolveDisplaySource();
   /* Star toggle — matches the # trigger's inverted-theme pill when
      starred (aria-pressed='true'): filled background = var(--text),
      glyph = var(--bg). Unstarred stays as a quiet muted outline so
-     most cards don't shout "I'm starred!" at rest. */
+     most cards don't shout "I'm starred!" at rest.
+     Geometry is DELIBERATELY identical to .digest-card__tag-trigger
+     (same height, same padding, same border-radius) so the two
+     buttons read as a paired set and align on a single baseline. */
   .digest-card__star {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 0;
-    min-height: 0;
-    padding: 3px 7px;
+    height: 26px;
+    min-width: 26px;
+    padding: 0 7px;
     background: transparent;
     border: 0;
     border-radius: 4px;
@@ -370,9 +376,9 @@ const displaySourceName = resolveDisplaySource();
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 3px 7px;
-    min-width: 0;
-    min-height: 0;
+    height: 26px;
+    min-width: 26px;
+    padding: 0 7px;
     background: var(--text);
     border: 0;
     border-radius: 4px;

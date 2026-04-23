@@ -110,8 +110,10 @@ describe('history.astro — REQ-HIST-001', () => {
     expect(historyPageSource).toContain('No articles in the last 7 days.');
   });
 
-  it('REQ-HIST-001: UserMenu link label reads "History" (rename to Search & History is a future phase)', () => {
+  it('REQ-HIST-001: UserMenu link label reads "Search & History" (route stays /history)', () => {
     expect(userMenuSource).toContain('href="/history"');
-    expect(userMenuSource).toMatch(/<span>History<\/span>/);
+    // The label now advertises the search affordance that lives on
+    // the /history page. Route is unchanged so bookmarks survive.
+    expect(userMenuSource).toMatch(/Search\s*&amp;\s*History/);
   });
 });

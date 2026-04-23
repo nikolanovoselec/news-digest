@@ -63,7 +63,7 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
       role="menuitem"
       href="/history"
     >
-      <span>History</span>
+      <span>Search &amp; History</span>
       <span class="user-menu__row-icon" aria-hidden="true">
         <svg
           width="18"
@@ -180,14 +180,20 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     display: block;
   }
 
-  /* Mobile (default) sizing — bigger panel, taller rows, base font so
-     the menu is comfortably tappable. Desktop (≥768px) tightens back
-     to the compact variant where the pointer is precise. */
+  /* Panel sizes tightly around its contents — label + icon with only
+     a small `gap: 12px` between them and the standard padding. The
+     prior 260px min-width was leaving a wide empty strip in the
+     middle of every row on mobile. `width: max-content` + a
+     guard-rail `min-width` keeps it from ever collapsing too narrow
+     when rendered contents change (e.g. a long "Search & History"
+     row determines the panel width, everything else aligns to it). */
   .user-menu__panel {
     position: absolute;
     top: calc(100% + 8px);
     right: 0;
-    min-width: 260px;
+    width: max-content;
+    min-width: 180px;
+    max-width: calc(100vw - 24px);
     padding: 6px;
     background: var(--bg);
     border: 1px solid var(--border);
@@ -199,7 +205,7 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
   }
   @media (min-width: 768px) {
     .user-menu__panel {
-      min-width: 200px;
+      min-width: 180px;
       padding: 4px;
       border-radius: 8px;
     }
@@ -238,15 +244,16 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     padding: 0;
   }
 
-  /* Text label sits immediately next to the glyph instead of flexing
-     to the panel edges — the old space-between layout pushed icons
-     to the far right and left a wide empty gap in the middle of
-     every row. Compact left-aligned layout reads as a tight list. */
+  /* Icons sit at the right edge of every row (the prior layout the
+     user preferred). Keep justify-content: space-between so labels
+     and glyphs are separated but bound by the tight panel width
+     from `.user-menu__panel` above — now `max-content` instead of
+     a fixed 260px so the gap is dictated by the longest row. */
   .user-menu__row {
     display: flex;
     align-items: center;
-    justify-content: flex-start;
-    gap: 12px;
+    justify-content: space-between;
+    gap: 24px;
   }
   .user-menu__row-icon {
     display: inline-flex;
