@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-23
 
+- REQ-READ-001 AC 5 dashboard cap raised from 30 to 50 newest articles so users with broader tag sets see more of each day's ticks without navigating away from `/digest`.
+- REQ-DES-001 AC 1 typography surfaces reduced: the serif stack now applies to article titles and long-form reading only; the standalone dashboard digest headline was retired and the brand wordmark (sans stack) now carries that role.
 - REQ-PIPE-001 gains AC 6: each candidate's published-at timestamp now reflects the source feed's real publish date, so a three-week-old article is no longer stamped "today" on the dashboard. When the feed provides no usable date, the ingestion time is used as a safe fallback.
 - REQ-AUTH-005 AC 2 generalised to cover both transport paths: account deletion now succeeds via both a JSON API request and a native HTML form submission from `/settings`, so users on mobile in-app webviews (which do not reliably dispatch fetch-based DELETE) can still delete their account.
 - REQ-PWA-003 AC 3 menu copy updated: the first user-menu entry is now "Search & History" (was "History") to reflect that the destination page supports both day-grouped browsing and keyword search.
