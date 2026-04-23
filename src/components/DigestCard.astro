@@ -269,22 +269,21 @@ const displaySourceName = resolveDisplaySource();
      with 0 padding so the rendered size tracks the '#' character
      directly. A generous invisible hit area (2px padding) keeps
      touch-targetability without the button looking bigger than #. */
-  /* Star toggle — DELIBERATELY identical height + geometry to
-     .digest-card__tag-trigger so the two read as a paired set on a
-     single baseline. 18px is the target height: the floor that
-     cleanly contains both the 14×14 star glyph and the text-sm*1.1
-     ('#N') character at line-height 1, matching the ~18px compact
-     look the pre-pill revision had without the 26px brick. */
+  /* Star toggle — matches the pre-pill compact size the user asked
+     for (see the black '#' screenshot). DELIBERATELY no explicit
+     height: padding: 2px 4px + a 14×14 SVG gives ~18px visual
+     height, hugging the glyph without a filled pill rectangle
+     dominating the card. Identical geometry to
+     .digest-card__tag-trigger so the two read as a paired set. */
   .digest-card__star {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 18px;
-    padding: 0 6px;
+    padding: 2px 4px;
     line-height: 1;
     background: transparent;
     border: 0;
-    border-radius: 4px;
+    border-radius: 3px;
     color: var(--text-muted);
     opacity: 0.7;
     cursor: pointer;
@@ -375,13 +374,12 @@ const displaySourceName = resolveDisplaySource();
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 18px;
-    padding: 0 6px;
+    padding: 2px 4px;
     background: var(--text);
     border: 0;
-    border-radius: 4px;
+    border-radius: 3px;
     color: var(--bg);
-    font-size: calc(var(--text-sm) * 1.1);
+    font-size: var(--text-sm);
     font-weight: 600;
     font-family: inherit;
     line-height: 1;
