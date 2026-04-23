@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
 import { readFileSync } from 'node:fs';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
 
@@ -14,22 +15,26 @@ import type { Plugin } from 'vite';
  * (before the workerd bundle is produced), and emits
  * `export default "<contents>"` — which is just a string by the time
  * the test pool boots.
+ *
+ * Paths are resolved via node:path#resolve, not via `new URL(file://...)`,
+ * to stay safe when the repo lives under a directory containing spaces
+ * or characters that would require percent-encoding in a URL.
  */
 function rawCssPlugin(): Plugin {
+  const SUFFIX = '?raw-css';
   return {
     name: 'news-digest:raw-css',
     enforce: 'pre',
     resolveId(source, importer) {
-      if (!source.endsWith('?raw-css')) return null;
-      const rel = source.slice(0, -'?raw-css'.length);
-      if (importer === undefined) return null;
-      const importerDir = fileURLToPath(new URL('.', `file://${importer}`));
-      const absPath = new URL(rel, `file://${importerDir}`).pathname;
-      return `${absPath}?raw-css`;
+      if (!source.endsWith(SUFFIX)) return null;
+      const rel = source.slice(0, -SUFFIX.length);
+      const base = importer === undefined ? process.cwd() : dirname(importer);
+      const absPath = isAbsolute(rel) ? rel : resolve(base, rel);
+      return `${absPath}${SUFFIX}`;
     },
     load(id) {
-      if (!id.endsWith('?raw-css')) return null;
-      const filePath = id.slice(0, -'?raw-css'.length);
+      if (!id.endsWith(SUFFIX)) return null;
+      const filePath = id.slice(0, -SUFFIX.length);
       const contents = readFileSync(filePath, 'utf-8');
       return `export default ${JSON.stringify(contents)};`;
     }

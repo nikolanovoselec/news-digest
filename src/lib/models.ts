@@ -30,9 +30,6 @@ export interface ModelOption {
 // adherence to the JSON output contract.
 export const DEFAULT_MODEL_ID = '@cf/openai/gpt-oss-120b';
 
-// Kimi K2.x prices are not yet published in Cloudflare's per-token table at
-// the time of writing. Set both fields to 0 so `estimateCost` returns 0 for
-// Kimi entries; update when Cloudflare publishes official pricing.
 export const MODELS: ModelOption[] = [
   // Featured — the four headline choices users see at the top of the dropdown.
   {
