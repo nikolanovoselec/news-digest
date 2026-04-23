@@ -21,16 +21,27 @@ describe('detail page source contract — REQ-READ-002', () => {
     expect(detailSource).toContain('REQ-READ-003');
   });
 
-  it('REQ-READ-002: renders bullets as an unordered list via mapped <li>', () => {
-    expect(detailSource).toMatch(/<ul[\s\S]*?class="article-detail__bullets"/);
-    expect(detailSource).toMatch(/details\.map\(\(bullet\)\s*=>\s*<li/);
+  it('REQ-READ-002: renders each details entry as a <p> paragraph', () => {
+    // Editorial prose layout (drop cap + 62ch measure) requires real
+    // paragraphs, not <li> bullets. The AC explicitly says "long-form
+    // reading prose"; the test pins that shape.
+    expect(detailSource).toMatch(/<div[\s\S]*?class="article-detail__body"/);
+    expect(detailSource).toMatch(/details\.map\(\(paragraph,\s*i\)\s*=>\s*\(/);
+    expect(detailSource).toContain('article-detail__paragraph');
+    // First paragraph carries the drop-cap modifier.
+    expect(detailSource).toContain('article-detail__paragraph--lead');
+  });
+
+  it('REQ-READ-002: metadata line renders source, date, and read-time', () => {
+    expect(detailSource).toContain('article-detail__meta');
+    expect(detailSource).toMatch(/MIN READ/);
   });
 
   it('REQ-READ-002: never uses innerHTML in the frontmatter render', () => {
     expect(detailSource).not.toContain('innerHTML');
   });
 
-  it('REQ-READ-002: bullets render via textContent (Astro {expression}) — no set:html', () => {
+  it('REQ-READ-002: paragraphs render via textContent (Astro {expression}) — no set:html', () => {
     expect(detailSource).not.toContain('set:html');
   });
 

@@ -35,7 +35,7 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. `/digest/:id/:slug` renders the article title, the three `details` bullets as an unordered list, and a prominent "Read at source" link to `source_url` (opens in a new tab with `rel="noopener noreferrer"`).
+1. `/digest/:id/:slug` renders the article title, the three `details` paragraphs as long-form reading prose, a small-caps metadata line (source · publish date · estimated read time), and a prominent "Read at source" link to `source_url` (opens in a new tab with `rel="noopener noreferrer"`). The first paragraph carries a drop-cap initial and the reading column is capped around 62 characters with hyphenation.
 2. All text is rendered with `textContent` — no markdown parsing, no HTML sanitizer, no `innerHTML`.
 3. The slug is derived from the title and enforced unique per digest.
 4. A back control returns to `/digest` using the View Transitions shared-element morph for the card→detail transition, and reverses it on back.
