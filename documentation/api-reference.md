@@ -93,7 +93,7 @@ Session near-expiry triggers a `Set-Cookie` refresh in the same response.
 
 **Response:** `{ digest: DigestRow | null, articles: ArticleRow[], live: bool, next_scheduled_at: int | null }`
 
-Returns the most recent digest row for this user; `live=true` when `status='in_progress'`; `next_scheduled_at` is the unix ts of the next scheduled run when today's has not yet generated (null when live). The digest row includes `id`, `local_date`, `generated_at`, `execution_ms`, `tokens_in`, `tokens_out`, `estimated_cost_usd`, `model_id`, `status`, `error_code`, `trigger`. Each article row includes `id`, `digest_id`, `slug`, `source_url`, `title`, `one_liner`, `details_json`, `source_name`, `published_at`, `rank`, `read_at`.
+Returns the most recent digest row for this user; `live=true` when `status='in_progress'`; `next_scheduled_at` is the unix ts of the next scheduled run when today's has not yet generated (null when live). The digest row includes `id`, `local_date`, `generated_at`, `execution_ms`, `tokens_in`, `tokens_out`, `estimated_cost_usd`, `model_id`, `status`, `error_code`, `trigger`. Each article row includes `id`, `digest_id`, `slug`, `source_url`, `title`, `one_liner`, `details_json`, `source_name`, `published_at`, `rank`, `read_at`, `tags` (JSON array of the user hashtags this article matched during fan-out — used by the tag-strip filter per [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation) and [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) AC 7).
 
 **Implements:** [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-READ-005](../sdd/reading.md#req-read-005-pending-today-banner)
 
