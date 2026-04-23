@@ -64,4 +64,5 @@ The app is installable on iOS, Android, and desktop via a standards web manifest
 **Priority:** P1
 **Dependencies:** REQ-DES-001
 **Verification:** Integration test
-**Status:** Implemented
+**Status:** Partial
+**Notes:** AC 1–5 are covered by tests/pwa/mobile-layout.test.ts; AC 6 (44×44 tap-target minimum on header controls) has no automated test yet.
