@@ -87,6 +87,7 @@ interface WireArticle {
   primary_source_name: string | null;
   primary_source_url: string | null;
   published_at: number;
+  details: string[];
   tags: string[];
 }
 
@@ -203,6 +204,7 @@ export async function GET(context: APIContext): Promise<Response> {
       primary_source_name: row.primary_source_name,
       primary_source_url: row.primary_source_url,
       published_at: row.published_at,
+      details: parseStringArray(row.details_json),
       tags: parseStringArray(row.tags_json),
     });
     group.article_count += 1;

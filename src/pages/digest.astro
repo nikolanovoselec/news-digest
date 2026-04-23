@@ -821,6 +821,27 @@ const sortedUserTags = [...userTags].sort((a, b) => {
       border-color 150ms var(--ease, ease),
       background 150ms var(--ease, ease);
   }
+  /* Left-side gradient mask: as tags scroll past the + add pill on
+     mobile, the ::before sits to its immediate left with a fade from
+     transparent to --bg so chips vanish smoothly instead of visibly
+     clipping mid-width against the pill's edge. Desktop is static
+     position (see the hover+pointer media query above) — the mask is
+     harmless there but invisible. */
+  .tag-add::before {
+    content: '';
+    position: absolute;
+    right: 100%;
+    top: 0;
+    bottom: 0;
+    width: 1.5rem;
+    background: linear-gradient(to right, transparent, var(--bg));
+    pointer-events: none;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .tag-add::before {
+      display: none;
+    }
+  }
   .tag-add:hover {
     color: var(--text);
     border-color: var(--text);

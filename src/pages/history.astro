@@ -185,7 +185,7 @@ function formatHourMinute(unixSeconds: number): string {
                           digestId={a.id}
                           slug={slugify(a.title)}
                           title={a.title}
-                          oneLiner=""
+                          oneLiner={a.details[0] ?? ''}
                           sourceName={a.primary_source_name}
                           sourceUrl={a.primary_source_url}
                           tags={a.tags}
