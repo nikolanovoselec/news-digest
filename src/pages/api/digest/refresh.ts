@@ -31,10 +31,12 @@ import { generateUlid } from '~/lib/ulid';
 import { loadSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
-/** 5-minute cooldown between refreshes (REQ-GEN-002 AC 1). */
-const COOLDOWN_SECONDS = 300;
-/** 10 refreshes per 24h rolling window (REQ-GEN-002 AC 1). */
-const DAILY_CAP = 10;
+/** 30-second cooldown between refreshes — enough to stop accidental
+ * double-clicks and repeated tap spam, without blocking real iteration. */
+const COOLDOWN_SECONDS = 30;
+/** Daily cap intentionally set beyond any realistic manual usage. The
+ * product's actual guard rail is the cron scheduler, not this limit. */
+const DAILY_CAP = 1000;
 /** 24h window in seconds. */
 const WINDOW_SECONDS = 86_400;
 
