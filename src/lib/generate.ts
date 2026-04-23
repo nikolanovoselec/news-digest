@@ -40,8 +40,6 @@ import { deduplicateSlug, slugify } from '~/lib/slug';
 import { localDateInTz } from '~/lib/tz';
 import { DEFAULT_MODEL_ID, estimateCost, modelById } from '~/lib/models';
 import { applyForeignKeysPragma, batch } from '~/lib/db';
-import { sendDigestEmail } from '~/lib/email';
-import type { DigestEmailContext } from '~/lib/email';
 import { log } from '~/lib/log';
 import type { ErrorCode } from '~/lib/errors';
 import type {
@@ -418,42 +416,13 @@ export async function generateDigest(
       model_id: modelId,
     });
 
-    // --- Step 9: Best-effort email --------------------------------------
+    // --- Step 9: Email dispatch -----------------------------------------
     //
-    // Send on BOTH scheduled and manual digests when email_enabled = 1.
-    // Manual refreshes now take minutes of real time, so surfacing the
-    // "your digest is ready" email on manual is a meaningful signal
-    // (users close the tab and come back to an inbox notification).
-    // Email failures are logged by `sendDigestEmail` but never
-    // rejected to the caller — digest read surface is independent.
-    if (user.email_enabled === 1) {
-      try {
-        const modelOption = modelById(modelId);
-        const modelName = modelOption?.name ?? modelId;
-        const emailCtx: DigestEmailContext = {
-          user: { email: user.email, gh_login: user.gh_login },
-          digest_id: resolvedDigestId,
-          local_date: localDate,
-          article_count: articles.length,
-          top_tags: tags.slice(0, 3),
-          execution_ms: executionMs,
-          tokens: tokensIn + tokensOut,
-          estimated_cost_usd: costUsd,
-          model_name: modelName,
-          app_url: env.APP_URL,
-        };
-        await sendDigestEmail(env, emailCtx);
-      } catch (err) {
-        // sendDigestEmail is documented as non-throwing, but guard
-        // anyway — email is best-effort.
-        log('error', 'email.send.failed', {
-          user_id: user.gh_login,
-          digest_id: resolvedDigestId,
-          status: null,
-          error: errorDetail(err),
-        });
-      }
-    }
+    // Wave 2 relocates daily email delivery to `dispatchDailyEmails`,
+    // which fires from the `*/5 * * * *` cron and gates on
+    // `users.last_emailed_local_date`. This per-user generate path no
+    // longer sends email directly — the dispatcher covers both
+    // scheduled and legacy manual refreshes uniformly.
 
     return { digestId: resolvedDigestId, status: 'ready' };
   } catch (err) {

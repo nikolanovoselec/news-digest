@@ -1,69 +1,25 @@
 ---
-// Implements REQ-READ-001, REQ-READ-004, REQ-READ-005, REQ-READ-006
-// Implements REQ-SET-002
+// Implements REQ-READ-001
+// Implements REQ-READ-005
 //
-// Today's digest view. Three possible render states keyed off the
-// `/api/digest/today` response:
+// Today's digest view — global article pool filtered by the user's
+// active hashtags. The hourly scrape_run populates the pool; this page
+// renders the 30 newest articles whose tags intersect the user's tag
+// set, plus a countdown header:
 //
-//   1. `digest === null` or `digest.local_date !== today` and
-//      `next_scheduled_at !== null` → pending-today banner variant.
-//   2. `live === true` (digest.status === 'in_progress') → indeterminate
-//      progress bar + 10 skeleton cards + footer elapsed clock; starts
-//      the 5-second poll loop on mount.
-//   3. `digest.status === 'ready'` → full card grid + cost footer.
-//   4. `digest.status === 'failed'` → 303-redirect to /digest/failed.
+//   Last updated at HH:MM · Next update in Xm Ys
 //
-// The page also handles the offline case (REQ-READ-006 AC 4) by
-// rendering a `data-offline-banner` slot that the small inline script
-// toggles based on `navigator.onLine`.
+// The page is server-rendered in-process via loadTodayPayload — no
+// subrequest roundtrip. The tag-strip filter is preserved unchanged.
+// Empty state: "No news for you today, try adding additional tags."
 
 import type { APIContext } from 'astro';
 import Base from '~/layouts/Base.astro';
 import DigestCard from '~/components/DigestCard.astro';
-import LoadingSkeleton from '~/components/LoadingSkeleton.astro';
-import PendingBanner from '~/components/PendingBanner.astro';
 import { loadSession } from '~/middleware/auth';
 import { requireSettingsComplete } from '~/middleware/settings-gate';
-import { localDateInTz } from '~/lib/tz';
-import { GET as getToday } from '~/pages/api/digest/today';
-
-interface DigestRow {
-  id: string;
-  user_id: string;
-  local_date: string;
-  generated_at: number;
-  execution_ms: number | null;
-  tokens_in: number | null;
-  tokens_out: number | null;
-  estimated_cost_usd: number | null;
-  model_id: string;
-  status: 'in_progress' | 'ready' | 'failed';
-  error_code: string | null;
-  trigger: string;
-}
-
-interface ArticleRow {
-  id: string;
-  digest_id: string;
-  slug: string;
-  source_url: string;
-  title: string;
-  one_liner: string;
-  details_json: string;
-  source_name: string | null;
-  published_at: number | null;
-  rank: number;
-  read_at: number | null;
-  /** REQ-GEN-005 AC 6 — validated subset of the user's hashtag list. */
-  tags?: string[];
-}
-
-interface TodayResponse {
-  digest: DigestRow | null;
-  articles: ArticleRow[];
-  live: boolean;
-  next_scheduled_at: number | null;
-}
+import { localHourMinuteInTz } from '~/lib/tz';
+import { loadTodayPayload } from '~/pages/api/digest/today';
 
 const env = Astro.locals.runtime.env;
 if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
@@ -86,56 +42,8 @@ if (gated !== null) {
 
 const user = session.user;
 
-// Fetch today's digest + articles by invoking the /api/digest/today
-// GET handler in-process. Calling the handler directly (rather than
-// making a fetch to our own origin) avoids a subrequest roundtrip and
-// keeps the auth scoping identical to browser navigation because the
-// handler reads its own session from context.request.
-let today: TodayResponse = {
-  digest: null,
-  articles: [],
-  live: false,
-  next_scheduled_at: null,
-};
-try {
-  const res = await getToday({
-    request: Astro.request,
-    locals: Astro.locals,
-    url: new URL(Astro.request.url),
-  } as unknown as APIContext);
-  if (res.ok) {
-    today = (await res.json()) as TodayResponse;
-  }
-} catch {
-  // Treat handler failures as "no digest yet" — the page still renders
-  // with the pending banner so the user sees something useful.
-}
-
-// Determine "today" in the user's tz so we can compare against
-// digest.local_date. REQ-READ-005 AC 2 — if the most recent digest's
-// local_date is NOT today, the banner wins over any stale card grid.
-const nowSec = Math.floor(Date.now() / 1000);
-const todayLocal = localDateInTz(nowSec, user.tz);
-
-// If TODAY's digest failed (REQ-READ-004 AC 5 + REQ-READ-006 AC 2),
-// redirect to the dedicated failure page. A failed digest from a prior
-// day is treated as "no digest for today" — the pending banner for the
-// next scheduled run takes over.
-if (
-  today.digest !== null &&
-  today.digest.status === 'failed' &&
-  today.digest.local_date === todayLocal
-) {
-  const code = today.digest.error_code ?? 'llm_failed';
-  return Astro.redirect(`/digest/failed?code=${encodeURIComponent(code)}`, 303);
-}
-
-const digest = today.digest;
-const articles = today.articles;
-
-// Parse the user's current hashtags for the inline tag strip at the top
-// of the page. Empty array when not yet set — the strip renders an
-// obvious "+ add" prompt and POSTs to /api/tags on submit.
+// Parse the user's active hashtags for the tag strip + the global-pool
+// query.
 let userTags: string[] = [];
 if (user.hashtags_json !== null && user.hashtags_json !== '') {
   try {
@@ -148,42 +56,42 @@ if (user.hashtags_json !== null && user.hashtags_json !== '') {
   }
 }
 
-// Per-tag article count for today's digest — drives both the rail's
-// `[count]` affordance and the "sort by count descending" order. Tags
-// the user subscribes to but that have zero articles today render
-// with a middle-dot (`·`) instead of a literal 0.
+// Fetch the dashboard payload in-process. loadTodayPayload returns
+// articles + last_scrape_run + next_scrape_at in the same shape the
+// /api/digest/today GET handler returns.
+const today = await loadTodayPayload(env.DB, user.id, userTags);
+const articles = today.articles;
+
+// Header pieces. `Last updated at HH:MM` is formatted in the user's
+// timezone; the countdown is computed client-side from next_scrape_at
+// so the ticker stays accurate across the tab's lifetime.
+let lastUpdatedLabel = '';
+if (today.last_scrape_run !== null) {
+  const { hour, minute } = localHourMinuteInTz(
+    today.last_scrape_run.started_at,
+    user.tz,
+  );
+  const hh = hour.toString().padStart(2, '0');
+  const mm = minute.toString().padStart(2, '0');
+  lastUpdatedLabel = `${hh}:${mm}`;
+}
+
+// Per-tag article count for the tag-strip — drives the `[count]`
+// affordance and the count-desc sort order. Tags with zero articles
+// today render a blank count slot (tag strip CSS collapses the slot).
 const tagCounts = new Map<string, number>();
 for (const tag of userTags) tagCounts.set(tag, 0);
 for (const a of articles) {
-  const raw = a.tags ?? [];
-  for (const t of raw) {
+  for (const t of a.tags) {
     if (!tagCounts.has(t)) continue;
     tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
   }
 }
-// Sort: count DESC, alphabetical as tiebreaker.
 const sortedUserTags = [...userTags].sort((a, b) => {
   const diff = (tagCounts.get(b) ?? 0) - (tagCounts.get(a) ?? 0);
   if (diff !== 0) return diff;
   return a.localeCompare(b);
 });
-
-const isLive = digest !== null && digest.status === 'in_progress';
-const isReadyToday =
-  digest !== null &&
-  digest.status === 'ready' &&
-  digest.local_date === todayLocal;
-
-// Banner is shown when there is no digest at all or the most recent
-// one is from a prior day (REQ-READ-005 AC 2 / AC 4).
-const showBanner = !isLive && !isReadyToday && today.next_scheduled_at !== null;
-const firstEver = digest === null;
-
-// Empty-result page per REQ-READ-006 AC 1: a ready digest with fewer
-// than 3 articles redirects to the no-stories page.
-if (isReadyToday && articles.length < 3) {
-  return Astro.redirect('/digest/no-stories', 303);
-}
 ---
 
 <Base title="Today's digest">
@@ -198,10 +106,9 @@ if (isReadyToday && articles.length < 3) {
     </div>
 
     {/*
-      Inline tag strip (REQ-SET-002). The sole editor for the user's
-      hashtags — there is no tag configuration in /settings anymore.
-      Empty state renders just the "+ add" pill which expands into an
-      input on click.
+      Inline tag strip. Sole editor for the user's hashtags — there is
+      no tag configuration in /settings anymore. Empty state renders
+      just the "+ add" pill which expands into an input on click.
     */}
     <div class="tag-strip" data-tag-strip>
       {sortedUserTags.map((tag) => {
@@ -219,11 +126,6 @@ if (isReadyToday && articles.length < 3) {
             <span class="tag-chip__label">
               <span class="tag-chip__hash" aria-hidden="true">#</span>{tag}
             </span>
-            {/*
-              The right-edge slot is a single width. Unselected: count
-              (or middle-dot when 0). Selected: an × remove affordance.
-              They crossfade in place so chip width never jitters.
-            */}
             <span class="tag-chip__slot" aria-hidden="true">
               <span class="tag-chip__count">{count > 0 ? count : ''}</span>
               <span
@@ -267,82 +169,42 @@ if (isReadyToday && articles.length < 3) {
 
     <header class="digest-page__header">
       <h1 class="digest-page__title">Today's digest</h1>
-      {/*
-        A plain <button>, NOT a <form action="/api/digest/refresh">. If
-        JS is slow to hydrate and the user clicks early, we used to see
-        a full-page POST navigate to /api/digest/refresh — which the
-        service worker's /api/* NetworkFirst rule then turned into a
-        generic 404 on cache miss. The button-only variant means a click
-        without JS is simply a no-op; the JS click handler fires fetch()
-        and handles all response codes.
-      */}
-      <button
-        type="button"
-        class="digest-page__refresh-button"
-        data-refresh-button
-        disabled={isLive}
-      >
-        Refresh now
-      </button>
+      {
+        today.last_scrape_run !== null && today.next_scrape_at !== null && (
+          <p
+            class="digest-page__meta"
+            data-countdown
+            data-next-at={String(today.next_scrape_at)}
+          >
+            <span>Last updated at <span class="digest-page__meta-time">{lastUpdatedLabel}</span></span>
+            <span aria-hidden="true"> · </span>
+            <span>Next update in <span class="digest-page__meta-countdown" data-countdown-text>…</span></span>
+          </p>
+        )
+      }
     </header>
 
     {
-      isLive && digest !== null && (
-        <div class="digest-page__progress" data-progress aria-label="Generating digest">
-          <div class="digest-page__progress-bar" role="progressbar" aria-valuetext="generating"></div>
-        </div>
-      )
-    }
-
-    {
-      showBanner && today.next_scheduled_at !== null && (
-        <PendingBanner
-          nextScheduledAt={today.next_scheduled_at}
-          tz={user.tz}
-          firstEver={firstEver}
-        />
-      )
-    }
-
-    {
-      isLive && digest !== null && (
-        <div
-          class="digest-page__grid"
-          data-digest-grid
-          data-digest-poll
-          data-digest-id={digest.id}
-          data-state="live"
-        >
-          {Array.from({ length: 10 }).map(() => <LoadingSkeleton />)}
-        </div>
-      )
-    }
-
-    {
-      isReadyToday && digest !== null && (
+      articles.length === 0 ? (
+        <p class="digest-page__empty" data-empty>
+          No news for you today, try adding additional tags.
+        </p>
+      ) : (
         <div class="digest-page__grid" data-digest-grid data-state="ready">
           {articles.map((a, i) => (
             <DigestCard
-              digestId={digest.id}
+              digestId={a.id}
+              articleId={a.id}
               slug={a.slug}
               title={a.title}
-              oneLiner={a.one_liner}
-              sourceName={a.source_name}
-              sourceUrl={a.source_url}
-              tags={a.tags ?? []}
+              oneLiner={a.details[0] ?? ''}
+              sourceName={a.primary_source_name}
+              sourceUrl={a.primary_source_url}
+              tags={a.tags}
+              starred={a.starred}
               index={i}
             />
           ))}
-        </div>
-      )
-    }
-
-    {
-      isLive && digest !== null && (
-        <div class="digest-page__live-footer" data-live-footer>
-          <span data-elapsed-clock data-started-at={String(digest.generated_at)}>
-            Generating… 0s elapsed
-          </span>
         </div>
       )
     }
@@ -351,143 +213,104 @@ if (isReadyToday && articles.length < 3) {
 </Base>
 
 <script>
-  // Implements REQ-READ-001 AC 4, REQ-READ-004, REQ-READ-006 AC 4
+  // Implements REQ-READ-001
   //
   // Three responsibilities:
-  //   1. Wire the Refresh form to POST /api/digest/refresh (JSON), then
-  //      morph the button into a progress bar on 202 and reload to pick
-  //      up the in-progress digest.
-  //   2. Start the 5-second poll loop via digest-poll.ts when the page
-  //      renders the live state (reload on ready, redirect on failed).
-  //   3. Toggle the offline banner based on navigator.onLine.
+  //   1. Tick the "Next update in Xm Ys" countdown once per second from
+  //      the server-rendered next_scrape_at; refetch /api/digest/today
+  //      when the countdown hits zero and re-render the header+grid.
+  //   2. Toggle the offline banner based on navigator.onLine.
+  //   3. Wire the tag-strip filter (add / remove / toggle-select).
 
-  import { bindDigestPoll } from '~/scripts/digest-poll';
+  let countdownHandle: number | null = null;
 
-  interface RefreshResponse {
-    digest_id?: string;
-    status?: string;
-    error?: string;
-    code?: string;
-    retry_after_seconds?: number;
+  function formatCountdown(seconds: number): string {
+    if (seconds <= 0) return '0m 0s';
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}m ${s}s`;
   }
 
-  async function handleRefresh(button: HTMLButtonElement): Promise<void> {
-    button.disabled = true;
-    let res: Response;
+  async function refetchAndReplace(): Promise<void> {
     try {
-      res = await fetch('/api/digest/refresh', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch('/api/digest/today', {
         credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
       });
-    } catch {
-      button.disabled = false;
-      return;
-    }
-
-    if (res.status === 429) {
-      // REQ-READ-006 AC 3 — rate-limited response sends the user to the
-      // dedicated countdown page.
-      let body: RefreshResponse = {};
-      try {
-        body = (await res.json()) as RefreshResponse;
-      } catch {
-        /* ignore */
+      if (!res.ok) return;
+      const body = (await res.json()) as {
+        last_scrape_run: { started_at: number } | null;
+        next_scrape_at: number | null;
+        articles: unknown[];
+      };
+      if (body.next_scrape_at !== null) {
+        const el = document.querySelector<HTMLElement>('[data-countdown]');
+        if (el !== null) {
+          el.dataset['nextAt'] = String(body.next_scrape_at);
+        }
       }
-      const seconds =
-        typeof body.retry_after_seconds === 'number' ? body.retry_after_seconds : 300;
-      window.location.assign(`/rate-limited?seconds=${encodeURIComponent(seconds)}`);
-      return;
+      // If the article set changed, a full reload is the simplest way
+      // to pick up the new server render — the page is lightweight and
+      // this only fires once per hour.
+      if (Array.isArray(body.articles)) {
+        window.location.reload();
+      }
+    } catch {
+      /* ignore — the next tick retries */
     }
-
-    if (res.status === 202 || res.status === 409) {
-      // Reload — the server-rendered page picks up the in-progress
-      // digest and starts the poll loop on the next render.
-      window.location.reload();
-      return;
-    }
-
-    // Other failures — re-enable the button so the user can retry.
-    button.disabled = false;
   }
 
-  function wireRefresh(): void {
-    const button = document.querySelector<HTMLButtonElement>('[data-refresh-button]');
-    if (button === null) return;
-    if (button.dataset['bound'] === '1') return;
-    button.dataset['bound'] = '1';
-    button.addEventListener('click', () => {
-      void handleRefresh(button);
-    });
+  function tickCountdown(): void {
+    const el = document.querySelector<HTMLElement>('[data-countdown]');
+    const textEl = document.querySelector<HTMLElement>('[data-countdown-text]');
+    if (el === null || textEl === null) return;
+    const raw = el.dataset['nextAt'];
+    if (raw === undefined || raw === '') return;
+    const nextAt = Number.parseInt(raw, 10);
+    if (Number.isNaN(nextAt)) return;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const remaining = nextAt - nowSec;
+    if (remaining <= 0) {
+      textEl.textContent = '0m 0s';
+      // Fire a refetch exactly once; avoid a tight loop by bumping the
+      // next-at forward by 60s so we don't refetch on every tick until
+      // the real update lands.
+      el.dataset['nextAt'] = String(nowSec + 60);
+      void refetchAndReplace();
+      return;
+    }
+    textEl.textContent = formatCountdown(remaining);
+  }
+
+  function wireCountdown(): void {
+    if (countdownHandle !== null) return;
+    const el = document.querySelector<HTMLElement>('[data-countdown]');
+    if (el === null) return;
+    tickCountdown();
+    countdownHandle = window.setInterval(tickCountdown, 1000);
   }
 
   function wireOfflineBanner(): void {
     const banner = document.querySelector<HTMLElement>('[data-offline-banner]');
-    const refreshButton = document.querySelector<HTMLButtonElement>(
-      '[data-refresh-button]',
-    );
     if (banner === null) return;
     const update = (): void => {
-      const offline = !window.navigator.onLine;
-      banner.hidden = !offline;
-      if (refreshButton !== null) {
-        if (offline) {
-          refreshButton.disabled = true;
-          refreshButton.title = 'You are offline';
-        } else if (refreshButton.title === 'You are offline') {
-          refreshButton.disabled = false;
-          refreshButton.removeAttribute('title');
-        }
-      }
+      banner.hidden = window.navigator.onLine;
     };
     update();
     window.addEventListener('online', update);
     window.addEventListener('offline', update);
   }
 
-  let pollCancel: (() => void) | null = null;
-
-  function wireElapsedClock(): void {
-    const el = document.querySelector<HTMLElement>('[data-elapsed-clock]');
-    if (el === null) return;
-    const startRaw = el.dataset['startedAt'];
-    if (startRaw === undefined || startRaw === '') return;
-    const startSec = Number.parseInt(startRaw, 10);
-    if (Number.isNaN(startSec)) return;
-    const update = (): void => {
-      const diff = Math.max(0, Math.floor(Date.now() / 1000) - startSec);
-      el.textContent = `Generating… ${diff}s elapsed`;
-    };
-    update();
-    const handle = window.setInterval(update, 1000);
-    el.dataset['elapsedHandle'] = String(handle);
-  }
-
   function teardown(): void {
-    if (pollCancel !== null) {
-      pollCancel();
-      pollCancel = null;
-    }
-    const el = document.querySelector<HTMLElement>('[data-elapsed-clock]');
-    if (el !== null) {
-      const raw = el.dataset['elapsedHandle'];
-      if (raw !== undefined && raw !== '') {
-        const handle = Number.parseInt(raw, 10);
-        if (!Number.isNaN(handle)) window.clearInterval(handle);
-      }
-      el.dataset['elapsedHandle'] = '';
+    if (countdownHandle !== null) {
+      window.clearInterval(countdownHandle);
+      countdownHandle = null;
     }
   }
 
   function init(): void {
-    wireRefresh();
+    wireCountdown();
     wireOfflineBanner();
-    wireElapsedClock();
-    const grid = document.querySelector<HTMLElement>('[data-digest-poll]');
-    if (grid !== null) {
-      pollCancel = bindDigestPoll();
-    }
-
     wireTagStrip();
   }
 
@@ -522,9 +345,6 @@ if (isReadyToday && articles.length < 3) {
   }
 
   function renderTagChip(strip: HTMLElement, tag: string): HTMLElement {
-    // Mirror the SSR chip markup so dynamically-added chips behave
-    // identically. A newly-added tag has zero articles today → render
-    // the middle-dot placeholder in the count slot.
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'tag-chip';
@@ -551,8 +371,6 @@ if (isReadyToday && articles.length < 3) {
     slot.setAttribute('aria-hidden', 'true');
     const count = document.createElement('span');
     count.className = 'tag-chip__count';
-    // Zero-count tags render an empty count slot (no middle dot) — the
-    // × still appears on select via the absolute-positioned sibling.
     count.textContent = '';
     slot.appendChild(count);
     const remove = document.createElement('span');
@@ -568,18 +386,12 @@ if (isReadyToday && articles.length < 3) {
     slot.appendChild(remove);
     chip.appendChild(slot);
 
-    // Insert before the [data-tag-add] button so the "+ add" stays last.
     const addButton = strip.querySelector<HTMLButtonElement>('[data-tag-add]');
     if (addButton !== null) strip.insertBefore(chip, addButton);
     else strip.appendChild(chip);
     return chip;
   }
 
-  /**
-   * Show a tiny live-region message next to the tag strip. Auto-clears
-   * after 3s. Used for over-cap and save-failure feedback so failed
-   * optimistic adds don't disappear silently.
-   */
   function showTagError(strip: HTMLElement, message: string): void {
     let region = strip.querySelector<HTMLElement>('[data-tag-error]');
     if (region === null) {
@@ -618,7 +430,7 @@ if (isReadyToday && articles.length < 3) {
       input.hidden = true;
       addButton.hidden = false;
     };
-    const MAX_TAGS = 20; // matches server MAX_HASHTAGS in api/settings.ts
+    const MAX_TAGS = 20;
     const commit = async (): Promise<void> => {
       const tag = normaliseTag(input.value);
       if (tag.length < 2 || tag.length > 32) {
@@ -655,18 +467,11 @@ if (isReadyToday && articles.length < 3) {
       }
     });
     input.addEventListener('blur', () => {
-      // Small delay so a click on a tag-remove inside the strip doesn't
-      // race with the blur-close and leave the input stranded.
       setTimeout(() => {
         if (!input.hidden && document.activeElement !== input) hide();
       }, 150);
     });
 
-    // REQ-SET-002 AC 2 + REQ-READ-001 AC 7:
-    //   Click on the chip body         → toggle filter selection
-    //   Click on the red × inside chip → delete the tag
-    //   Selected chips filter the grid to articles whose tag list
-    //   intersects the selection set; no selection = no filter.
     const applyFilter = (): void => {
       const selected = new Set<string>();
       strip
@@ -702,7 +507,6 @@ if (isReadyToday && articles.length < 3) {
     strip.addEventListener('click', (e) => {
       const target = e.target as HTMLElement | null;
       if (target === null) return;
-      // Red × → delete the tag, regardless of selection state.
       const removeHit = target.closest<HTMLElement>('[data-tag-remove]');
       if (removeHit !== null) {
         e.preventDefault();
@@ -728,7 +532,6 @@ if (isReadyToday && articles.length < 3) {
         })();
         return;
       }
-      // Chip body → toggle selection / filter.
       const chip = target.closest<HTMLElement>('[data-tag-chip]');
       if (chip === null) return;
       e.preventDefault();
@@ -753,14 +556,9 @@ if (isReadyToday && articles.length < 3) {
   .digest-page {
     max-width: 1120px;
     margin: 0 auto;
-    /* More generous page padding so the first block (tag rail)
-       doesn't crash into the header chrome above. */
     padding: 1.25rem 0 2rem;
     display: flex;
     flex-direction: column;
-    /* Larger default vertical rhythm between top-level sections —
-       tag rail, title header, card grid. Mobile keeps 1.25rem, desktop
-       grows to 2rem so the page breathes on wide viewports. */
     gap: 1.25rem;
   }
   @media (min-width: 768px) {
@@ -783,15 +581,11 @@ if (isReadyToday && articles.length < 3) {
     display: none;
   }
 
-  /* "Today's digest" header — serif anchor + demoted refresh button.
-     Desktop gets a touch more top padding to visually separate from
-     the tag rail. Mobile relies on the parent .digest-page gap. */
   .digest-page__header {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
     padding: 0 0.25rem;
   }
   @media (min-width: 768px) {
@@ -803,9 +597,6 @@ if (isReadyToday && articles.length < 3) {
 
   .digest-page__title {
     margin: 0;
-    /* Editorial headline — serif, tight leading, slight negative
-       tracking so the three-word title sits anchor-weight on the
-       page. This is the visual focal point of the dashboard. */
     font-family: var(--font-serif);
     font-size: var(--text-2xl);
     font-weight: 600;
@@ -814,62 +605,26 @@ if (isReadyToday && articles.length < 3) {
     color: var(--text);
   }
 
-  /* Refresh uses the primary-button contrast so it reads as the same
-     class of CTA as Save, Read-at-source, Restore-initial-tags —
-     inverted of the current theme: black bg + white text in light
-     mode, white bg + black text in dark. Slightly smaller than the
-     Save button so it still defers visual weight to the serif
-     'Today's digest' anchor. */
-  .digest-page__refresh-button {
-    min-height: 40px;
-    padding: 0.4rem 1.1rem;
-    background-color: var(--text);
-    color: var(--bg);
-    border: 1px solid var(--text);
-    border-radius: 0.375rem;
+  .digest-page__meta {
+    margin: 0;
+    color: var(--text-muted);
     font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .digest-page__meta-time,
+  .digest-page__meta-countdown {
     font-weight: 600;
-    cursor: pointer;
-    transition: opacity 150ms ease;
-  }
-  .digest-page__refresh-button:hover {
-    opacity: 0.9;
-  }
-  .digest-page__refresh-button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
+    color: var(--text);
   }
 
-  .digest-page__progress {
-    position: relative;
-    height: 4px;
-    background-color: var(--border);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-
-  .digest-page__progress-bar {
-    position: absolute;
-    inset: 0;
-    background-color: var(--text);
-    width: 35%;
-    animation: progress-slide 1.8s ease-in-out infinite;
-  }
-
-  @keyframes progress-slide {
-    0% {
-      transform: translateX(-100%);
-    }
-    100% {
-      transform: translateX(400%);
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .digest-page__progress-bar {
-      animation: none;
-      width: 100%;
-    }
+  .digest-page__empty {
+    margin: 2rem auto;
+    padding: 0 1rem;
+    max-width: 32rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: var(--text-base);
   }
 
   /* REQ-READ-001 AC 1 — responsive grid with breathing-room gaps
@@ -894,14 +649,6 @@ if (isReadyToday && articles.length < 3) {
       gap: 1.5rem;
     }
   }
-
-  .digest-page__live-footer {
-    padding: 0.75rem 1rem;
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-    text-align: center;
-    border-top: 1px solid var(--border);
-  }
 </style>
 
 {/* Tag-strip styles are `is:global` because renderTagChip() builds
@@ -911,11 +658,6 @@ if (isReadyToday && articles.length < 3) {
     fell back to default button sizing and looked visibly bigger than
     the SSR'd ones until the next page reload. */}
 <style is:global>
-  /* Heatmap rail: single horizontal row, snap-scrolling on mobile so
-     the user never sees partially-clipped chips. The `+ add` ghost
-     chip sits trailing when the rail fits, and `position: sticky;
-     right: 0` when it overflows so adding a tag is always one tap
-     away without scrolling. */
   .tag-strip {
     display: flex;
     flex-wrap: nowrap;
@@ -927,12 +669,6 @@ if (isReadyToday && articles.length < 3) {
     scroll-snap-type: x proximity;
     scrollbar-width: none;
   }
-  /* Desktop (hover-capable + pointer-fine) has no finger-swipe
-     affordance and no visible horizontal scrollbar, so the rightmost
-     tags become unreachable in a scroll-only layout. Switch to a
-     wrapping multi-row rail on those devices so every tag is
-     immediately tap-/click-reachable; sticky '+ add' is pointless
-     when the rail wraps, so revert it to static flow. */
   @media (hover: hover) and (pointer: fine) {
     .tag-strip {
       flex-wrap: wrap;
@@ -981,8 +717,6 @@ if (isReadyToday && articles.length < 3) {
     gap: 0.15em;
     white-space: nowrap;
   }
-  /* Hash marker — bolder + muted so the tag slug reads as the focus
-     and the '#' reads as a typographic accent, not a competing glyph. */
   .tag-chip__hash {
     font-weight: 700;
     color: var(--text-muted);
@@ -992,9 +726,6 @@ if (isReadyToday && articles.length < 3) {
     color: var(--bg);
     opacity: 0.7;
   }
-  /* When the tag has zero articles AND isn't selected, collapse the
-     right-edge slot entirely so the chip snugs around the label.
-     Selecting the tag re-expands the slot so the × fits. */
   .tag-chip[data-count='0']:not(.is-selected) {
     gap: 0;
     padding-right: 0.75rem;
@@ -1004,9 +735,6 @@ if (isReadyToday && articles.length < 3) {
     overflow: hidden;
   }
 
-  /* Right-edge slot — count and × live here stacked, swapped via
-     opacity. Fixed width prevents any chip-width jitter when a tag
-     is selected. `tabular-nums` keeps '3' and '12' the same width. */
   .tag-chip__slot {
     position: relative;
     display: inline-flex;
@@ -1023,12 +751,6 @@ if (isReadyToday && articles.length < 3) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    /* .tag-chip__remove is a <span role="button"> and global.css
-       gives every [role="button"] min-width/min-height: 44px for
-       touch-target safety. Inside the 22 × 22 slot that min would
-       inflate the red circle to 44 × 44 and burst past the chip.
-       Clamp explicitly here — the slot itself is 22 × 22 and the
-       surrounding chip's min-height of 32 satisfies the tap target. */
     min-width: 0;
     min-height: 0;
     width: 100%;
@@ -1053,10 +775,6 @@ if (isReadyToday && articles.length < 3) {
     background: #b91c1c;
   }
 
-  /* Selected chip: invert colours (matches the primary button
-     contrast) and swap the count slot for the red × via opacity
-     crossfade. Width stays constant because both count and × share
-     the same absolute-positioned slot. */
   .tag-chip.is-selected {
     background: var(--text);
     color: var(--bg);
@@ -1079,12 +797,6 @@ if (isReadyToday && articles.length < 3) {
     display: none;
   }
 
-  /* Ghost-chip "+ add": dashed outline, muted text (never translucent
-     — opacity on the whole chip makes the chips behind bleed through
-     during sticky-scroll). Sticks to the right edge of the viewport
-     once the rail overflows so adding a tag is always reachable. A
-     non-zero z-index + solid var(--bg) background keep it opaque
-     above the chips it scrolls over. */
   .tag-add {
     display: inline-flex;
     align-items: center;

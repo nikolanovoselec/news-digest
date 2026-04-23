@@ -1,50 +1,97 @@
 // Tests for src/pages/digest.astro and its associated components —
-// REQ-READ-001, REQ-READ-004, REQ-READ-005.
+// REQ-READ-001, REQ-READ-005.
 //
 // Astro pages can't be fully rendered in a vitest worker without the
 // full Astro runtime, so we validate observable contract via `?raw`
 // source imports (same pattern used in install-prompt.test.ts). The
 // tests assert on the DOM hooks, class names, animation rules, and
-// branch conditions that the client script + CSS rely on.
+// branch conditions that the client script relies on.
 
 import { describe, it, expect } from 'vitest';
 
 import digestPageSource from '../../src/pages/digest.astro?raw';
 import digestCardSource from '../../src/components/DigestCard.astro?raw';
-import skeletonSource from '../../src/components/LoadingSkeleton.astro?raw';
-import pendingBannerSource from '../../src/components/PendingBanner.astro?raw';
 
 describe('digest.astro — REQ-READ-001 grid', () => {
   it('REQ-READ-001: implements REQ-READ-001 marker is present', () => {
     expect(digestPageSource).toContain('REQ-READ-001');
   });
 
+  it('REQ-READ-001: implements REQ-READ-005 marker is present', () => {
+    expect(digestPageSource).toContain('REQ-READ-005');
+  });
+
   it('REQ-READ-001: responsive grid uses 1/2/3 columns at 640/768/1024 breakpoints', () => {
-    // AC 1 — mobile default is 1 column.
     expect(digestPageSource).toMatch(/grid-template-columns:\s*1fr/);
-    // Tablet breakpoint — 2 columns at 768px.
     expect(digestPageSource).toMatch(
       /@media\s*\(min-width:\s*768px\)[\s\S]*?grid-template-columns:\s*repeat\(2/,
     );
-    // Desktop breakpoint — 3 columns at 1024px.
     expect(digestPageSource).toMatch(
       /@media\s*\(min-width:\s*1024px\)[\s\S]*?grid-template-columns:\s*repeat\(3/,
     );
   });
 
-  it('REQ-READ-001: renders exactly 10 skeleton cards in the live state', () => {
-    // Array.from({ length: 10 }) is the only place skeletons originate.
-    expect(digestPageSource).toMatch(/Array\.from\(\s*\{\s*length:\s*10\s*\}\s*\)/);
+  it('REQ-READ-001: header contains "Last updated at" and "Next update in"', () => {
+    expect(digestPageSource).toContain('Last updated at');
+    expect(digestPageSource).toContain('Next update in');
   });
 
-  it('REQ-READ-001: Refresh button is disabled while live', () => {
-    expect(digestPageSource).toContain('disabled={isLive}');
+  it('REQ-READ-005: empty state reads "No news for you today, try adding additional tags."', () => {
+    expect(digestPageSource).toContain(
+      'No news for you today, try adding additional tags.',
+    );
   });
 
   it('REQ-READ-001: iterates articles with index so stagger delay is per-card', () => {
-    // Passing index to DigestCard is the mechanism that drives the
-    // 40ms-per-card animation-delay.
+    // Passing index to DigestCard is the mechanism that drives any
+    // per-card staging (focus order, stagger preservation).
     expect(digestPageSource).toMatch(/index=\{i\}/);
+  });
+
+  it('REQ-READ-001: no Refresh button on the page', () => {
+    expect(digestPageSource).not.toMatch(/data-refresh-button/);
+    expect(digestPageSource).not.toContain('digest-page__refresh-button');
+    expect(digestPageSource).not.toContain('handleRefresh');
+  });
+
+  it('REQ-READ-001: no PendingBanner / LoadingSkeleton imports', () => {
+    expect(digestPageSource).not.toContain('PendingBanner');
+    expect(digestPageSource).not.toContain('LoadingSkeleton');
+  });
+
+  it('REQ-READ-001: no stale live-state / poll hooks remain', () => {
+    expect(digestPageSource).not.toContain('data-digest-poll');
+    expect(digestPageSource).not.toContain('bindDigestPoll');
+    expect(digestPageSource).not.toMatch(/\bisLive\b/);
+    expect(digestPageSource).not.toMatch(/\bisReadyToday\b/);
+    expect(digestPageSource).not.toContain('/digest/no-stories');
+    expect(digestPageSource).not.toContain('/digest/failed');
+  });
+
+  it('REQ-READ-001: ticks countdown every 1000ms via setInterval', () => {
+    expect(digestPageSource).toContain('setInterval');
+    expect(digestPageSource).toMatch(/setInterval\(\s*tickCountdown\s*,\s*1000\s*\)/);
+  });
+
+  it('REQ-READ-001: tears down interval on astro:before-swap', () => {
+    expect(digestPageSource).toContain('astro:before-swap');
+    expect(digestPageSource).toContain('clearInterval');
+  });
+
+  it('REQ-READ-001: countdown anchor is data-next-at populated from next_scrape_at', () => {
+    expect(digestPageSource).toContain('data-next-at');
+    expect(digestPageSource).toContain('next_scrape_at');
+  });
+
+  it('REQ-READ-001: offline banner stays wired off navigator.onLine', () => {
+    expect(digestPageSource).toContain('navigator.onLine');
+    expect(digestPageSource).toContain('data-offline-banner');
+  });
+
+  it('REQ-READ-001: tag-strip filter logic is preserved', () => {
+    expect(digestPageSource).toContain('data-tag-strip');
+    expect(digestPageSource).toContain('data-tag-chip');
+    expect(digestPageSource).toContain('wireTagStrip');
   });
 });
 
@@ -69,98 +116,7 @@ describe('DigestCard.astro — REQ-READ-001 AC 2/3', () => {
     expect(digestCardSource).toMatch(/card-\$\{slug\}/);
   });
 
-  it('REQ-READ-001: no entrance stagger animation on cards', () => {
-    // The 240ms fade-in stagger was removed because it replayed on
-    // every View-Transition back from the article-detail page,
-    // flickering the grid. Cards render instantly; the clicked card
-    // still morphs via its transition:name. Assert the animation
-    // declaration is gone (no keyframes, no animation: ... other
-    // than the popover transitions).
-    expect(digestCardSource).not.toMatch(/@keyframes\s+digest-card-enter/);
-    expect(digestCardSource).not.toMatch(/animation:\s*digest-card-enter/);
-  });
-
   it('REQ-READ-001: link target resolves to the detail route', () => {
     expect(digestCardSource).toMatch(/\/digest\/\$\{digestId\}\/\$\{slug\}/);
-  });
-});
-
-describe('LoadingSkeleton.astro — REQ-READ-004 AC 2', () => {
-  it('REQ-READ-004: skeleton shimmer is 1.4s linear', () => {
-    expect(skeletonSource).toMatch(/skeleton-shimmer\s*1\.4s\s*linear/);
-  });
-
-  it('REQ-READ-004: shimmer gradient spans 0% to 100% for the sweep effect', () => {
-    expect(skeletonSource).toContain('linear-gradient(');
-    expect(skeletonSource).toContain('background-size: 200% 100%');
-  });
-
-  it('REQ-READ-004: shimmer is disabled under prefers-reduced-motion', () => {
-    expect(skeletonSource).toMatch(
-      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?animation:\s*none/,
-    );
-  });
-
-  it('REQ-READ-004: skeleton matches card min-height of 140px so no layout shift', () => {
-    expect(skeletonSource).toContain('min-height: 140px');
-  });
-});
-
-describe('PendingBanner.astro — REQ-READ-005', () => {
-  it('REQ-READ-005: renders "Next digest scheduled at HH:MM — in Xh Ym" for returning users', () => {
-    expect(pendingBannerSource).toContain('Next digest scheduled at');
-  });
-
-  it('REQ-READ-005: renders "Your first digest is scheduled for HH:MM" when firstEver', () => {
-    expect(pendingBannerSource).toContain('Your first digest is scheduled for');
-  });
-
-  it('REQ-READ-005: renders from nextScheduledAt + tz props', () => {
-    expect(pendingBannerSource).toContain('nextScheduledAt');
-    expect(pendingBannerSource).toContain("localHourMinuteInTz(nextScheduledAt, tz)");
-  });
-
-  it('REQ-READ-005: ticks the countdown every 60s via setInterval', () => {
-    expect(pendingBannerSource).toContain('setInterval');
-    expect(pendingBannerSource).toContain('60_000');
-  });
-
-  it('REQ-READ-005: uses the data-next-at attribute as the source of truth', () => {
-    expect(pendingBannerSource).toContain('data-next-at');
-  });
-
-  it('REQ-READ-005: tears down interval on astro:before-swap to avoid leaks', () => {
-    expect(pendingBannerSource).toContain("astro:before-swap");
-    expect(pendingBannerSource).toContain('clearInterval');
-  });
-});
-
-describe('digest.astro — REQ-READ-005 pending banner visibility', () => {
-  it('REQ-READ-005: shows the banner when digest is missing OR not today AND next_scheduled_at is set', () => {
-    expect(digestPageSource).toMatch(/showBanner\s*=\s*!isLive\s*&&\s*!isReadyToday/);
-    expect(digestPageSource).toContain('next_scheduled_at !== null');
-  });
-
-  it('REQ-READ-005: passes firstEver=true when the user has never had a digest', () => {
-    expect(digestPageSource).toContain('firstEver = digest === null');
-  });
-
-  it('REQ-READ-004: attaches data-digest-poll with the digest id to trigger the 5s poll', () => {
-    expect(digestPageSource).toContain('data-digest-poll');
-    expect(digestPageSource).toContain('data-digest-id={digest.id}');
-  });
-
-  it('REQ-READ-006: redirects to /digest/failed when status is failed', () => {
-    expect(digestPageSource).toContain('/digest/failed?code=');
-  });
-
-  it('REQ-READ-006: redirects to /digest/no-stories for ready digests under 3 articles', () => {
-    expect(digestPageSource).toMatch(/articles\.length\s*<\s*3/);
-    expect(digestPageSource).toContain('/digest/no-stories');
-  });
-
-  it('REQ-READ-006: toggles offline banner based on navigator.onLine', () => {
-    expect(digestPageSource).toContain('navigator.onLine');
-    expect(digestPageSource).toContain('data-offline-banner');
   });
 });
