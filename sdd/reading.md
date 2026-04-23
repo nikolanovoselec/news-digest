@@ -115,7 +115,7 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 **Acceptance Criteria:**
 1. When the LLM returns fewer than 3 articles, the page shows "No stories today — try broader hashtags" with a link to `/settings`.
 2. When the digest has `status='failed'`, the page shows "We couldn't build your digest" with a Try-again control and a Go-to-settings link; the raw `error_code` appears in a muted monospace footer, never prose from the error.
-3. When the manual refresh is rate-limited, the page shows "Slow down — next refresh available in {Xh Ym}" with a live countdown and the button disabled until the cooldown expires.
+3. The Try-again control submits the refresh request in place and updates an inline status region next to the button — "Retrying…" while the request is in flight, a rate-limit reason with countdown when the refresh is rejected, and a network-error message on transport failure. The user stays on the failure page throughout; navigation to the live digest only happens once a new generation is actually accepted.
 4. When `navigator.onLine` is false, a top-of-page banner reads "You're offline — showing the last digest you viewed"; the Refresh button is disabled with a tooltip.
 5. 404 and 500 responses have dedicated pages with a calm headline and two clear actions.
 
