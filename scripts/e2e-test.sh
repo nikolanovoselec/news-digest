@@ -21,6 +21,25 @@ set -uo pipefail
 BASE=${BASE:-https://news.graymatter.ch}
 : "${DEV_BYPASS_TOKEN:?DEV_BYPASS_TOKEN must be set}"
 
+# Guard against running this script against the owner's production
+# Worker. The test POSTs tags like "llm" and triggers /api/discovery/retry,
+# which cache feed lists in KV that then leak into the LLM's tag
+# allowlist and contaminate real article data. Running against a
+# preview or local wrangler dev environment is the intended use.
+# Pass `--force-prod` as the first argument to opt in explicitly.
+PROD_HOSTS="news.graymatter.ch"
+if [ "${1:-}" != "--force-prod" ]; then
+  for host in $PROD_HOSTS; do
+    if printf '%s' "$BASE" | grep -qE "^https?://$host(/|:|$)"; then
+      echo "REFUSING to run e2e against $BASE (production)."
+      echo "This test mutates user tags + triggers discovery; the side"
+      echo "effects pollute the global article pool."
+      echo "Run against a preview deploy or pass --force-prod to override."
+      exit 2
+    fi
+  done
+fi
+
 COOKIE_JAR=$(mktemp)
 trap 'rm -f "$COOKIE_JAR"' EXIT
 
