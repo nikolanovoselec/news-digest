@@ -1,0 +1,46 @@
+# News Digest — robots policy.
+#
+# Public surface is the landing page only. Everything behind the login
+# (dashboard, article details, settings, starred, history) is either
+# user-specific or guarded by session cookies, so there's nothing
+# useful for a crawler to index there. The API is service-only.
+
+User-agent: *
+Allow: /$
+Allow: /manifest.webmanifest
+Allow: /favicon.svg
+Allow: /icons/
+Allow: /og.png
+Allow: /swiss-post.svg
+Allow: /llms.txt
+Allow: /llms-full.txt
+Allow: /sitemap.xml
+Disallow: /api/
+Disallow: /digest
+Disallow: /digest/
+Disallow: /starred
+Disallow: /history
+Disallow: /settings
+
+# Block AI training crawlers that don't respect robots.txt anyway but
+# the declarative signal is worth having. llms.txt tells well-behaved
+# agents exactly what they're allowed to consume.
+User-agent: GPTBot
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: PerplexityBot
+Disallow: /
+
+Sitemap: https://news.graymatter.ch/sitemap.xml

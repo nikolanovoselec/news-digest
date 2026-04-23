@@ -1,0 +1,91 @@
+# News Digest — full overview
+
+> A daily, AI-curated news digest running on Cloudflare Workers. Users authenticate with GitHub, pick tags from a curated 20-tag allowlist, and see a personalised feed sourced from ~50 hourly-scraped RSS/Atom/JSON feeds. Summaries are LLM-generated (NYT-style titles, 1–3 paragraph bodies, deduped across sources). Single-operator, pre-launch.
+
+## Architecture
+
+```
+┌─────────────┐    ┌──────────────────────┐    ┌──────────────────────┐
+│ Cron hourly ├───▶│ SCRAPE_COORDINATOR   ├───▶│ SCRAPE_CHUNKS (queue)│
+│ 0 * * * *   │    │ (fetch + canonical-  │    │  → LLM → persist to  │
+│ worker.ts   │    │  dedupe + chunk)     │    │  global article pool │
+└─────────────┘    └──────────────────────┘    └──────────────────────┘
+
+┌─────────────┐    ┌──────────────────────┐
+│ Cron daily  ├───▶│ starred-exempt 7-day │
+│ 0 3 * * *   │    │ retention cleanup    │
+└─────────────┘    └──────────────────────┘
+
+┌─────────────┐    ┌──────────────────────┐
+│ Cron 5-min  ├───▶│ once-per-day email   │
+│ */5 * * * * │    │ dispatcher + tag     │
+│             │    │ discovery drain      │
+└─────────────┘    └──────────────────────┘
+```
+
+## Data model
+
+```sql
+articles(id, canonical_url UNIQUE, primary_source_name, primary_source_url,
+         title, details_json, tags_json, published_at, ingested_at,
+         scrape_run_id)
+article_sources(article_id → articles.id, source_name, source_url, published_at)
+article_tags(article_id → articles.id, tag)
+article_stars(user_id → users.id, article_id → articles.id, starred_at)
+article_reads(user_id, article_id, read_at)
+scrape_runs(id, started_at, finished_at, articles_ingested,
+            articles_deduped, tokens_in, tokens_out,
+            estimated_cost_usd, model_id, chunk_count, status)
+users(... hashtags_json, digest_hour, digest_minute, tz,
+      email_enabled, last_emailed_local_date, ...)
+```
+
+## Pipeline cost
+
+- ~500 candidates per tick × ~100 per chunk = ~5 chunks/hour
+- @cf/openai/gpt-oss-120b at ~$0.35/M tokens
+- **~$4.60/day = ~$140/month** independent of user count
+- Browser-rendering fallback considered but not enabled (RSS body snippets + LLM synthesis cover ~80% of feeds acceptably)
+
+## Sources per tag
+
+Every default tag has ≥1 curated source. Tag list:
+cloudflare, ai, mcp, agenticai, genai, aws, cloud, serverless, workers,
+azure, zero-trust, microsegmentation, kubernetes, terraform, devsecops,
+observability, rust, python, postgres, threat-intel.
+
+50-source composition: 8 cloud vendors, 8 AI labs, 4 MCP/agentic, 8 security, 6 DevOps/platforms, 4 languages, 6 community aggregators, 4 databases, 2 observability.
+
+## User flow
+
+1. GitHub OAuth → new account seeded with 20 default tags
+2. Settings: pick local digest-ready time, toggle email, restore-defaults button
+3. Dashboard `/digest`: 30 newest articles matching user's tags, "Last updated at HH:MM · Next update in Xm Ys" countdown
+4. Per-card: source badge, star button, tag-disclosure
+5. Article detail: title, small-caps metadata, drop-cap body, "Read at source" (single-source direct link; multi-source modal)
+6. `/starred`: user's starred articles (survive the 7-day retention cutoff)
+7. `/history`: day-grouped past articles + per-day token/cost aggregates from scrape_runs
+
+## Retention
+
+- Articles older than 7 days are deleted nightly (03:00 UTC) **unless** at least one user has starred them.
+- Stars are idempotent via `INSERT OR IGNORE` on the `(user_id, article_id)` primary key.
+- FK ON DELETE CASCADE removes article_sources, article_tags, article_reads when a parent article goes.
+
+## Key engineering decisions
+
+- **Global pool, not per-user runs**: LLM cost is O(1) in users, so adding users has zero marginal cost. Legacy per-user pipeline (REQ-GEN-*) retired.
+- **Canonical URL dedupe**: utm_* / fbclid / trailing slash / scheme stripping at write time, followed by an in-chunk LLM `dedup_groups` merge pass for semantic collisions ("same story, different outlets").
+- **First-source-wins**: earliest `published_at` in a cluster becomes the card's primary; all other sources land in `article_sources` and surface as an alt-source modal.
+- **Retry → mark-failed**: coordinator + chunk consumer both stamp `scrape_runs.status='failed'` on the third retry attempt, so orphans never stay 'running' forever.
+- **Write-time URL scheme gate**: `javascript:` / `data:` / `file:` URLs are dropped at the coordinator before they reach article_sources, never rendered as `href`.
+
+## Crawling policy
+
+Public crawlers: landing page + static assets (favicon, manifest, OG image, sponsor SVG). Everything else 303-redirects to login.
+
+AI training crawlers blocked in robots.txt — summaries are transformed third-party work and the product isn't in a position to license that re-use.
+
+## Contact
+
+Operator: Nikola Novoselec. Publisher: Gray Matter GmbH (https://graymatter.ch). Built with Codeflare (https://codeflare.ch).

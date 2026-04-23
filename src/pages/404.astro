@@ -1,0 +1,91 @@
+---
+// Catch-all 404 page. Astro routes here for any URL that no route
+// file claims. Design matches the editorial aesthetic of the rest of
+// the app: serif hero number, small-caps eyebrow, sans subtitle, one
+// primary action, minimal chrome.
+
+import Base from '~/layouts/Base.astro';
+---
+
+<Base title="Not found" description="The page you were looking for doesn't exist." noindex={true}>
+  <section class="error-page">
+    <p class="error-page__eyebrow">Error</p>
+    <h1 class="error-page__code" aria-label="404 Not Found">404</h1>
+    <p class="error-page__title">Page not found</p>
+    <p class="error-page__body">
+      The URL you opened doesn't point at anything we serve. It might
+      have been renamed or never existed in the first place.
+    </p>
+    <div class="error-page__actions">
+      <a class="error-page__primary" href="/">Back to home</a>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .error-page {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    min-height: calc(100svh - 14rem);
+    padding: 2rem 1.25rem;
+    text-align: center;
+  }
+  .error-page__eyebrow {
+    margin: 0 0 0.25rem;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  /* Oversized serif numeral — matches the editorial aesthetic of the
+     article detail page and the landing hero. Clamped so it stays
+     readable on a 320px mobile and doesn't blow past the column on a
+     4K monitor. */
+  .error-page__code {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: clamp(5rem, 18vw, 10rem);
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    color: var(--text);
+  }
+  .error-page__title {
+    margin: 0.5rem 0 0.25rem;
+    font-size: var(--text-2xl);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .error-page__body {
+    margin: 0;
+    max-width: 32rem;
+    font-size: 1rem;
+    line-height: 1.55;
+    color: var(--text-muted);
+  }
+  .error-page__actions {
+    margin-top: 1.5rem;
+    display: inline-flex;
+    gap: 0.75rem;
+  }
+  .error-page__primary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0.75rem 1.5rem;
+    background: var(--text);
+    color: var(--bg);
+    text-decoration: none;
+    font-weight: 600;
+    border-radius: 8px;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+  .error-page__primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px color-mix(in oklab, var(--text) 20%, transparent);
+  }
+</style>

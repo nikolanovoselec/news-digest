@@ -20,13 +20,41 @@ interface Props {
    * showing Digest / History tabs as clickable is a UX dead-end.
    */
   firstRun?: boolean;
+  /**
+   * If true, emit `<meta name="robots" content="noindex, follow">`.
+   * Authenticated surfaces (dashboard, settings, starred, history,
+   * article detail) pass this so they're kept out of public indices.
+   */
+  noindex?: boolean;
+  /**
+   * Canonical URL for this page. When omitted, derived from
+   * `Astro.url.origin + Astro.url.pathname` — safe for most routes
+   * since the site doesn't use query-string-driven canonical variants.
+   */
+  canonical?: string;
+  /** Optional explicit open-graph image (1200×630). Defaults to /og.png. */
+  ogImage?: string;
 }
 
 const {
   title = 'News Digest',
-  description = 'Your personalised daily news digest.',
+  description = 'A daily, AI-curated news digest. Pick your interests, we fetch and summarise the day — fresh every hour, delivered at your time.',
   firstRun = false,
+  noindex = false,
+  canonical,
+  ogImage,
 } = Astro.props;
+
+// Full title format: "<page> — News Digest" unless the caller passed
+// the root brand already. Home/landing uses the brand verbatim.
+const fullTitle =
+  title === 'News Digest' || title.startsWith('News Digest')
+    ? title
+    : `${title} — News Digest`;
+
+const canonicalUrl =
+  canonical ?? `${Astro.url.origin}${Astro.url.pathname}`;
+const ogImageUrl = ogImage ?? `${Astro.url.origin}/og.png`;
 
 // Server-side theme resolution (REQ-DES-002).
 // Reading the `theme` cookie lets us set `data-theme` on <html> in the FIRST
@@ -55,7 +83,35 @@ const initialTheme = cookieTheme ?? 'light';
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="description" content={description} />
-    <title>{title}</title>
+    <title>{fullTitle}</title>
+
+    {/* Canonical + indexing hints. Authenticated pages pass noindex so
+        search engines don't surface login walls or user-specific
+        dashboards. */}
+    <link rel="canonical" href={canonicalUrl} />
+    {noindex && <meta name="robots" content="noindex, follow" />}
+
+    {/* Open Graph (Facebook, LinkedIn, Slack, Discord, etc.) */}
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="News Digest" />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:image" content={ogImageUrl} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_US" />
+
+    {/* Twitter / X card */}
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={fullTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImageUrl} />
+
+    {/* Performance hints — the site itself has no third-party deps on
+        the critical path, but the dns-prefetch cost is ~0 and keeps the
+        door open for future font/avatar hosts without a redeploy. */}
+    <link rel="dns-prefetch" href="//secure.gravatar.com" />
 
     {/* pwa:apple-tags:start — REQ-PWA-001 AC 3. Keep these markers so this
         block stays idempotent across concurrent edits from other phases. */}
@@ -67,6 +123,31 @@ const initialTheme = cookieTheme ?? 'light';
     <meta name="apple-mobile-web-app-title" content="Digest" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     {/* pwa:apple-tags:end */}
+
+    {/* Schema.org JSON-LD: WebSite + Organization. Gives Google a clean
+        knowledge-panel card and disambiguates the site from the
+        publisher entity. */}
+    <script type="application/ld+json" set:html={JSON.stringify({
+      '@context': 'https://schema.org',
+      '@graph': [
+        {
+          '@type': 'WebSite',
+          '@id': `${Astro.url.origin}/#website`,
+          url: Astro.url.origin,
+          name: 'News Digest',
+          description,
+          publisher: { '@id': `${Astro.url.origin}/#org` },
+          inLanguage: 'en',
+        },
+        {
+          '@type': 'Organization',
+          '@id': `${Astro.url.origin}/#org`,
+          name: 'Gray Matter GmbH',
+          url: 'https://graymatter.ch',
+          logo: `${Astro.url.origin}/favicon.svg`,
+        },
+      ],
+    })} />
 
     {/* REQ-DES-002: /theme-init.js reconciles the server-rendered data-theme
         with prefers-color-scheme on a first visit where no cookie is set. */}
