@@ -83,20 +83,25 @@ function makeDb(opts: {
 }
 
 /** Mock Resend transport: the fetch handler decides each call's fate
- *  by looking at the JSON body's `to` address against a scripted map. */
+ *  by looking at the JSON body's `to` address against a scripted map.
+ *  Captures the `init` argument on every call so assertions can probe
+ *  `signal` (AC 1 — timeout) alongside body. */
 function makeFetch(
   outcomeByRecipient: Record<
     string,
     { kind: 'ok' } | { kind: 'non-2xx'; status: number } | { kind: 'throw' }
   >,
-): { fetch: typeof globalThis.fetch; calls: Array<{ to: string }> } {
-  const calls: Array<{ to: string }> = [];
+): {
+  fetch: typeof globalThis.fetch;
+  calls: Array<{ to: string; signal: AbortSignal | null | undefined }>;
+} {
+  const calls: Array<{ to: string; signal: AbortSignal | null | undefined }> = [];
   const fetch = vi
     .fn()
     .mockImplementation(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(init.body as string) as { to: string[] };
       const to = body.to[0] ?? '';
-      calls.push({ to });
+      calls.push({ to, signal: init.signal });
       const outcome = outcomeByRecipient[to] ?? { kind: 'ok' };
       if (outcome.kind === 'throw') throw new Error('network error');
       if (outcome.kind === 'non-2xx') {
@@ -217,6 +222,134 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
     // fetch error bubble, the cron would retry the whole tick and
     // a persistent Resend failure would storm-dispatch on every 5m.
     await expect(dispatchDailyEmails(env)).resolves.toBeUndefined();
+  });
+
+  it('REQ-MAIL-002 AC 1: each Resend request carries an AbortSignal (request-level timeout)', async () => {
+    // The AbortSignal is the mechanism that guarantees a stuck Resend
+    // request doesn't hang the cron tick past the next invocation. If
+    // a refactor drops the signal the dispatcher silently loses its
+    // per-request deadline. sendEmail owns the timeout value; the
+    // dispatcher's contract is that every call passes through the
+    // transport that attaches one.
+    const db = makeDb({
+      distinctTzs: [{ tz: 'UTC' }],
+      usersByTz: {
+        UTC: [
+          { id: 'u-timeout-check', email: 'timeout@x.com', gh_login: 't',
+            digest_hour: 14, digest_minute: 0, last_emailed_local_date: null },
+        ],
+      },
+      calls: [],
+    });
+    const { fetch, calls } = makeFetch({ 'timeout@x.com': { kind: 'ok' } });
+    await dispatchDailyEmails(makeEnv(db, fetch) as Env);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('REQ-MAIL-002 AC 4: dispatcher NEVER writes to reading-surface tables, regardless of outcome', async () => {
+    // AC 4 — "reading surfaces stay fully usable regardless of email
+    // outcome". Architectural invariant: the email path must not
+    // touch `articles`, `article_tags`, `article_sources`,
+    // `article_stars`, `article_reads`, or `scrape_runs`. A
+    // regression that accidentally joins email dispatch into those
+    // tables breaks the REQ-MAIL-002 / REQ-READ-001 isolation.
+    const calls: SqlCall[] = [];
+    const db = makeDb({
+      distinctTzs: [{ tz: 'UTC' }],
+      usersByTz: {
+        UTC: [
+          { id: 'u-success', email: 'ok@x.com', gh_login: 'ok',
+            digest_hour: 14, digest_minute: 0, last_emailed_local_date: null },
+          { id: 'u-failure', email: 'fail@x.com', gh_login: 'f',
+            digest_hour: 14, digest_minute: 0, last_emailed_local_date: null },
+        ],
+      },
+      calls,
+    });
+    const { fetch } = makeFetch({
+      'ok@x.com': { kind: 'ok' },
+      'fail@x.com': { kind: 'non-2xx', status: 500 },
+    });
+    await dispatchDailyEmails(makeEnv(db, fetch) as Env);
+
+    // No SQL issued by the dispatcher should mention any reading-
+    // surface table — not even a SELECT (which would indicate a join
+    // or a lookup that couples email to reading state).
+    const READING_TABLES = [
+      'articles',
+      'article_tags',
+      'article_sources',
+      'article_stars',
+      'article_reads',
+      'scrape_runs',
+    ];
+    for (const call of calls) {
+      for (const table of READING_TABLES) {
+        // Word-boundary match so 'articles' doesn't false-positive
+        // on 'articles_' or other strings that just share the stem.
+        const re = new RegExp(`\\b${table}\\b`);
+        expect(
+          re.test(call.sql),
+          `dispatcher must not touch ${table} (SQL was: ${call.sql.slice(0, 120)})`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('REQ-MAIL-002 AC 2 (dispatcher lane): a D1 UPDATE throw is caught by the dispatcher\'s own try/catch', async () => {
+    // The prior AC 2/3 tests verify `sendEmail`'s non-throw contract.
+    // This test exercises the dispatcher's OWN outer catch (lines
+    // 138-147 of email-dispatch.ts): if D1 throws on the
+    // last_emailed_local_date UPDATE, the dispatcher must log +
+    // continue, not bubble the error up to the cron.
+    const throwingPrepare = vi.fn().mockImplementation((sql: string) => {
+      const bound: unknown[] = [];
+      return {
+        bind: (...params: unknown[]) => {
+          bound.push(...params);
+          return {
+            all: vi.fn().mockImplementation(async () => {
+              if (sql.includes('SELECT id, email, gh_login')) {
+                return {
+                  success: true,
+                  results: [{
+                    id: 'u-d1-throws',
+                    email: 'd1throws@x.com',
+                    gh_login: 'd',
+                    digest_hour: 14,
+                    digest_minute: 0,
+                    last_emailed_local_date: null,
+                  }],
+                };
+              }
+              return { success: true, results: [] };
+            }),
+            run: vi.fn().mockImplementation(async () => {
+              if (sql.includes('UPDATE users SET last_emailed_local_date')) {
+                throw new Error('D1: database is locked');
+              }
+              return { success: true, meta: { changes: 1 } };
+            }),
+            first: vi.fn().mockResolvedValue(null),
+          };
+        },
+        all: vi.fn().mockImplementation(async () => {
+          if (sql.includes('SELECT DISTINCT tz')) {
+            return { success: true, results: [{ tz: 'UTC' }] };
+          }
+          return { success: true, results: [] };
+        }),
+      };
+    });
+    const db = { prepare: throwingPrepare } as unknown as D1Database;
+    const { fetch } = makeFetch({ 'd1throws@x.com': { kind: 'ok' } });
+
+    // The critical assertion: dispatchDailyEmails resolves, does not
+    // reject — even though the D1 UPDATE inside its loop threw.
+    await expect(
+      dispatchDailyEmails(makeEnv(db, fetch) as Env),
+    ).resolves.toBeUndefined();
   });
 
   it('REQ-MAIL-002 AC 5: a successful follow-up tick after a prior failure DOES advance the stamp', async () => {
