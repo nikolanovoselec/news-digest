@@ -178,8 +178,8 @@ const initialTheme = cookieTheme ?? 'light';
       <a href="/" class="site-header__brand focus-ring" aria-label="News Digest home">
         <svg
           class="site-header__mark"
-          width="22"
-          height="22"
+          width="32"
+          height="32"
           viewBox="0 0 24 24"
           aria-hidden="true"
           fill="currentColor"
@@ -263,13 +263,27 @@ const initialTheme = cookieTheme ?? 'light';
         flex-shrink: 0;
       }
 
+      /* Wordmark doubles as the page H1 — 'Today's digest' was
+         removed from /digest in favour of the brand carrying the
+         visual weight of a page header. 2xl on desktop bumps to
+         3xl so it reads as a header, not chrome. Mobile stays at
+         2xl to keep the 44px sticky-header row comfortable. */
       .site-header__wordmark {
         display: inline-flex;
         align-items: baseline;
-        font-size: var(--text-lg);
-        font-weight: 600;
-        letter-spacing: -0.02em;
+        font-size: var(--text-2xl);
+        font-weight: 700;
+        letter-spacing: -0.025em;
         line-height: 1;
+      }
+      @media (min-width: 768px) {
+        .site-header__wordmark {
+          /* No text-3xl token in the design system; inline the
+             desktop bump so we don't fork the scale. 40px reads as
+             a page header at desktop widths while staying below an
+             H1 (48px+) so the brand still feels like navigation. */
+          font-size: 40px;
+        }
       }
       /* "news" in muted, "digest" in full text — kerned together without
          whitespace. Gives the brand character without adding chrome. */

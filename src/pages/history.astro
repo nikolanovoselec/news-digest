@@ -316,7 +316,7 @@ function formatCostUsd(value: number | null | undefined): string {
     document.addEventListener('astro:before-swap', () => {
       if (typeof hwin.__historySearchTeardown === 'function') {
         hwin.__historySearchTeardown();
-        hwin.__historySearchTeardown = undefined;
+        delete hwin.__historySearchTeardown;
       }
     });
     document.addEventListener('astro:page-load', reinit);

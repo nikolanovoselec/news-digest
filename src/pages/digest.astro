@@ -167,8 +167,11 @@ const sortedUserTags = [...userTags].sort((a, b) => {
       No stories match the selected tag(s). Click a selected tag to deselect.
     </p>
 
+    {/* The "Today's digest" <h1> was dropped — the brand wordmark
+        at the top-left now plays the page-header role, so a second
+        <h1> below it felt redundant. Countdown is preserved as a
+        lightweight line above the grid. */}
     <header class="digest-page__header">
-      <h1 class="digest-page__title">Today's digest</h1>
       <p
         class="digest-page__meta"
         data-countdown
@@ -592,33 +595,19 @@ const sortedUserTags = [...userTags].sort((a, b) => {
     display: none;
   }
 
-  /* REQ-READ-001 — title on the left, "Next update in Xm" on the right
-     of the same row when there's space; the countdown wraps to its own
-     line below the title when the viewport is too narrow. */
+  /* REQ-READ-001 — countdown-only header now that the title is gone.
+     Right-aligned so "Next update in Xm" sits flush against the
+     grid's right edge without a heading dragging the visual weight. */
   .digest-page__header {
     display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: space-between;
-    column-gap: 1rem;
-    row-gap: 0.35rem;
+    justify-content: flex-end;
     padding: 0 0.25rem;
   }
   @media (min-width: 768px) {
     .digest-page__header {
       padding: 0 0.5rem;
-      margin-top: 0.5rem;
+      margin-top: 0.25rem;
     }
-  }
-
-  .digest-page__title {
-    margin: 0;
-    font-family: var(--font-serif);
-    font-size: var(--text-2xl);
-    font-weight: 600;
-    line-height: 1.15;
-    letter-spacing: -0.02em;
-    color: var(--text);
   }
 
   .digest-page__meta {
