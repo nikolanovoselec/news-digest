@@ -288,13 +288,26 @@ const initialTheme = cookieTheme ?? 'light';
       .site-footer__copy {
         margin: 0;
       }
-      /* Scramble-target sits inside a link — fixed character width so
-         the link doesn't jitter as non-monospace glyphs rotate in.
-         tabular-nums matches digit widths too. */
+      /* Scramble-target sits inside a link. The scramble rotates
+         through proportional chars (W vs i vs *) that have very
+         different widths — in a flowing line this would shove the
+         surrounding text back and forth every 50ms, making the whole
+         footer flicker. Fix:
+           1. inline-block with a fixed `ch`-based width — each glyph
+              position gets the same horizontal slot regardless of
+              which char lands there.
+           2. monospace font — each slot is actually the same width
+              at render time (prop fonts still vary within `ch`).
+           3. text-align:left so the scrambled chars fill the slot
+              from the left, not center-justified.
+         "Codeflare" is 9 chars; 9ch is the exact rest width. */
       .site-footer__scramble {
         display: inline-block;
-        min-width: 5em;
-        font-variant-numeric: tabular-nums;
+        width: 9ch;
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        text-align: left;
+        white-space: pre;
       }
       .site-footer__link {
         color: var(--text-muted);
