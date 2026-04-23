@@ -1,21 +1,21 @@
 # Digest Generation
 
-An hourly global scrape-and-summarise pipeline: one cron-triggered coordinator run per hour assembles candidates from the curated source registry, canonical-URL-dedupes them, and fans chunks out to the LLM consumer. The consumer writes summaries + tags + cluster groupings into a shared article pool. The per-user dashboard then reads from that pool filtered by each user's active tags, so cost scales with the world (one LLM pass per hour) rather than with users × refreshes. Starred articles survive the 7-day retention cutoff.
+A global scrape-and-summarise pipeline that runs every 4 hours: one cron-triggered coordinator run per tick assembles candidates from the curated source registry, canonical-URL-dedupes them, and fans chunks out to the LLM consumer. The consumer writes summaries + tags + cluster groupings into a shared article pool. The per-user dashboard then reads from that pool filtered by each user's active tags, so cost scales with the world (one LLM pass per tick) rather than with users × refreshes. Starred articles survive the 7-day retention cutoff.
 
 ---
 
-### REQ-PIPE-001: Hourly global scrape-and-summarise pipeline
+### REQ-PIPE-001: Global scrape-and-summarise pipeline on a fixed cadence
 
-**Intent:** Every hour, the system fetches from the curated source registry, canonical-URL-dedupes candidates, and queues LLM summarization so the per-user dashboard reads from a single up-to-date pool rather than running the LLM per user. Cost scales O(1) in users instead of O(users × refreshes).
+**Intent:** Every 4 hours, the system fetches from the curated source registry, canonical-URL-dedupes candidates, and queues LLM summarization so the per-user dashboard reads from a single up-to-date pool rather than running the LLM per user. Cost scales O(1) in users instead of O(users × refreshes).
 
 **Applies To:** System
 
 **Acceptance Criteria:**
-1. An hourly Cron Trigger fires on the top of the hour and kicks off a single coordinator run for all users.
+1. A Cron Trigger fires every 4 hours on the hour (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC) and kicks off a single coordinator run for all users.
 2. The coordinator enqueues one chunk job per ~100 candidates so LLM calls stay within the model's context window and partial failures only lose one chunk.
 3. Each run is tracked by a `scrape_runs` row that transitions `running` → `ready` on success (or `failed` on abort), with a chunk counter that drops to zero when the last chunk finishes.
 4. Candidates whose canonical URL is already present in the article pool are skipped on subsequent ticks so the same story is never re-summarised.
-5. The pipeline is independent of individual user accounts — it runs once per hour regardless of how many users are signed up, and adding users does not multiply LLM spend.
+5. The pipeline is independent of individual user accounts — it runs once per tick regardless of how many users are signed up, and adding users does not multiply LLM spend.
 
 **Constraints:** CON-LLM-001, CON-PERF-001
 **Priority:** P0
@@ -99,7 +99,7 @@ An hourly global scrape-and-summarise pipeline: one cron-triggered coordinator r
 1. A daily cron fires at 03:00 UTC and deletes articles whose published-at timestamp is older than 7 days, when no user has starred the article.
 2. An article starred by any user is preserved regardless of age.
 3. Deletion cascades remove the article's alternative sources, tag rows, and read-tracking rows so no orphans remain.
-4. The cleanup run is independent of the hourly scrape run and never blocks ingestion.
+4. The cleanup run is independent of the global scrape run and never blocks ingestion.
 
 **Constraints:** CON-DATA-001
 **Priority:** P1

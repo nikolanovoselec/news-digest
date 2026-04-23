@@ -12,7 +12,7 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 
 **Acceptance Criteria:**
 1. `/digest` reads articles from the global article pool filtered by the user's active tags; articles whose tag list does not intersect the user's tag list are excluded.
-2. The top of the page shows "Last updated at HH:MM · Next update in Xm Ys" with both the most-recent scrape time and a live countdown to the next scheduled tick; the countdown decrements once per second.
+2. The top of the page shows "Last updated at HH:MM" with the most-recent scrape time, and a live "Next update in Xm" countdown (formatted "Xh Ym" when more than an hour remains, "Xm" otherwise) that counts down toward the next scheduled scrape tick and is visibly updated as time passes.
 3. No manual Refresh button is rendered and no live-state skeleton cards are shown — the pool is always populated so the grid renders directly.
 4. When the user has no tag filters selected, the grid shows every article whose tags intersect the user's full tag list; when one or more filter tags are selected, the grid narrows to articles matching those filters.
 5. The grid shows the 30 newest articles ordered by published-at descending.

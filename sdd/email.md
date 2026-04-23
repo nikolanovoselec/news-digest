@@ -12,7 +12,7 @@ Resend-backed notification sent after every successful digest — whether genera
 
 **Acceptance Criteria:**
 1. At most one email per user is sent per day, gated so the same user never receives a second notification on the same local date.
-2. The email fires at the user's configured local digest time, independent of the hourly scrape cadence.
+2. The email fires at the user's configured local digest time, independent of the global scrape cadence.
 3. The subject line reads exactly "Your news digest is ready".
 4. The body contains a single direct link to the dashboard and no per-article content; the dashboard is authoritative for article listings.
 5. Users who turn off `email_enabled` in settings receive no email.
