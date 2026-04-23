@@ -81,7 +81,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 - Store markdown, render client-side with `marked` + DOMPurify.
 - Store markdown, render server-side with sanitize-html.
 
-**Rationale:** Plaintext + `textContent` makes XSS impossible by construction. One less dependency, one less configuration surface, zero sanitizer updates to track. The aesthetic constraint (bullet summaries) maps cleanly to a `string[]` rendered as `<ul><li>` with `textContent`.
+**Rationale:** Plaintext + `textContent` makes XSS impossible by construction. One less dependency, one less configuration surface, zero sanitizer updates to track. Detail paragraphs are stored as a `string[]` and rendered via `textContent`, so the same invariant holds regardless of how many paragraphs the LLM returns.
 
 **Related requirements:** [REQ-GEN-005](../../sdd/generation.md#req-gen-005-single-call-llm-summarization), [REQ-READ-002](../../sdd/reading.md#req-read-002-article-detail-view)
 
