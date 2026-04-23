@@ -122,13 +122,14 @@ Superseded by REQ-PIPE-001 in the 2026-04-23 global-feed rework. The per-user di
 2. When the digest has `status='failed'`, the page shows "We couldn't build your digest" with a Try-again control and a Go-to-settings link; the raw `error_code` appears in a muted monospace footer, never prose from the error.
 3. The Try-again control submits the refresh request in place and updates an inline status region next to the button — "Retrying…" while the request is in flight, a rate-limit reason with countdown when the refresh is rejected, and a network-error message on transport failure. The user stays on the failure page throughout; navigation to the live digest only happens once a new generation is actually accepted.
 4. When `navigator.onLine` is false, a top-of-page banner reads "You're offline — showing the last digest you viewed"; the Refresh button is disabled with a tooltip.
-5. 404 and 500 responses have dedicated pages with a calm headline and two clear actions.
+5. 404 and 500 responses have dedicated pages with a calm headline and at least one clear action.
 
 **Constraints:** CON-SEC-001
 **Priority:** P1
 **Dependencies:** REQ-READ-001
 **Verification:** Integration test
-**Status:** Implemented
+**Status:** Partial
+**Notes:** 404/500 pages (AC 5) and offline/rate-limited surfaces ship in code but no automated test references REQ-READ-006. AC 1-4 behaviour verified manually.
 
 ---
 

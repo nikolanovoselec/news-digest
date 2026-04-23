@@ -62,3 +62,25 @@ Structured JSON logging as the single operational surface — no external observ
 **Dependencies:** None
 **Verification:** Integration test
 **Status:** Implemented
+
+---
+
+### REQ-OPS-004: Crawler policy and public-surface discoverability
+
+**Intent:** The landing page is the only public surface and should be cleanly indexable; every authenticated surface is explicitly hidden from crawlers. Well-behaved AI training crawlers are denied across the whole site. SEO metadata, a sitemap, a machine-readable crawling policy, and search-engine friendly error pages round out the contract so the one public URL is discoverable without leaking user content or feeding model training.
+
+**Applies To:** User (via operator setup)
+
+**Acceptance Criteria:**
+1. The landing page carries title, description, canonical, and Open Graph metadata suitable for a search result card.
+2. A crawler policy file declares the landing page and public assets as allowed, every authenticated surface and the API as disallowed, and blocks known AI training user agents.
+3. A machine-readable agents policy file describes what the product is, what is public, and an explicit request not to train on content behind the login.
+4. A sitemap is served from a stable URL, lists only public URLs, and is referenced from the crawler policy file.
+5. Error pages served for not-found and server-error conditions are flagged no-index so crawler spaces stay clean.
+
+**Constraints:** CON-SEC-001
+**Priority:** P2
+**Dependencies:** None
+**Verification:** Manual check
+**Status:** Partial
+**Notes:** Shipped in `6dbc790` (robots.txt, llms.txt, llms-full.txt, sitemap.xml, SEO metadata, 404/500 pages with noindex). No automated test yet verifies the policy payloads or sitemap shape.
