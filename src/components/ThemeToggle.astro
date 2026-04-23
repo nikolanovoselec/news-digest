@@ -8,7 +8,7 @@
 
 <button
   type="button"
-  class="theme-toggle focus-ring"
+  class="theme-toggle"
   aria-label="Toggle color theme"
   data-theme-toggle
 >
@@ -56,7 +56,12 @@
   /* Match HeaderThemeToggle (the authenticated-header variant) so
      anonymous pages — login, landing, logged-out error pages — show
      the theme switch in the same transparent circle with a hover-
-     only border. No filled-surface background any more. */
+     only border. No filled-surface background any more.
+     `outline: none` on every focus state kills the persistent
+     circular ring some mobile engines paint when :focus-visible
+     fires on tap (the class also dropped `focus-ring` so the global
+     outline utility can't match). The icon itself is the affordance;
+     the control doesn't need a focus ring on top of it. */
   .theme-toggle {
     display: inline-flex;
     align-items: center;
@@ -69,7 +74,14 @@
     border-radius: 9999px;
     color: var(--text);
     cursor: pointer;
+    outline: none;
     -webkit-tap-highlight-color: transparent;
+  }
+  .theme-toggle:focus,
+  .theme-toggle:focus-visible,
+  .theme-toggle:active {
+    outline: none;
+    box-shadow: none;
   }
   .theme-toggle:hover {
     border-color: var(--border);
@@ -100,15 +112,29 @@
 </style>
 
 <script>
-  // Implements REQ-DES-002 click handler wiring. Runs once per page load.
-  import { initThemeToggle } from '~/scripts/theme-toggle';
+  // Implements REQ-DES-002 click handler wiring. Uses a document-
+  // level delegated click handler gated by a flag on <html> so there
+  // is NO race between when the button enters the DOM and when the
+  // script binds — every tap anywhere on a [data-theme-toggle]
+  // element fires `toggleTheme` immediately, even if this script
+  // happened to execute before Astro's ViewTransition placed the
+  // button. Fixes the "tap sometimes does nothing until I reload"
+  // mobile bug the per-button initThemeToggle pattern had.
+  import { toggleTheme } from '~/scripts/theme-toggle';
 
-  function wire(): void {
-    const buttons = document.querySelectorAll<HTMLButtonElement>('[data-theme-toggle]');
-    buttons.forEach((b) => initThemeToggle(b));
+  if (document.documentElement.dataset['themeToggleBound'] !== '1') {
+    document.documentElement.dataset['themeToggleBound'] = '1';
+    document.addEventListener(
+      'click',
+      (e) => {
+        const t = e.target;
+        if (!(t instanceof Element)) return;
+        const btn = t.closest<HTMLButtonElement>('[data-theme-toggle]');
+        if (btn === null) return;
+        e.preventDefault();
+        toggleTheme(document, localStorage, (q) => window.matchMedia(q));
+      },
+      true,
+    );
   }
-
-  wire();
-  // Re-wire after Astro View Transitions swap the DOM.
-  document.addEventListener('astro:page-load', wire);
 </script>
