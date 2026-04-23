@@ -19,12 +19,15 @@ import type { Headline } from '~/lib/types';
 /**
  * Shared inference parameters for every Workers AI call.
  * - `temperature: 0.2` — summaries should be consistent, not creative.
- * - `max_tokens: 4096` — hard cap to prevent runaway generation.
+ * - `max_tokens: 8192` — headroom for 10 articles × (title + url +
+ *   one_liner + 3 bullets) plus JSON structure. The prior 4096 ceiling
+ *   was truncating responses once a user crossed ~5 hashtags, missing
+ *   the closing `]}` and failing JSON.parse.
  * - `response_format` — force JSON output on models that support it.
  */
 export const LLM_PARAMS = {
   temperature: 0.2,
-  max_tokens: 4096,
+  max_tokens: 8192,
   response_format: { type: 'json_object' },
 } as const;
 

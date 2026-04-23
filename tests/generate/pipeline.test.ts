@@ -331,7 +331,7 @@ describe('generateDigest — happy path', () => {
     expect(params.messages?.[1]?.content).toContain('User interests');
     // LLM_PARAMS pinned.
     expect(params.temperature).toBe(0.2);
-    expect(params.max_tokens).toBe(4096);
+    expect(params.max_tokens).toBe(8192);
     expect(params.response_format).toEqual({ type: 'json_object' });
   });
 
