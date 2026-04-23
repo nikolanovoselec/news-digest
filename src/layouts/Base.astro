@@ -115,87 +115,15 @@ const initialTheme = cookieTheme ?? 'light';
 
     <footer class="site-footer safe-x" aria-label="Site footer">
       <p class="site-footer__copy">
-        Built with <a class="site-footer__link" href="https://codeflare.ch/" target="_blank" rel="noopener noreferrer"><span class="site-footer__scramble js-scramble-target" aria-label="Codeflare">Codeflare</span></a> · © 2026 <a class="site-footer__link" href="https://graymatter.ch" target="_blank" rel="noopener noreferrer">Gray Matter GmbH</a>
+        Built with <a class="site-footer__link" href="https://codeflare.ch/" target="_blank" rel="noopener noreferrer"><span class="site-footer__scramble js-scramble-target" aria-label="Codeflare">Codeflare</span></a> © 2026 <a class="site-footer__link" href="https://graymatter.ch" target="_blank" rel="noopener noreferrer">Gray Matter GmbH</a>
       </p>
     </footer>
 
-    <script is:inline define:vars={{ scrambleTarget: 'Codeflare' }}>
-      // Scramble effect on the "Codeflare" wordmark in the footer.
-      // Mirrors the effect used on codeflare.ch and graymatter.ch.
-      // `is:inline` + `define:vars` forces Astro to ship this as a
-      // plain inline script (no module bundling, no late TS compile)
-      // so it runs on first paint with zero build-step fragility.
-      (function () {
-        var activeInterval = null;
-        function initFooterScramble() {
-          var elements = document.querySelectorAll('.js-scramble-target');
-          if (elements.length === 0) return;
-
-          // Reset any previous ticker before starting a new one so
-          // astro:page-load re-entries don't stack timers.
-          if (activeInterval !== null) {
-            clearInterval(activeInterval);
-            activeInterval = null;
-          }
-
-          var CHARS =
-            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*<>{}[]|/\\~';
-          var TICK_MS = 50;
-          var target = scrambleTarget;
-          var current = target.split('');
-          var phase = 'hold';
-          // Start partway through the hold so the first scramble kicks
-          // in ~1 second after first paint (not 3 seconds) — the user
-          // sees the effect without having to wait.
-          var frame = 45;
-
-          function randomChar() {
-            return CHARS.charAt(Math.floor(Math.random() * CHARS.length));
-          }
-
-          activeInterval = setInterval(function () {
-            frame++;
-            if (phase === 'hold') {
-              if (frame > 60) { phase = 'scramble'; frame = 0; }
-              return;
-            }
-            if (phase === 'scramble') {
-              current = current.map(function (_, i) {
-                return Math.random() < 0.4 ? randomChar() : target.charAt(i);
-              });
-              if (frame > 30) { phase = 'decrypt'; frame = 0; }
-            } else if (phase === 'decrypt') {
-              current = current.map(function (_, i) {
-                return Math.random() < frame / 25 ? target.charAt(i) : randomChar();
-              });
-              if (frame > 25) { phase = 'swap'; frame = 0; current = target.split(''); }
-            } else if (phase === 'swap') {
-              var a = Math.floor(Math.random() * current.length);
-              var b = Math.floor(Math.random() * current.length);
-              var tmp = current[a]; current[a] = current[b]; current[b] = tmp;
-              if (frame > 15) { phase = 'hold'; frame = 0; current = target.split(''); }
-            }
-            var scrambled = current.join('');
-            elements.forEach(function (el) { el.textContent = scrambled; });
-          }, TICK_MS);
-        }
-
-        // Tear down before View Transitions swap the DOM.
-        document.addEventListener('astro:before-swap', function () {
-          if (activeInterval !== null) {
-            clearInterval(activeInterval);
-            activeInterval = null;
-          }
-        });
-
-        if (document.readyState === 'loading') {
-          document.addEventListener('DOMContentLoaded', initFooterScramble);
-        } else {
-          initFooterScramble();
-        }
-        document.addEventListener('astro:page-load', initFooterScramble);
-      })();
-    </script>
+    {/* Scramble effect lives in /scramble.js so the site's CSP
+        (`script-src 'self'`) allows it. Inline scripts are blocked;
+        bundled modules work too but this keeps the payload out of
+        Astro's build graph for a zero-failure-surface static asset. */}
+    <script src="/scramble.js" defer></script>
 
     <style>
       /* Sticky header with a tasteful backdrop blur on scroll — no solid
