@@ -1,23 +1,54 @@
 // Tests for REQ-HIST-002 — user stats widget and its data contract.
 //
-// Splits into two concerns:
+// After the global-feed rework the /api/stats tiles split by ownership:
 //
-//   A. Widget-side formatting (owned by this phase via StatsWidget.astro):
-//      the pure functions that render tile values. We re-declare the
-//      implementations here because the @cloudflare/vitest-pool-workers
-//      runtime has no Astro plugin configured — `.astro` files are not
-//      importable. The reference implementations are a verbatim copy of
-//      the helpers inside StatsWidget.astro's frontmatter; if they ever
-//      drift a widget-side visual regression is the first signal.
+//   - digests_generated, tokens_consumed, cost_usd are GLOBAL metrics
+//     derived from `scrape_runs` (the hourly pipeline runs once for
+//     every user, so the totals are the same for everyone).
+//   - articles_total is user-scoped via an `article_tags` JOIN so each
+//     user sees the count of articles whose tags intersect their tag
+//     set.
+//   - articles_read is strictly user-scoped via `article_reads.user_id`.
 //
-//   B. API-side SQL contract (owned by Phase 5C /api/stats): the four
-//      tile queries must be scoped by user_id, and the two article-level
-//      queries must JOIN through `digests` so a user can never read
-//      another user's article counts by supplying a foreign digest_id.
-//      Those are recorded as it.todo placeholders here; Phase 5C will
-//      fill them in when it lands the /api/stats handler.
+// The widget-side format helpers are unchanged (still a verbatim copy
+// of the helpers inside StatsWidget.astro) — a drift there surfaces as
+// a visual regression first.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { GET } from '~/pages/api/stats';
+import { SESSION_COOKIE_NAME } from '~/middleware/auth';
+import { signSession } from '~/lib/session-jwt';
+
+const JWT_SECRET = 'test-secret-for-hmac-sha256-signing-minimum-length';
+const APP_URL = 'https://news-digest.example.com';
+
+interface UserRow {
+  id: string;
+  email: string;
+  gh_login: string;
+  tz: string;
+  digest_hour: number | null;
+  digest_minute: number;
+  hashtags_json: string | null;
+  model_id: string | null;
+  email_enabled: number;
+  session_version: number;
+}
+
+function baseUser(hashtags: string[] = ['ai', 'cloudflare']): UserRow {
+  return {
+    id: 'user-1',
+    email: 'a@b.c',
+    gh_login: 'alice',
+    tz: 'UTC',
+    digest_hour: 8,
+    digest_minute: 0,
+    hashtags_json: JSON.stringify(hashtags),
+    model_id: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
+    email_enabled: 1,
+    session_version: 1,
+  };
+}
 
 // --- Widget-side format helpers (copied verbatim from StatsWidget.astro) ---
 
@@ -39,13 +70,99 @@ function formatReadOfTotal(read: number, total: number): string {
   return `${formatInt(read)} of ${formatInt(total)}`;
 }
 
+/** Mock responses for each query branch. */
+interface Responses {
+  digestsN?: number;
+  articlesReadN?: number;
+  articlesTotalN?: number;
+  tokensN?: number;
+  costN?: number;
+}
+
+interface Binding {
+  sql: string;
+  params: unknown[];
+}
+
+function makeDb(user: UserRow | null, resp: Responses = {}): {
+  db: D1Database;
+  bindings: Binding[];
+  prepared: string[];
+} {
+  const bindings: Binding[] = [];
+  const prepared: string[] = [];
+  const prepare = vi.fn().mockImplementation((sql: string) => {
+    prepared.push(sql);
+    const stmt = {
+      _sql: sql,
+      _params: [] as unknown[],
+      bind(...params: unknown[]) {
+        stmt._params = params;
+        bindings.push({ sql, params });
+        return stmt;
+      },
+      first: vi.fn().mockImplementation(async () => {
+        if (sql.startsWith('SELECT id, email, gh_login')) return user;
+        // Route by query shape. Order matters — keep the more specific
+        // substring checks first.
+        if (sql.includes('FROM article_reads')) {
+          return { n: resp.articlesReadN ?? 0 };
+        }
+        if (sql.includes('FROM articles a')) {
+          return { n: resp.articlesTotalN ?? 0 };
+        }
+        if (sql.includes('FROM scrape_runs')) {
+          if (sql.includes('COUNT(*)')) return { n: resp.digestsN ?? 0 };
+          if (sql.includes('tokens_in')) return { n: resp.tokensN ?? 0 };
+          if (sql.includes('estimated_cost_usd')) return { n: resp.costN ?? 0 };
+        }
+        return { n: 0 };
+      }),
+      run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 0 } }),
+      all: vi.fn().mockResolvedValue({ results: [] }),
+    };
+    return stmt;
+  });
+  const db = { prepare } as unknown as D1Database;
+  return { db, bindings, prepared };
+}
+
+function makeEnv(db: D1Database): Partial<Env> {
+  return {
+    APP_URL,
+    OAUTH_JWT_SECRET: JWT_SECRET,
+    DB: db,
+  };
+}
+
+function makeContext(request: Request, e: Partial<Env>): unknown {
+  return {
+    request,
+    locals: { runtime: { env: e as Env } },
+    url: new URL(request.url),
+    params: {},
+  };
+}
+
+async function authedRequest(): Promise<Request> {
+  const token = await signSession(
+    { sub: 'user-1', email: 'a@b.c', ghl: 'alice', sv: 1 },
+    JWT_SECRET,
+  );
+  return new Request(`${APP_URL}/api/stats`, {
+    method: 'GET',
+    headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
+  });
+}
+
+// --- Widget-side formatting tests (unchanged — pure helpers still valid) ---
+
 describe('StatsWidget — cost formatting (REQ-HIST-002 AC 4)', () => {
   it('REQ-HIST-002: renders $0.00 for zero cost', () => {
     expect(formatCostUsd(0)).toBe('$0.00');
   });
 
   it('REQ-HIST-002: renders $0.14 for 14 cents (3 sig figs collapse to 2dp)', () => {
-    // "0.140".toPrecision(3) -> "0.140" -> Number -> "0.14" via toFixed(2)
     expect(formatCostUsd(0.14)).toBe('$0.14');
   });
 
@@ -54,7 +171,6 @@ describe('StatsWidget — cost formatting (REQ-HIST-002 AC 4)', () => {
   });
 
   it('REQ-HIST-002: carries at least 4 sig figs for tiny sub-cent amounts', () => {
-    // 0.003 is below 1 cent; the formatter should keep 4 decimal places.
     expect(formatCostUsd(0.003)).toBe('$0.0030');
   });
 
@@ -70,8 +186,6 @@ describe('StatsWidget — cost formatting (REQ-HIST-002 AC 4)', () => {
   });
 
   it('REQ-HIST-002: rounds tiny negatives through the absolute-value path', () => {
-    // Negative costs shouldn't happen in practice but the helper must
-    // not surface sign ambiguity in the UI.
     expect(formatCostUsd(-0.05)).toBe('$0.05');
   });
 });
@@ -107,46 +221,146 @@ describe('StatsWidget — read-of-total formatting (REQ-HIST-002 AC 3)', () => {
   });
 
   it('REQ-HIST-002: read cannot exceed total in the UI format (displayed verbatim)', () => {
-    // The widget does not clamp — this documents that behavior: if the
-    // API ever returns read > total the UI shows the raw pair so the
-    // inconsistency is visible to the user.
     expect(formatReadOfTotal(5, 3)).toBe('5 of 3');
   });
 });
 
-describe('GET /api/stats — SQL contract (REQ-HIST-002 AC 2, owned by Phase 5C)', () => {
-  // These are it.todo placeholders because /api/stats is Phase 5C's
-  // deliverable. When that phase lands it should fill these in with
-  // mock-D1 tests that assert the literal SQL shape:
-  //
-  //   (1) SELECT COUNT(*)           FROM digests WHERE user_id = ?1
-  //   (2) SELECT SUM(tokens_in+out) FROM digests WHERE user_id = ?1
-  //   (3) SELECT SUM(cost)          FROM digests WHERE user_id = ?1
-  //   (4a) SELECT COUNT(DISTINCT a.source_url) FROM articles a
-  //         JOIN digests d ON d.id = a.digest_id
-  //         WHERE d.user_id = ?1
-  //   (4b) SELECT COUNT(DISTINCT a.source_url) FROM articles a
-  //         JOIN digests d ON d.id = a.digest_id
-  //         WHERE d.user_id = ?1 AND a.read_at IS NOT NULL
-  //
-  //  (4a/4b use DISTINCT source_url so same-URL articles across multiple
-  //   same-day refreshes count once, not per row.)
-  //
-  // The IDOR property: queries (4a) and (4b) MUST filter on d.user_id,
-  // never on articles directly, so a compromised or spoofed digest_id
-  // can never read across users.
+// --- API-side SQL contract tests (converted from it.todo placeholders) ---
 
-  it.todo('REQ-HIST-002: digests_generated query binds session user_id');
-  it.todo('REQ-HIST-002: tokens_consumed query binds session user_id');
-  it.todo('REQ-HIST-002: cost_usd query binds session user_id');
-  it.todo(
-    'REQ-HIST-002: articles_total query JOINs digests and filters d.user_id (IDOR-safe)',
-  );
-  it.todo(
-    'REQ-HIST-002: articles_read query JOINs digests and filters d.user_id (IDOR-safe)',
-  );
-  it.todo('REQ-HIST-002: handler returns 401 when no session cookie is present');
-  it.todo(
-    'REQ-HIST-002: handler response shape includes digests_generated, articles_read, articles_total, tokens_consumed, cost_usd',
-  );
+describe('GET /api/stats — SQL contract (REQ-HIST-002 AC 2)', () => {
+  it('REQ-HIST-002: digests_generated = COUNT(*) FROM scrape_runs WHERE status=ready (global)', async () => {
+    const { db, prepared } = makeDb(baseUser(), { digestsN: 14 });
+    const req = await authedRequest();
+    const res = await GET(makeContext(req, makeEnv(db)) as never);
+    expect(res.status).toBe(200);
+
+    const digestSql = prepared.find(
+      (s) =>
+        s.includes('COUNT(*)') &&
+        s.includes('FROM scrape_runs') &&
+        s.includes("status = 'ready'"),
+    );
+    expect(digestSql).toBeDefined();
+
+    const body = (await res.json()) as { digests_generated: number };
+    expect(body.digests_generated).toBe(14);
+  });
+
+  it('REQ-HIST-002: tokens_consumed = SUM(tokens_in + tokens_out) FROM scrape_runs (global)', async () => {
+    const { db, prepared } = makeDb(baseUser(), { tokensN: 125_000 });
+    const req = await authedRequest();
+    const res = await GET(makeContext(req, makeEnv(db)) as never);
+
+    const tokensSql = prepared.find(
+      (s) =>
+        s.includes('SUM(') &&
+        s.includes('tokens_in') &&
+        s.includes('tokens_out') &&
+        s.includes('FROM scrape_runs'),
+    );
+    expect(tokensSql).toBeDefined();
+
+    const body = (await res.json()) as { tokens_consumed: number };
+    expect(body.tokens_consumed).toBe(125_000);
+  });
+
+  it('REQ-HIST-002: cost_usd = SUM(estimated_cost_usd) FROM scrape_runs (global)', async () => {
+    const { db, prepared } = makeDb(baseUser(), { costN: 0.42 });
+    const req = await authedRequest();
+    const res = await GET(makeContext(req, makeEnv(db)) as never);
+
+    const costSql = prepared.find(
+      (s) =>
+        s.includes('SUM(estimated_cost_usd)') && s.includes('FROM scrape_runs'),
+    );
+    expect(costSql).toBeDefined();
+
+    const body = (await res.json()) as { cost_usd: number };
+    expect(body.cost_usd).toBe(0.42);
+  });
+
+  it('REQ-HIST-002: articles_total filtered by user tags via article_tags JOIN', async () => {
+    const { db, bindings, prepared } = makeDb(
+      baseUser(['ai', 'cloudflare']),
+      { articlesTotalN: 140 },
+    );
+    const req = await authedRequest();
+    const res = await GET(makeContext(req, makeEnv(db)) as never);
+
+    const articlesTotalSql = prepared.find(
+      (s) => s.includes('FROM articles a') && s.includes('article_tags'),
+    );
+    expect(articlesTotalSql).toBeDefined();
+    expect(articlesTotalSql!).toContain('COUNT(DISTINCT');
+    expect(articlesTotalSql!).toContain('tag IN');
+
+    // Tags are bound as positional parameters, never string-interpolated.
+    const articlesBind = bindings.find(
+      (b) => b.sql.includes('FROM articles a') && b.sql.includes('article_tags'),
+    );
+    expect(articlesBind).toBeDefined();
+    expect(articlesBind!.params).toEqual(['ai', 'cloudflare']);
+
+    const body = (await res.json()) as { articles_total: number };
+    expect(body.articles_total).toBe(140);
+  });
+
+  it('REQ-HIST-002: articles_read = COUNT(*) FROM article_reads WHERE user_id = session user', async () => {
+    const { db, bindings, prepared } = makeDb(baseUser(), { articlesReadN: 38 });
+    const req = await authedRequest();
+    const res = await GET(makeContext(req, makeEnv(db)) as never);
+
+    const readsSql = prepared.find(
+      (s) => s.includes('FROM article_reads') && s.includes('user_id'),
+    );
+    expect(readsSql).toBeDefined();
+    expect(readsSql!).toContain('COUNT(*)');
+
+    const readsBind = bindings.find((b) => b.sql.includes('FROM article_reads'));
+    expect(readsBind).toBeDefined();
+    // First bound parameter is the session user id.
+    expect(readsBind!.params[0]).toBe('user-1');
+
+    const body = (await res.json()) as { articles_read: number };
+    expect(body.articles_read).toBe(38);
+  });
+
+  it('REQ-HIST-002: handler returns 401 when no session cookie is present', async () => {
+    const { db } = makeDb(null);
+    const req = new Request(`${APP_URL}/api/stats`, { method: 'GET' });
+    const res = await GET(makeContext(req, makeEnv(db)) as never);
+    expect(res.status).toBe(401);
+  });
+
+  it('REQ-HIST-002: response shape includes digests_generated, articles_read, articles_total, tokens_consumed, cost_usd', async () => {
+    const { db } = makeDb(baseUser(), {
+      digestsN: 14,
+      articlesReadN: 38,
+      articlesTotalN: 140,
+      tokensN: 125_000,
+      costN: 0.42,
+    });
+    const req = await authedRequest();
+    const res = await GET(makeContext(req, makeEnv(db)) as never);
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as Record<string, number>;
+    expect(body).toHaveProperty('digests_generated', 14);
+    expect(body).toHaveProperty('articles_read', 38);
+    expect(body).toHaveProperty('articles_total', 140);
+    expect(body).toHaveProperty('tokens_consumed', 125_000);
+    expect(body).toHaveProperty('cost_usd', 0.42);
+  });
+
+  it('REQ-HIST-002: zero rows → zero tiles, not null', async () => {
+    const { db } = makeDb(baseUser()); // all defaults to 0
+    const req = await authedRequest();
+    const res = await GET(makeContext(req, makeEnv(db)) as never);
+    const body = (await res.json()) as Record<string, number>;
+    expect(body.digests_generated).toBe(0);
+    expect(body.articles_read).toBe(0);
+    expect(body.articles_total).toBe(0);
+    expect(body.tokens_consumed).toBe(0);
+    expect(body.cost_usd).toBe(0);
+  });
 });

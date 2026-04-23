@@ -1,64 +1,120 @@
 // Implements REQ-HIST-001
 //
-// GET /api/history?offset=<int> — paginated list of the authenticated
-// user's past digests, newest first, 30 per page.
+// GET /api/history — day-grouped view of the last 7 days of articles
+// that match the authenticated user's active tags, plus per-day
+// aggregates from `scrape_runs` (token/cost/ingested sums and the list
+// of individual ticks for expansion).
 //
-// The SQL is the exact form mandated by REQ-HIST-001 AC 5:
-//   SELECT d.*, (SELECT COUNT(*) FROM articles WHERE digest_id = d.id)
-//     AS article_count
-//   FROM digests d
-//   WHERE d.user_id = :session_user_id
-//   ORDER BY generated_at DESC
-//   LIMIT 30 OFFSET :offset
+// The handler produces at most 7 day-groups, keyed by the user's
+// timezone (users.tz) so rows flip over at local midnight rather than
+// UTC midnight. Articles are filtered to the user's active tags via the
+// `article_tags` join; scrape_runs are global (one tick affects every
+// user) so they are returned as-is.
 //
-// The `user_id` filter is the sole IDOR protection — there is no
-// ownership check further up the stack. A correlated subquery computes
-// `article_count` per row without a separate round trip.
+// Response shape:
+//   { days: [
+//       { local_date, article_count, articles[], ticks[],
+//         day_tokens_in, day_tokens_out, day_cost_usd,
+//         day_articles_ingested }
+//     ] }
 //
-// `has_more` is derived by peeking one row past the page size: we
-// request LIMIT 31, slice off the last, and report true when that 31st
-// row existed. Avoids a second COUNT(*) query.
+// Days are sorted local_date DESC. Empty days (no articles, no ticks)
+// are omitted entirely; only days where something happened land in the
+// response.
 
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
-import { modelById } from '~/lib/models';
 import { loadSession } from '~/middleware/auth';
+import { localDateInTz, DEFAULT_TZ } from '~/lib/tz';
 
-/** Page size fixed by REQ-HIST-001 AC 1. */
-const PAGE_SIZE = 30;
+/** 7 days of history per REQ-HIST-001 AC 1. */
+const WINDOW_SECONDS = 7 * 86_400;
 
-/** Row shape returned by the SELECT below. Keep in sync with the
- *  `digests` table schema (migrations/0001_initial.sql) plus the
- *  `article_count` correlated-subquery column. */
-interface DigestRow {
+/** Row shape for the articles+tags query. */
+interface ArticleRow {
   id: string;
-  user_id: string;
-  local_date: string;
-  generated_at: number;
-  execution_ms: number | null;
-  tokens_in: number | null;
-  tokens_out: number | null;
-  estimated_cost_usd: number | null;
-  model_id: string;
-  status: string;
-  error_code: string | null;
-  trigger: string;
-  article_count: number;
+  title: string;
+  primary_source_name: string | null;
+  primary_source_url: string | null;
+  published_at: number;
+  details_json: string | null;
+  tags_json: string | null;
 }
 
-/**
- * Parse and clamp the `offset` query param. Values that are missing,
- * non-integer, or negative collapse to 0 — callers see the first page
- * rather than an error, which is the most forgiving UX for a back
- * button that encoded a stale query string.
- */
-function parseOffset(url: URL): number {
-  const raw = url.searchParams.get('offset');
-  if (raw === null) return 0;
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return n;
+/** Row shape for the scrape_runs query. */
+interface ScrapeRunRow {
+  id: string;
+  started_at: number;
+  finished_at: number | null;
+  articles_ingested: number;
+  articles_deduped: number;
+  tokens_in: number;
+  tokens_out: number;
+  estimated_cost_usd: number;
+  status: string;
+}
+
+/** Parse the stored `hashtags_json` user column into a bare string list. */
+function parseHashtags(raw: string | null): string[] {
+  if (raw === null || raw === '') return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v): v is string => typeof v === 'string');
+  } catch {
+    return [];
+  }
+}
+
+/** Parse a JSON string-array column (tags_json). Returns [] on malformed
+ *  input so the handler never crashes on a corrupted row. */
+function parseStringArray(json: string | null): string[] {
+  if (json === null || json === '') return [];
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v): v is string => typeof v === 'string');
+  } catch {
+    return [];
+  }
+}
+
+/** Wire shape for an article inside a day group. */
+interface WireArticle {
+  id: string;
+  title: string;
+  primary_source_name: string | null;
+  primary_source_url: string | null;
+  published_at: number;
+  tags: string[];
+}
+
+/** Wire shape for a scrape_runs tick inside a day group. */
+interface WireTick {
+  id: string;
+  started_at: number;
+  finished_at: number | null;
+  articles_ingested: number;
+  tokens_in: number;
+  tokens_out: number;
+  estimated_cost_usd: number;
+  status: string;
+}
+
+interface DayGroup {
+  local_date: string;
+  article_count: number;
+  articles: WireArticle[];
+  ticks: WireTick[];
+  day_tokens_in: number;
+  day_tokens_out: number;
+  day_cost_usd: number;
+  day_articles_ingested: number;
+}
+
+interface HistoryResponse {
+  days: DayGroup[];
 }
 
 export async function GET(context: APIContext): Promise<Response> {
@@ -72,54 +128,134 @@ export async function GET(context: APIContext): Promise<Response> {
     return errorResponse('unauthorized');
   }
 
-  const url = new URL(context.request.url);
-  const offset = parseOffset(url);
+  const user = session.user;
+  const tz = user.tz === '' ? DEFAULT_TZ : user.tz;
+  const userTags = parseHashtags(user.hashtags_json);
 
-  // Request one extra row so we can detect whether another page exists
-  // without a second COUNT(*) query.
-  const fetchLimit = PAGE_SIZE + 1;
+  const now = Math.floor(Date.now() / 1000);
+  const sevenDaysAgo = now - WINDOW_SECONDS;
 
-  let rows: DigestRow[];
+  // --- Articles ---------------------------------------------------------
+  // Restrict to articles in the window whose tag set intersects the
+  // user's active tags. Placeholders are positional (?1 = window,
+  // ?2..?N = tags) so tag slugs are bound, never string-interpolated.
+  let articleRows: ArticleRow[] = [];
+  if (userTags.length > 0) {
+    const tagPlaceholders = userTags.map((_, i) => `?${i + 2}`).join(', ');
+    const articlesSql =
+      `SELECT a.id, a.title, a.primary_source_name, a.primary_source_url, ` +
+      `a.published_at, a.details_json, ` +
+      `(SELECT json_group_array(DISTINCT at.tag) FROM article_tags at ` +
+      `WHERE at.article_id = a.id) AS tags_json ` +
+      `FROM articles a ` +
+      `WHERE a.published_at >= ?1 ` +
+      `AND a.id IN (SELECT DISTINCT article_id FROM article_tags WHERE tag IN (${tagPlaceholders})) ` +
+      `ORDER BY a.published_at DESC`;
+    try {
+      const result = await env.DB
+        .prepare(articlesSql)
+        .bind(sevenDaysAgo, ...userTags)
+        .all<ArticleRow>();
+      articleRows = result.results ?? [];
+    } catch (err) {
+      log('error', 'digest.generation', {
+        user_id: user.id,
+        op: 'history_articles_read',
+        error_code: 'internal_error',
+        detail: String(err).slice(0, 500),
+      });
+      return errorResponse('internal_error');
+    }
+  }
+
+  // --- Scrape runs ------------------------------------------------------
+  // Global — not user-scoped. Every user sees the same tick history.
+  let runRows: ScrapeRunRow[] = [];
   try {
-    const result = await env.DB.prepare(
-      'SELECT d.*, (SELECT COUNT(*) FROM articles WHERE digest_id = d.id) AS article_count ' +
-        'FROM digests d WHERE d.user_id = ?1 ORDER BY generated_at DESC LIMIT ?2 OFFSET ?3',
-    )
-      .bind(session.user.id, fetchLimit, offset)
-      .all<DigestRow>();
-    rows = result.results ?? [];
+    const result = await env.DB
+      .prepare(
+        `SELECT id, started_at, finished_at, articles_ingested, articles_deduped, ` +
+          `tokens_in, tokens_out, estimated_cost_usd, status ` +
+          `FROM scrape_runs WHERE started_at >= ?1 ORDER BY started_at DESC`,
+      )
+      .bind(sevenDaysAgo)
+      .all<ScrapeRunRow>();
+    runRows = result.results ?? [];
   } catch (err) {
     log('error', 'digest.generation', {
-      user_id: session.user.id,
-      op: 'history_read',
+      user_id: user.id,
+      op: 'history_runs_read',
       error_code: 'internal_error',
       detail: String(err).slice(0, 500),
     });
     return errorResponse('internal_error');
   }
 
-  const hasMore = rows.length > PAGE_SIZE;
-  const pageRows = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+  // --- Group by local_date ---------------------------------------------
+  const dayMap = new Map<string, DayGroup>();
 
-  // Attach human-readable model names so the client-side "Load more"
-  // renderer can display them without bundling the model catalog.
-  // Unknown IDs (e.g. models removed from the catalog mid-retention)
-  // fall back to the raw id so the UI degrades gracefully.
-  const enriched = pageRows.map((row) => {
-    const meta = modelById(row.model_id);
-    return {
-      ...row,
-      model_name: meta !== undefined ? meta.name : row.model_id,
-    };
-  });
+  for (const row of articleRows) {
+    const localDate = localDateInTz(row.published_at, tz);
+    const group = upsertDay(dayMap, localDate);
+    group.articles.push({
+      id: row.id,
+      title: row.title,
+      primary_source_name: row.primary_source_name,
+      primary_source_url: row.primary_source_url,
+      published_at: row.published_at,
+      tags: parseStringArray(row.tags_json),
+    });
+    group.article_count += 1;
+  }
+
+  for (const run of runRows) {
+    const localDate = localDateInTz(run.started_at, tz);
+    const group = upsertDay(dayMap, localDate);
+    group.ticks.push({
+      id: run.id,
+      started_at: run.started_at,
+      finished_at: run.finished_at,
+      articles_ingested: run.articles_ingested,
+      tokens_in: run.tokens_in,
+      tokens_out: run.tokens_out,
+      estimated_cost_usd: run.estimated_cost_usd,
+      status: run.status,
+    });
+    group.day_tokens_in += run.tokens_in;
+    group.day_tokens_out += run.tokens_out;
+    group.day_cost_usd += run.estimated_cost_usd;
+    group.day_articles_ingested += run.articles_ingested;
+  }
+
+  // Sort the map entries by local_date DESC and take up to 7 day groups.
+  const days: DayGroup[] = Array.from(dayMap.values())
+    .sort((a, b) => (a.local_date < b.local_date ? 1 : a.local_date > b.local_date ? -1 : 0))
+    .slice(0, 7);
+
+  const body: HistoryResponse = { days };
 
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
   if (session.refreshCookie !== null) {
     headers.append('Set-Cookie', session.refreshCookie);
   }
+  return new Response(JSON.stringify(body), { status: 200, headers });
+}
 
-  return new Response(
-    JSON.stringify({ digests: enriched, has_more: hasMore }),
-    { status: 200, headers },
-  );
+/** Lazily create a DayGroup in the map, returning the (possibly
+ *  existing) value so callers can append in place. */
+function upsertDay(map: Map<string, DayGroup>, localDate: string): DayGroup {
+  const existing = map.get(localDate);
+  if (existing !== undefined) return existing;
+  const fresh: DayGroup = {
+    local_date: localDate,
+    article_count: 0,
+    articles: [],
+    ticks: [],
+    day_tokens_in: 0,
+    day_tokens_out: 0,
+    day_cost_usd: 0,
+    day_articles_ingested: 0,
+  };
+  map.set(localDate, fresh);
+  return fresh;
 }

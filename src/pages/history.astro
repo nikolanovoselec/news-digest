@@ -1,50 +1,57 @@
 ---
 // Implements REQ-HIST-001
 //
-// /history — paginated past digests, 30 per page, newest first.
+// /history — day-grouped list of the authenticated user's last 7 days
+// of articles, plus per-day aggregates from the global `scrape_runs`
+// table. Each day row expands via a native <details> element to reveal
+// its tick list (every hourly run's timestamp, articles ingested,
+// tokens, cost) followed by the article cards for that day.
 //
-// Page-loader behaviour (REQ-HIST-001 AC 1):
-//   The frontmatter calls GET /api/history?offset=0 against the same
-//   origin, forwarding the user's session cookie. The handler applies
-//   the user-scoped SQL (`WHERE d.user_id = :session_user_id`), so this
-//   page needs no separate authentication logic — an anonymous visitor
-//   sees a `401` shaped redirect to /api/auth/github/login.
-//
-// Load-more behaviour (REQ-HIST-001 AC 3):
-//   The client script below hits /api/history?offset=N via the browser
-//   fetch, appends the rows with a staggered fade-in, then updates the
-//   local offset and the button's visibility from the response's
-//   `has_more` flag.
-//
-// Row click-through (REQ-HIST-001 AC 4):
-//   Each row is wrapped in `<a href="/digest/{id}">` so native anchor
-//   semantics (middle-click, cmd+click, right-click) all work.
+// Data is loaded in-process from /api/history so the page never pays
+// for a same-origin subrequest hop. The title ("History") stays as-is
+// for this phase — a future phase may rename it to "Search & History"
+// and add a live search box.
 
 import type { APIContext } from 'astro';
 import Base from '~/layouts/Base.astro';
+import DigestCard from '~/components/DigestCard.astro';
 import { loadSession } from '~/middleware/auth';
-import { localDateInTz, DEFAULT_TZ } from '~/lib/tz';
-import { modelById } from '~/lib/models';
+import { slugify } from '~/lib/slug';
+import { GET as getHistory } from '~/pages/api/history';
 
-interface DigestRow {
+interface WireArticle {
   id: string;
-  user_id: string;
-  local_date: string;
-  generated_at: number;
-  execution_ms: number | null;
-  tokens_in: number | null;
-  tokens_out: number | null;
-  estimated_cost_usd: number | null;
-  model_id: string;
+  title: string;
+  primary_source_name: string | null;
+  primary_source_url: string | null;
+  published_at: number;
+  tags: string[];
+}
+
+interface WireTick {
+  id: string;
+  started_at: number;
+  finished_at: number | null;
+  articles_ingested: number;
+  tokens_in: number;
+  tokens_out: number;
+  estimated_cost_usd: number;
   status: string;
-  error_code: string | null;
-  trigger: string;
+}
+
+interface DayGroup {
+  local_date: string;
   article_count: number;
+  articles: WireArticle[];
+  ticks: WireTick[];
+  day_tokens_in: number;
+  day_tokens_out: number;
+  day_cost_usd: number;
+  day_articles_ingested: number;
 }
 
 interface HistoryResponse {
-  digests: DigestRow[];
-  has_more: boolean;
+  days: DayGroup[];
 }
 
 const env = Astro.locals.runtime.env;
@@ -52,8 +59,6 @@ if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
   return new Response('Application not configured', { status: 500 });
 }
 
-// Auth is enforced by the API, but we also need the user's tz to format
-// the generated_at timestamps. Unauthenticated callers bounce to login.
 const session = await loadSession(
   Astro.request,
   env.DB,
@@ -62,309 +67,146 @@ const session = await loadSession(
 if (session === null) {
   return Astro.redirect('/api/auth/github/login', 303);
 }
+Astro.locals.user = session.user;
 
-const user = session.user;
-Astro.locals.user = user;
-const tz = user.tz === '' ? DEFAULT_TZ : user.tz;
-
-// REQ-HIST-001 AC 1 — /history fetches from /api/history?offset=0.
-// Call the handler directly in-process (same pattern as digest.astro
-// uses for /api/digest/today). A same-origin `fetch()` subrequest
-// works from local dev but fails silently in the deployed Worker
-// (subrequest returns 0 digests / stats), which left every page
-// showing the empty-state regardless of DB contents.
-import { GET as getHistory } from '~/pages/api/history';
-
-let initial: HistoryResponse = { digests: [], has_more: false };
+// Fetch the day-grouped payload in-process. Same pattern as digest.astro:
+// a direct handler call side-steps the subrequest hop that silently
+// returns zero rows on the deployed Worker.
+let data: HistoryResponse = { days: [] };
 try {
   const res = await getHistory({
     request: Astro.request,
     locals: Astro.locals,
-    url: new URL('/api/history?offset=0', Astro.request.url),
+    url: new URL('/api/history', Astro.request.url),
   } as unknown as APIContext);
   if (res.ok) {
-    initial = (await res.json()) as HistoryResponse;
+    data = (await res.json()) as HistoryResponse;
   }
 } catch {
-  initial = { digests: [], has_more: false };
+  data = { days: [] };
 }
 
-/**
- * Format a bytes-like count as a comma-grouped string (e.g. `1,234`).
- * Used for token columns where the number is meaningful at the
- * thousand-separator level but not precise past that.
- */
-function formatInt(value: number | null): string {
-  if (value === null) return '—';
-  return value.toLocaleString('en-US');
+const days = data.days;
+
+/** Comma-grouped integer, em-dash when null/undefined. */
+function formatInt(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '\u2014';
+  return Math.max(0, Math.round(n)).toLocaleString('en-US');
 }
 
-/**
- * Format a USD cost with 2-4 significant figures (REQ-HIST-002 AC 4
- * carryover for consistency with the stats widget).
- */
-function formatCost(value: number | null): string {
-  if (value === null) return '—';
+/** USD cost with sig-fig-aware decimal places, em-dash when null. */
+function formatCostUsd(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '\u2014';
   if (value === 0) return '$0.00';
-  // Use toPrecision for sig figs, then trim unused trailing zeros past
-  // the decimal (e.g. "0.140" -> "0.14") while keeping "2.00".
-  const precise = value.toPrecision(value < 0.01 ? 2 : 3);
-  // toPrecision may yield scientific notation for tiny values; force
-  // fixed form by going through Number() and toFixed if needed.
+  const precise = Math.abs(value).toPrecision(value < 0.01 ? 2 : 3);
   const asNum = Number(precise);
   const fixed = asNum < 0.01 ? asNum.toFixed(4) : asNum.toFixed(2);
   return `$${fixed}`;
 }
 
-/** Human-readable execution time (ms -> "1.23 s" / "450 ms"). */
-function formatMs(ms: number | null): string {
-  if (ms === null) return '—';
-  if (ms < 1000) return `${ms} ms`;
-  return `${(ms / 1000).toFixed(2)} s`;
+/** HH:MM formatting for a Unix timestamp (UTC). The user's tz is only
+ *  meaningful at the day-grouping level — inside a day, per-tick times
+ *  are already scoped to that day so HH:MM UTC is unambiguous enough for
+ *  this view. */
+function formatHourMinute(unixSeconds: number): string {
+  const d = new Date(unixSeconds * 1000);
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
 }
-
-function modelName(modelId: string | null): string {
-  if (modelId === null || modelId === '') return '—';
-  const meta = modelById(modelId);
-  return meta !== undefined ? meta.name : modelId;
-}
-
-function localDate(unixSeconds: number): string {
-  return localDateInTz(unixSeconds, tz);
-}
-
-const initialDigests = initial.digests;
-const initialHasMore = initial.has_more;
 ---
 
-<Base title="Digest history">
-  <section class="history" data-history data-tz={tz}>
+<!-- Implements REQ-HIST-001 -->
+<Base title="Search & History">
+  <section class="history">
     <header class="history__hero">
-      <h1 class="history__title">Digest history</h1>
-      <p class="history__subtitle">Your past daily digests, newest first.</p>
+      <h1 class="history__title">Search &amp; History</h1>
+      <p class="history__subtitle">The last 7 days of articles matching your tags.</p>
+      <label class="history__search" aria-label="Search history">
+        <input
+          type="search"
+          class="history__search-input"
+          placeholder="Search coming soon…"
+          data-history-search
+          disabled
+        />
+      </label>
     </header>
 
-    <ol class="history__list" data-history-list aria-live="polite">
-      {
-        initialDigests.map((row, index) => (
-          <li
-            class="history__row"
-            data-history-row
-            data-digest-id={row.id}
-            style={`--row-index: ${index}`}
-          >
-            <a class="history__link" href={`/digest/${row.id}`}>
-              <span class="history__date">{localDate(row.generated_at)}</span>
-              <span class="history__status" data-status={row.status}>
-                {row.status}
-              </span>
-              <span class="history__articles">
-                {row.article_count} {row.article_count === 1 ? 'article' : 'articles'}
-              </span>
-              <span class="history__exec">{formatMs(row.execution_ms)}</span>
-              <span class="history__tokens">
-                {formatInt((row.tokens_in ?? 0) + (row.tokens_out ?? 0))} tokens
-              </span>
-              <span class="history__cost">{formatCost(row.estimated_cost_usd)}</span>
-              <span class="history__model">{modelName(row.model_id)}</span>
-            </a>
-          </li>
-        ))
-      }
-    </ol>
-
     {
-      initialDigests.length === 0 && (
-        <p class="history__empty">
-          You haven't generated any digests yet. They'll appear here once your first
-          daily digest runs.
+      days.length === 0 ? (
+        <p class="history__empty" data-history-empty>
+          No articles in the last 7 days.
         </p>
+      ) : (
+        <ol class="history__list" data-history-list>
+          {days.map((day) => (
+            <li class="history__day" data-history-day data-date={day.local_date}>
+              <details class="history__details">
+                <summary class="history__summary">
+                  <span class="history__date">{day.local_date}</span>
+                  <span class="history__sep" aria-hidden="true">·</span>
+                  <span class="history__count">
+                    {day.article_count} {day.article_count === 1 ? 'story' : 'stories'}
+                  </span>
+                  <span class="history__sep" aria-hidden="true">·</span>
+                  <span class="history__tokens">
+                    {formatInt(day.day_tokens_in + day.day_tokens_out)} tokens
+                  </span>
+                  <span class="history__sep" aria-hidden="true">·</span>
+                  <span class="history__cost">{formatCostUsd(day.day_cost_usd)}</span>
+                </summary>
+
+                <div class="history__body">
+                  {day.ticks.length > 0 && (
+                    <ul class="history__ticks" aria-label="Scrape runs for this day">
+                      {day.ticks.map((tick) => (
+                        <li class="history__tick" data-history-tick data-status={tick.status}>
+                          <span class="history__tick-time">{formatHourMinute(tick.started_at)}</span>
+                          <span class="history__tick-ingested">
+                            {formatInt(tick.articles_ingested)} ingested
+                          </span>
+                          <span class="history__tick-tokens">
+                            {formatInt(tick.tokens_in + tick.tokens_out)} tokens
+                          </span>
+                          <span class="history__tick-cost">
+                            {formatCostUsd(tick.estimated_cost_usd)}
+                          </span>
+                          <span class="history__tick-status">{tick.status}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {day.articles.length > 0 && (
+                    <div class="history__grid" data-history-grid>
+                      {day.articles.map((a, i) => (
+                        <DigestCard
+                          digestId={a.id}
+                          slug={slugify(a.title)}
+                          title={a.title}
+                          oneLiner=""
+                          sourceName={a.primary_source_name}
+                          sourceUrl={a.primary_source_url}
+                          tags={a.tags}
+                          index={i}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </details>
+            </li>
+          ))}
+        </ol>
       )
     }
-
-    <button
-      type="button"
-      class="history__more"
-      data-history-more
-      data-offset={initialDigests.length}
-      hidden={!initialHasMore}
-    >
-      Load more
-    </button>
-    <p class="history__status" data-history-status aria-live="polite"></p>
   </section>
 </Base>
 
-<script>
-  // Implements REQ-HIST-001 AC 3 — Load more button fetches the next
-  // page via /api/history?offset=N and appends the rows with a
-  // staggered fade-in.
-
-  interface DigestRow {
-    id: string;
-    local_date: string;
-    generated_at: number;
-    execution_ms: number | null;
-    tokens_in: number | null;
-    tokens_out: number | null;
-    estimated_cost_usd: number | null;
-    model_id: string;
-    model_name?: string;
-    status: string;
-    article_count: number;
-  }
-
-  interface HistoryResponse {
-    digests: DigestRow[];
-    has_more: boolean;
-  }
-
-  function formatInt(value: number | null): string {
-    if (value === null) return '\u2014';
-    return value.toLocaleString('en-US');
-  }
-
-  function formatMs(ms: number | null): string {
-    if (ms === null) return '\u2014';
-    if (ms < 1000) return `${ms} ms`;
-    return `${(ms / 1000).toFixed(2)} s`;
-  }
-
-  function formatCost(value: number | null): string {
-    if (value === null) return '\u2014';
-    if (value === 0) return '$0.00';
-    const precise = value.toPrecision(value < 0.01 ? 2 : 3);
-    const asNum = Number(precise);
-    const fixed = asNum < 0.01 ? asNum.toFixed(4) : asNum.toFixed(2);
-    return `$${fixed}`;
-  }
-
-  function localDateInTz(unixSeconds: number, tz: string): string {
-    const ms = unixSeconds * 1000;
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: tz,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).formatToParts(new Date(ms));
-    let y = '';
-    let m = '';
-    let d = '';
-    for (const p of parts) {
-      if (p.type === 'year') y = p.value;
-      else if (p.type === 'month') m = p.value;
-      else if (p.type === 'day') d = p.value;
-    }
-    return `${y}-${m}-${d}`;
-  }
-
-  function escapeHtml(s: string): string {
-    return s
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  function renderRow(row: DigestRow, tz: string, index: number): HTMLLIElement {
-    const li = document.createElement('li');
-    li.className = 'history__row history__row--enter';
-    li.dataset['historyRow'] = '';
-    li.dataset['digestId'] = row.id;
-    li.style.setProperty('--row-index', String(index));
-
-    const articles = `${row.article_count} ${row.article_count === 1 ? 'article' : 'articles'}`;
-    const tokens = `${formatInt((row.tokens_in ?? 0) + (row.tokens_out ?? 0))} tokens`;
-
-    li.innerHTML = `
-      <a class="history__link" href="/digest/${encodeURIComponent(row.id)}">
-        <span class="history__date">${escapeHtml(localDateInTz(row.generated_at, tz))}</span>
-        <span class="history__status" data-status="${escapeHtml(row.status)}">${escapeHtml(row.status)}</span>
-        <span class="history__articles">${escapeHtml(articles)}</span>
-        <span class="history__exec">${escapeHtml(formatMs(row.execution_ms))}</span>
-        <span class="history__tokens">${escapeHtml(tokens)}</span>
-        <span class="history__cost">${escapeHtml(formatCost(row.estimated_cost_usd))}</span>
-        <span class="history__model">${escapeHtml(row.model_name ?? row.model_id ?? '')}</span>
-      </a>
-    `;
-    return li;
-  }
-
-  async function loadMore(
-    button: HTMLButtonElement,
-    list: HTMLElement,
-    status: HTMLElement,
-  ): Promise<void> {
-    const offset = Number.parseInt(button.dataset['offset'] ?? '0', 10);
-    if (!Number.isFinite(offset) || offset < 0) return;
-
-    button.disabled = true;
-    status.textContent = 'Loading…';
-
-    let res: Response;
-    try {
-      res = await fetch(`/api/history?offset=${offset}`, {
-        credentials: 'same-origin',
-        headers: { Accept: 'application/json' },
-      });
-    } catch {
-      status.textContent = 'Network error. Please try again.';
-      button.disabled = false;
-      return;
-    }
-
-    if (!res.ok) {
-      status.textContent = 'Could not load more digests.';
-      button.disabled = false;
-      return;
-    }
-
-    let body: HistoryResponse;
-    try {
-      body = (await res.json()) as HistoryResponse;
-    } catch {
-      status.textContent = 'Could not read the response.';
-      button.disabled = false;
-      return;
-    }
-
-    const root = document.querySelector<HTMLElement>('[data-history]');
-    const tz = root?.dataset['tz'] ?? 'UTC';
-    const baseIndex = list.querySelectorAll('[data-history-row]').length;
-    body.digests.forEach((row, i) => {
-      list.appendChild(renderRow(row, tz, baseIndex + i));
-    });
-
-    button.dataset['offset'] = String(offset + body.digests.length);
-    button.hidden = !body.has_more;
-    status.textContent = '';
-    button.disabled = false;
-  }
-
-  function init(): void {
-    const button = document.querySelector<HTMLButtonElement>('[data-history-more]');
-    const list = document.querySelector<HTMLElement>('[data-history-list]');
-    const status = document.querySelector<HTMLElement>('[data-history-status]');
-    if (button === null || list === null || status === null) return;
-    if (button.dataset['bound'] === '1') return;
-    button.dataset['bound'] = '1';
-    button.addEventListener('click', () => {
-      void loadMore(button, list, status);
-    });
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init, { once: true });
-  } else {
-    init();
-  }
-  document.addEventListener('astro:page-load', init);
-</script>
-
 <style>
   .history {
-    max-width: 820px;
+    max-width: 960px;
     margin: 0 auto;
     padding: 1.5rem 0;
     display: flex;
@@ -375,11 +217,12 @@ const initialHasMore = initial.has_more;
   .history__hero {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.5rem;
   }
 
   .history__title {
     margin: 0;
+    font-family: var(--font-serif);
     font-size: var(--text-2xl);
     font-weight: 600;
     color: var(--text);
@@ -391,132 +234,151 @@ const initialHasMore = initial.has_more;
     font-size: var(--text-base);
   }
 
+  .history__search {
+    display: flex;
+  }
+
+  .history__search-input {
+    width: 100%;
+    min-height: 40px;
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    background-color: var(--surface);
+    color: var(--text);
+    font-size: var(--text-base);
+  }
+
+  .history__search-input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
   .history__list {
     list-style: none;
     margin: 0;
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.75rem;
   }
 
-  .history__row {
-    margin: 0;
-    padding: 0;
+  .history__day {
     border: 1px solid var(--border);
     border-radius: 0.5rem;
     background-color: var(--surface);
     overflow: hidden;
   }
 
-  .history__row--enter {
-    opacity: 0;
-    transform: translateY(4px);
-    animation: history-row-in 280ms ease-out forwards;
-    animation-delay: calc(var(--row-index, 0) * 30ms);
+  .history__details > summary {
+    list-style: none;
+    cursor: pointer;
   }
 
-  @keyframes history-row-in {
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+  .history__details > summary::-webkit-details-marker {
+    display: none;
   }
 
-  .history__link {
-    display: grid;
-    grid-template-columns: repeat(7, auto);
-    gap: 0.75rem;
+  .history__summary {
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    padding: 0.75rem 1rem;
+    gap: 0.5rem;
+    padding: 0.875rem 1rem;
     min-height: 44px;
     color: var(--text);
-    text-decoration: none;
+    font-variant-numeric: tabular-nums;
   }
 
-  .history__link:hover {
+  .history__summary:hover {
     background-color: var(--bg);
   }
 
   .history__date {
     font-weight: 600;
-    font-variant-numeric: tabular-nums;
   }
 
-  .history__status {
+  .history__sep {
+    color: var(--text-muted);
+  }
+
+  .history__count,
+  .history__tokens,
+  .history__cost {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+
+  .history__body {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 0.75rem 1rem 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .history__ticks {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .history__tick {
+    display: grid;
+    grid-template-columns: auto 1fr 1fr 1fr auto;
+    gap: 0.75rem;
+    align-items: center;
+    padding: 0.4rem 0.5rem;
     font-size: var(--text-sm);
     color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    border-radius: 0.25rem;
+  }
+
+  .history__tick:nth-child(odd) {
+    background-color: var(--bg);
+  }
+
+  .history__tick-time {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .history__tick-status {
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
 
-  .history__status[data-status='failed'] {
+  .history__tick[data-status='failed'] .history__tick-status {
     color: #b91c1c;
   }
 
-  .history__articles,
-  .history__exec,
-  .history__tokens,
-  .history__cost,
-  .history__model {
-    font-size: var(--text-sm);
-    color: var(--text-muted);
-    font-variant-numeric: tabular-nums;
+  .history__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.75rem;
   }
 
   .history__empty {
     margin: 0;
-    padding: 1rem;
+    padding: 2rem;
     color: var(--text-muted);
     text-align: center;
     border: 1px dashed var(--border);
     border-radius: 0.5rem;
   }
 
-  .history__more {
-    align-self: center;
-    min-height: 44px;
-    padding: 0.5rem 1.5rem;
-    background-color: transparent;
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 0.375rem;
-    font-size: var(--text-base);
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .history__more[hidden] {
-    display: none;
-  }
-
-  .history__status {
-    margin: 0;
-    min-height: 1.25rem;
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-    text-align: center;
-  }
-
-  /* Collapse the grid on narrow screens so rows wrap sensibly. */
   @media (max-width: 640px) {
-    .history__link {
-      grid-template-columns: 1fr auto;
-      grid-auto-rows: auto;
+    .history__tick {
+      grid-template-columns: auto 1fr;
+      row-gap: 0.2rem;
     }
-    .history__date {
-      grid-column: 1;
-    }
-    .history__status {
+    .history__tick-status {
       grid-column: 2;
       text-align: right;
-    }
-    .history__articles,
-    .history__exec,
-    .history__tokens,
-    .history__cost,
-    .history__model {
-      grid-column: 1 / -1;
     }
   }
 </style>

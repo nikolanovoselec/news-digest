@@ -1,11 +1,8 @@
 // Tests for src/pages/api/history.ts — REQ-HIST-001.
 //
-// Verifies:
-//   - offset pagination binds the parsed `offset` query param
-//   - the SELECT contains the correlated-subquery article_count
-//   - has_more is true iff a peek row past LIMIT exists
-//   - the query is user-scoped (IDOR-safe) — the bound params carry the
-//     session user_id as the first positional arg
+// The handler returns a day-grouped view of the last 7 days of articles
+// whose tags intersect the user's active tags, plus the scrape_runs
+// that happened in the same window (aggregated per local-date).
 
 import { describe, it, expect, vi } from 'vitest';
 import { GET } from '~/pages/api/history';
@@ -29,71 +26,80 @@ interface UserRow {
   session_version: number;
 }
 
-interface DigestRow {
+interface ArticleRow {
   id: string;
-  user_id: string;
-  local_date: string;
-  generated_at: number;
-  execution_ms: number | null;
-  tokens_in: number | null;
-  tokens_out: number | null;
-  estimated_cost_usd: number | null;
-  model_id: string;
-  status: string;
-  error_code: string | null;
-  trigger: string;
-  article_count: number;
+  title: string;
+  primary_source_name: string | null;
+  primary_source_url: string | null;
+  published_at: number;
+  details_json: string | null;
+  tags_json: string | null;
 }
 
-function baseRow(): UserRow {
+interface ScrapeRunRow {
+  id: string;
+  started_at: number;
+  finished_at: number | null;
+  articles_ingested: number;
+  articles_deduped: number;
+  tokens_in: number;
+  tokens_out: number;
+  estimated_cost_usd: number;
+  status: string;
+}
+
+function baseRow(tz = 'UTC', hashtags: string[] = ['ai', 'cloudflare']): UserRow {
   return {
     id: '12345',
     email: 'alice@example.com',
     gh_login: 'alice',
-    tz: 'Europe/Zurich',
+    tz,
     digest_hour: 8,
     digest_minute: 0,
-    hashtags_json: '["ai"]',
+    hashtags_json: JSON.stringify(hashtags),
     model_id: MODEL_ID,
     email_enabled: 1,
     session_version: 1,
   };
 }
 
-/** Build a synthetic digest row with the given id and index for ordering. */
-function fakeDigest(id: string, generatedAt: number, articleCount: number): DigestRow {
+function fakeArticle(id: string, publishedAt: number, tags: string[]): ArticleRow {
   return {
     id,
-    user_id: '12345',
-    local_date: '2026-04-22',
-    generated_at: generatedAt,
-    execution_ms: 1234,
+    title: `Article ${id}`,
+    primary_source_name: 'HN',
+    primary_source_url: `https://news.example.com/${id}`,
+    published_at: publishedAt,
+    details_json: JSON.stringify(['details']),
+    tags_json: JSON.stringify(tags),
+  };
+}
+
+function fakeRun(id: string, startedAt: number): ScrapeRunRow {
+  return {
+    id,
+    started_at: startedAt,
+    finished_at: startedAt + 60,
+    articles_ingested: 10,
+    articles_deduped: 4,
     tokens_in: 500,
     tokens_out: 800,
-    estimated_cost_usd: 0.14,
-    model_id: MODEL_ID,
-    status: 'completed',
-    error_code: null,
-    trigger: 'scheduled',
-    article_count: articleCount,
+    estimated_cost_usd: 0.07,
+    status: 'ready',
   };
 }
 
 /**
- * D1 stub:
- *   - SELECT id, email, gh_login, ... -> authRow (auth middleware)
- *   - SELECT d.*, (SELECT COUNT(*) FROM articles ...) FROM digests d ...
- *     -> `digests` (history read)
- * Captures bound params on every prepare().bind() call so tests can
- * assert pagination params and user_id scoping.
+ * D1 stub that routes SQL prefixes to canned results.
+ * - auth middleware: SELECT id, email, gh_login...
+ * - articles:        SELECT a.id, a.title, a.primary_source_name...
+ * - scrape_runs:     SELECT id, started_at, finished_at, articles_ingested...
  */
 function makeDb(
   authRow: UserRow | null,
-  digests: DigestRow[],
-): {
-  db: D1Database;
-  bindings: { sql: string; params: unknown[] }[];
-} {
+  articles: ArticleRow[],
+  runs: ScrapeRunRow[],
+): { db: D1Database; bindings: { sql: string; params: unknown[] }[] } {
   const bindings: { sql: string; params: unknown[] }[] = [];
   const prepareSpy = vi.fn().mockImplementation((sql: string) => {
     const stmt = {
@@ -109,18 +115,11 @@ function makeDb(
         return null;
       }),
       all: vi.fn().mockImplementation(async () => {
-        if (sql.startsWith('SELECT d.*')) {
-          // Apply the LIMIT/OFFSET bound params so the stub's output
-          // reflects what the real D1 would return — this is how
-          // has_more's peek-row semantics get exercised.
-          const [, limitRaw, offsetRaw] = stmt._params as [
-            unknown,
-            number,
-            number,
-          ];
-          const limit = typeof limitRaw === 'number' ? limitRaw : 31;
-          const offset = typeof offsetRaw === 'number' ? offsetRaw : 0;
-          return { results: digests.slice(offset, offset + limit) };
+        if (sql.startsWith('SELECT a.id, a.title')) {
+          return { results: articles };
+        }
+        if (sql.startsWith('SELECT id, started_at, finished_at, articles_ingested')) {
+          return { results: runs };
         }
         return { results: [] };
       }),
@@ -148,209 +147,132 @@ function makeContext(request: Request, e: Partial<Env>): unknown {
   };
 }
 
-async function historyRequest(
-  offset: string | null,
-  token: string | null,
-): Promise<Request> {
+async function authedToken(): Promise<string> {
+  return signSession(
+    { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
+    JWT_SECRET,
+  );
+}
+
+async function historyRequest(token: string | null): Promise<Request> {
   const headers = new Headers();
   if (token !== null) {
     headers.set('Cookie', `${SESSION_COOKIE_NAME}=${token}`);
   }
-  const qs = offset === null ? '' : `?offset=${offset}`;
-  return new Request(`${APP_URL}/api/history${qs}`, {
+  return new Request(`${APP_URL}/api/history`, {
     method: 'GET',
     headers,
   });
 }
 
-describe('GET /api/history', () => {
-  it('REQ-HIST-001: returns 401 when no session is present', async () => {
-    const { db } = makeDb(null, []);
-    const req = await historyRequest(null, null);
+describe('GET /api/history — REQ-HIST-001', () => {
+  it('REQ-HIST-001: returns 401 when no session cookie is present', async () => {
+    const { db } = makeDb(null, [], []);
+    const req = await historyRequest(null);
     const res = await GET(makeContext(req, env(db)) as never);
     expect(res.status).toBe(401);
   });
 
-  it('REQ-HIST-001: offset=0 returns the first 30 rows and has_more=true when more exist', async () => {
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      JWT_SECRET,
-    );
-    // Seed 31 rows so the peek-row triggers has_more=true without
-    // returning the 31st in the payload.
-    const rows = Array.from({ length: 31 }, (_, i) =>
-      fakeDigest(`d${i}`, 1_713_000_000 - i * 86_400, i % 5),
-    );
-    const { db } = makeDb(baseRow(), rows);
-    const req = await historyRequest('0', token);
+  it('REQ-HIST-001: returns up to 7 day-groups', async () => {
+    const token = await authedToken();
+    // Seed articles across 10 distinct UTC dates so the handler must
+    // clamp to the 7-day window (via SQL) and to 7 groups (via slice).
+    const now = Math.floor(Date.now() / 1000);
+    const articles: ArticleRow[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      articles.push(fakeArticle(`a${i}`, now - i * 86_400 - 3600, ['ai']));
+    }
+    const { db } = makeDb(baseRow('UTC'), articles, []);
+    const req = await historyRequest(token);
     const res = await GET(makeContext(req, env(db)) as never);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      digests: DigestRow[];
-      has_more: boolean;
+      days: { local_date: string; article_count: number }[];
     };
-    expect(body.digests.length).toBe(30);
-    expect(body.has_more).toBe(true);
-    expect(body.digests[0]!.id).toBe('d0');
-    expect(body.digests[29]!.id).toBe('d29');
+    expect(body.days.length).toBeLessThanOrEqual(7);
   });
 
-  it('REQ-HIST-001: has_more=false when the last page returns fewer than 30 rows', async () => {
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      JWT_SECRET,
-    );
-    const rows = Array.from({ length: 5 }, (_, i) =>
-      fakeDigest(`d${i}`, 1_713_000_000 - i * 86_400, 3),
-    );
-    const { db } = makeDb(baseRow(), rows);
-    const req = await historyRequest('0', token);
-    const res = await GET(makeContext(req, env(db)) as never);
-    const body = (await res.json()) as { digests: DigestRow[]; has_more: boolean };
-    expect(body.digests.length).toBe(5);
-    expect(body.has_more).toBe(false);
-  });
-
-  it('REQ-HIST-001: offset=30 paginates to the second page', async () => {
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      JWT_SECRET,
-    );
-    // 60 rows total: page 2 (offset=30) yields rows 30..59 with has_more=false.
-    const rows = Array.from({ length: 60 }, (_, i) =>
-      fakeDigest(`d${i}`, 1_713_000_000 - i * 86_400, i),
-    );
-    const { db } = makeDb(baseRow(), rows);
-    const req = await historyRequest('30', token);
-    const res = await GET(makeContext(req, env(db)) as never);
-    const body = (await res.json()) as { digests: DigestRow[]; has_more: boolean };
-    expect(body.digests.length).toBe(30);
-    expect(body.digests[0]!.id).toBe('d30');
-    expect(body.digests[29]!.id).toBe('d59');
-    expect(body.has_more).toBe(false);
-  });
-
-  it('REQ-HIST-001: non-numeric offset falls back to 0', async () => {
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      JWT_SECRET,
-    );
-    const rows = Array.from({ length: 3 }, (_, i) =>
-      fakeDigest(`d${i}`, 1_713_000_000 - i * 86_400, 0),
-    );
-    const { db, bindings } = makeDb(baseRow(), rows);
-    const req = await historyRequest('not-a-number', token);
-    const res = await GET(makeContext(req, env(db)) as never);
-    expect(res.status).toBe(200);
-    // Second binding is the digests read — the third param (offset) is 0.
-    const digestBind = bindings.find((b) => b.sql.startsWith('SELECT d.*'));
-    expect(digestBind).toBeDefined();
-    expect(digestBind!.params[2]).toBe(0);
-  });
-
-  it('REQ-HIST-001: negative offset falls back to 0', async () => {
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      JWT_SECRET,
-    );
-    const { db, bindings } = makeDb(baseRow(), []);
-    const req = await historyRequest('-50', token);
-    await GET(makeContext(req, env(db)) as never);
-    const digestBind = bindings.find((b) => b.sql.startsWith('SELECT d.*'));
-    expect(digestBind!.params[2]).toBe(0);
-  });
-
-  it('REQ-HIST-001: binds the session user_id as the first positional arg (IDOR-safe)', async () => {
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      JWT_SECRET,
-    );
-    const { db, bindings } = makeDb(baseRow(), []);
-    const req = await historyRequest('0', token);
-    await GET(makeContext(req, env(db)) as never);
-    const digestBind = bindings.find((b) => b.sql.startsWith('SELECT d.*'));
-    expect(digestBind).toBeDefined();
-    expect(digestBind!.params[0]).toBe('12345');
-  });
-
-  it('REQ-HIST-001: SQL contains the article_count correlated subquery', async () => {
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      JWT_SECRET,
-    );
-    const { db, bindings } = makeDb(baseRow(), []);
-    const req = await historyRequest('0', token);
-    await GET(makeContext(req, env(db)) as never);
-    const digestBind = bindings.find((b) => b.sql.startsWith('SELECT d.*'));
-    expect(digestBind).toBeDefined();
-    // Must be a correlated subquery on `articles`, aliased to article_count.
-    expect(digestBind!.sql).toContain('SELECT COUNT(*) FROM articles');
-    expect(digestBind!.sql).toContain('article_count');
-    // Must use the user_id filter.
-    expect(digestBind!.sql).toContain('d.user_id = ?1');
-    // Must order by generated_at DESC per REQ-HIST-001 AC 1.
-    expect(digestBind!.sql).toContain('ORDER BY generated_at DESC');
-  });
-
-  it('REQ-HIST-001: request LIMIT peeks one row past the page size', async () => {
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      JWT_SECRET,
-    );
-    const { db, bindings } = makeDb(baseRow(), []);
-    const req = await historyRequest('0', token);
-    await GET(makeContext(req, env(db)) as never);
-    const digestBind = bindings.find((b) => b.sql.startsWith('SELECT d.*'));
-    // LIMIT = PAGE_SIZE + 1 = 31
-    expect(digestBind!.params[1]).toBe(31);
-  });
-
-  it('REQ-HIST-001: each row includes article_count in the response', async () => {
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      JWT_SECRET,
-    );
-    const rows = [
-      fakeDigest('d0', 1_713_000_000, 7),
-      fakeDigest('d1', 1_712_900_000, 12),
+  it('REQ-HIST-001: each day-group aggregates articles + ticks + token/cost sums', async () => {
+    const token = await authedToken();
+    // Anchor to a stable UTC day; tz=UTC so the local date == UTC date.
+    const dayStartUtc = Math.floor(Date.UTC(2026, 3, 22, 0, 0, 0) / 1000);
+    const articles = [
+      fakeArticle('a1', dayStartUtc + 3600, ['ai']),
+      fakeArticle('a2', dayStartUtc + 7200, ['ai', 'cloudflare']),
     ];
-    const { db } = makeDb(baseRow(), rows);
-    const req = await historyRequest('0', token);
-    const res = await GET(makeContext(req, env(db)) as never);
-    const body = (await res.json()) as { digests: DigestRow[] };
-    expect(body.digests[0]!.article_count).toBe(7);
-    expect(body.digests[1]!.article_count).toBe(12);
-  });
-
-  it('REQ-HIST-001: enriches each row with a human-readable model_name', async () => {
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      JWT_SECRET,
-    );
-    const rows = [fakeDigest('d0', 1_713_000_000, 5)];
-    const { db } = makeDb(baseRow(), rows);
-    const req = await historyRequest('0', token);
+    const runs = [
+      { ...fakeRun('r1', dayStartUtc + 0), tokens_in: 100, tokens_out: 200, estimated_cost_usd: 0.05, articles_ingested: 7 },
+      { ...fakeRun('r2', dayStartUtc + 3600), tokens_in: 50, tokens_out: 150, estimated_cost_usd: 0.03, articles_ingested: 3 },
+    ];
+    const { db } = makeDb(baseRow('UTC'), articles, runs);
+    const req = await historyRequest(token);
     const res = await GET(makeContext(req, env(db)) as never);
     const body = (await res.json()) as {
-      digests: Array<DigestRow & { model_name: string }>;
+      days: Array<{
+        local_date: string;
+        article_count: number;
+        articles: unknown[];
+        ticks: unknown[];
+        day_tokens_in: number;
+        day_tokens_out: number;
+        day_cost_usd: number;
+        day_articles_ingested: number;
+      }>;
     };
-    // The test MODEL_ID maps to "Llama 3.1 8B Fast" in the catalog.
-    expect(body.digests[0]!.model_name).toBe('Llama 3.1 8B Fast');
+    const group = body.days.find((d) => d.local_date === '2026-04-22');
+    expect(group).toBeDefined();
+    expect(group!.article_count).toBe(2);
+    expect(group!.articles.length).toBe(2);
+    expect(group!.ticks.length).toBe(2);
+    expect(group!.day_tokens_in).toBe(150);
+    expect(group!.day_tokens_out).toBe(350);
+    expect(group!.day_cost_usd).toBeCloseTo(0.08, 6);
+    expect(group!.day_articles_ingested).toBe(10);
   });
 
-  it('REQ-HIST-001: falls back to model_id when the catalog lookup misses', async () => {
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      JWT_SECRET,
-    );
-    const removed = fakeDigest('d0', 1_713_000_000, 5);
-    removed.model_id = '@cf/removed/legacy';
-    const { db } = makeDb(baseRow(), [removed]);
-    const req = await historyRequest('0', token);
+  it('REQ-HIST-001: scrape_runs grouped by user tz, not by UTC date', async () => {
+    const token = await authedToken();
+    // A tick at 2026-04-22 23:30 UTC lands on 2026-04-23 local in
+    // Pacific/Auckland (UTC+12) — the handler must group it on the
+    // local date, not the UTC date.
+    const runAtUtc = Math.floor(Date.UTC(2026, 3, 22, 23, 30, 0) / 1000);
+    const runs = [fakeRun('r1', runAtUtc)];
+    const { db } = makeDb(baseRow('Pacific/Auckland'), [], runs);
+    const req = await historyRequest(token);
     const res = await GET(makeContext(req, env(db)) as never);
     const body = (await res.json()) as {
-      digests: Array<DigestRow & { model_name: string }>;
+      days: Array<{ local_date: string; ticks: unknown[] }>;
     };
-    expect(body.digests[0]!.model_name).toBe('@cf/removed/legacy');
+    // Exactly one day-group, keyed to the local date (2026-04-23), not
+    // the UTC date (2026-04-22).
+    expect(body.days.length).toBe(1);
+    expect(body.days[0]!.local_date).toBe('2026-04-23');
+    expect(body.days[0]!.ticks.length).toBe(1);
+  });
+
+  it("REQ-HIST-001: articles filtered to the user's active tags", async () => {
+    const token = await authedToken();
+    const { db, bindings } = makeDb(baseRow('UTC', ['ai', 'cloudflare']), [], []);
+    const req = await historyRequest(token);
+    await GET(makeContext(req, env(db)) as never);
+
+    const articleBind = bindings.find((b) => b.sql.startsWith('SELECT a.id, a.title'));
+    expect(articleBind).toBeDefined();
+    // ?1 = window cutoff, ?2..?N = tags. Both tags must be bound.
+    expect(articleBind!.sql).toContain('article_tags');
+    expect(articleBind!.sql).toContain('tag IN');
+    const params = articleBind!.params;
+    expect(params.length).toBe(3); // cutoff + 2 tags
+    expect(params.slice(1)).toEqual(['ai', 'cloudflare']);
+  });
+
+  it('REQ-HIST-001: empty pool returns { days: [] }', async () => {
+    const token = await authedToken();
+    const { db } = makeDb(baseRow('UTC'), [], []);
+    const req = await historyRequest(token);
+    const res = await GET(makeContext(req, env(db)) as never);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { days: unknown[] };
+    expect(body.days).toEqual([]);
   });
 });
