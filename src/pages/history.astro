@@ -253,6 +253,19 @@ function formatCostUsd(value: number | null | undefined): string {
           .forEach((b) => {
             b.removeAttribute('data-bound');
           });
+        // Strip Astro's view-transition scope from the clone so it
+        // cannot conflict with the ORIGINAL card's `transition:name`
+        // that still sits in the hidden day list. The spec only
+        // allows a single element per `view-transition-name` value
+        // during a transition; duplicates silently abort the
+        // animation. The animation here is polish, not contract, so
+        // it's safe to drop it on the search clone rather than
+        // rewrite the scope to a unique value.
+        clone
+          .querySelectorAll<HTMLElement>('[data-astro-transition-scope]')
+          .forEach((scoped) => {
+            scoped.removeAttribute('data-astro-transition-scope');
+          });
         searchGrid.appendChild(clone);
         matches++;
       }
@@ -273,13 +286,24 @@ function formatCostUsd(value: number | null | undefined): string {
     };
   }
 
+  // Gate the document-level listeners behind a flag on <html> so
+  // returning to /history via View Transitions does NOT stack a fresh
+  // astro:before-swap + astro:page-load pair on every visit. The
+  // module-level script re-executes on each return, but the guard
+  // keeps the document listeners singletons — same pattern
+  // card-interactions.ts uses for `cardOutsideClickBound`. The
+  // `teardown` reference itself is updated on each page-load so the
+  // swap handler always tears down the CURRENT input wiring.
   let teardown = initHistorySearch();
-  document.addEventListener('astro:before-swap', () => {
-    teardown();
-  });
-  document.addEventListener('astro:page-load', () => {
-    teardown = initHistorySearch();
-  });
+  if (document.documentElement.dataset['historySearchBound'] !== '1') {
+    document.documentElement.dataset['historySearchBound'] = '1';
+    document.addEventListener('astro:before-swap', () => {
+      teardown();
+    });
+    document.addEventListener('astro:page-load', () => {
+      teardown = initHistorySearch();
+    });
+  }
 </script>
 
 <style>

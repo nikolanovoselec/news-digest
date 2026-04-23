@@ -81,6 +81,31 @@ describe('history.astro — REQ-HIST-001', () => {
     expect(historyPageSource).toMatch(/initCardInteractions\(searchGrid\)/);
   });
 
+  it('REQ-HIST-001: cloned cards strip data-astro-transition-scope so they do not collide with the hidden originals in View Transitions', () => {
+    // Astro's `transition:name={id}` generates a
+    // `data-astro-transition-scope="..."` attribute + a scoped
+    // stylesheet rule mapping scope → view-transition-name. The spec
+    // requires unique view-transition-name values across participating
+    // elements; duplicates silently abort the transition. Since the
+    // ORIGINAL card stays in the hidden [data-history-list] while its
+    // clone shows in the search grid, the clone must drop the scope
+    // to avoid the collision.
+    expect(historyPageSource).toMatch(
+      /removeAttribute\('data-astro-transition-scope'\)/,
+    );
+  });
+
+  it('REQ-HIST-001: astro:before-swap + astro:page-load listeners are gated by documentElement flag so returning to /history does not stack handlers', () => {
+    // Without this guard, each View-Transitions return re-executes
+    // the top-level <script> and adds another before-swap +
+    // page-load listener on document — after N visits one input
+    // event fires N apply() runs.
+    expect(historyPageSource).toMatch(/historySearchBound/);
+    expect(historyPageSource).toMatch(
+      /dataset\['historySearchBound'\]\s*!==\s*'1'/,
+    );
+  });
+
   it('REQ-HIST-001: empty state reads "No articles in the last 7 days."', () => {
     expect(historyPageSource).toContain('No articles in the last 7 days.');
   });
