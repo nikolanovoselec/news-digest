@@ -8,7 +8,7 @@ Local development setup and production deployment steps.
 
 ## Prerequisites
 
-- Node.js 20+ (local dev only; production runs on Cloudflare Workers)
+- Node.js 24+ (local dev only; production runs on Cloudflare Workers)
 - Cloudflare account with Workers Paid plan enabled
 - GitHub OAuth App created (Settings → Developer Settings → OAuth Apps)
 - Resend account with a verified sending domain
@@ -74,6 +74,15 @@ Or via GitHub Actions (`.github/workflows/deploy.yml`), which:
 | `SCRAPE_COORDINATOR` | Queue | `scrape-coordinator` | Hourly coordinator dispatch |
 | `SCRAPE_CHUNKS` | Queue | `scrape-chunks` | LLM chunk jobs |
 | `AI` | Workers AI | (account-level) | LLM inference |
+
+## Dependency Automation
+
+Dependabot is configured (`.github/dependabot.yml`) to open weekly PRs every Monday at 06:00 UTC. It covers:
+
+- **npm** — runtime deps get individual PRs; dev deps are grouped into one PR per week to keep review surface manageable.
+- **GitHub Actions** — action pin bumps are PRed automatically, preventing slow-drip deprecation warnings (e.g., Node.js 20 → 24 runner transitions, CodeQL v3 → v4 upgrades).
+
+CI workflows use `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'` at the workflow level so all actions run under Node.js 24 regardless of the action's bundled Node version.
 
 ## Resend domain verification
 

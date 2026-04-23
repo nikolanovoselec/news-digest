@@ -147,6 +147,37 @@ Returns up to 50 articles from the global pool filtered by the session user's ac
 
 **Implements:** [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view)
 
+### GET /api/scrape-status
+
+**Auth:** Required (session cookie).
+
+**Response (idle):**
+```json
+{ "running": false }
+```
+
+**Response (in progress):**
+```json
+{
+  "running": true,
+  "id": "string",
+  "started_at": 1234567890,
+  "chunks_remaining": 3,
+  "chunks_total": 12,
+  "articles_ingested": 47
+}
+```
+
+`chunks_remaining` and `chunks_total` are `null` when the coordinator has not yet written the chunk count to KV. `articles_ingested` defaults to `0`.
+
+Reads one `scrape_runs` row (most recent by `started_at DESC`) plus one KV key (`scrape_run:{id}:chunks_remaining`). No LLM cost.
+
+**Callers:**
+- `/digest` — swaps the "Next update in Xm" countdown for "Update in progress" while `running=true`.
+- `/settings` Force Refresh section — polls every 5s after form submission to show live `articles_ingested` and `chunks_remaining`.
+
+**Implements:** [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-and-history)
+
 ---
 
 ## Discovery
