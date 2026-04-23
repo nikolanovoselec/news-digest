@@ -123,7 +123,12 @@ describe('DIGEST_SYSTEM — REQ-GEN-005 AC 5/6/7', () => {
     // The system prompt must describe the tags-subset contract so the
     // model does not hallucinate tags outside the user's hashtag list.
     expect(DIGEST_SYSTEM).toContain('tags');
-    expect(DIGEST_SYSTEM).toContain("user's interest hashtags");
+    // Phrasing evolves — the contract is: tags come from the user's
+    // hashtag list, source_tags is authoritative, invented tags are
+    // forbidden. Assert on the invariants, not the exact wording.
+    expect(DIGEST_SYSTEM).toMatch(/user hashtags|user's hashtags/i);
+    expect(DIGEST_SYSTEM).toContain('source_tags');
+    expect(DIGEST_SYSTEM).toMatch(/never invent|do not invent/i);
   });
 });
 
