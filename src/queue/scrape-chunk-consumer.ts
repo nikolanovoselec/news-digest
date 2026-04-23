@@ -194,6 +194,13 @@ export async function processOneChunk(
     wastedTokensIn = extractTokensIn(aiResult);
     wastedTokensOut = extractTokensOut(aiResult);
     wastedCostUsd = estimateCost(DEFAULT_MODEL_ID, wastedTokensIn, wastedTokensOut);
+    // Dump the first chunk of raw response so wrangler tail can show
+    // WHAT the model emitted — the user was stuck with
+    // status=failed runs with no diagnostic signal. Trim hard so the
+    // log line stays Cloudflare-size-safe.
+    const primaryPreview = typeof rawResponse === 'string'
+      ? rawResponse.slice(0, 400)
+      : JSON.stringify(rawResponse).slice(0, 400);
     log('warn', 'digest.generation', {
       status: 'chunk_invalid_json_fallback_try',
       scrape_run_id: body.scrape_run_id,
@@ -203,17 +210,26 @@ export async function processOneChunk(
       primary_tokens_in: wastedTokensIn,
       primary_tokens_out: wastedTokensOut,
       primary_cost_usd: wastedCostUsd,
+      primary_response_preview: primaryPreview,
     });
     modelUsed = FALLBACK_MODEL_ID;
     aiResult = await runLLM(modelUsed);
     rawResponse = extractResponsePayload(aiResult);
     parsed = narrowChunkPayload(parseLLMPayload(rawResponse), rawResponse);
     if (parsed === null) {
+      const fallbackPreview = typeof rawResponse === 'string'
+        ? rawResponse.slice(0, 400)
+        : JSON.stringify(rawResponse).slice(0, 400);
+      const fallbackTokensIn = extractTokensIn(aiResult);
+      const fallbackTokensOut = extractTokensOut(aiResult);
       log('warn', 'digest.generation', {
         status: 'chunk_invalid_json',
         scrape_run_id: body.scrape_run_id,
         chunk_index: body.chunk_index,
         fallback_model: FALLBACK_MODEL_ID,
+        fallback_tokens_in: fallbackTokensIn,
+        fallback_tokens_out: fallbackTokensOut,
+        fallback_response_preview: fallbackPreview,
       });
       throw new Error('chunk_invalid_json');
     }

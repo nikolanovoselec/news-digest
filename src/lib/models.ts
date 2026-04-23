@@ -18,22 +18,30 @@ export interface ModelOption {
   category: 'featured' | 'budget';
 }
 
-// Default model: Google gemma-4-26b-a4b-it. 256K context, 26B params,
-// reasoning-capable, Google-instruction-tuned, and the cheapest output
-// price on Workers AI among models big enough for our 100-article
-// chunks at 400-500 words each ($0.30/M out vs gpt-oss-20b's $0.30/M
-// out vs gpt-oss-120b's $0.75/M out). Saves ~60% over gpt-oss-120b.
+// Default model: @cf/openai/gpt-oss-20b. Native OpenAI JSON mode
+// (response_format: json_object is HARD-guaranteed, not aspirational),
+// 128K context, $0.20/$0.30 per M tokens. Swapped in as default after
+// the Gemma-4 experiment failed — Gemma-4 is a REASONING model that
+// emits chain-of-thought into choices[0].message.reasoning and only
+// writes the final JSON to .content AFTER reasoning completes. With a
+// 100-article chunk at 200-250 words each, Gemma's chain-of-thought
+// ate the entire 50K max_tokens budget before producing any JSON, so
+// every call landed with finish_reason=length + content=null, which
+// extractResponsePayload correctly treats as malformed → fallback →
+// (if fallback also failed, which it did) chunk dead-lettered.
 //
-// Fallback: if Gemma 4 ever returns malformed JSON, the chunk consumer
-// retries the chunk with `@cf/openai/gpt-oss-20b` before giving up —
-// gpt-oss has explicit native JSON mode and is a known-good failover.
-// See src/queue/scrape-chunk-consumer.ts#processOneChunk.
-export const DEFAULT_MODEL_ID = '@cf/google/gemma-4-26b-a4b-it';
+// gpt-oss-20b is proven, the format is deterministic, and the price
+// delta vs Gemma ($0.30/M out → same) is zero. The original fallback
+// path (retry with gpt-oss-20b) is redundant when gpt-oss-20b IS the
+// primary, so we promote gpt-oss-120b to fallback — more capable
+// model in case 20B chokes on a weird candidate.
+export const DEFAULT_MODEL_ID = '@cf/openai/gpt-oss-20b';
 
 /** Fallback model the chunk consumer retries with on malformed-JSON
- * output. `@cf/openai/gpt-oss-20b` is the cheapest model with OpenAI's
- * native `response_format: json_object` guarantee. */
-export const FALLBACK_MODEL_ID = '@cf/openai/gpt-oss-20b';
+ * output. `@cf/openai/gpt-oss-120b` is the larger sibling of the
+ * default — same OpenAI JSON contract but more parameters, so when
+ * 20B trips on a pathological chunk the 120B pass is the safety net. */
+export const FALLBACK_MODEL_ID = '@cf/openai/gpt-oss-120b';
 
 export const MODELS: ModelOption[] = [
   // Featured — the four headline choices users see at the top of the dropdown.

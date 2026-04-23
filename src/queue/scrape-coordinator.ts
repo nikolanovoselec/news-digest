@@ -127,6 +127,43 @@ export async function runCoordinator(
 ): Promise<void> {
   const { scrape_run_id } = body;
 
+  // --- Step 0: Race guard — bail if this run already fanned out -------
+  //
+  // Queue delivery can double-dispatch the same message (retry-after-
+  // ack-lost, stuck cron re-enqueue). A second run of the coordinator
+  // for the same scrape_run_id would overwrite the KV
+  // chunks_remaining counter AFTER the chunk consumer already
+  // decremented it, breaking the "last chunk calls finishRun" math
+  // and leaving the run stuck as `running` forever.
+  //
+  // If chunk_count > 0, a prior coordinator pass already fanned out
+  // chunks for this run — skip this duplicate dispatch.
+  try {
+    const existing = await env.DB
+      .prepare('SELECT chunk_count FROM scrape_runs WHERE id = ?1')
+      .bind(scrape_run_id)
+      .first<{ chunk_count: number | null }>();
+    if (
+      existing !== null &&
+      typeof existing.chunk_count === 'number' &&
+      existing.chunk_count > 0
+    ) {
+      log('warn', 'digest.generation', {
+        status: 'coordinator_duplicate_dispatch',
+        scrape_run_id,
+        existing_chunk_count: existing.chunk_count,
+      });
+      return;
+    }
+  } catch (err) {
+    log('warn', 'digest.generation', {
+      status: 'coordinator_race_guard_select_failed',
+      scrape_run_id,
+      detail: String(err).slice(0, 500),
+    });
+    // Fall through — race guard is best-effort.
+  }
+
   // --- Step 1: Build the full source list (curated + discovered) -------
   const discoveredSources = await loadDiscoveredSources(env.KV);
   const allSources: SourceForFetch[] = [

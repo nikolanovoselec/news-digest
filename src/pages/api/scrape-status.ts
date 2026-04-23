@@ -1,3 +1,5 @@
+// Implements REQ-PIPE-006
+//
 // Lightweight status endpoint for the dashboard countdown + the
 // settings Force Refresh progress line. Reads the most recent row
 // from `scrape_runs` (one SELECT on an indexed column) plus the

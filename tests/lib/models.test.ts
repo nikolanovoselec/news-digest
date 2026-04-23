@@ -43,8 +43,16 @@ describe('MODELS catalog', () => {
 });
 
 describe('DEFAULT_MODEL_ID', () => {
-  it('REQ-SET-004: DEFAULT_MODEL_ID is Google gemma-4-26b-a4b-it (cheapest large-context option)', () => {
-    expect(DEFAULT_MODEL_ID).toBe('@cf/google/gemma-4-26b-a4b-it');
+  it('REQ-SET-004: DEFAULT_MODEL_ID is @cf/openai/gpt-oss-20b — native OpenAI JSON mode, not a reasoning model', () => {
+    // Gemma-4 (the prior default) is a reasoning model: it emits
+    // chain-of-thought into choices[0].message.reasoning and only
+    // writes final JSON to .content AFTER reasoning completes. With
+    // a 100-article chunk the chain-of-thought ate the entire
+    // max_tokens budget before producing any JSON → every call
+    // returned content=null → chunks failed and dead-lettered.
+    // gpt-oss-20b honors response_format: json_object as a HARD
+    // contract and never emits reasoning side-channel output.
+    expect(DEFAULT_MODEL_ID).toBe('@cf/openai/gpt-oss-20b');
   });
 
   it('REQ-SET-004: DEFAULT_MODEL_ID is present in MODELS', () => {
@@ -70,18 +78,18 @@ describe('modelById', () => {
 
 describe('estimateCost', () => {
   it('REQ-SET-004: estimateCost computes USD from per-million-token prices', () => {
-    // gemma-4-26b-a4b-it: input $0.10 / output $0.30 per Mtok.
-    // 1,000,000 in → $0.10; 1,000,000 out → $0.30; total $0.40.
+    // gpt-oss-20b: input $0.20 / output $0.30 per Mtok.
+    // 1,000,000 in → $0.20; 1,000,000 out → $0.30; total $0.50.
     const cost = estimateCost(DEFAULT_MODEL_ID, 1_000_000, 1_000_000);
-    expect(cost).toBeCloseTo(0.40, 6);
+    expect(cost).toBeCloseTo(0.50, 6);
   });
 
   it('REQ-SET-004: estimateCost scales linearly with token counts', () => {
-    // 2,000 input tokens × $0.10/Mtok → $0.0002
+    // 2,000 input tokens × $0.20/Mtok → $0.0004
     // 1,000 output tokens × $0.30/Mtok → $0.0003
-    // total ≈ $0.0005
+    // total ≈ $0.0007
     const cost = estimateCost(DEFAULT_MODEL_ID, 2_000, 1_000);
-    expect(cost).toBeCloseTo(0.0005, 9);
+    expect(cost).toBeCloseTo(0.0007, 9);
   });
 
   it('REQ-SET-004: estimateCost is non-zero for Kimi K2.5 (published pricing)', () => {

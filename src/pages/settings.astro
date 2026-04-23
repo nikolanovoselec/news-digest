@@ -483,6 +483,17 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     void pollScrapeProgress();
     scrapeProgressHandle = window.setInterval(pollScrapeProgress, 5_000);
   }
+  /** Clear the scrape-progress poll interval on Astro View-Transition
+   *  navigations. Without this the setInterval keeps firing after
+   *  the user leaves /settings — the DOM-query null-guard stops
+   *  UI writes but the HTTP request still fires every 5s. */
+  function teardownScrapeProgress(): void {
+    if (scrapeProgressHandle !== null) {
+      window.clearInterval(scrapeProgressHandle);
+      scrapeProgressHandle = null;
+    }
+  }
+  document.addEventListener('astro:before-swap', teardownScrapeProgress);
 
   function init(): void {
     // Restore + delete forms live OUTSIDE the main settings form (they

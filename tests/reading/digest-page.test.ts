@@ -72,11 +72,16 @@ describe('digest.astro — REQ-READ-001 grid', () => {
     // The countdown shows "Xm" / "Xh Ym" — no seconds — so a 10-second
     // tick interval is visually indistinguishable from a 1-second one
     // and cheaper (6x fewer re-renders per minute). Accept either
-    // cadence in case a future revert flips it back to 1s.
+    // cadence (a future revert to 1s stays green), and accept the
+    // tick callback being either a direct reference (`tickCountdown`)
+    // or an arrow wrapper that also polls scrape-status — the
+    // contract is "runs every 1s or 10s", not "is exactly these
+    // three characters at the callsite".
     expect(digestPageSource).toContain('setInterval');
     expect(digestPageSource).toMatch(
-      /setInterval\(\s*tickCountdown\s*,\s*(?:1000|10_000|10000)\s*\)/,
+      /setInterval\([\s\S]*?,\s*(?:1000|10_000|10000)\s*\)/,
     );
+    expect(digestPageSource).toContain('tickCountdown');
   });
 
   it('REQ-READ-001: tears down interval on astro:before-swap', () => {
