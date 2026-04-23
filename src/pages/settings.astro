@@ -111,13 +111,27 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           the × to delete. You can revert to the curated starter list at any time.
         </p>
         <div class="settings__actions-row">
-          <button
-            type="button"
-            class="settings__secondary-button"
-            data-restore-tags
+          {/*
+            Native <form> POST to /api/tags/restore — the endpoint
+            writes DEFAULT_HASHTAGS server-side and 303-redirects to
+            /digest, so the button works with zero JavaScript. The
+            light progressive enhancement below only updates the
+            inline "Restoring…" status during the POST round-trip.
+          */}
+          <form
+            method="post"
+            action="/api/tags/restore"
+            class="settings__restore-form"
+            data-restore-form
           >
-            {RESTORE_DEFAULTS_LABEL}
-          </button>
+            <button
+              type="submit"
+              class="settings__secondary-button"
+              data-restore-tags
+            >
+              {RESTORE_DEFAULTS_LABEL}
+            </button>
+          </form>
           <p class="settings__status" data-restore-status aria-live="polite"></p>
         </div>
       </fieldset>
@@ -212,9 +226,6 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
   //
   // Client-side controller for /settings. Framework-free — collects
   // form state from DOM data attributes and POSTs JSON to /api/settings.
-
-  import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
-  const DEFAULT_HASHTAGS_CLIENT = Array.from(DEFAULT_HASHTAGS);
 
   interface SettingsResponse {
     ok?: boolean;
@@ -378,37 +389,20 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       void submitSettings(form, status, submit);
     });
 
-    // Restore initial tags button (REQ-SET-002). POSTs the bundled
-    // defaults to /api/tags; on success, reloads so the tag strip on
-    // /digest reflects the new list (user lands on /digest since the
-    // digest page is the only place the tag strip renders).
-    const restoreBtn = document.querySelector<HTMLButtonElement>('[data-restore-tags]');
+    // Restore initial tags: the <form> submits natively — the server
+    // writes DEFAULT_HASHTAGS and 303-redirects to /digest. JS here is
+    // a cosmetic layer that paints "Restoring…" while the browser
+    // waits for the redirect. If the script never runs, the button
+    // still works.
+    const restoreForm = document.querySelector<HTMLFormElement>('[data-restore-form]');
     const restoreStatus = document.querySelector<HTMLElement>('[data-restore-status]');
-    if (restoreBtn !== null && restoreStatus !== null && restoreBtn.dataset['bound'] !== '1') {
-      restoreBtn.dataset['bound'] = '1';
-      restoreBtn.addEventListener('click', async () => {
-        restoreBtn.disabled = true;
-        restoreStatus.textContent = 'Restoring…';
-        try {
-          const res = await fetch('/api/tags', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tags: DEFAULT_HASHTAGS_CLIENT }),
-            credentials: 'same-origin',
-          });
-          if (!res.ok) {
-            restoreStatus.textContent = 'Could not restore. Please try again.';
-            restoreBtn.disabled = false;
-            return;
-          }
-          restoreStatus.textContent = 'Restored.';
-          setTimeout(() => {
-            window.location.assign('/digest');
-          }, 300);
-        } catch {
-          restoreStatus.textContent = 'Network error. Please try again.';
-          restoreBtn.disabled = false;
-        }
+    if (restoreForm !== null && restoreForm.dataset['bound'] !== '1') {
+      restoreForm.dataset['bound'] = '1';
+      restoreForm.addEventListener('submit', () => {
+        const button = restoreForm.querySelector<HTMLButtonElement>('[data-restore-tags]');
+        if (button !== null) button.disabled = true;
+        if (restoreStatus !== null) restoreStatus.textContent = 'Restoring…';
+        // Fall through to native POST — browser follows the 303.
       });
     }
 
