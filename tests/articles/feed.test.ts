@@ -2,7 +2,7 @@
 //
 // Contract:
 //   GET /api/digest/today (authenticated) returns
-//   { articles: WireArticle[], last_scrape_run: ScrapeRunRow | null, next_scrape_at: number | null }.
+//   { articles: WireArticle[], last_scrape_run: ScrapeRunRow | null, next_scrape_at: number }.
 //   articles is the 30 newest rows from the GLOBAL article pool whose
 //   tag list intersects the user's hashtags, ORDER BY published_at DESC.
 
@@ -192,7 +192,7 @@ interface WireArticle {
 interface WireResponse {
   articles: WireArticle[];
   last_scrape_run: ScrapeRunRow | null;
-  next_scrape_at: number | null;
+  next_scrape_at: number;
 }
 
 describe('GET /api/digest/today — REQ-READ-001', () => {

@@ -180,16 +180,29 @@ export async function processOneChunk(
   let rawResponse = extractResponsePayload(aiResult);
   let parsed = narrowChunkPayload(parseLLMPayload(rawResponse), rawResponse);
 
+  // Wasted tokens — the primary call that failed still cost money even
+  // though its output was unusable. Accumulate here so a fallback
+  // success doesn't silently drop them from cost reporting.
+  let wastedTokensIn = 0;
+  let wastedTokensOut = 0;
+  let wastedCostUsd = 0;
+
   if (parsed === null) {
     // Primary model returned unparseable output. Log the event and
     // retry once with the fallback — gpt-oss-20b has OpenAI's native
     // response_format: json_object which hard-guarantees valid JSON.
+    wastedTokensIn = extractTokensIn(aiResult);
+    wastedTokensOut = extractTokensOut(aiResult);
+    wastedCostUsd = estimateCost(DEFAULT_MODEL_ID, wastedTokensIn, wastedTokensOut);
     log('warn', 'digest.generation', {
       status: 'chunk_invalid_json_fallback_try',
       scrape_run_id: body.scrape_run_id,
       chunk_index: body.chunk_index,
       primary_model: DEFAULT_MODEL_ID,
       fallback_model: FALLBACK_MODEL_ID,
+      primary_tokens_in: wastedTokensIn,
+      primary_tokens_out: wastedTokensOut,
+      primary_cost_usd: wastedCostUsd,
     });
     modelUsed = FALLBACK_MODEL_ID;
     aiResult = await runLLM(modelUsed);
@@ -281,10 +294,21 @@ export async function processOneChunk(
   for (const s of survivors) {
     const title = sanitizeText(s.llmArticle.title);
     const detailsRaw = s.llmArticle.details;
-    const details = (Array.isArray(detailsRaw)
-      ? detailsRaw.map((p) => sanitizeText(p))
-      : [sanitizeText(detailsRaw)]
-    ).filter((p) => p !== '');
+    // The prompt contract asks the LLM for a single string with
+    // paragraphs separated by `\n`. Split on any run of newlines so a
+    // model that returns `\n\n` between paragraphs still produces
+    // multiple entries. If the model ignores the contract and returns
+    // an array, keep the per-element path.
+    const rawPieces: string[] = Array.isArray(detailsRaw)
+      ? detailsRaw.flatMap((p) =>
+          typeof p === 'string' ? p.split(/\n+/) : [],
+        )
+      : typeof detailsRaw === 'string'
+        ? detailsRaw.split(/\n+/)
+        : [];
+    const details = rawPieces
+      .map((p) => sanitizeText(p))
+      .filter((p) => p !== '');
     if (title === '' || details.length === 0) continue;
 
     const llmTags = Array.isArray(s.llmArticle.tags) ? s.llmArticle.tags : [];
@@ -367,13 +391,20 @@ export async function processOneChunk(
     await batchExec(env.DB, statements);
   }
 
-  // Accumulate chunk stats into the scrape_runs row.
-  const tokensIn = extractTokensIn(aiResult);
-  const tokensOut = extractTokensOut(aiResult);
+  // Accumulate chunk stats into the scrape_runs row. Tokens from the
+  // failed primary call (when the fallback was taken) count too — they
+  // burned real budget even though their output was unusable — so we
+  // add them to the reported totals.
+  const successTokensIn = extractTokensIn(aiResult);
+  const successTokensOut = extractTokensOut(aiResult);
+  const tokensIn = successTokensIn + wastedTokensIn;
+  const tokensOut = successTokensOut + wastedTokensOut;
   // Cost attribution uses the model that actually produced the output
-  // — `modelUsed` is DEFAULT_MODEL_ID on the happy path but flips to
-  // FALLBACK_MODEL_ID when the fallback retry succeeded.
-  const costUsd = estimateCost(modelUsed, tokensIn, tokensOut);
+  // for the success path, plus the primary-model cost for the wasted
+  // attempt when a fallback fired. `modelUsed` is DEFAULT_MODEL_ID on
+  // the happy path but flips to FALLBACK_MODEL_ID when the fallback
+  // retry succeeded.
+  const costUsd = estimateCost(modelUsed, successTokensIn, successTokensOut) + wastedCostUsd;
   // Deduped count = input candidates that ended up collapsed into a
   // primary plus input candidates that were dropped entirely (e.g. zero
   // valid tags after validation).

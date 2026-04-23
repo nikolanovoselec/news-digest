@@ -68,9 +68,15 @@ describe('digest.astro — REQ-READ-001 grid', () => {
     expect(digestPageSource).not.toContain('/digest/failed');
   });
 
-  it('REQ-READ-001: ticks countdown every 1000ms via setInterval', () => {
+  it('REQ-READ-001: ticks countdown via setInterval (minutes-only format tolerates a 10-second cadence)', () => {
+    // The countdown shows "Xm" / "Xh Ym" — no seconds — so a 10-second
+    // tick interval is visually indistinguishable from a 1-second one
+    // and cheaper (6x fewer re-renders per minute). Accept either
+    // cadence in case a future revert flips it back to 1s.
     expect(digestPageSource).toContain('setInterval');
-    expect(digestPageSource).toMatch(/setInterval\(\s*tickCountdown\s*,\s*1000\s*\)/);
+    expect(digestPageSource).toMatch(
+      /setInterval\(\s*tickCountdown\s*,\s*(?:1000|10_000|10000)\s*\)/,
+    );
   });
 
   it('REQ-READ-001: tears down interval on astro:before-swap', () => {

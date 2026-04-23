@@ -20,7 +20,7 @@
 //     last_scrape_run: {
 //       id, started_at, finished_at, status
 //     } | null,
-//     next_scrape_at: number | null  // unix seconds (started_at + 3600)
+//     next_scrape_at: number  // unix seconds of the next `0 */4 * * *` UTC tick
 //   }
 
 import type { APIContext } from 'astro';
@@ -95,7 +95,10 @@ export interface WireArticle {
 export interface TodayResponse {
   articles: WireArticle[];
   last_scrape_run: ScrapeRunRow | null;
-  next_scrape_at: number | null;
+  /** Unix seconds of the next `0 */4 * * *` UTC cron tick. Always a
+   *  real timestamp — the countdown renders even when lastRun is null
+   *  because the schedule is independent of any completed run. */
+  next_scrape_at: number;
 }
 
 /**
@@ -200,8 +203,11 @@ export async function loadTodayPayload(
  * The schedule is `0 *\/4 * * *` UTC — 00/04/08/12/16/20. Returns the
  * next such time STRICTLY in the future; rolls to tomorrow 00:00 UTC
  * when we're past 20:00.
+ *
+ * Exported for unit testing so boundary cases (exact quadrant-hour
+ * hits, day rollover) can be pinned against a frozen clock.
  */
-function computeNextScrapeAt(): number {
+export function computeNextScrapeAt(): number {
   const now = new Date();
   const next = new Date(
     Date.UTC(

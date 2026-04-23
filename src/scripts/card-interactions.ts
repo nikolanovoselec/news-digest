@@ -1,3 +1,6 @@
+// Implements REQ-STAR-001
+// Implements REQ-READ-001
+//
 // Dashboard card interactions — star toggle + tag-disclosure popover.
 //
 // The previous implementation used a single document-level capture-

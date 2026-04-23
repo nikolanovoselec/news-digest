@@ -23,6 +23,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  initCardInteractions,
   handleStarClick,
   toggleTagDisclosure,
   closeAllTagPopovers,
@@ -101,13 +102,16 @@ function makeDisclosurePair(opts: { initiallyOpen?: boolean } = {}): {
 beforeEach(() => {
   vi.restoreAllMocks();
   // card-interactions references `window.setTimeout` / `window.clearTimeout`.
-  // Under workerd these already exist globally, but the handler calls
-  // `window.setTimeout` explicitly — stub it to a pass-through that we
-  // can still inspect.
+  // Stub both to no-ops so the 5-second auto-close timer scheduled by
+  // `toggleTagDisclosure` doesn't leak past the test. None of these
+  // tests assert on the auto-close behavior — the assertions look at
+  // the synchronous classList/aria mutations only — so a no-op is
+  // strictly correct and avoids the timer-leak flakiness the prior
+  // pass-through stub caused under CI load.
   vi.stubGlobal('window', {
     ...(globalThis as unknown as { window?: Window }).window,
-    setTimeout: ((cb: () => void, ms: number) => setTimeout(cb, ms)) as unknown as typeof window.setTimeout,
-    clearTimeout: ((h: number) => clearTimeout(h)) as unknown as typeof window.clearTimeout,
+    setTimeout: (() => 0) as unknown as typeof window.setTimeout,
+    clearTimeout: (() => undefined) as unknown as typeof window.clearTimeout,
   });
   // `closeAllTagPopovers` calls `document.querySelectorAll`. Provide a
   // stub that returns nothing by default; individual tests override it.
@@ -252,6 +256,104 @@ describe('toggleTagDisclosure — REQ-READ-001 AC 6', () => {
     // MUST NOT throw and MUST NOT mutate aria-expanded.
     expect(() => toggleTagDisclosure(orphan)).not.toThrow();
     expect(triggerAttrs['aria-expanded']).toBe('false');
+  });
+});
+
+describe('initCardInteractions — REQ-STAR-001 + REQ-READ-001 event plumbing', () => {
+  /** Mock button that captures its bound click listener so we can
+   *  invoke it with a synthetic event and inspect preventDefault /
+   *  stopPropagation interactions. */
+  function makeCapturingButton(dataAttr: 'starToggle' | 'tagTrigger'): {
+    button: HTMLButtonElement;
+    invokeClick: (e: { preventDefault: () => void; stopPropagation: () => void }) => void;
+  } {
+    const dataset: Record<string, string> = {};
+    dataset[dataAttr] = '';
+    dataset['articleId'] = 'evt-art';
+    const attrs: Record<string, string> = { 'aria-pressed': 'false', 'aria-expanded': 'false' };
+    let captured: ((e: Event) => void) | null = null;
+    const button = {
+      dataset,
+      getAttribute: (k: string) => attrs[k] ?? null,
+      setAttribute: (k: string, v: string) => {
+        attrs[k] = v;
+      },
+      addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
+        if (type === 'click' && typeof listener === 'function') captured = listener;
+      },
+      closest: () => null,
+    } as unknown as HTMLButtonElement;
+    return {
+      button,
+      invokeClick: (e) => {
+        if (captured === null) throw new Error('no click listener bound');
+        captured(e as unknown as Event);
+      },
+    };
+  }
+
+  it('REQ-STAR-001: the bound star handler calls preventDefault + stopPropagation so the card anchor does not navigate on tap', () => {
+    // Regression guard for the mobile bug that motivated the
+    // direct-binding refactor: a button sitting inside/near an <a>
+    // element must not let the click bubble up and trigger navigation.
+    const { button, invokeClick } = makeCapturingButton('starToggle');
+    const rootQS: Record<string, HTMLButtonElement[]> = {
+      '[data-star-toggle]': [button],
+      '[data-tag-trigger]': [],
+    };
+    const root = {
+      querySelectorAll: (sel: string) => (rootQS[sel] ?? []) as unknown as NodeListOf<Element>,
+    } as unknown as HTMLElement;
+
+    const bound = initCardInteractions(root);
+    expect(bound).toBe(1);
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
+    invokeClick({ preventDefault, stopPropagation });
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(stopPropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it('REQ-READ-001: the bound tag-trigger handler calls preventDefault + stopPropagation', () => {
+    const { button, invokeClick } = makeCapturingButton('tagTrigger');
+    const rootQS: Record<string, HTMLButtonElement[]> = {
+      '[data-star-toggle]': [],
+      '[data-tag-trigger]': [button],
+    };
+    const root = {
+      querySelectorAll: (sel: string) => (rootQS[sel] ?? []) as unknown as NodeListOf<Element>,
+    } as unknown as HTMLElement;
+
+    const bound = initCardInteractions(root);
+    expect(bound).toBe(1);
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    invokeClick({ preventDefault, stopPropagation });
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(stopPropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it('REQ-STAR-001: re-running init does not double-bind (dataset.bound guard)', () => {
+    // Simulates astro:page-load firing twice. A double-bind would
+    // cause a single click to fire two fetches and flip aria-pressed
+    // back and forth instantly.
+    const { button } = makeCapturingButton('starToggle');
+    const root = {
+      querySelectorAll: (sel: string) =>
+        (sel === '[data-star-toggle]' ? [button] : []) as unknown as NodeListOf<Element>,
+    } as unknown as HTMLElement;
+
+    const first = initCardInteractions(root);
+    const second = initCardInteractions(root);
+
+    expect(first).toBe(1);
+    expect(second).toBe(0);
+    expect(button.dataset['bound']).toBe('1');
   });
 });
 

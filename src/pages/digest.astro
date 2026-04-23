@@ -178,17 +178,13 @@ const sortedUserTags = [...userTags].sort((a, b) => {
 
     <header class="digest-page__header">
       <h1 class="digest-page__title">Today's digest</h1>
-      {
-        today.next_scrape_at !== null && (
-          <p
-            class="digest-page__meta"
-            data-countdown
-            data-next-at={String(today.next_scrape_at)}
-          >
-            <span>Next update in <span class="digest-page__meta-countdown" data-countdown-text>…</span></span>
-          </p>
-        )
-      }
+      <p
+        class="digest-page__meta"
+        data-countdown
+        data-next-at={String(today.next_scrape_at)}
+      >
+        <span>Next update in <span class="digest-page__meta-countdown" data-countdown-text>…</span></span>
+      </p>
     </header>
 
     {
@@ -251,14 +247,12 @@ const sortedUserTags = [...userTags].sort((a, b) => {
       if (!res.ok) return;
       const body = (await res.json()) as {
         last_scrape_run: { started_at: number } | null;
-        next_scrape_at: number | null;
+        next_scrape_at: number;
         articles: unknown[];
       };
-      if (body.next_scrape_at !== null) {
-        const el = document.querySelector<HTMLElement>('[data-countdown]');
-        if (el !== null) {
-          el.dataset['nextAt'] = String(body.next_scrape_at);
-        }
+      const el = document.querySelector<HTMLElement>('[data-countdown]');
+      if (el !== null) {
+        el.dataset['nextAt'] = String(body.next_scrape_at);
       }
       // If the article set changed, a full reload is the simplest way
       // to pick up the new server render — the page is lightweight and
