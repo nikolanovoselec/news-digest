@@ -568,7 +568,11 @@ function extractFeeds(parsed: unknown): DiscoveredFeed[] {
  * treats as `llm_invalid_json`.
  */
 function extractResponsePayload(aiResult: AIRunResponse): unknown {
-  if (typeof aiResult.response === 'string' || typeof aiResult.response === 'object') {
+  // `typeof null === 'object'`, so guard against a null `response`
+  // explicitly — we want to fall through to the OpenAI envelope branch
+  // rather than accept a null payload as valid.
+  if (typeof aiResult.response === 'string') return aiResult.response;
+  if (typeof aiResult.response === 'object' && aiResult.response !== null) {
     return aiResult.response;
   }
   const choices = (aiResult as Record<string, unknown>)['choices'];
@@ -578,7 +582,11 @@ function extractResponsePayload(aiResult: AIRunResponse): unknown {
       const message = first['message'] as Record<string, unknown> | null | undefined;
       if (message !== null && message !== undefined && typeof message === 'object') {
         const content = message['content'];
-        if (typeof content === 'string' || typeof content === 'object') return content;
+        if (typeof content === 'string') return content;
+        // Reject `null` content (tool-call-only responses) so the
+        // caller correctly classifies them as llm_invalid_json instead
+        // of silently passing null through the parser.
+        if (typeof content === 'object' && content !== null) return content;
       }
     }
   }

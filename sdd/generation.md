@@ -127,7 +127,8 @@ A single `generateDigest` function called from two places: the cron dispatcher (
 **Priority:** P0
 **Dependencies:** REQ-GEN-005
 **Verification:** Integration test
-**Status:** Implemented
+**Status:** Partial
+**Notes:** AC 5 (per-article tag persistence) ships in `src/lib/generate.ts` + `migrations/0002_article_tags.sql` but no test asserts the final insert binds the validated tag list. AC 1-4 remain verified by existing pipeline and sanitize tests.
 
 ---
 

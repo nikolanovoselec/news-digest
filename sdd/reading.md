@@ -23,7 +23,8 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 **Priority:** P0
 **Dependencies:** REQ-GEN-006, REQ-SET-002
 **Verification:** Integration test
-**Status:** Implemented
+**Status:** Partial
+**Notes:** AC 6 (per-card # popover with 5 s auto-dismiss) and AC 7 (tag-strip filter + "no stories match" empty state) ship in code but have no automated test. AC 1-5 remain verified by `tests/reading/digest-page.test.ts`.
 
 ---
 

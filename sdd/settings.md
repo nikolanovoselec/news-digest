@@ -44,7 +44,8 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 **Priority:** P0
 **Dependencies:** REQ-SET-001
 **Verification:** Integration test
-**Status:** Implemented
+**Status:** Partial
+**Notes:** AC 2 (toggle + inverted chip + red × affordance), AC 4 (client-only selection state, no server write on toggle), AC 7 (filter + empty-state message), and AC 8 (default-hashtag seed + restore action) ship in code but have no automated test. AC 1, 3, 5, and 6 remain verified by `tests/settings/api.test.ts`.
 
 ---
 
