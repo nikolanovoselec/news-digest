@@ -6,6 +6,7 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-23
 
+- REQ-DES-001 and REQ-DES-003 demoted from Implemented to Partial: the code ships the full Swiss-minimal visual language and deliberate motion system, but no automated tests verified the typography scale, focus ring, touch-target minimum, easing curve, or reduced-motion gating. Tests are now in progress; both REQs will return to Implemented once those tests are in and green.
 - REQ-GEN-005 and REQ-GEN-002 retuned together: the default model moves to a larger, longer-context option so richer six-article digests fit without truncation, the candidate headline pool tightens to the top 100, and the manual-refresh cooldown shortens to a debounce with a much higher daily ceiling. Users will notice deeper summaries, slightly higher per-digest cost, and far less friction when refreshing.
 - REQ-DES-002 (theme toggle) now labels the *target* mode with a paired sun/moon icon rather than the current state, so the menu item reads as an action instead of a status.
 - REQ-READ-006 (failure page) Try-again now reports outcomes inline — retrying, rate-limit reason with countdown, or network error — and only navigates to the digest once a new generation is accepted, instead of redirecting to a rate-limited page on 429.
