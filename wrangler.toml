@@ -23,20 +23,37 @@ migrations_dir = "./migrations"
 binding = "KV"
 id = "34a836c647a4453fb167e60d00b06f0d"
 
+# Global-feed queues (REQ-PIPE-001, REQ-PIPE-002). The hourly coordinator
+# receives one message per :00 tick; the chunk consumer handles one
+# ~100-candidate LLM call per message.
 [[queues.producers]]
-binding = "DIGEST_JOBS"
-queue = "digest-jobs"
+binding = "SCRAPE_COORDINATOR"
+queue = "scrape-coordinator"
+
+[[queues.producers]]
+binding = "SCRAPE_CHUNKS"
+queue = "scrape-chunks"
 
 [[queues.consumers]]
-queue = "digest-jobs"
+queue = "scrape-coordinator"
+max_batch_size = 1
+max_retries = 3
+
+[[queues.consumers]]
+queue = "scrape-chunks"
 max_batch_size = 1
 max_retries = 3
 
 [ai]
 binding = "AI"
 
+# Cron triggers:
+#   0 * * * *   — hourly global-feed coordinator (REQ-PIPE-001)
+#   0 3 * * *   — daily retention cleanup (REQ-PIPE-005)
+#   */5 * * * * — email dispatcher + discovery drain (REQ-MAIL-001 +
+#                 REQ-DISC-003)
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["0 * * * *", "0 3 * * *", "*/5 * * * *"]
 
 [vars]
 # APP_URL is set as a Worker secret (different per deployment target)

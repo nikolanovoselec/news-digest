@@ -1,9 +1,14 @@
-// Tests for src/worker.ts scheduled() — REQ-GEN-001 (cron dispatcher)
-// + REQ-GEN-007 (stuck-digest sweeper).
+// Tests for src/worker.ts scheduled() — REQ-PIPE-001 / REQ-PIPE-005 /
+// REQ-DISC-003 / REQ-MAIL-001.
 //
-// The cron handler runs three passes in order: sweeper, discovery
-// processor, scheduling. These tests stub D1/KV/Queue/AI via vi.fn()
-// and assert on the SQL executed and the messages enqueued.
+// The cron dispatcher branches on `controller.cron`:
+//   - `0 * * * *`   → starts a scrape_run and enqueues SCRAPE_COORDINATOR.
+//   - `0 3 * * *`   → runs cleanup (REQ-PIPE-005).
+//   - `*/5 * * * *` → discovery drain + daily-email dispatcher (per-user
+//                     digest enqueue is retired).
+//
+// These tests stub D1, KV, and the queue producers, then drive the
+// `scheduled` export with the relevant controller.cron value.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import workerDefault, { scheduled } from '~/worker';
@@ -15,37 +20,17 @@ interface SqlCall {
   kind: 'run' | 'all' | 'first';
 }
 
-/**
- * D1 stub. Takes a response-map keyed by a SQL-prefix matcher so a
- * single stub covers all three cron passes. Any SQL not matched falls
- * through to an empty result.
- */
 function makeDb(responses: {
-  updateDigestsResult?: { changes: number };
-  distinctTzResults?: Array<{ tz: string }>;
-  dueUsersResults?: Array<{ id: string }>;
   pendingDiscoveriesResults?: Array<{ tag: string }>;
-}): { db: D1Database; calls: SqlCall[] } {
+} = {}): { db: D1Database; calls: SqlCall[] } {
   const calls: SqlCall[] = [];
   const makeStmtMethods = (sql: string, params: unknown[]) => ({
     run: vi.fn().mockImplementation(async () => {
       calls.push({ sql, params, kind: 'run' });
-      if (sql.startsWith('UPDATE digests')) {
-        return {
-          success: true,
-          meta: { changes: responses.updateDigestsResult?.changes ?? 0 },
-        };
-      }
-      return { success: true, meta: { changes: 0 } };
+      return { success: true, meta: { changes: 1 } };
     }),
     all: vi.fn().mockImplementation(async () => {
       calls.push({ sql, params, kind: 'all' });
-      if (sql.includes('SELECT DISTINCT tz')) {
-        return { success: true, results: responses.distinctTzResults ?? [] };
-      }
-      if (sql.includes('SELECT id FROM users')) {
-        return { success: true, results: responses.dueUsersResults ?? [] };
-      }
       if (sql.startsWith('SELECT tag FROM pending_discoveries')) {
         return {
           success: true,
@@ -66,7 +51,11 @@ function makeDb(responses: {
       bind: (...params: unknown[]) => makeStmtMethods(sql, params),
     };
   });
-  const db = { prepare } as unknown as D1Database;
+  const db = {
+    prepare,
+    batch: vi.fn().mockResolvedValue([]),
+    exec: vi.fn().mockResolvedValue({ count: 0, duration: 0 }),
+  } as unknown as D1Database;
   return { db, calls };
 }
 
@@ -81,13 +70,13 @@ function makeKv(): KVNamespace {
 
 interface QueueMock {
   queue: Queue<unknown>;
-  sendBatchCalls: Array<Array<{ body: unknown }>>;
   sendCalls: unknown[];
+  sendBatchCalls: Array<Array<{ body: unknown }>>;
 }
 
 function makeQueue(): QueueMock {
-  const sendBatchCalls: Array<Array<{ body: unknown }>> = [];
   const sendCalls: unknown[] = [];
+  const sendBatchCalls: Array<Array<{ body: unknown }>> = [];
   const queue = {
     send: vi.fn().mockImplementation(async (body: unknown) => {
       sendCalls.push(body);
@@ -98,19 +87,25 @@ function makeQueue(): QueueMock {
         sendBatchCalls.push(messages);
       }),
   } as unknown as Queue<unknown>;
-  return { queue, sendBatchCalls, sendCalls };
+  return { queue, sendCalls, sendBatchCalls };
 }
 
 function makeEnv(
   db: D1Database,
   kv: KVNamespace,
-  queue: Queue<unknown>,
+  coordinator: Queue<unknown>,
+  chunks: Queue<unknown>,
+  digestJobs: Queue<unknown>,
 ): Env {
   return {
     DB: db,
     KV: kv,
-    DIGEST_JOBS: queue,
-    AI: { run: vi.fn().mockResolvedValue({ response: '{"feeds":[]}' }) } as unknown as Ai,
+    SCRAPE_COORDINATOR: coordinator,
+    SCRAPE_CHUNKS: chunks,
+    DIGEST_JOBS: digestJobs,
+    AI: {
+      run: vi.fn().mockResolvedValue({ response: '{"feeds":[]}' }),
+    } as unknown as Ai,
     ASSETS: {} as Fetcher,
     OAUTH_CLIENT_ID: 'x',
     OAUTH_CLIENT_SECRET: 'x',
@@ -121,22 +116,29 @@ function makeEnv(
   } as unknown as Env;
 }
 
-function makeController(): ScheduledController {
+function makeController(cron: string): ScheduledController {
   return {
     scheduledTime: Date.now(),
-    cron: '*/5 * * * *',
+    cron,
     noRetry: () => undefined,
   } as unknown as ScheduledController;
 }
 
-function makeCtx(): ExecutionContext {
-  return {
-    waitUntil: (_p: Promise<unknown>) => undefined,
+function makeCtx(): {
+  ctx: ExecutionContext;
+  waitUntils: Array<Promise<unknown>>;
+} {
+  const waitUntils: Array<Promise<unknown>> = [];
+  const ctx = {
+    waitUntil: (p: Promise<unknown>) => {
+      waitUntils.push(p);
+    },
     passThroughOnException: () => undefined,
   } as unknown as ExecutionContext;
+  return { ctx, waitUntils };
 }
 
-describe('scheduled() cron handler', () => {
+describe('cron dispatch — REQ-PIPE-001 / REQ-PIPE-005', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -144,187 +146,83 @@ describe('scheduled() cron handler', () => {
     vi.unstubAllGlobals();
   });
 
-  it('REQ-GEN-007: stuck-digest sweeper runs first with the 10-minute threshold', async () => {
-    const { db, calls } = makeDb({ updateDigestsResult: { changes: 0 } });
+  it('REQ-PIPE-001: cron "0 * * * *" starts a scrape_run and sends a SCRAPE_COORDINATOR message', async () => {
+    const { db, calls } = makeDb();
     const kv = makeKv();
-    const { queue } = makeQueue();
-    const env = makeEnv(db, kv, queue);
+    const coordinator = makeQueue();
+    const chunks = makeQueue();
+    const digestJobs = makeQueue();
+    const env = makeEnv(db, kv, coordinator.queue, chunks.queue, digestJobs.queue);
+    const { ctx, waitUntils } = makeCtx();
+    await scheduled(makeController('0 * * * *'), env, ctx);
+    // Wait for any queue sends the handler deferred to waitUntil.
+    await Promise.all(waitUntils);
 
-    await scheduled(makeController(), env, makeCtx());
-
-    const sweeper = calls.find(
-      (c) => c.sql.startsWith('UPDATE digests') && c.kind === 'run',
+    // A scrape_runs INSERT must have happened.
+    const insert = calls.find(
+      (c) => c.sql.includes('INSERT INTO scrape_runs') && c.kind === 'run',
     );
-    expect(sweeper).toBeDefined();
-    expect(sweeper!.sql).toContain("status = 'failed'");
-    expect(sweeper!.sql).toContain("error_code = 'generation_stalled'");
-    expect(sweeper!.sql).toContain("status = 'in_progress'");
-    // The threshold parameter should be (now - 600).
-    const nowSec = Math.floor(Date.now() / 1000);
-    const threshold = sweeper!.params[0] as number;
-    expect(threshold).toBeLessThanOrEqual(nowSec - 600);
-    expect(threshold).toBeGreaterThanOrEqual(nowSec - 602);
+    expect(insert).toBeDefined();
+    // And exactly one coordinator message was sent with a scrape_run_id.
+    expect(coordinator.sendCalls).toHaveLength(1);
+    const msg = coordinator.sendCalls[0] as { scrape_run_id: string };
+    expect(typeof msg.scrape_run_id).toBe('string');
+    expect(msg.scrape_run_id.length).toBeGreaterThan(0);
   });
 
-  it('REQ-GEN-007: sweeper failure aborts the cron — no scheduling queries run', async () => {
-    // D1 that throws on UPDATE digests.
-    const calls: SqlCall[] = [];
-    const prepare = vi.fn().mockImplementation((sql: string) => ({
-      bind: (..._params: unknown[]) => ({
-        run: vi.fn().mockImplementation(async () => {
-          calls.push({ sql, params: _params, kind: 'run' });
-          if (sql.startsWith('UPDATE digests')) {
-            throw new Error('d1 exploded');
-          }
-          return { success: true, meta: { changes: 0 } };
-        }),
-        all: vi.fn().mockResolvedValue({ success: true, results: [] }),
-        first: vi.fn().mockResolvedValue(null),
-      }),
-    }));
-    const db = { prepare } as unknown as D1Database;
+  it('REQ-PIPE-005: cron "0 3 * * *" invokes runCleanup', async () => {
+    // runCleanup is imported from src/queue/cleanup.ts. We assert that
+    // the dispatcher reached it without throwing; since the stub body
+    // is a no-op we can't assert DB calls, but we can assert no
+    // coordinator or chunks messages are enqueued (the daily cleanup
+    // branch never talks to the queue).
+    const { db } = makeDb();
     const kv = makeKv();
-    const { queue, sendBatchCalls } = makeQueue();
-    const env = makeEnv(db, kv, queue);
-
-    await scheduled(makeController(), env, makeCtx());
-
-    // Only the failing UPDATE digests call should exist.
-    expect(calls.some((c) => c.sql.startsWith('SELECT DISTINCT tz'))).toBe(false);
-    expect(sendBatchCalls).toHaveLength(0);
+    const coordinator = makeQueue();
+    const chunks = makeQueue();
+    const digestJobs = makeQueue();
+    const env = makeEnv(db, kv, coordinator.queue, chunks.queue, digestJobs.queue);
+    const { ctx } = makeCtx();
+    await scheduled(makeController('0 3 * * *'), env, ctx);
+    expect(coordinator.sendCalls).toHaveLength(0);
+    expect(chunks.sendCalls).toHaveLength(0);
   });
 
-  it('REQ-DISC-001: discovery processor is invoked after the sweeper', async () => {
+  it('cron "*/5 * * * *" no longer enqueues per-user digests (regression guard)', async () => {
+    const { db } = makeDb();
+    const kv = makeKv();
+    const coordinator = makeQueue();
+    const chunks = makeQueue();
+    const digestJobs = makeQueue();
+    const env = makeEnv(db, kv, coordinator.queue, chunks.queue, digestJobs.queue);
+    const { ctx } = makeCtx();
+    await scheduled(makeController('*/5 * * * *'), env, ctx);
+    // No coordinator enqueue (that's the hourly path), and critically
+    // no DIGEST_JOBS send/sendBatch (per-user dispatch retired).
+    expect(coordinator.sendCalls).toHaveLength(0);
+    expect(digestJobs.sendCalls).toHaveLength(0);
+    expect(digestJobs.sendBatchCalls).toHaveLength(0);
+  });
+
+  it('cron "*/5 * * * *" still drains pending_discoveries and dispatches daily emails', async () => {
+    // The discovery drain issues a SELECT on pending_discoveries; seeing
+    // that query execute is the observable signal that the branch fired.
     const { db, calls } = makeDb({
-      updateDigestsResult: { changes: 0 },
       pendingDiscoveriesResults: [],
-      distinctTzResults: [],
     });
     const kv = makeKv();
-    const { queue } = makeQueue();
-    const env = makeEnv(db, kv, queue);
-
-    await scheduled(makeController(), env, makeCtx());
-
-    // Should have queried pending_discoveries (the discovery processor).
+    const coordinator = makeQueue();
+    const chunks = makeQueue();
+    const digestJobs = makeQueue();
+    const env = makeEnv(db, kv, coordinator.queue, chunks.queue, digestJobs.queue);
+    const { ctx } = makeCtx();
+    await scheduled(makeController('*/5 * * * *'), env, ctx);
     const discoveryQuery = calls.find((c) =>
       c.sql.startsWith('SELECT tag FROM pending_discoveries'),
     );
     expect(discoveryQuery).toBeDefined();
-
-    // Sweeper came before it.
-    const sweeperIdx = calls.findIndex((c) => c.sql.startsWith('UPDATE digests'));
-    const discoveryIdx = calls.findIndex((c) =>
-      c.sql.startsWith('SELECT tag FROM pending_discoveries'),
-    );
-    expect(sweeperIdx).toBeGreaterThanOrEqual(0);
-    expect(discoveryIdx).toBeGreaterThanOrEqual(0);
-    expect(sweeperIdx).toBeLessThan(discoveryIdx);
-  });
-
-  it('REQ-GEN-001: scheduling pass selects distinct tz then finds due users', async () => {
-    const { db, calls } = makeDb({
-      updateDigestsResult: { changes: 0 },
-      pendingDiscoveriesResults: [],
-      distinctTzResults: [{ tz: 'UTC' }],
-      dueUsersResults: [{ id: 'u1' }, { id: 'u2' }],
-    });
-    const kv = makeKv();
-    const { queue, sendBatchCalls } = makeQueue();
-    const env = makeEnv(db, kv, queue);
-
-    await scheduled(makeController(), env, makeCtx());
-
-    // The distinct-tz query ran.
-    expect(
-      calls.find((c) => c.sql.includes('SELECT DISTINCT tz')),
-    ).toBeDefined();
-
-    // The due-users query ran.
-    const dueUsers = calls.find((c) => c.sql.includes('SELECT id FROM users'));
-    expect(dueUsers).toBeDefined();
-    expect(dueUsers!.sql).toContain('hashtags_json IS NOT NULL');
-    expect(dueUsers!.sql).toContain('digest_hour');
-    expect(dueUsers!.sql).toContain('digest_minute');
-    expect(dueUsers!.sql).toContain('last_generated_local_date');
-
-    // sendBatch called once with two jobs.
-    expect(sendBatchCalls).toHaveLength(1);
-    expect(sendBatchCalls[0]).toHaveLength(2);
-    const bodies = sendBatchCalls[0]!.map((m) => m.body) as Array<{
-      trigger: string;
-      user_id: string;
-      local_date: string;
-    }>;
-    expect(bodies[0]!.trigger).toBe('scheduled');
-    expect(bodies[0]!.user_id).toBe('u1');
-    expect(bodies[1]!.user_id).toBe('u2');
-    // local_date is YYYY-MM-DD.
-    expect(bodies[0]!.local_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-  });
-
-  it('REQ-GEN-001: enqueues nothing when no users are due', async () => {
-    const { db } = makeDb({
-      updateDigestsResult: { changes: 0 },
-      pendingDiscoveriesResults: [],
-      distinctTzResults: [{ tz: 'UTC' }],
-      dueUsersResults: [],
-    });
-    const kv = makeKv();
-    const { queue, sendBatchCalls } = makeQueue();
-    const env = makeEnv(db, kv, queue);
-
-    await scheduled(makeController(), env, makeCtx());
-    expect(sendBatchCalls).toHaveLength(0);
-  });
-
-  it('REQ-GEN-001: window start/end are 5-minute-aligned half-open bounds', async () => {
-    // Don't freeze time — just assert the shape of the bound params.
-    // The window parameters are always [floor(m/5)*5, floor(m/5)*5+5).
-    const { db, calls } = makeDb({
-      updateDigestsResult: { changes: 0 },
-      pendingDiscoveriesResults: [],
-      distinctTzResults: [{ tz: 'UTC' }],
-      dueUsersResults: [],
-    });
-    const kv = makeKv();
-    const { queue } = makeQueue();
-    const env = makeEnv(db, kv, queue);
-
-    await scheduled(makeController(), env, makeCtx());
-
-    const dueUsers = calls.find((c) => c.sql.includes('SELECT id FROM users'));
-    expect(dueUsers).toBeDefined();
-    // params: [tz, hour, windowStart, windowEnd, localDate]
-    expect(dueUsers!.params[0]).toBe('UTC');
-    expect(typeof dueUsers!.params[1]).toBe('number');
-    expect(dueUsers!.params[1]).toBeGreaterThanOrEqual(0);
-    expect(dueUsers!.params[1]).toBeLessThanOrEqual(23);
-    const windowStart = dueUsers!.params[2] as number;
-    const windowEnd = dueUsers!.params[3] as number;
-    expect(windowStart % 5).toBe(0);
-    expect(windowEnd - windowStart).toBe(5);
-    expect(dueUsers!.params[4]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-  });
-
-  it('REQ-GEN-001: enqueues across multiple timezones with a single sendBatch per chunk', async () => {
-    const { db } = makeDb({
-      updateDigestsResult: { changes: 0 },
-      pendingDiscoveriesResults: [],
-      distinctTzResults: [{ tz: 'UTC' }, { tz: 'America/New_York' }],
-      dueUsersResults: [{ id: 'u1' }],
-    });
-    const kv = makeKv();
-    const { queue, sendBatchCalls } = makeQueue();
-    const env = makeEnv(db, kv, queue);
-
-    await scheduled(makeController(), env, makeCtx());
-
-    // Both tzs yielded u1 via the same stubbed dueUsersResults — two
-    // total messages in one sendBatch.
-    expect(sendBatchCalls.length).toBeGreaterThanOrEqual(1);
-    const total = sendBatchCalls.reduce((acc, b) => acc + b.length, 0);
-    expect(total).toBeGreaterThanOrEqual(2);
+    // dispatchDailyEmails is a stub in Gate B; its body is empty, so
+    // we only assert the cron returned cleanly without throwing.
   });
 
   it('worker.ts default export has scheduled, queue, fetch handlers', () => {

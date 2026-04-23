@@ -19,5 +19,9 @@ binding = "KV"
 id = "test-placeholder"
 
 [[queues.producers]]
-binding = "DIGEST_JOBS"
-queue = "digest-jobs-test"
+binding = "SCRAPE_COORDINATOR"
+queue = "scrape-coordinator-test"
+
+[[queues.producers]]
+binding = "SCRAPE_CHUNKS"
+queue = "scrape-chunks-test"
