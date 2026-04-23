@@ -46,6 +46,7 @@ import {
   type Candidate,
   type Cluster,
 } from '~/lib/dedupe';
+import { fetchArticleBodies } from '~/lib/article-fetch';
 import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
 import { DEFAULT_MODEL_ID, FALLBACK_MODEL_ID, estimateCost } from '~/lib/models';
 import { addChunkStats, finishRun } from '~/lib/scrape-run';
@@ -141,10 +142,49 @@ export async function processOneChunk(
   const allowedTags = await loadAllowedTags(env.KV);
   const allowedTagSet = new Set(allowedTags);
 
+  // Fetch article bodies for candidates whose feed snippet is thin.
+  // Happens inside the chunk consumer (not the coordinator) so the
+  // coordinator's execution budget isn't blown by 500+ HTTP fetches
+  // before it can enqueue chunks. Each chunk only fetches its own
+  // ~100 URLs (100 × 5s / 20 workers ≈ 25s) — well within a chunk
+  // consumer's 15-min queue-message budget. Feeds that ship rich
+  // <content:encoded> skip the fetch; the LLM prompt's 'grounded
+  // summary' branch only fires when snippet has real content.
+  const SNIPPET_FLOOR = 400;
+  const urlsToFetch: string[] = [];
+  for (const c of body.candidates) {
+    const existingSnippet = c.body_snippet ?? '';
+    if (existingSnippet.length < SNIPPET_FLOOR) {
+      urlsToFetch.push(c.source_url);
+    }
+  }
+  let fetchedBodies = new Map<string, string>();
+  if (urlsToFetch.length > 0) {
+    const fetchStart = Date.now();
+    fetchedBodies = await fetchArticleBodies(urlsToFetch, 20);
+    log('info', 'digest.generation', {
+      status: 'chunk_article_bodies_fetched',
+      scrape_run_id: body.scrape_run_id,
+      chunk_index: body.chunk_index,
+      urls_requested: urlsToFetch.length,
+      urls_fetched: fetchedBodies.size,
+      duration_ms: Date.now() - fetchStart,
+    });
+  }
+
   // Build candidates in the LLM-expected shape. Order is preserved so
   // output array indices line up with input indices for cluster + dedup
   // lookups.
   const promptCandidates = body.candidates.map((c, idx) => {
+    const fetched = fetchedBodies.get(c.source_url);
+    const feedSnippet = c.body_snippet ?? '';
+    // Take whichever is longer — feeds like blog.cloudflare.com ship
+    // <content:encoded> with the full body, so don't clobber with a
+    // shorter <article>-extracted fetch.
+    const bestSnippet =
+      fetched !== undefined && fetched.length > feedSnippet.length
+        ? fetched
+        : feedSnippet;
     const base = {
       index: idx,
       title: c.title,
@@ -152,8 +192,8 @@ export async function processOneChunk(
       source_name: c.source_name,
       published_at: c.published_at,
     };
-    if (typeof c.body_snippet === 'string' && c.body_snippet !== '') {
-      return { ...base, body_snippet: c.body_snippet };
+    if (bestSnippet !== '') {
+      return { ...base, body_snippet: bestSnippet };
     }
     return base;
   });
