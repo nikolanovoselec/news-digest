@@ -115,12 +115,78 @@ const initialTheme = cookieTheme ?? 'light';
 
     <footer class="site-footer safe-x" aria-label="Site footer">
       <p class="site-footer__copy">
-        Built with <a class="site-footer__link" href="https://codeflare.ch/" target="_blank" rel="noopener noreferrer">Codeflare</a>
+        Built with <a class="site-footer__link" href="https://codeflare.ch/" target="_blank" rel="noopener noreferrer"><span class="site-footer__scramble js-scramble-target" aria-label="Codeflare">Codeflare</span></a>
       </p>
       <p class="site-footer__copy">
         © 2026 <a class="site-footer__link" href="https://graymatter.ch" target="_blank" rel="noopener noreferrer">Gray Matter GmbH</a>
       </p>
     </footer>
+
+    <script>
+      // Scramble effect on the "Codeflare" wordmark in the footer.
+      // Mirrors the effect used on codeflare.ch and graymatter.ch so
+      // the attribution reads as part of the same brand family.
+      //
+      // State machine:
+      //   hold (60 ticks) → scramble (30 ticks) → decrypt (25 ticks) →
+      //   swap (15 ticks) → hold (…)
+      //
+      // Tick cadence 50ms; full cycle ~6.5 seconds.
+      function initFooterScramble() {
+        const elements = document.querySelectorAll('.js-scramble-target');
+        if (elements.length === 0) return;
+
+        const CHARS =
+          'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*<>{}[]|/\\~';
+        const TICK_MS = 50;
+        const target = 'Codeflare';
+        let current = target.split('');
+        let phase: 'hold' | 'scramble' | 'decrypt' | 'swap' = 'hold';
+        let frame = 0;
+
+        function randomChar(): string {
+          return CHARS[Math.floor(Math.random() * CHARS.length)] ?? 'x';
+        }
+
+        const interval = setInterval(() => {
+          frame++;
+          if (phase === 'hold') {
+            if (frame > 60) { phase = 'scramble'; frame = 0; }
+            return;
+          }
+          if (phase === 'scramble') {
+            current = current.map((_, i) =>
+              Math.random() < 0.4 ? randomChar() : (target[i] ?? ''));
+            if (frame > 30) { phase = 'decrypt'; frame = 0; }
+          } else if (phase === 'decrypt') {
+            current = current.map((_, i) =>
+              Math.random() < frame / 25 ? (target[i] ?? '') : randomChar());
+            if (frame > 25) { phase = 'swap'; frame = 0; current = target.split(''); }
+          } else if (phase === 'swap') {
+            const a = Math.floor(Math.random() * current.length);
+            const b = Math.floor(Math.random() * current.length);
+            [current[a], current[b]] = [current[b]!, current[a]!];
+            if (frame > 15) { phase = 'hold'; frame = 0; current = target.split(''); }
+          }
+          const scrambled = current.join('');
+          elements.forEach((el) => { (el as HTMLElement).textContent = scrambled; });
+        }, TICK_MS);
+
+        // Tear down the ticker before View Transitions swap the DOM so
+        // the next page's init starts fresh. Without this the timer
+        // leaks and accumulates on every in-app navigation.
+        document.addEventListener('astro:before-swap', () => {
+          clearInterval(interval);
+        }, { once: true });
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initFooterScramble);
+      } else {
+        initFooterScramble();
+      }
+      document.addEventListener('astro:page-load', initFooterScramble);
+    </script>
 
     <style>
       /* Sticky header with a tasteful backdrop blur on scroll — no solid

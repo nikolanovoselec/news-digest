@@ -123,22 +123,41 @@ if [ -z "$KV_ID" ]; then
   echo "KV: created $KV_TITLE → $KV_ID"
 fi
 
-# ----------------------------------------------------------- resource: Queue
-QUEUE_NAME=$(toml_scalar '[[queues.producers]]' 'queue')
-if [ -z "$QUEUE_NAME" ]; then
-  echo "ERROR: could not parse queue name from wrangler.toml"
+# ---------------------------------------------------------- resource: Queues
+# Iterate every `[[queues.producers]]` section in wrangler.toml (the
+# global-feed rework ships two: `scrape-coordinator` + `scrape-chunks`).
+# For each, check-or-create on Cloudflare so a fresh fork lands with the
+# queues pre-provisioned before `wrangler deploy` runs.
+QUEUE_NAMES=$(awk '
+  $0 == "[[queues.producers]]" { in_sec = 1; next }
+  /^\[/ && in_sec { in_sec = 0 }
+  in_sec && $1 == "queue" {
+    n = split($0, parts, "\"")
+    if (n >= 2) print parts[2]
+  }
+' wrangler.toml)
+
+if [ -z "$QUEUE_NAMES" ]; then
+  echo "ERROR: could not parse any queue names from wrangler.toml"
   exit 1
 fi
-if cf_get "/accounts/$CLOUDFLARE_ACCOUNT_ID/queues" \
-    | jq -e --arg n "$QUEUE_NAME" '.result | any(.queue_name == $n)' > /dev/null; then
-  echo "Queue: '$QUEUE_NAME' already exists"
-else
-  echo "Queue: creating '$QUEUE_NAME'..."
-  BODY=$(jq -cn --arg n "$QUEUE_NAME" '{queue_name:$n}')
-  cf_post "/accounts/$CLOUDFLARE_ACCOUNT_ID/queues" "$BODY" \
-    | jq -r '.result.queue_name' > /dev/null
-  echo "Queue: created $QUEUE_NAME"
-fi
+
+EXISTING_QUEUES=$(cf_get "/accounts/$CLOUDFLARE_ACCOUNT_ID/queues")
+
+while IFS= read -r QUEUE_NAME; do
+  [ -z "$QUEUE_NAME" ] && continue
+  if printf '%s' "$EXISTING_QUEUES" \
+      | jq -e --arg n "$QUEUE_NAME" '.result | any(.queue_name == $n)' \
+      > /dev/null; then
+    echo "Queue: '$QUEUE_NAME' already exists"
+  else
+    echo "Queue: creating '$QUEUE_NAME'..."
+    BODY=$(jq -cn --arg n "$QUEUE_NAME" '{queue_name:$n}')
+    cf_post "/accounts/$CLOUDFLARE_ACCOUNT_ID/queues" "$BODY" \
+      | jq -r '.result.queue_name' > /dev/null
+    echo "Queue: created $QUEUE_NAME"
+  fi
+done <<< "$QUEUE_NAMES"
 
 # -------------------------------------------------- patch wrangler.toml ids
 # Only touch the specific id lines inside [[d1_databases]] / [[kv_namespaces]]
@@ -173,6 +192,9 @@ awk -v new="$KV_ID" '
 
 echo ""
 echo "Resolved resource ids:"
-echo "  D1:    $D1_NAME = $D1_ID"
-echo "  KV:    $KV_TITLE = $KV_ID"
-echo "  Queue: $QUEUE_NAME"
+echo "  D1:     $D1_NAME = $D1_ID"
+echo "  KV:     $KV_TITLE = $KV_ID"
+while IFS= read -r QUEUE_NAME; do
+  [ -z "$QUEUE_NAME" ] && continue
+  echo "  Queue:  $QUEUE_NAME"
+done <<< "$QUEUE_NAMES"
