@@ -37,15 +37,48 @@ describe('history.astro — REQ-HIST-001', () => {
     expect(historyPageSource).not.toContain('data-load-more');
   });
 
-  it('REQ-HIST-001: each day row can expand to show ticks + article cards', () => {
+  it('REQ-HIST-001: each day row expands to show the day\'s article grid (per-tick detail removed)', () => {
     // Native <details>/<summary> is the expansion mechanism — no JS
-    // handler required. The body contains both the tick list and a
-    // DigestCard grid.
+    // handler required. Opening a day now reveals just the article
+    // grid; cumulative stats (tokens + cost) sit in the summary row,
+    // not in a per-tick breakdown.
     expect(historyPageSource).toContain('<details');
     expect(historyPageSource).toContain('<summary');
-    expect(historyPageSource).toContain('history__ticks');
     expect(historyPageSource).toContain('history__grid');
     expect(historyPageSource).toContain('DigestCard');
+    // Regression guard: per-tick list must NOT come back.
+    expect(historyPageSource).not.toContain('history__ticks');
+    expect(historyPageSource).not.toContain('history__tick-time');
+    expect(historyPageSource).not.toContain('data-history-tick');
+  });
+
+  it('REQ-HIST-001: search at 3+ chars renders matches in a dashboard-style flat grid', () => {
+    // The [data-search-grid] container is the flat-grid surface; the
+    // day-grouped <ol data-history-list> hides while it is visible.
+    expect(historyPageSource).toContain('data-search-grid');
+    expect(historyPageSource).toContain('data-search-empty');
+    // Minimum query length — 3 chars — is the contract the user
+    // actually cares about (no firing on 1- or 2-letter noise).
+    expect(historyPageSource).toMatch(/MIN_QUERY_LEN\s*=\s*3/);
+    // Breakpoints of the flat search grid mirror .digest-page__grid.
+    expect(historyPageSource).toMatch(
+      /\.history__search-grid\s*\{[\s\S]*?grid-template-columns:\s*1fr/,
+    );
+    expect(historyPageSource).toMatch(
+      /@media\s*\(min-width:\s*768px\)[\s\S]*?\.history__search-grid[\s\S]*?repeat\(2/,
+    );
+    expect(historyPageSource).toMatch(
+      /@media\s*\(min-width:\s*1024px\)[\s\S]*?\.history__search-grid[\s\S]*?repeat\(3/,
+    );
+  });
+
+  it('REQ-HIST-001: search clones cards (not live-moves them) so scroll position is preserved on query change', () => {
+    // The `data-bound` clear step is what rebinds star + tag-
+    // disclosure handlers on the cloned buttons — without it the
+    // clones would be visually present but dead to taps.
+    expect(historyPageSource).toMatch(/cloneNode\(true\)/);
+    expect(historyPageSource).toMatch(/removeAttribute\('data-bound'\)/);
+    expect(historyPageSource).toMatch(/initCardInteractions\(searchGrid\)/);
   });
 
   it('REQ-HIST-001: empty state reads "No articles in the last 7 days."', () => {
