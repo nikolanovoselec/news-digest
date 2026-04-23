@@ -32,11 +32,12 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 
 **Acceptance Criteria:**
 1. A hashtag strip renders at the top of the reading surface and is the sole place where users add, remove, or view their tags; the settings form no longer contains any hashtag controls.
-2. Each existing tag appears as a chip with a remove affordance; activating the affordance deletes that tag from the user's selection without leaving the page.
+2. Each tag in the strip starts in an unselected state and can be toggled into a selected state by clicking it. In the selected state the tag inverts its colour scheme (the opposite of the current theme, matching the primary-button contrast) and expands to reveal a red remove affordance attached to the right edge of the chip. Clicking the body of a selected tag returns it to the unselected state; clicking the red affordance deletes that tag from the user's selection. Any number of tags may be selected simultaneously.
 3. An add affordance at the end of the strip expands inline into a single text input; submitting the input appends a new tag to the selection.
-4. Every add or remove persists immediately via the dedicated tags write endpoint with no form submit required; the user's tag list updates visibly on success.
+4. Every add or remove persists immediately via the dedicated tags write endpoint with no form submit required; the user's tag list updates visibly on success. Toggling selection never writes to the server — it only affects the client-side filter state.
 5. Each hashtag must be 2–32 characters long, is normalised to lowercase with any leading `#` stripped, and may contain only characters in `[a-z0-9-]`; other characters are stripped server-side before storage.
 6. At least one hashtag is required for a digest to generate, a maximum of 20 total hashtags is enforced server-side, and duplicates are collapsed before storage.
+7. While one or more tags are selected, the reading surface filters its visible articles to those whose stored tag list intersects the selection. When every article is filtered out, the reading surface shows a short message naming the selected tags and inviting the user to deselect.
 
 **Constraints:** None
 **Priority:** P0

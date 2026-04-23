@@ -281,7 +281,9 @@ export async function fanOutForTags(
   // Simple semaphore: each worker pulls the next job index until the
   // list is exhausted. Results are stored in the same index so ordering
   // is preserved regardless of network latency.
-  type JobResult = { kind: 'discovered' | 'generic'; headlines: Headline[] } | undefined;
+  type JobResult =
+    | { kind: 'discovered' | 'generic'; tag: string; headlines: Headline[] }
+    | undefined;
   const results: JobResult[] = [];
   for (let i = 0; i < jobs.length; i++) {
     results.push(undefined);
@@ -294,7 +296,7 @@ export async function fanOutForTags(
       const job = jobs[i];
       if (job === undefined) return;
       const headlines = await fetchFromSource(job.source, job.tag, kv);
-      results[i] = { kind: job.kind, headlines };
+      results[i] = { kind: job.kind, tag: job.tag, headlines };
     }
   };
 
@@ -305,22 +307,37 @@ export async function fanOutForTags(
   }
   await Promise.all(workers);
 
-  // Deduplicate by canonical URL. The first occurrence wins, and
-  // because tag-specific jobs come first in `jobs`, they will displace
-  // a later generic-source duplicate.
-  const seen = new Set<string>();
-  const out: Headline[] = [];
+  // Deduplicate by canonical URL. First occurrence wins for title /
+  // source_name (tag-specific jobs come first in `jobs`), but the
+  // `source_tags` array unions contributions from every tag that
+  // produced the same URL — downstream the LLM needs to know that a
+  // single canonical article can satisfy multiple user hashtags.
+  const seen = new Map<string, Headline>();
+  const order: string[] = [];
   for (const r of results) {
     if (r === undefined) continue;
     for (const h of r.headlines) {
       const key = canonicalize(h.url);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(h);
-      if (out.length >= MAX_COMBINED_HEADLINES) {
-        return out;
+      const existing = seen.get(key);
+      if (existing !== undefined) {
+        const tags = new Set(existing.source_tags ?? []);
+        tags.add(r.tag);
+        existing.source_tags = Array.from(tags);
+        continue;
+      }
+      seen.set(key, { ...h, source_tags: [r.tag] });
+      order.push(key);
+      if (order.length >= MAX_COMBINED_HEADLINES) {
+        break;
       }
     }
+    if (order.length >= MAX_COMBINED_HEADLINES) break;
+  }
+
+  const out: Headline[] = [];
+  for (const key of order) {
+    const h = seen.get(key);
+    if (h !== undefined) out.push(h);
   }
   return out;
 }

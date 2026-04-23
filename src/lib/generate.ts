@@ -87,6 +87,7 @@ interface LLMDigestPayload {
     url?: unknown;
     one_liner?: unknown;
     details?: unknown;
+    tags?: unknown;
   }>;
 }
 
@@ -225,6 +226,10 @@ export async function generateDigest(
     // form. First occurrence wins — matches the fan-out's dedupe order
     // (tag-specific feeds land ahead of generic sources).
     const sourceNameByCanonicalUrl = buildSourceNameMap(headlines);
+    // A parallel lookup from canonical URL to the fan-out's source_tags,
+    // used as a last-resort fallback when `sanitizeArticles` finds the
+    // LLM omitted the `tags` field entirely.
+    const sourceTagsByCanonicalUrl = buildSourceTagsMap(headlines);
 
     // --- Step 5: All-sources-failed guard -------------------------------
     if (headlines.length === 0) {
@@ -318,7 +323,12 @@ export async function generateDigest(
     }
 
     // --- Step 7: Sanitize article plaintext ------------------------------
-    const articles = sanitizeArticles(parsed, sourceNameByCanonicalUrl);
+    const articles = sanitizeArticles(
+      parsed,
+      sourceNameByCanonicalUrl,
+      sourceTagsByCanonicalUrl,
+      tags,
+    );
     if (articles.length === 0) {
       // Parsed OK but produced zero usable articles — treat as invalid JSON
       // (the contract says ≥1 article with the documented shape).
@@ -627,8 +637,11 @@ function extractFirstJsonObject(raw: string): string | null {
 function sanitizeArticles(
   payload: LLMDigestPayload,
   sourceNameByCanonicalUrl: Map<string, string>,
+  sourceTagsByCanonicalUrl: Map<string, string[]>,
+  userHashtags: string[],
 ): GeneratedArticle[] {
   const rawArticles = Array.isArray(payload.articles) ? payload.articles : [];
+  const userHashtagSet = new Set(userHashtags);
   const out: GeneratedArticle[] = [];
   for (const a of rawArticles) {
     if (a === null || typeof a !== 'object') continue;
@@ -642,9 +655,40 @@ function sanitizeArticles(
       if (sanitized !== '') details.push(sanitized);
     }
     if (title === '' || url === '' || oneLiner === '') continue;
-    const sourceName =
-      sourceNameByCanonicalUrl.get(canonicalize(url)) ?? null;
-    out.push({ title, url, one_liner: oneLiner, details, source_name: sourceName });
+    const canonical = canonicalize(url);
+    const sourceName = sourceNameByCanonicalUrl.get(canonical) ?? null;
+    // Tags: validated twice — first against the user's current hashtag
+    // list (so a hallucinated tag never reaches the DB), then — if the
+    // LLM omitted / returned all-invalid tags — fall back to the
+    // source_tags that the fan-out recorded for this URL. Either path
+    // yields a subset of the user's hashtags.
+    const llmTags = Array.isArray(a.tags) ? a.tags : [];
+    const validatedTags: string[] = [];
+    const seenTags = new Set<string>();
+    for (const t of llmTags) {
+      if (typeof t !== 'string') continue;
+      const lower = t.trim().toLowerCase().replace(/^#/, '');
+      if (lower === '' || seenTags.has(lower)) continue;
+      if (!userHashtagSet.has(lower)) continue;
+      seenTags.add(lower);
+      validatedTags.push(lower);
+    }
+    if (validatedTags.length === 0) {
+      const fallback = sourceTagsByCanonicalUrl.get(canonical) ?? [];
+      for (const t of fallback) {
+        if (seenTags.has(t) || !userHashtagSet.has(t)) continue;
+        seenTags.add(t);
+        validatedTags.push(t);
+      }
+    }
+    out.push({
+      title,
+      url,
+      one_liner: oneLiner,
+      details,
+      tags: validatedTags,
+      source_name: sourceName,
+    });
   }
   return out;
 }
@@ -660,6 +704,20 @@ function buildSourceNameMap(headlines: Headline[]): Map<string, string> {
     const key = canonicalize(h.url);
     if (map.has(key)) continue;
     map.set(key, h.source_name);
+  }
+  return map;
+}
+
+/** Build a canonical-URL → source_tags lookup so `sanitizeArticles` can
+ * fall back to the fan-out's source_tags when the LLM omits the `tags`
+ * field entirely. A canonical URL may have come from multiple hashtags
+ * (fan-out unions them); we keep the whole array. */
+function buildSourceTagsMap(headlines: Headline[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const h of headlines) {
+    const key = canonicalize(h.url);
+    if (map.has(key)) continue;
+    map.set(key, Array.from(new Set(h.source_tags ?? [])));
   }
   return map;
 }
@@ -734,12 +792,13 @@ function buildFinalBatch(args: {
     usedSlugs.push(slug);
     const articleId = generateUlid();
     const detailsJson = JSON.stringify(article.details);
+    const tagsJson = JSON.stringify(article.tags ?? []);
     statements.push(
       db
         .prepare(
           `INSERT INTO articles
-             (id, digest_id, slug, source_url, title, one_liner, details_json, source_name, rank)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+             (id, digest_id, slug, source_url, title, one_liner, details_json, source_name, rank, tags_json)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
         )
         .bind(
           articleId,
@@ -751,6 +810,7 @@ function buildFinalBatch(args: {
           detailsJson,
           article.source_name,
           idx + 1,
+          tagsJson,
         ),
     );
   });

@@ -22,8 +22,7 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 **Priority:** P0
 **Dependencies:** None
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** Code ships all six acceptance criteria in `src/styles/global.css` and `src/layouts/Base.astro`, but no automated test verifies the typography scale, palette rules, iOS font-size floor, focus-visible outline, or 44 × 44 touch-target minimum. Promote back to Implemented once the pending test file lands.
+**Status:** Implemented
 
 ---
 
@@ -65,5 +64,4 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 **Priority:** P1
 **Dependencies:** REQ-DES-001
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** Single easing curve, three duration tokens, View Transitions router, and the reduced-motion override are all wired in `src/styles/global.css` and `src/layouts/Base.astro`, but no automated test asserts the presence of the easing curve, duration scale, ClientRouter import, or prefers-reduced-motion gating. Promote back to Implemented once the pending test file lands.
+**Status:** Implemented

@@ -98,7 +98,9 @@ A single `generateDigest` function called from two places: the cron dispatcher (
 2. The prompt is loaded from a centralized prompts module; user-controlled content (hashtags, headlines) is fenced with triple backticks so the model treats it as data, not instructions.
 3. Inference is low-temperature and constrained to strict JSON output (`response_format: { type: 'json_object' }`), with an output budget large enough for six articles whose three detail paragraphs run to ~200 words each without truncation.
 4. The response is parsed as strict JSON. Both string payloads and already-parsed object payloads (returned by models that honour `response_format: json_object`) are accepted; on parse failure the digest is marked `status='failed'` with `error_code='llm_invalid_json'`.
-5. The expected shape is `{ articles: [{ title, url, one_liner, details }] }` with up to 6 articles, `one_liner` a single plaintext sentence targeting 150–200 characters, and `details` an array of exactly 3 plaintext paragraphs each targeting ~200 words (prose only, no bullet prefixes, no lists, no HTML, no Markdown). If fewer than 6 strong matches exist the model returns fewer; if none, an empty `articles: []` array is a valid response.
+5. The expected shape is `{ articles: [{ title, url, one_liner, details, tags }] }` with up to 6 articles, `one_liner` a single plaintext sentence targeting 150–200 characters, and `details` an array of exactly 3 plaintext paragraphs each targeting ~200 words (prose only, no bullet prefixes, no lists, no HTML, no Markdown). If fewer than 6 strong matches exist the model returns fewer; if none, an empty `articles: []` array is a valid response.
+6. Each candidate headline sent to the model carries the authoritative list of user hashtags that matched it during fan-out, and the model is instructed to echo the relevant subset back as each returned article's `tags` field. The returned tags are validated server-side to be a subset of the user's current hashtag list; any hallucinated tag is discarded, and if the model omits the field the fan-out's own source-tag union is used as a fallback.
+7. `title` is a punchy, glance-ready headline rewrite (roughly 45–80 characters, active voice, no clickbait) rather than a verbatim copy of the source feed's title, so the reading surface presents stories in a consistent editorial voice.
 
 **Constraints:** CON-LLM-001, CON-SEC-003
 **Priority:** P0
@@ -119,6 +121,7 @@ A single `generateDigest` function called from two places: the cron dispatcher (
 2. The digest status update uses `WHERE id = ? AND status = 'in_progress'` so a row externally marked `failed` (e.g., by the stuck-sweeper) is never overwritten.
 3. `last_generated_local_date` is updated for both scheduled and manual triggers — a manual refresh consumes today's slot so the scheduled run naturally skips.
 4. Article plaintext (title, one_liner, each bullet in details) is sanitized by stripping HTML tags, stripping control characters, and collapsing whitespace before the insert.
+5. Each article row persists its validated tag list as JSON in the `tags_json` column so the reading surface can filter by tag without consulting the digest generator. Rows written before the column existed are treated as an empty list.
 
 **Constraints:** CON-DATA-001, CON-SEC-003
 **Priority:** P0

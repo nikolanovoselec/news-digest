@@ -41,13 +41,15 @@ CRITICAL OUTPUT CONTRACT:
 - If you cannot produce a useful digest, output {"articles": []}.
 
 The object shape is always:
-{"articles":[{"title":"string","url":"string","one_liner":"string","details":["string","string","string"]}]}
+{"articles":[{"title":"string","url":"string","one_liner":"string","details":["string","string","string"],"tags":["string"]}]}
 
 Content rules:
 - Pick up to 6 headlines most relevant to the user's interests, ranked by relevance then recency.
+- "title" MUST be a punchy, glance-ready New-York-Times-style headline of your own writing — concrete, specific, active voice, roughly 45–80 characters, and free of clickbait. Do NOT copy the source headline verbatim when it reads like a press-release or feed title. The goal is a headline a reader would pause on.
 - "one_liner" is a single plaintext sentence, ~150–200 characters, stating the single most important fact about the article.
 - Each "details" string is a plaintext paragraph about ~200 words covering context, specifics, and why it matters. No bullet prefixes, no lists inside the paragraph.
 - Return exactly 3 details strings per article.
+- "tags" MUST be a non-empty subset of the user's interest hashtags (provided below) that this article is genuinely about. Use the candidate headline's own "source_tags" field as the authoritative source of truth — copy those entries into "tags", dropping any that the story does not really cover. Never invent tags the user did not provide.
 - All strings are plaintext: no HTML, no Markdown, no inline links.
 - Skip duplicates, press releases with no substance, and pure advertising.
 - If fewer than 6 good matches exist, return fewer — do not pad with weak results.`;
@@ -59,24 +61,38 @@ Content rules:
  * model's behaviour.
  */
 export function digestUserPrompt(hashtags: string[], headlines: Headline[]): string {
+  // Each candidate headline carries a `source_tags` array listing the
+  // user hashtags that pulled it from a source. The LLM copies those
+  // into the article's `tags` output, dropping any that the story
+  // doesn't really cover. Pass the pruned headline shape explicitly
+  // so the model doesn't see internal-only fields like `snippet`.
+  const candidateHeadlines = headlines.map((h) => ({
+    title: h.title,
+    url: h.url,
+    source_name: h.source_name,
+    source_tags: h.source_tags ?? [],
+  }));
   return `User interests (hashtags):
 \`\`\`
 ${hashtags.join(', ')}
 \`\`\`
 
-Candidate headlines (JSON array):
+Candidate headlines (JSON array). Each headline's "source_tags" field is
+the authoritative list of user hashtags that matched the article during
+fan-out — copy the relevant entries into the output "tags" field:
 \`\`\`json
-${JSON.stringify(headlines)}
+${JSON.stringify(candidateHeadlines)}
 \`\`\`
 
 Return exactly this JSON shape:
 {
   "articles": [
     {
-      "title": "plaintext title, copy as-is from input",
-      "url": "URL from input",
+      "title": "punchy NYT-style headline you have written (roughly 45–80 characters)",
+      "url": "URL from input, copied verbatim",
       "one_liner": "plaintext sentence, ~150–200 characters, the single most important fact",
-      "details": ["paragraph ~200 words", "paragraph ~200 words", "paragraph ~200 words"]
+      "details": ["paragraph ~200 words", "paragraph ~200 words", "paragraph ~200 words"],
+      "tags": ["subset of the user's hashtags this article is about"]
     }
   ]
 }

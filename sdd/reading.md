@@ -16,10 +16,12 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 3. Cards enter with a staggered fade-in (40ms per card, capped at 10 cards) when `prefers-reduced-motion` is `no-preference`; under `reduce` the entrance is instant.
 4. A "Refresh now" button is visible; during generation it morphs into an indeterminate progress bar.
 5. The digest footer shows execution time, token count, estimated cost, and model name.
+6. Each card shows a hashtag-glyph affordance to the left of the title. Activating the affordance opens a non-interactive popover anchored to the card listing the user hashtags this article is tagged with; the popover dismisses itself automatically after 5 seconds, or immediately when the affordance is activated a second time.
+7. The tag strip (REQ-SET-002) doubles as a filter: while any tag is selected, the grid shows only cards whose stored tag list intersects the selection. With no selection every card is visible; with a selection that matches no card, a brief "no stories match" message replaces the grid and invites the user to deselect.
 
 **Constraints:** CON-A11Y-001
 **Priority:** P0
-**Dependencies:** REQ-GEN-006
+**Dependencies:** REQ-GEN-006, REQ-SET-002
 **Verification:** Integration test
 **Status:** Implemented
 

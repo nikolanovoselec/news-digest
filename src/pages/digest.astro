@@ -54,6 +54,8 @@ interface ArticleRow {
   published_at: number | null;
   rank: number;
   read_at: number | null;
+  /** REQ-GEN-005 AC 6 — validated subset of the user's hashtag list. */
+  tags?: string[];
 }
 
 interface TodayResponse {
@@ -190,9 +192,21 @@ if (isReadyToday && articles.length < 3) {
             class="tag-chip"
             data-tag-chip
             data-tag={tag}
-            aria-label={`${tag} — click to arm for removal, click again to remove`}
+            aria-pressed="false"
+            aria-label={`${tag} — click to filter, click again to deselect`}
           >
-            {display}
+            <span class="tag-chip__label">{display}</span>
+            <span
+              class="tag-chip__remove"
+              data-tag-remove
+              role="button"
+              tabindex="-1"
+              aria-label={`Remove ${tag} from your hashtags`}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z" />
+              </svg>
+            </span>
           </button>
         );
       })}
@@ -210,6 +224,15 @@ if (isReadyToday && articles.length < 3) {
         hidden
       />
     </div>
+    <p
+      class="tag-strip__nomatch"
+      data-tag-nomatch
+      role="status"
+      aria-live="polite"
+      hidden
+    >
+      No stories match the selected tag(s). Click a selected tag to deselect.
+    </p>
 
     <header class="digest-page__header">
       <h1 class="digest-page__title">Today's digest</h1>
@@ -274,6 +297,7 @@ if (isReadyToday && articles.length < 3) {
               title={a.title}
               oneLiner={a.one_liner}
               sourceName={a.source_name}
+              tags={a.tags ?? []}
               index={i}
             />
           ))}
@@ -479,16 +503,30 @@ if (isReadyToday && articles.length < 3) {
   }
 
   function renderTagChip(strip: HTMLElement, tag: string): HTMLElement {
+    // Match the SSR chip markup in digest.astro so selected styling and
+    // the remove affordance behave identically for dynamically-added chips.
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'tag-chip';
     chip.dataset['tagChip'] = '';
     chip.dataset['tag'] = tag;
-    chip.setAttribute(
-      'aria-label',
-      `${tag} — click to arm for removal, click again to remove`,
-    );
-    chip.textContent = '#' + tag;
+    chip.setAttribute('aria-pressed', 'false');
+    chip.setAttribute('aria-label', `${tag} — click to filter, click again to deselect`);
+    const label = document.createElement('span');
+    label.className = 'tag-chip__label';
+    label.textContent = '#' + tag;
+    chip.appendChild(label);
+    const remove = document.createElement('span');
+    remove.className = 'tag-chip__remove';
+    remove.dataset['tagRemove'] = '';
+    remove.setAttribute('role', 'button');
+    remove.setAttribute('tabindex', '-1');
+    remove.setAttribute('aria-label', `Remove ${tag} from your hashtags`);
+    remove.innerHTML =
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+      '<path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>' +
+      '</svg>';
+    chip.appendChild(remove);
     // Insert before the [data-tag-add] button so the "+ add" stays last.
     const addButton = strip.querySelector<HTMLButtonElement>('[data-tag-add]');
     if (addButton !== null) strip.insertBefore(chip, addButton);
@@ -583,61 +621,81 @@ if (isReadyToday && articles.length < 3) {
       }, 150);
     });
 
-    // Two-tap delete:
-    //   1st click on a chip  → chip enters `is-pending` (red) state;
-    //   2nd click on the SAME chip → remove + POST /api/tags;
-    //   click on any other chip or the add button or outside → revert
-    //   pending state; Escape does the same.
-    const clearPending = (): void => {
+    // REQ-SET-002 AC 2 + REQ-READ-001 AC 7:
+    //   Click on the chip body         → toggle filter selection
+    //   Click on the red × inside chip → delete the tag
+    //   Selected chips filter the grid to articles whose tag list
+    //   intersects the selection set; no selection = no filter.
+    const applyFilter = (): void => {
+      const selected = new Set<string>();
       strip
-        .querySelectorAll<HTMLElement>('[data-tag-chip].is-pending')
+        .querySelectorAll<HTMLElement>('[data-tag-chip].is-selected')
         .forEach((el) => {
-          el.classList.remove('is-pending');
-          el.setAttribute('aria-pressed', 'false');
+          const t = el.dataset['tag'];
+          if (t !== undefined && t !== '') selected.add(t);
         });
+      const cards = document.querySelectorAll<HTMLElement>('[data-digest-card]');
+      let visible = 0;
+      cards.forEach((card) => {
+        if (selected.size === 0) {
+          delete card.dataset['filterHide'];
+          visible++;
+          return;
+        }
+        const raw = card.dataset['tags'] ?? '';
+        const cardTags = raw === '' ? [] : raw.split(',');
+        const match = cardTags.some((t) => selected.has(t));
+        if (match) {
+          delete card.dataset['filterHide'];
+          visible++;
+        } else {
+          card.dataset['filterHide'] = '1';
+        }
+      });
+      const noMatch = document.querySelector<HTMLElement>('[data-tag-nomatch]');
+      if (noMatch !== null) {
+        noMatch.hidden = !(selected.size > 0 && visible === 0);
+      }
     };
+
     strip.addEventListener('click', (e) => {
       const target = e.target as HTMLElement | null;
-      const chip = target?.closest<HTMLElement>('[data-tag-chip]');
-      // A click on the add button or the input clears any pending state.
-      if (chip === null || chip === undefined) {
-        if (target?.closest('[data-tag-add], [data-tag-add-input]')) {
-          clearPending();
-        }
-        return;
-      }
-      e.preventDefault();
-      const tag = chip.dataset['tag'] ?? '';
-      if (tag === '') return;
-      if (chip.classList.contains('is-pending')) {
-        // Second tap — delete. Keep at least one tag.
+      if (target === null) return;
+      // Red × → delete the tag, regardless of selection state.
+      const removeHit = target.closest<HTMLElement>('[data-tag-remove]');
+      if (removeHit !== null) {
+        e.preventDefault();
+        e.stopPropagation();
+        const chip = removeHit.closest<HTMLElement>('[data-tag-chip]');
+        if (chip === null) return;
+        const tag = chip.dataset['tag'] ?? '';
+        if (tag === '') return;
         if (tagStripTags(strip).length <= 1) {
           showTagError(strip, 'At least one tag is required.');
           return;
         }
         chip.remove();
+        applyFilter();
         const remaining = tagStripTags(strip);
         void (async () => {
           const ok = await saveTags(strip, remaining);
           if (!ok) {
             renderTagChip(strip, tag);
+            applyFilter();
             showTagError(strip, 'Could not save. Please try again.');
           }
         })();
         return;
       }
-      // First tap — clear any other pending chip, then mark this one.
-      clearPending();
-      chip.classList.add('is-pending');
-      chip.setAttribute('aria-pressed', 'true');
-      showTagError(strip, 'Tap again to remove. Tap elsewhere to cancel.');
-    });
-    document.addEventListener('click', (e) => {
-      const target = e.target as Node | null;
-      if (target !== null && !strip.contains(target)) clearPending();
-    });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') clearPending();
+      // Chip body → toggle selection / filter.
+      const chip = target.closest<HTMLElement>('[data-tag-chip]');
+      if (chip === null) return;
+      e.preventDefault();
+      const tag = chip.dataset['tag'] ?? '';
+      if (tag === '') return;
+      const nowSelected = chip.classList.toggle('is-selected');
+      chip.setAttribute('aria-pressed', nowSelected ? 'true' : 'false');
+      applyFilter();
     });
   }
 
@@ -783,11 +841,12 @@ if (isReadyToday && articles.length < 3) {
   .tag-chip {
     display: inline-flex;
     align-items: center;
+    gap: 0;
     min-height: 32px;
     padding: 0.25rem 0.75rem;
-    background: var(--text);
-    color: var(--bg);
-    border: 1px solid var(--text);
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
     border-radius: 9999px;
     font-size: var(--text-sm);
     font-weight: 500;
@@ -795,16 +854,66 @@ if (isReadyToday && articles.length < 3) {
     line-height: 1;
     letter-spacing: -0.01em;
     cursor: pointer;
+    overflow: hidden;
     -webkit-tap-highlight-color: transparent;
-    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    transition:
+      background 150ms var(--ease, ease),
+      color 150ms var(--ease, ease),
+      border-color 150ms var(--ease, ease),
+      padding-right 150ms var(--ease, ease);
   }
   .tag-chip:hover {
-    opacity: 0.9;
+    border-color: var(--text-muted);
   }
-  .tag-chip.is-pending {
+  .tag-chip__label {
+    display: inline-block;
+    white-space: nowrap;
+  }
+  /* REQ-SET-002 AC 2: selected chip adopts the inverted colour scheme
+     (same contrast as the primary button: black bg + white text in
+     light mode, white bg + black text in dark mode) and expands to
+     reveal the red remove affordance attached to the right edge. */
+  .tag-chip.is-selected {
+    background: var(--text);
+    color: var(--bg);
+    border-color: var(--text);
+    padding-right: 0.25rem;
+  }
+  .tag-chip__remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 0;
+    height: 22px;
+    margin-left: 0;
     background: #dc2626;
     color: #fff;
-    border-color: #dc2626;
+    border-radius: 9999px;
+    overflow: hidden;
+    opacity: 0;
+    transition:
+      width 150ms var(--ease, ease),
+      margin-left 150ms var(--ease, ease),
+      opacity 150ms var(--ease, ease);
+    pointer-events: none;
+  }
+  .tag-chip.is-selected .tag-chip__remove {
+    width: 22px;
+    margin-left: 0.4rem;
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .tag-chip__remove:hover {
+    background: #b91c1c;
+  }
+
+  .tag-strip__nomatch {
+    margin: 0 1rem 0.5rem;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .tag-strip__nomatch[hidden] {
+    display: none;
   }
 
   .tag-add {

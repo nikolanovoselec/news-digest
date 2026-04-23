@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { __test } from '~/lib/generate';
 
-const { sanitizeText, sanitizeArticles } = __test;
+const { sanitizeText, sanitizeArticles: sanitizeArticlesRaw } = __test;
 
 /** Empty source_name lookup for tests that don't care about the badge column.
  * `sanitizeArticles` resolves each article's `source_name` from this map by
@@ -18,6 +18,20 @@ const { sanitizeText, sanitizeArticles } = __test;
  * `source_name: null`, which is the same null we'd store for any URL the
  * LLM returns that isn't present in the fan-out headlines. */
 const NO_SOURCES = new Map<string, string>();
+const NO_SOURCE_TAGS = new Map<string, string[]>();
+const NO_USER_HASHTAGS: string[] = [];
+
+// Adapter that lets pre-tags-feature tests keep their two-argument
+// call shape. The full 4-arg form is exercised by the dedicated
+// "tags" describe block below.
+function sanitizeArticles(
+  payload: Parameters<typeof sanitizeArticlesRaw>[0],
+  sources: Map<string, string>,
+  sourceTags: Map<string, string[]> = NO_SOURCE_TAGS,
+  userHashtags: string[] = NO_USER_HASHTAGS,
+): ReturnType<typeof sanitizeArticlesRaw> {
+  return sanitizeArticlesRaw(payload, sources, sourceTags, userHashtags);
+}
 
 describe('sanitizeText', () => {
   it('REQ-GEN-006: strips simple HTML tags', () => {
@@ -275,5 +289,112 @@ describe('sanitizeArticles', () => {
     expect(out).toHaveLength(1);
     expect(out[0]?.one_liner).toBe('Read here now');
     expect(out[0]?.details).toEqual(['See source for details']);
+  });
+});
+
+describe('sanitizeArticles — tags validation', () => {
+  it('REQ-GEN-005: keeps tags that are in the user\'s hashtag list', () => {
+    const out = sanitizeArticles(
+      {
+        articles: [
+          {
+            title: 'CF news',
+            url: 'https://blog.cloudflare.com/x',
+            one_liner: 'one-liner',
+            details: ['a', 'b', 'c'],
+            tags: ['cloudflare', 'ai'],
+          },
+        ],
+      },
+      NO_SOURCES,
+      NO_SOURCE_TAGS,
+      ['cloudflare', 'ai', 'mcp'],
+    );
+    expect(out[0]?.tags).toEqual(['cloudflare', 'ai']);
+  });
+
+  it('REQ-GEN-005: drops LLM-hallucinated tags not in the user\'s list', () => {
+    const out = sanitizeArticles(
+      {
+        articles: [
+          {
+            title: 'Mixed tags',
+            url: 'https://example.com/x',
+            one_liner: 'one-liner',
+            details: ['a', 'b', 'c'],
+            tags: ['cloudflare', 'unicorns', 'AI'],
+          },
+        ],
+      },
+      NO_SOURCES,
+      NO_SOURCE_TAGS,
+      ['cloudflare', 'ai'],
+    );
+    // 'unicorns' is not a user hashtag — dropped. 'AI' normalises to
+    // lowercase 'ai' and matches.
+    expect(out[0]?.tags).toEqual(['cloudflare', 'ai']);
+  });
+
+  it('REQ-GEN-005: strips leading # and dedupes tags', () => {
+    const out = sanitizeArticles(
+      {
+        articles: [
+          {
+            title: 'hashes',
+            url: 'https://example.com/y',
+            one_liner: 'one-liner',
+            details: ['a', 'b', 'c'],
+            tags: ['#cloudflare', 'cloudflare', '  #CloudFlare  '],
+          },
+        ],
+      },
+      NO_SOURCES,
+      NO_SOURCE_TAGS,
+      ['cloudflare'],
+    );
+    expect(out[0]?.tags).toEqual(['cloudflare']);
+  });
+
+  it('REQ-GEN-005: falls back to source_tags when LLM returns no valid tags', () => {
+    const sourceTags = new Map<string, string[]>([
+      ['https://example.com/y', ['ai', 'mcp']],
+    ]);
+    const out = sanitizeArticles(
+      {
+        articles: [
+          {
+            title: 'Fallback',
+            url: 'https://example.com/y',
+            one_liner: 'one-liner',
+            details: ['a', 'b', 'c'],
+            tags: ['unicorns', 'rainbows'],
+          },
+        ],
+      },
+      NO_SOURCES,
+      sourceTags,
+      ['ai', 'mcp'],
+    );
+    expect(out[0]?.tags).toEqual(['ai', 'mcp']);
+  });
+
+  it('REQ-GEN-005: tags [] when neither LLM nor source_tags yield a match', () => {
+    const out = sanitizeArticles(
+      {
+        articles: [
+          {
+            title: 'Untagged',
+            url: 'https://example.com/z',
+            one_liner: 'one-liner',
+            details: ['a', 'b', 'c'],
+            // No tags from LLM, no source_tags entry, no user hashtags.
+          },
+        ],
+      },
+      NO_SOURCES,
+      NO_SOURCE_TAGS,
+      [],
+    );
+    expect(out[0]?.tags).toEqual([]);
   });
 });

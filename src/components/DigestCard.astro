@@ -2,8 +2,9 @@
 // Implements REQ-READ-001, REQ-READ-002
 //
 // Single article card for the digest overview grid. Renders the title,
-// 120-char one-liner summary, and source-name badge. The entire card
-// is a link to the detail route so the whole surface is clickable.
+// 120-char one-liner summary, source-name badge, and a hashtag
+// affordance on the left of the title that opens a non-interactive
+// popover showing the article's tag list (REQ-READ-001 AC 6).
 //
 // View Transitions: each card carries a unique `transition:name` derived
 // from the article slug so Astro's ClientRouter performs a shared-element
@@ -20,6 +21,8 @@ interface Props {
   title: string;
   oneLiner: string;
   sourceName: string | null;
+  /** Article tag list (REQ-GEN-005 AC 6). Empty array when no tags. */
+  tags?: string[];
   /**
    * Zero-based index used for the 40ms-per-card stagger animation
    * (REQ-READ-001 AC 3). Values ≥10 are clamped by the CSS.
@@ -27,56 +30,143 @@ interface Props {
   index?: number;
 }
 
-const { digestId, slug, title, oneLiner, sourceName, index = 0 } = Astro.props;
+const {
+  digestId,
+  slug,
+  title,
+  oneLiner,
+  sourceName,
+  tags = [],
+  index = 0,
+} = Astro.props;
 
 const href = `/digest/${digestId}/${slug}`;
 const transitionName = `card-${slug}`;
 // Cap stagger at 10 cards per REQ-READ-001 AC 3 — anything beyond that
 // animates at the same 400ms offset.
 const stagger = Math.min(index, 9);
+// data-tags is the filter contract with the tag-strip script on
+// digest.astro: a comma-joined list so the script can intersect against
+// the selected-tag set without re-parsing JSON per card.
+const tagAttr = tags.join(',');
 ---
 
-<a
+<article
   class="digest-card"
-  href={href}
   data-digest-card
   data-stagger-index={stagger}
+  data-tags={tagAttr}
   style={`--stagger-delay: ${stagger * 40}ms`}
-  transition:name={transitionName}
 >
-  <h2 class="digest-card__title">{title}</h2>
-  <p class="digest-card__one-liner">{oneLiner}</p>
+  <a
+    class="digest-card__link"
+    href={href}
+    transition:name={transitionName}
+    aria-label={title}
+  >
+    <div class="digest-card__heading">
+      {
+        tags.length > 0 && (
+          <button
+            type="button"
+            class="digest-card__tag-trigger"
+            data-tag-trigger
+            aria-label={`Show tags for ${title}`}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              {/* MDI pound-box-outline — https://pictogrammers.com/library/mdi/icon/pound-box-outline/ */}
+              <path d="M5,3H19A2,2 0 0,1 21,5V19A2,2 0 0,1 19,21H5A2,2 0 0,1 3,19V5A2,2 0 0,1 5,3M5,5V19H19V5H5M15.04,12.06L14.16,15.87L12.21,15.42L13.09,11.61L11.15,11.16L10.26,14.97L8.32,14.52L9.2,10.71L7,10.2L7.46,8.25L9.65,8.76L10.21,6.35L8,5.83L8.46,3.88L10.67,4.4L11.55,0.59L13.5,1.04L12.62,4.85L14.56,5.3L15.44,1.5L17.39,1.94L16.5,5.75L18.71,6.26L18.25,8.21L16.05,7.7L15.5,10.11L17.71,10.62L17.25,12.56L15.04,12.06M12.17,7.25L11.62,9.66L13.56,10.11L14.12,7.7L12.17,7.25Z" />
+            </svg>
+          </button>
+        )
+      }
+      <h2 class="digest-card__title">{title}</h2>
+    </div>
+    <p class="digest-card__one-liner">{oneLiner}</p>
+    {
+      sourceName !== null && sourceName !== '' && (
+        <span class="digest-card__source">{sourceName}</span>
+      )
+    }
+  </a>
   {
-    sourceName !== null && sourceName !== '' && (
-      <span class="digest-card__source">{sourceName}</span>
+    tags.length > 0 && (
+      <div
+        class="digest-card__tag-popover"
+        data-tag-popover
+        role="tooltip"
+        hidden
+      >
+        {tags.map((t) => (
+          <span class="digest-card__tag-chip">#{t}</span>
+        ))}
+      </div>
     )
   }
-</a>
+</article>
 
 <style>
   .digest-card {
+    position: relative;
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    opacity: 0;
+    animation: digest-card-enter 240ms ease-out both;
+    animation-delay: var(--stagger-delay, 0ms);
+  }
+
+  .digest-card__link {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
     padding: 1rem 1.25rem;
-    background-color: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 0.5rem;
     color: var(--text);
     text-decoration: none;
     min-height: 140px;
-    opacity: 0;
-    animation: digest-card-enter 240ms ease-out both;
-    animation-delay: var(--stagger-delay, 0ms);
+    /* Undo the global 44x44 minimum so the card isn't forced wider
+       than its grid cell on small viewports. The card itself is a
+       large tap target via the full surface. */
+    min-width: 0;
+    min-height: 140px;
   }
 
   .digest-card:hover {
     border-color: var(--text-muted);
   }
 
-  .digest-card:focus-visible {
+  .digest-card__link:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
+    border-radius: 0.5rem;
+  }
+
+  .digest-card__heading {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .digest-card__tag-trigger {
+    /* The trigger lives inside the anchor; clicking it must NOT
+       navigate. Event-capture on the container stops propagation via
+       the client script below. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 2px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .digest-card__tag-trigger:hover {
+    color: var(--text);
+    background: var(--bg);
   }
 
   .digest-card__title {
@@ -84,6 +174,8 @@ const stagger = Math.min(index, 9);
     font-size: var(--text-lg);
     font-weight: 600;
     line-height: 1.3;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .digest-card__one-liner {
@@ -106,6 +198,35 @@ const stagger = Math.min(index, 9);
     font-weight: 400;
   }
 
+  .digest-card__tag-popover {
+    position: absolute;
+    top: 42px;
+    left: 16px;
+    z-index: 5;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    max-width: calc(100% - 32px);
+  }
+  .digest-card__tag-popover[hidden] {
+    display: none;
+  }
+
+  .digest-card__tag-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: var(--text-sm);
+    line-height: 1.4;
+  }
+
   @keyframes digest-card-enter {
     from {
       opacity: 0;
@@ -124,4 +245,78 @@ const stagger = Math.min(index, 9);
       animation: none;
     }
   }
+
+  /* Hide a card when the tag-strip filter is active and the card's
+     tag list does not intersect the selection. The digest.astro script
+     sets data-filter-hide on miss. */
+  .digest-card[data-filter-hide='1'] {
+    display: none;
+  }
 </style>
+
+<script>
+  // REQ-READ-001 AC 6: clicking the # trigger opens a non-interactive
+  // popover; clicking it again closes immediately. Popover auto-
+  // dismisses after 5s. Delegated on <document> so it works across
+  // View Transitions re-renders.
+  const POPOVER_TTL_MS = 5000;
+  const triggerAttr = 'data-tag-trigger';
+  const popoverAttr = 'data-tag-popover';
+  const activeTimers = new WeakMap<Element, number>();
+
+  function closePopover(popover: HTMLElement): void {
+    popover.hidden = true;
+    const timer = activeTimers.get(popover);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      activeTimers.delete(popover);
+    }
+  }
+
+  function openPopover(popover: HTMLElement): void {
+    // Close any other open popover first — only one visible at a time.
+    document.querySelectorAll<HTMLElement>(`[${popoverAttr}]`).forEach((p) => {
+      if (p !== popover) closePopover(p);
+    });
+    popover.hidden = false;
+    const timer = window.setTimeout(() => closePopover(popover), POPOVER_TTL_MS);
+    activeTimers.set(popover, timer);
+  }
+
+  function init(): void {
+    if (document.documentElement.dataset['tagPopoverBound'] === '1') return;
+    document.documentElement.dataset['tagPopoverBound'] = '1';
+    document.addEventListener(
+      'click',
+      (e) => {
+        const target = e.target;
+        if (!(target instanceof Element)) return;
+        const trigger = target.closest<HTMLButtonElement>(`[${triggerAttr}]`);
+        if (trigger === null) return;
+        // Prevent card navigation — the trigger lives inside the
+        // anchor.
+        e.preventDefault();
+        e.stopPropagation();
+        const card = trigger.closest<HTMLElement>('[data-digest-card]');
+        if (card === null) return;
+        const popover = card.querySelector<HTMLElement>(`[${popoverAttr}]`);
+        if (popover === null) return;
+        if (popover.hidden) {
+          openPopover(popover);
+        } else {
+          closePopover(popover);
+        }
+      },
+      true,
+    );
+    // Clicking anywhere else closes all popovers.
+    document.addEventListener('click', (e) => {
+      const target = e.target;
+      if (target instanceof Element && target.closest(`[${triggerAttr}]`)) return;
+      document.querySelectorAll<HTMLElement>(`[${popoverAttr}]`).forEach(closePopover);
+    });
+  }
+
+  init();
+  document.addEventListener('astro:page-load', init);
+</script>

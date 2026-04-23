@@ -20,6 +20,13 @@ export interface Headline {
   url: string;
   snippet?: string;
   source_name: string;
+  /** User hashtags that produced this headline during fan-out. A single
+   * canonical URL can match multiple tags (e.g. a Cloudflare blog post
+   * that's relevant to both #cloudflare and #ai); dedupe unions the
+   * tags so downstream the LLM sees every matching topic for the item.
+   * Populated by fanOutForTags; extract() implementations don't need
+   * to set it. */
+  source_tags?: string[];
 }
 
 export interface GeneratedArticle {
@@ -27,6 +34,9 @@ export interface GeneratedArticle {
   url: string;
   one_liner: string;
   details: string[];
+  /** User hashtags this article belongs to. Returned by the LLM and
+   * validated server-side against the user's current hashtag list. */
+  tags: string[];
   /** Resolved from the dedupe headline map by canonicalized URL; `null` when
    * the LLM returned a URL not present in the fetched headlines (should be
    * rare — the prompt instructs the model to pick from the headline list). */

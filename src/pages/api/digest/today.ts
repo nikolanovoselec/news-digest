@@ -51,6 +51,24 @@ interface ArticleRow {
   published_at: number | null;
   rank: number;
   read_at: number | null;
+  // Rows written before migration 0002 don't carry this column; D1
+  // returns it as null once the column exists, and `undefined` when
+  // the test harness omits it entirely.
+  tags_json?: string | null;
+}
+
+/** Parse a stored `tags_json` column into a string array. Columns
+ * written before migration 0002 are NULL (or missing under a test
+ * harness) and coerced to []. */
+function parseTags(tagsJson: string | null | undefined): string[] {
+  if (tagsJson === null || tagsJson === undefined || tagsJson === '') return [];
+  try {
+    const parsed = JSON.parse(tagsJson) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v): v is string => typeof v === 'string');
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -121,13 +139,21 @@ export async function GET(context: APIContext): Promise<Response> {
     const rows = await env.DB
       .prepare(
         `SELECT id, digest_id, slug, source_url, title, one_liner, details_json,
-                source_name, published_at, rank, read_at
+                source_name, published_at, rank, read_at, tags_json
          FROM articles WHERE digest_id = ?1 ORDER BY rank ASC`,
       )
       .bind(digest.id)
       .all<ArticleRow>();
     articles = rows.results ?? [];
   }
+
+  // Convert stored `tags_json` into a plain string array per article so
+  // clients don't have to re-parse. Keep the original column out of the
+  // wire payload — the array form is the only shape the UI consumes.
+  const wireArticles = articles.map(({ tags_json, ...rest }) => ({
+    ...rest,
+    tags: parseTags(tags_json),
+  }));
 
   const isLive = digest !== null && digest.status === 'in_progress';
   const isToday = digest !== null && digest.local_date === todayLocal;
@@ -148,7 +174,7 @@ export async function GET(context: APIContext): Promise<Response> {
   return new Response(
     JSON.stringify({
       digest,
-      articles,
+      articles: wireArticles,
       live: isLive,
       next_scheduled_at: nextScheduledAt,
     }),
