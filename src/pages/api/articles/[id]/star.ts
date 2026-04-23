@@ -108,7 +108,7 @@ export async function POST(context: APIContext): Promise<Response> {
       .bind(auth.userId, auth.articleId, nowSec)
       .run();
   } catch (err) {
-    log('error', 'star.write_failed', {
+    log('error', 'article.star.failed', {
       user_id: auth.userId,
       article_id: auth.articleId,
       verb: 'POST',
@@ -134,7 +134,7 @@ export async function DELETE(context: APIContext): Promise<Response> {
       .bind(auth.userId, auth.articleId)
       .run();
   } catch (err) {
-    log('error', 'star.write_failed', {
+    log('error', 'article.star.failed', {
       user_id: auth.userId,
       article_id: auth.articleId,
       verb: 'DELETE',

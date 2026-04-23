@@ -35,7 +35,8 @@ export type LogEvent =
   | 'email.send.failed'
   | 'discovery.completed'
   | 'discovery.queued'
-  | 'settings.update.failed';
+  | 'settings.update.failed'
+  | 'article.star.failed';
 
 /** Shape of every emitted log line. */
 export interface LogRecord {
