@@ -41,7 +41,7 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 **Dependencies:** REQ-DISC-001
 **Verification:** Integration test
 **Status:** Partial
-**Notes:** AC 1 (GET /api/discovery/status scoped by session user) is verified by tests/settings/discovery-status.test.ts. AC 2 and AC 3 (in-app banner on /digest) are not yet implemented — the post-rework dashboard does not render a discovery banner. Tracked in pending.md for the next sprint.
+**Notes:** AC 1 (session-scoped discovery-status endpoint) has automated coverage. AC 2 and AC 3 (in-app banner on the reading surface) are deferred — tracked in pending.md.
 
 ---
 
@@ -63,7 +63,7 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 **Dependencies:** REQ-DISC-001
 **Verification:** Integration test
 **Status:** Partial
-**Notes:** Discovery-time failure counting + tag re-queue on auto-eviction (process-pending path) is verified by tests/discovery/process-pending.test.ts. Feed-level health tracking during the hourly global-feed coordinator run is not yet implemented — the coordinator's per-source try/catch swallows fetch errors but does not increment `source_health:{url}` or evict URLs from `sources:{tag}` after 2 consecutive failures. Tracked in pending.md.
+**Notes:** Discovery-time failure counting and tag re-queue on auto-eviction have automated coverage. Feed-level health tracking during the hourly coordinator run is deferred — tracked in pending.md.
 
 ---
 
