@@ -83,8 +83,18 @@
     outline: none;
     box-shadow: none;
   }
-  .theme-toggle:hover {
-    border-color: var(--border);
+  /* Hover border ONLY on true-pointer devices. Samsung Browser and
+     Android Chrome latch :hover state after a tap until another tap
+     lands elsewhere, so a flat :hover rule would leave a 1px
+     circular border around the button after every tap — exactly
+     the "circle around it" bug the user reported. `@media (hover:
+     hover)` is how you tell CSS "this device can actually move a
+     pointer off an element", which excludes all touch-primary
+     surfaces. */
+  @media (hover: hover) and (pointer: fine) {
+    .theme-toggle:hover {
+      border-color: var(--border);
+    }
   }
 
   .theme-toggle__icon {

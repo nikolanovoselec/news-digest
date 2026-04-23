@@ -79,8 +79,13 @@
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
-  .header-theme-toggle:hover {
-    border-color: var(--border);
+  /* Hover border ONLY on true-pointer devices — mobile engines latch
+     :hover after a tap, which left a circular 1px border stuck
+     around the button until another tap landed elsewhere. */
+  @media (hover: hover) and (pointer: fine) {
+    .header-theme-toggle:hover {
+      border-color: var(--border);
+    }
   }
 
   .header-theme-toggle__icon {
