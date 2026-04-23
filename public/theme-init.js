@@ -23,10 +23,19 @@
         'theme=' + theme + '; Path=/; Max-Age=' + oneYear + '; SameSite=Lax';
     }
 
-    // Logout cache clear hook (REQ-PWA-002 logout cache handling)
+    // Logout cache clear hook (REQ-PWA-002 logout cache handling).
+    // Iterate every cache name and purge anything under the
+    // `digest-cache-` prefix so a runtime-cache version bump never
+    // leaves a stale copy of the prior user's content behind.
     if (window.location.search.indexOf('logged_out=1') !== -1) {
       if ('caches' in window) {
-        caches.delete('digest-cache-v1').catch(function () {});
+        caches.keys().then(function (names) {
+          names.forEach(function (n) {
+            if (n.indexOf('digest-cache-') === 0) {
+              caches.delete(n).catch(function () {});
+            }
+          });
+        }).catch(function () {});
       }
     }
   } catch (e) {

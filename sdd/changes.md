@@ -6,6 +6,7 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-23
 
+- REQ-PWA-002 AC 2 changes: `/digest/*` HTML is now served network-first with a short timeout (previously stale-while-revalidate), and the failure page is never served from cache so users always see the latest server state and asset bundle. Offline visitors now see the generic offline banner on the failure route instead of a stale cached copy.
 - REQ-SET-002 and REQ-READ-001 gain a tag-filter behaviour: selecting a tag in the reading surface's tag strip inverts its colour and reveals a red × delete affordance, while the digest grid filters to articles whose stored tag list intersects the selection. When nothing matches, a short "no stories match" hint replaces the grid.
 - REQ-READ-001 adds a per-card # affordance: tapping it opens a non-interactive popover listing the article's tags, which dismisses itself after 5 seconds.
 - REQ-GEN-005 now asks the LLM to write punchy NYT-style headlines (≈45–80 characters, active voice) instead of echoing the source feed, and to emit a per-article tag list validated server-side against the user's current hashtags.

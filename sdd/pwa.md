@@ -33,10 +33,10 @@ The app is installable on iOS, Android, and desktop via a standards web manifest
 
 **Acceptance Criteria:**
 1. A service worker (via `@vite-pwa/astro`) caches static assets (JS, CSS, fonts, icons) with a cache-first strategy using hashed filenames.
-2. `/digest/*` HTML uses a stale-while-revalidate strategy.
+2. `/digest/*` HTML uses a network-first strategy with a short timeout so a healthy network always serves the latest build, falling back to the cached copy only when the network is slow or unavailable. The failure page is never served from cache — it must always reflect the latest server state and the latest asset bundle, so offline visitors see the generic offline banner instead of a stale failure page.
 3. `/api/*` uses a network-first strategy with a 3-second timeout and cache fallback.
 4. When `navigator.onLine` is false, a top-of-page banner appears and the "Refresh now" button is disabled with a tooltip.
-5. On logout, the digest cache (`digest-cache-v1`) is explicitly deleted via `caches.delete` so a subsequent user on the same device does not see the previous user's content.
+5. On logout, every runtime cache holding digest content is explicitly deleted so a subsequent user on the same device does not see the previous user's content. The purge iterates all cache names so future runtime-cache version bumps cannot silently leave stale content behind.
 
 **Constraints:** CON-SEC-001
 **Priority:** P2
