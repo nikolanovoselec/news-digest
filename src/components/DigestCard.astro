@@ -271,14 +271,15 @@ const displaySourceName = resolveDisplaySource();
      touch-targetability without the button looking bigger than #. */
   /* Star toggle — DELIBERATELY identical height + geometry to
      .digest-card__tag-trigger so the two read as a paired set on a
-     single baseline. 20px is the target height: it contains the
-     14×14 star glyph and the text-sm*1.1 ('#N') glyph with the
-     same visual weight, without turning either into a brick. */
+     single baseline. 18px is the target height: the floor that
+     cleanly contains both the 14×14 star glyph and the text-sm*1.1
+     ('#N') character at line-height 1, matching the ~18px compact
+     look the pre-pill revision had without the 26px brick. */
   .digest-card__star {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 20px;
+    height: 18px;
     padding: 0 6px;
     line-height: 1;
     background: transparent;
@@ -374,7 +375,7 @@ const displaySourceName = resolveDisplaySource();
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 20px;
+    height: 18px;
     padding: 0 6px;
     background: var(--text);
     border: 0;
