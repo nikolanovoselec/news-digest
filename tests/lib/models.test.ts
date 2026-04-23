@@ -66,18 +66,18 @@ describe('modelById', () => {
 
 describe('estimateCost', () => {
   it('REQ-SET-004: estimateCost computes USD from per-million-token prices', () => {
-    // Llama 3.1 8B Fast: input 0.045 / output 0.384 per Mtok.
-    // 1,000,000 input tokens → $0.045; 1,000,000 output tokens → $0.384 → total $0.429.
+    // Llama 3.3 70B Fast: input 0.293 / output 2.253 per Mtok.
+    // 1,000,000 in → $0.293; 1,000,000 out → $2.253; total $2.546.
     const cost = estimateCost(DEFAULT_MODEL_ID, 1_000_000, 1_000_000);
-    expect(cost).toBeCloseTo(0.429, 6);
+    expect(cost).toBeCloseTo(2.546, 6);
   });
 
   it('REQ-SET-004: estimateCost scales linearly with token counts', () => {
-    // 2,000 input tokens at $0.045/Mtok → $0.00009
-    // 1,000 output tokens at $0.384/Mtok → $0.000384
-    // total ≈ $0.000474
+    // 2,000 input tokens × $0.293/Mtok → $0.000586
+    // 1,000 output tokens × $2.253/Mtok → $0.002253
+    // total ≈ $0.002839
     const cost = estimateCost(DEFAULT_MODEL_ID, 2_000, 1_000);
-    expect(cost).toBeCloseTo(0.000474, 9);
+    expect(cost).toBeCloseTo(0.002839, 9);
   });
 
   it('REQ-SET-004: estimateCost returns 0 for Kimi models (prices unknown)', () => {

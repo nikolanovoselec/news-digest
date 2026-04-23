@@ -718,6 +718,6 @@ describe('generateDigest — model fallback', () => {
     await generateDigest(env, user, 'scheduled');
     expect(ai.run).toHaveBeenCalled();
     const modelUsed = ai.run.mock.calls[0]?.[0];
-    expect(modelUsed).toBe('@cf/meta/llama-3.1-8b-instruct-fp8-fast');
+    expect(modelUsed).toBe('@cf/meta/llama-3.3-70b-instruct-fp8-fast');
   });
 });

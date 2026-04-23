@@ -205,7 +205,7 @@ describe('POST /api/digest/refresh', () => {
       rateStateRow: {
         last_refresh_at: now - 600, // cooldown already past
         refresh_window_start: now - 1000, // early in 24h window
-        refresh_count_24h: 1000, // cap reached (matches DAILY_CAP in refresh.ts)
+        refresh_count_24h: 100, // cap reached (matches DAILY_CAP in refresh.ts)
       },
     });
     const { queue } = makeQueue();
@@ -284,6 +284,6 @@ describe('POST /api/digest/refresh', () => {
     expect(rateUpdate!.params[1]).toBe(86_400);
     expect(rateUpdate!.params[2]).toBe('user-1');
     expect(rateUpdate!.params[3]).toBe(30);
-    expect(rateUpdate!.params[4]).toBe(1000);
+    expect(rateUpdate!.params[4]).toBe(100);
   });
 });

@@ -1,7 +1,7 @@
 // Implements REQ-GEN-005, REQ-DISC-001, REQ-DISC-005
 //
 // Centralised LLM prompts for the two calls the product makes:
-//   1. Digest generation — rank + summarise up to 300 candidate headlines.
+//   1. Digest generation — rank + summarise up to 100 candidate headlines.
 //   2. Source discovery — suggest authoritative RSS/Atom/JSON feeds for a tag.
 //
 // Kept in one file so iteration is easy, the system/user split is obvious,
@@ -19,9 +19,10 @@ import type { Headline } from '~/lib/types';
 /**
  * Shared inference parameters for every Workers AI call.
  * - `temperature: 0.2` — summaries should be consistent, not creative.
- * - `max_tokens: 16384` — headroom for up to 6 articles with ~200-char
- *   one-liners and 3× ~200-word bullet details. Prior 8192 ceiling was
- *   being hit once the prompt asked for longer bullets.
+ * - `max_tokens: 50000` — generous ceiling for up to 6 articles with
+ *   ~200-char one-liners and 3× ~200-word detail paragraphs. The
+ *   llama-3.3-70b default has a 128K context so 8K input + 50K output
+ *   fits comfortably.
  * - `response_format` — force JSON output on models that support it.
  */
 export const LLM_PARAMS = {

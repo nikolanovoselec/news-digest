@@ -14,7 +14,7 @@
 // Pipeline (happy path):
 //   - Claim / create the digests row.
 //   - Load the user's tags and their discovered feed adapters from KV.
-//   - Fan out across generic + discovered sources → up to 300 Headlines.
+//   - Fan out across generic + discovered sources → up to 100 Headlines.
 //   - Call Workers AI once with DIGEST_SYSTEM + digestUserPrompt. Parse strict
 //     JSON. Sanitize every plaintext field. Generate ULIDs + slugs.
 //   - One db.batch([...]): article INSERTs, digest UPDATE (status → 'ready'),

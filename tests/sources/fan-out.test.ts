@@ -1,7 +1,7 @@
 // Tests for src/lib/sources.ts fan-out — REQ-GEN-003 (cache-first fetch,
 // global concurrency cap, per-source error tolerance) and REQ-GEN-004
-// (canonical-URL dedupe across combined pool) with the REQ-GEN-005 cap
-// at 300 respected by the upstream caller.
+// (canonical-URL dedupe across combined pool) with the REQ-GEN-005
+// 100-headline cap respected by the upstream caller.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fanOutForTags, fetchFromSource } from '~/lib/sources';
@@ -303,7 +303,7 @@ describe('fanOutForTags', () => {
     );
   });
 
-  it('REQ-GEN-005: combined output capped at 100 headlines (fits llama-3.1-8b 30K context)', async () => {
+  it('REQ-GEN-005: combined output capped at 100 headlines (fits 30K-context budget-tier models)', async () => {
     const { kv, preload } = makeKv();
     // 4 tags × 3 sources × 30 items = 360 candidates, 120 after unique URLs
     // per tag. Cap should clamp to 100.

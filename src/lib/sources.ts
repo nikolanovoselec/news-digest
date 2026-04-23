@@ -13,7 +13,7 @@
 // decides whether `all sources failed` triggers `error_code='all_sources_failed'`.
 // URLs are canonicalised with `~/lib/canonical-url` and deduplicated on
 // the canonical form, with tag-specific feeds given priority so they
-// land first when the 300-item cap is applied upstream.
+// land first when the 100-item cap is applied upstream.
 
 import { XMLParser } from 'fast-xml-parser';
 import { canonicalize } from '~/lib/canonical-url';
@@ -248,7 +248,7 @@ export async function fetchFromSource(
  * discovered earlier (see `sources:{tag}` in KV) — those headlines are
  * preferred over generic sources when deduplication drops later
  * occurrences of a canonical URL, and they also come first in the
- * returned array so upstream 300-cap truncation keeps them.
+ * returned array so upstream 100-cap truncation keeps them.
  *
  * Returned headlines are deduplicated by canonical URL (REQ-GEN-004)
  * and truncated to {@link MAX_COMBINED_HEADLINES}.
