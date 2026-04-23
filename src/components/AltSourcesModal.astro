@@ -1,0 +1,327 @@
+---
+// Implements REQ-READ-002
+//
+// Alternative-source modal for multi-source articles. When the
+// global-feed pipeline clusters two or more URLs onto the same
+// canonical article (LLM dedup or canonical-URL collapse), the detail
+// page surfaces this modal instead of the single-link "Read at source"
+// button.
+//
+// The modal is a native <dialog> — the browser gives us Escape-to-close,
+// focus trapping, and backdrop-pseudo-element rendering for free. No
+// external UI library, no focus-trap dependency. Client script opens it
+// via dialog.showModal() from the detail-page trigger button and tears
+// down listeners on Astro's before-swap hook so navigating between
+// articles doesn't accumulate stale bindings.
+//
+// All text runs through Astro's default {expression} escaping; no
+// innerHTML, no sanitizer, no set:html.
+
+export interface Props {
+  /** Human-readable source name (e.g. "Hacker News") for the primary. */
+  primarySourceName: string;
+  /** Outbound URL for the primary source — opens in a new tab. */
+  primarySourceUrl: string;
+  /** Unix seconds for the primary source's publication timestamp. */
+  primaryPublishedAt: number;
+  /**
+   * Alt-source rows from `article_sources`, ordered by published_at ASC.
+   * Primary source is NOT duplicated here — the detail-page loader
+   * filters it out so the modal renders it once as the "primary" row.
+   */
+  altSources: Array<{
+    source_name: string;
+    source_url: string;
+    published_at: number | null;
+  }>;
+}
+
+const { primarySourceName, primarySourceUrl, primaryPublishedAt, altSources } =
+  Astro.props;
+
+// Format a unix-seconds timestamp as the editorial short form
+// "HH:MM DD Mon YYYY" (UTC). The detail page's metadata line already
+// uses UTC short form for the visible "date" label, so we stay
+// consistent here. We don't thread a user tz prop through yet — the
+// modal's purpose is source provenance, not precise local clock time.
+const MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+function formatPublished(unixSec: number | null): string {
+  if (unixSec === null) return '';
+  const d = new Date(unixSec * 1000);
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const mon = MONTHS[d.getUTCMonth()];
+  const year = d.getUTCFullYear();
+  return `${hh}:${mm} ${day} ${mon} ${year}`;
+}
+
+function toIsoDatetime(unixSec: number | null): string {
+  if (unixSec === null) return '';
+  return new Date(unixSec * 1000).toISOString();
+}
+
+const primaryFormatted = formatPublished(primaryPublishedAt);
+const primaryIso = toIsoDatetime(primaryPublishedAt);
+---
+
+<dialog class="alt-sources-modal" data-alt-sources-modal aria-labelledby="alt-sources-title">
+  <div class="alt-sources-modal__body">
+    <header class="alt-sources-modal__header">
+      <h2 class="alt-sources-modal__title" id="alt-sources-title">Read at source</h2>
+      <button
+        type="button"
+        class="alt-sources-modal__close"
+        data-alt-sources-close
+        aria-label="Close"
+      >
+        &times;
+      </button>
+    </header>
+    <ul class="alt-sources-modal__list">
+      <li class="alt-sources-modal__item" data-primary>
+        <a
+          class="alt-sources-modal__link"
+          href={primarySourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {primarySourceName}
+        </a>
+        <span class="alt-sources-modal__badge" aria-label="primary source">primary</span>
+        <span class="alt-sources-modal__sep" aria-hidden="true">&middot;</span>
+        <time class="alt-sources-modal__time" datetime={primaryIso}>
+          {primaryFormatted}
+        </time>
+      </li>
+      {
+        altSources.map((s) => (
+          <li class="alt-sources-modal__item">
+            <a
+              class="alt-sources-modal__link"
+              href={s.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {s.source_name}
+            </a>
+            <span class="alt-sources-modal__sep" aria-hidden="true">&middot;</span>
+            <time
+              class="alt-sources-modal__time"
+              datetime={toIsoDatetime(s.published_at)}
+            >
+              {formatPublished(s.published_at)}
+            </time>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</dialog>
+
+<script>
+  // Implements REQ-READ-002 — modal open/close wiring.
+  //
+  // Opens the <dialog> via showModal() when a `[data-alt-sources-trigger]`
+  // element is clicked anywhere on the page. Closes on:
+  //   - Escape (handled natively by <dialog>)
+  //   - Click on the close (×) button
+  //   - Click on the backdrop (event.target === dialog)
+  //
+  // Re-initialises on astro:page-load (View Transitions) and tears down
+  // listeners on astro:before-swap so navigating between articles
+  // doesn't accumulate stale bindings.
+
+  function getDialog(): HTMLDialogElement | null {
+    return document.querySelector<HTMLDialogElement>('[data-alt-sources-modal]');
+  }
+
+  function onTriggerClick(event: Event): void {
+    const dialog = getDialog();
+    if (dialog === null) return;
+    event.preventDefault();
+    if (typeof dialog.showModal === 'function') {
+      dialog.showModal();
+    }
+  }
+
+  function onCloseClick(event: Event): void {
+    const dialog = getDialog();
+    if (dialog === null) return;
+    event.preventDefault();
+    if (typeof dialog.close === 'function') {
+      dialog.close();
+    }
+  }
+
+  function onDialogClick(event: MouseEvent): void {
+    const dialog = getDialog();
+    if (dialog === null) return;
+    // Clicking the backdrop dispatches a click whose target is the
+    // dialog itself (the content sits in an inner wrapper).
+    if (event.target === dialog) {
+      dialog.close();
+    }
+  }
+
+  function initModal(): void {
+    const dialog = getDialog();
+    if (dialog === null) return;
+    if (dialog.dataset['bound'] === '1') return;
+    dialog.dataset['bound'] = '1';
+
+    const triggers = document.querySelectorAll<HTMLElement>(
+      '[data-alt-sources-trigger]',
+    );
+    triggers.forEach((t) => {
+      t.addEventListener('click', onTriggerClick);
+    });
+
+    const closeBtn = dialog.querySelector<HTMLElement>('[data-alt-sources-close]');
+    if (closeBtn !== null) {
+      closeBtn.addEventListener('click', onCloseClick);
+    }
+
+    dialog.addEventListener('click', onDialogClick);
+  }
+
+  function teardownModal(): void {
+    const dialog = getDialog();
+    if (dialog === null) return;
+
+    const triggers = document.querySelectorAll<HTMLElement>(
+      '[data-alt-sources-trigger]',
+    );
+    triggers.forEach((t) => {
+      t.removeEventListener('click', onTriggerClick);
+    });
+
+    const closeBtn = dialog.querySelector<HTMLElement>('[data-alt-sources-close]');
+    if (closeBtn !== null) {
+      closeBtn.removeEventListener('click', onCloseClick);
+    }
+
+    dialog.removeEventListener('click', onDialogClick);
+    dialog.dataset['bound'] = '0';
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initModal, { once: true });
+  } else {
+    initModal();
+  }
+  document.addEventListener('astro:page-load', initModal);
+  document.addEventListener('astro:before-swap', teardownModal);
+</script>
+
+<style>
+  /* Editorial modal: serif heading, small-caps metadata line inside
+   * list items, tokens reused from global.css. Centred, 32rem max. */
+  .alt-sources-modal {
+    padding: 0;
+    max-width: 32rem;
+    width: calc(100% - 2rem);
+    background-color: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+  }
+
+  .alt-sources-modal::backdrop {
+    background-color: rgba(0, 0, 0, 0.45);
+  }
+
+  .alt-sources-modal__body {
+    padding: 1.25rem 1.5rem 1.5rem;
+  }
+
+  .alt-sources-modal__header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .alt-sources-modal__title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+
+  .alt-sources-modal__close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+  }
+  .alt-sources-modal__close:hover {
+    color: var(--text);
+  }
+
+  .alt-sources-modal__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .alt-sources-modal__item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .alt-sources-modal__item:last-child {
+    border-bottom: none;
+  }
+
+  .alt-sources-modal__link {
+    color: var(--text);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .alt-sources-modal__link:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+
+  .alt-sources-modal__badge {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 0.25rem;
+    padding: 0.1rem 0.4rem;
+  }
+
+  .alt-sources-modal__sep {
+    color: var(--text-muted);
+    opacity: 0.6;
+  }
+
+  .alt-sources-modal__time {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+</style>

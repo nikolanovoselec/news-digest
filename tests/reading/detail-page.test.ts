@@ -3,13 +3,14 @@
 // The detail page is a server-rendered Astro component that executes
 // its frontmatter on every request. We test two contracts:
 //
-//   1. Source-level: bullets use textContent (Astro {expression}) — no
-//      innerHTML, no markdown, no sanitizer. The "Read at source" link
-//      uses target=_blank + rel=noopener noreferrer. View Transitions
-//      shared-element morph uses transition:name.
-//   2. Runtime semantics: the UPDATE statement for REQ-READ-003 is
-//      user-scoped via a subquery, runs only when read_at IS NULL
-//      (idempotent), and binds (now, article_id, user_id).
+//   1. Source-level: paragraphs use textContent (Astro {expression}) —
+//      no innerHTML, no markdown, no sanitizer. The source-link branch
+//      renders either a plain <a target="_blank" rel="noopener ...">
+//      (single source) or a <button data-alt-sources-trigger> that
+//      opens the <AltSourcesModal /> dialog (multi source). View
+//      Transitions shared-element morph uses transition:name.
+//   2. Runtime semantics: the INSERT OR IGNORE for REQ-READ-003 writes
+//      a row into article_reads scoped by (user_id, article_id).
 
 import { describe, it, expect } from 'vitest';
 
@@ -49,58 +50,77 @@ describe('detail page source contract — REQ-READ-002', () => {
     expect(detailSource).not.toMatch(/unified|remark|marked|markdown-it/);
   });
 
-  it('REQ-READ-002: source link opens in a new tab with rel=noopener noreferrer', () => {
+  it('REQ-READ-002: single-source article keeps direct-link behavior', () => {
+    // When there are no alternative sources, the page renders a plain
+    // <a> with target=_blank and rel=noopener noreferrer pointing at
+    // primary_source_url — the legacy behaviour preserved verbatim.
+    expect(detailSource).toMatch(/altSources\.length\s*===\s*0/);
+    expect(detailSource).toMatch(/href=\{articleRow\.primary_source_url\}/);
     expect(detailSource).toMatch(/target="_blank"/);
     expect(detailSource).toMatch(/rel="noopener noreferrer"/);
   });
 
-  it('REQ-READ-002: source link uses source_url from the article row', () => {
-    expect(detailSource).toContain('articleRow.source_url');
+  it('REQ-READ-002: multi-source article shows alt-sources modal trigger', () => {
+    // When at least one alt source exists, the "Read at source" affordance
+    // becomes a <button data-alt-sources-trigger> and the page mounts
+    // <AltSourcesModal />.
+    expect(detailSource).toContain('data-alt-sources-trigger');
+    expect(detailSource).toMatch(/altSources\.length\s*>=\s*1/);
+    expect(detailSource).toContain('AltSourcesModal');
+    expect(detailSource).toMatch(
+      /import\s+AltSourcesModal\s+from\s+['"]~\/components\/AltSourcesModal\.astro['"]/,
+    );
+  });
+
+  it('REQ-READ-002: button label is "Read at source (+N)" for multi-source', () => {
+    // readAtLabel is the single source of truth for the copy — the
+    // detail-page uses a template literal `Read at source (+${altCount})`.
+    expect(detailSource).toMatch(/Read at source \(\+\$\{altCount\}\)/);
   });
 
   it('REQ-READ-002: header carries transition:name for shared-element morph back to card', () => {
     expect(detailSource).toContain('transition:name={transitionName}');
-    expect(detailSource).toMatch(/card-\$\{articleRow\.slug\}/);
+    expect(detailSource).toMatch(/card-\$\{canonicalSlug\}/);
   });
 
   it('REQ-READ-002: back control returns to /digest', () => {
     expect(detailSource).toMatch(/href="\/digest"/);
   });
 
-  it('REQ-READ-002: digestId and slug are pulled from Astro.params', () => {
+  it('REQ-READ-002: articleId and slug are pulled from Astro.params', () => {
     expect(detailSource).toContain("Astro.params['id']");
     expect(detailSource).toContain("Astro.params['slug']");
   });
 });
 
 describe('detail page source contract — REQ-READ-003 read tracking', () => {
-  it('REQ-READ-003: UPDATE statement is user-scoped via subquery', () => {
+  it('REQ-READ-003: inserts into article_reads scoped by (user_id, article_id)', () => {
     expect(detailSource).toMatch(
-      /UPDATE articles SET read_at[\s\S]*digest_id IN \(SELECT id FROM digests WHERE user_id = \?3\)/,
+      /INSERT\s+OR\s+IGNORE\s+INTO\s+article_reads/i,
+    );
+    expect(detailSource).toMatch(
+      /\(user_id,\s*article_id,\s*read_at\)\s+VALUES/i,
     );
   });
 
-  it('REQ-READ-003: UPDATE is idempotent via read_at IS NULL filter', () => {
-    expect(detailSource).toContain('read_at IS NULL');
+  it('REQ-READ-003: INSERT is only issued when the user has not already read the article', () => {
+    // The page skips the INSERT when alreadyRead is true.
+    expect(detailSource).toMatch(/if\s*\(\s*!alreadyRead\s*\)/);
   });
 
-  it('REQ-READ-003: UPDATE is only issued when read_at is NULL on load (early return)', () => {
-    // The page skips the UPDATE when articleRow.read_at !== null.
-    expect(detailSource).toMatch(/if\s*\(\s*articleRow\.read_at\s*===\s*null\s*\)/);
-  });
-
-  it('REQ-READ-003: binds (now, article_id, user_id) in that order', () => {
-    // bind(nowSec, articleRow.id, user.id).run()
-    expect(detailSource).toMatch(/\.bind\(\s*nowSec\s*,\s*articleRow\.id\s*,\s*user\.id\s*\)/);
-  });
-
-  it('REQ-READ-003: digest row is user-scoped in the ownership check', () => {
+  it('REQ-READ-003: binds (user_id, article_id, now) in that order', () => {
     expect(detailSource).toMatch(
-      /SELECT id, user_id, local_date[\s\S]*FROM digests WHERE id = \?1 AND user_id = \?2/,
+      /\.bind\(\s*user\.id\s*,\s*articleRow\.id\s*,\s*nowSec\s*\)/,
     );
   });
 
-  it('REQ-READ-003: 404 for unknown or non-owned digest', () => {
+  it('REQ-READ-003: article lookup by id from the global pool', () => {
+    expect(detailSource).toMatch(
+      /SELECT id, title, details_json[\s\S]*FROM articles WHERE id = \?1/,
+    );
+  });
+
+  it('REQ-READ-003: 404 for unknown article id', () => {
     expect(detailSource).toContain("'Not found'");
     expect(detailSource).toContain('status: 404');
   });

@@ -1,44 +1,51 @@
 ---
 // Implements REQ-READ-002, REQ-READ-003
 //
-// Article detail view. Renders the article's title, the three `details`
-// bullets as an unordered list, and a prominent "Read at source" link.
+// Article detail view. Renders the article's title, each details
+// paragraph as a <p>, and a prominent "Read at source" affordance.
+// When the article was clustered from multiple sources (entries in
+// `article_sources`), the affordance becomes a "Read at source (+N)"
+// button that opens the <AltSourcesModal /> dialog; otherwise it
+// stays a direct link to the primary source.
+//
 // All text is rendered with Astro's default `{expression}` escaping —
 // the component NEVER sets raw HTML, never runs a markdown parser,
 // and never loads a sanitizer (REQ-READ-002 AC 2).
 //
 // Read-tracking (REQ-READ-003) runs inline in this page loader rather
-// than through a separate API endpoint: a single atomic UPDATE
-// user-scoped via a subquery flips `articles.read_at` from NULL to
-// now() on the first view. Repeat views do nothing because the WHERE
-// clause requires `read_at IS NULL`.
+// than through a separate API endpoint: a single atomic INSERT into
+// `article_reads` is user-scoped and idempotent via PRIMARY KEY
+// conflict (ON CONFLICT DO NOTHING).
 
 import type { APIContext } from 'astro';
 import Base from '~/layouts/Base.astro';
+import AltSourcesModal from '~/components/AltSourcesModal.astro';
 import { loadSession } from '~/middleware/auth';
 import { requireSettingsComplete } from '~/middleware/settings-gate';
-
-interface DigestRow {
-  id: string;
-  user_id: string;
-  local_date: string;
-  generated_at: number;
-  status: 'in_progress' | 'ready' | 'failed';
-  error_code: string | null;
-}
+import { slugify } from '~/lib/slug';
 
 interface ArticleRow {
   id: string;
-  digest_id: string;
-  slug: string;
-  source_url: string;
   title: string;
-  one_liner: string;
   details_json: string;
-  source_name: string | null;
+  primary_source_name: string;
+  primary_source_url: string;
+  published_at: number;
+  ingested_at: number;
+}
+
+interface AltSourceRow {
+  source_name: string;
+  source_url: string;
   published_at: number | null;
-  rank: number;
-  read_at: number | null;
+}
+
+interface ReadRow {
+  read_at: number;
+}
+
+interface StarRow {
+  starred_at: number;
 }
 
 const env = Astro.locals.runtime.env;
@@ -61,46 +68,77 @@ if (gated !== null) {
 }
 
 const user = session.user;
-const digestId = Astro.params['id'];
+const articleId = Astro.params['id'];
 const slug = Astro.params['slug'];
-if (typeof digestId !== 'string' || digestId === '') {
+if (typeof articleId !== 'string' || articleId === '') {
   return new Response('Not found', { status: 404 });
 }
 if (typeof slug !== 'string' || slug === '') {
   return new Response('Not found', { status: 404 });
 }
 
-// Enforce ownership: the digest must belong to the session user.
-const digestRow = await env.DB.prepare(
-  'SELECT id, user_id, local_date, generated_at, status, error_code FROM digests WHERE id = ?1 AND user_id = ?2',
-)
-  .bind(digestId, user.id)
-  .first<DigestRow>();
-
-if (digestRow === null) {
-  return new Response('Not found', { status: 404 });
-}
-
+// REQ-READ-002 — article lookup in the global pool. The row is NOT
+// user-scoped (any authenticated user can view any article); per-user
+// state (read, starred) is joined separately.
 const articleRow = await env.DB.prepare(
-  'SELECT id, digest_id, slug, source_url, title, one_liner, details_json, source_name, published_at, rank, read_at FROM articles WHERE digest_id = ?1 AND slug = ?2',
+  'SELECT id, title, details_json, primary_source_name, primary_source_url, published_at, ingested_at FROM articles WHERE id = ?1',
 )
-  .bind(digestId, slug)
+  .bind(articleId)
   .first<ArticleRow>();
 
 if (articleRow === null) {
   return new Response('Not found', { status: 404 });
 }
 
-// REQ-READ-003 AC 1+2+4 — atomic user-scoped UPDATE. The subquery
-// prevents cross-user marking; `read_at IS NULL` makes the statement
-// idempotent for re-visits.
-if (articleRow.read_at === null) {
+// Canonicalise slug against the title — if the URL slug doesn't match
+// the title-derived slug, redirect to the canonical URL so that stale
+// history links continue to work.
+const canonicalSlug = slugify(articleRow.title);
+if (slug !== canonicalSlug) {
+  return Astro.redirect(`/digest/${articleId}/${canonicalSlug}`, 301);
+}
+
+// Load alternative sources, ordered by published_at ASC so the modal
+// presents them chronologically. A null published_at sorts first.
+const altSourcesResult = await env.DB.prepare(
+  'SELECT source_name, source_url, published_at FROM article_sources WHERE article_id = ?1 ORDER BY published_at ASC',
+)
+  .bind(articleRow.id)
+  .all<AltSourceRow>();
+const altSourceRows: AltSourceRow[] = altSourcesResult.results ?? [];
+
+// Filter out the primary row from alt-sources — the modal renders it
+// once in the "primary" slot at the top of the list.
+const altSources = altSourceRows.filter(
+  (row) => row.source_url !== articleRow.primary_source_url,
+);
+
+// Per-user state — read + starred bools. Star button wire-up lives in
+// the star-feature agent's follow-up commit; here we only expose the
+// values so the page has them.
+const readRow = await env.DB.prepare(
+  'SELECT read_at FROM article_reads WHERE user_id = ?1 AND article_id = ?2',
+)
+  .bind(user.id, articleRow.id)
+  .first<ReadRow>();
+const alreadyRead = readRow !== null;
+
+const starRow = await env.DB.prepare(
+  'SELECT starred_at FROM article_stars WHERE user_id = ?1 AND article_id = ?2',
+)
+  .bind(user.id, articleRow.id)
+  .first<StarRow>();
+const isStarred = starRow !== null;
+
+// REQ-READ-003 — idempotent read mark via INSERT OR IGNORE. Best-effort;
+// a failure must not block the render.
+if (!alreadyRead) {
   const nowSec = Math.floor(Date.now() / 1000);
   try {
     await env.DB.prepare(
-      'UPDATE articles SET read_at = ?1 WHERE id = ?2 AND digest_id IN (SELECT id FROM digests WHERE user_id = ?3) AND read_at IS NULL',
+      'INSERT OR IGNORE INTO article_reads (user_id, article_id, read_at) VALUES (?1, ?2, ?3)',
     )
-      .bind(nowSec, articleRow.id, user.id)
+      .bind(user.id, articleRow.id, nowSec)
       .run();
   } catch {
     // Read-tracking is best-effort; a failure here must not block the
@@ -109,8 +147,8 @@ if (articleRow.read_at === null) {
 }
 
 // Parse the stored `details_json` array. The write path sanitizes and
-// guarantees an array-of-3, but be defensive against malformed rows so
-// a corrupt entry doesn't crash the render.
+// guarantees an array-of-1-to-3, but be defensive against malformed
+// rows so a corrupt entry doesn't crash the render.
 let details: string[] = [];
 try {
   const parsed = JSON.parse(articleRow.details_json) as unknown;
@@ -121,7 +159,7 @@ try {
   details = [];
 }
 
-const transitionName = `card-${articleRow.slug}`;
+const transitionName = `card-${canonicalSlug}`;
 
 // Reading-time estimate from the sum of detail-paragraph word counts.
 // 220 wpm is the standard desk-reader rate; clamp to ≥1 minute so a
@@ -134,10 +172,9 @@ function countWords(s: string): number {
 const totalWords = details.reduce((acc, p) => acc + countWords(p), 0);
 const readMinutes = Math.max(1, Math.ceil(totalWords / 220));
 
-// Publish-date formatting. When the article has its own `published_at`
-// fall back to the digest's generated_at. Render in the US editorial
-// short style (APR 23, NOV 8). Pure display, no timezone affordances
-// needed because the field is informational, not interactive.
+// Publish-date formatting. Render in the US editorial short style
+// (APR 23, NOV 8). Pure display, no timezone affordances needed
+// because the field is informational, not interactive.
 const MONTHS = [
   'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
   'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'
@@ -146,15 +183,13 @@ function formatDate(unixSec: number): string {
   const d = new Date(unixSec * 1000);
   return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
-const publishedSec = articleRow.published_at ?? digestRow.generated_at;
+const publishedSec = articleRow.published_at;
 const publishedLabel = formatDate(publishedSec);
 
-// Display source: prefer the fan-out's source_name (minus the
-// `feed:` namespace prefix), fall back to the outbound URL's host so
-// a null source_name never leaves the metadata line empty. Inlined
-// instead of a local function so tsc's null-narrowing on articleRow
-// from the 404 guard above stays in scope.
-const rawSource = articleRow.source_name ?? '';
+// Display source: prefer the primary_source_name (minus the `feed:`
+// namespace prefix), fall back to the outbound URL's host so a null
+// source_name never leaves the metadata line empty.
+const rawSource = articleRow.primary_source_name;
 let displaySource: string;
 if (rawSource !== '') {
   displaySource = rawSource.startsWith('feed:')
@@ -162,15 +197,34 @@ if (rawSource !== '') {
     : rawSource;
 } else {
   try {
-    displaySource = new URL(articleRow.source_url).host.replace(/^www\./, '');
+    displaySource = new URL(articleRow.primary_source_url).host.replace(/^www\./, '');
   } catch {
     displaySource = '';
   }
 }
+
+const altCount = altSources.length;
+const readAtLabel = altCount === 0
+  ? 'Read at source'
+  : `Read at source (+${altCount})`;
+
+// Star/read state exposed to the template so the follow-up star-feature
+// agent can wire the button without another data pass. Referenced
+// below via data-* attributes.
+const articleDataset = {
+  read: alreadyRead ? '1' : '0',
+  starred: isStarred ? '1' : '0',
+};
 ---
 
 <Base title={articleRow.title}>
-  <article class="article-detail" data-article-detail>
+  <article
+    class="article-detail"
+    data-article-detail
+    data-article-id={articleRow.id}
+    data-read={articleDataset.read}
+    data-starred={articleDataset.starred}
+  >
     <nav class="article-detail__back" aria-label="Back navigation">
       <a href="/digest" class="article-detail__back-link" aria-label="Back to digest">
         <svg
@@ -201,6 +255,43 @@ if (rawSource !== '') {
         <span class="article-detail__meta-item">{publishedLabel}</span>
         <span class="article-detail__meta-sep" aria-hidden="true">·</span>
         <span class="article-detail__meta-item">{readMinutes} MIN READ</span>
+        <span class="article-detail__meta-sep" aria-hidden="true">·</span>
+        {/* Implements REQ-STAR-001 — star toggle at the end of the
+            metadata line. Same optimistic toggle as the card button;
+            aria-pressed starts at the server-rendered state. */}
+        <button
+          type="button"
+          class="article-detail__star"
+          data-star-toggle
+          data-article-id={articleRow.id}
+          aria-pressed={isStarred ? 'true' : 'false'}
+          aria-label={isStarred ? 'Unstar this article' : 'Star this article'}
+        >
+          <svg
+            class="article-detail__star-icon article-detail__star-icon--filled"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+          </svg>
+          <svg
+            class="article-detail__star-icon article-detail__star-icon--outline"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61z" />
+          </svg>
+        </button>
       </p>
     </header>
 
@@ -216,26 +307,59 @@ if (rawSource !== '') {
       }
     </div>
 
-    <a
-      class="article-detail__source-link"
-      href={articleRow.source_url}
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      <span>Read at source</span>
-      <svg
-        class="article-detail__source-link-icon"
-        width="16"
-        height="16"
-        viewBox="0 0 24 24"
-        fill="currentColor"
-        aria-hidden="true"
-      >
-        {/* MDI arrow-right — https://pictogrammers.com/library/mdi/icon/arrow-right/ */}
-        <path d="M4,11V13H16L10.5,18.5L11.92,19.92L19.84,12L11.92,4.08L10.5,5.5L16,11H4Z" />
-      </svg>
-    </a>
+    {
+      altSources.length === 0 ? (
+        <a
+          class="article-detail__source-link"
+          href={articleRow.primary_source_url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span>{readAtLabel}</span>
+          <svg
+            class="article-detail__source-link-icon"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            {/* MDI arrow-right — https://pictogrammers.com/library/mdi/icon/arrow-right/ */}
+            <path d="M4,11V13H16L10.5,18.5L11.92,19.92L19.84,12L11.92,4.08L10.5,5.5L16,11H4Z" />
+          </svg>
+        </a>
+      ) : (
+        <button
+          type="button"
+          class="article-detail__source-link"
+          data-alt-sources-trigger
+        >
+          <span>{readAtLabel}</span>
+          <svg
+            class="article-detail__source-link-icon"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            {/* MDI arrow-right — https://pictogrammers.com/library/mdi/icon/arrow-right/ */}
+            <path d="M4,11V13H16L10.5,18.5L11.92,19.92L19.84,12L11.92,4.08L10.5,5.5L16,11H4Z" />
+          </svg>
+        </button>
+      )
+    }
   </article>
+  {
+    altSources.length >= 1 && (
+      <AltSourcesModal
+        primarySourceName={displaySource !== '' ? displaySource : articleRow.primary_source_name}
+        primarySourceUrl={articleRow.primary_source_url}
+        primaryPublishedAt={publishedSec}
+        altSources={altSources}
+      />
+    )
+  }
 </Base>
 
 <style>
@@ -361,7 +485,9 @@ if (rawSource !== '') {
   }
 
   /* Primary source link — stays solid-inverted like the other primary
-     actions (Save, Refresh) so the CTA still feels "the button". */
+     actions (Save, Refresh) so the CTA still feels "the button". The
+     same class is applied to both the <a> (single-source) and <button>
+     (multi-source) variants so the affordance reads identically. */
   .article-detail__source-link {
     display: inline-flex;
     align-items: center;
@@ -374,8 +500,11 @@ if (rawSource !== '') {
     border: 1px solid var(--text);
     border-radius: 0.375rem;
     font-weight: 600;
+    font-family: inherit;
+    font-size: inherit;
     text-decoration: none;
     margin-top: 0.5rem;
+    cursor: pointer;
   }
   .article-detail__source-link:hover {
     opacity: 0.9;
@@ -387,4 +516,99 @@ if (rawSource !== '') {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
+
+  /* Star toggle sits inline at the end of the metadata line. Small,
+     unobtrusive, muted by default; swaps filled vs outline via
+     aria-pressed so the user sees their action stick. */
+  .article-detail__star {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 0;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: color 150ms var(--ease, ease), background 150ms var(--ease, ease);
+  }
+  .article-detail__star:hover {
+    color: var(--text);
+    background: var(--surface);
+  }
+  .article-detail__star[aria-pressed='true'] {
+    color: var(--text);
+  }
+  .article-detail__star-icon {
+    display: inline-flex;
+  }
+  .article-detail__star-icon--filled {
+    display: none;
+  }
+  .article-detail__star[aria-pressed='true'] .article-detail__star-icon--filled {
+    display: inline-flex;
+  }
+  .article-detail__star[aria-pressed='true'] .article-detail__star-icon--outline {
+    display: none;
+  }
 </style>
+
+<script>
+  // Implements REQ-STAR-001 — inline handler for the metadata-line star
+  // button. Attaches once per page via the
+  // [data-star-detail-bound] sentinel; survives view transitions by
+  // re-running on astro:page-load. The DigestCard script is NOT in
+  // this page's graph (no cards render here), so we repeat the
+  // minimal toggle handler instead of relying on that component.
+  async function handleStarClick(button: HTMLButtonElement): Promise<void> {
+    const articleId = button.dataset['articleId'];
+    if (articleId === undefined || articleId === '') return;
+    const wasPressed = button.getAttribute('aria-pressed') === 'true';
+    const nextPressed = !wasPressed;
+    button.setAttribute('aria-pressed', nextPressed ? 'true' : 'false');
+    try {
+      const res = await fetch(
+        `/api/articles/${encodeURIComponent(articleId)}/star`,
+        {
+          method: nextPressed ? 'POST' : 'DELETE',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+      if (!res.ok) {
+        button.setAttribute('aria-pressed', wasPressed ? 'true' : 'false');
+      }
+    } catch {
+      button.setAttribute('aria-pressed', wasPressed ? 'true' : 'false');
+    }
+  }
+
+  function init(): void {
+    if (document.documentElement.dataset['starDetailBound'] === '1') return;
+    document.documentElement.dataset['starDetailBound'] = '1';
+    document.addEventListener('click', (e) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      const button = target.closest<HTMLButtonElement>('[data-star-toggle]');
+      if (button === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void handleStarClick(button);
+    }, true);
+  }
+
+  function teardown(): void {
+    // The document-level `data-star-detail-bound` flag persists across
+    // view transitions intentionally. The listener is added on
+    // `document` so it survives DOM swaps; init() only runs once.
+  }
+
+  init();
+  document.addEventListener('astro:page-load', init);
+  document.addEventListener('astro:before-swap', teardown);
+</script>
