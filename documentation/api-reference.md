@@ -45,7 +45,9 @@ Initiates GitHub OAuth. Generates random `state`, sets `oauth_state` cookie (Htt
 
 ### GET /api/auth/github/callback
 
-Handles GitHub's OAuth redirect. Validates `state`, exchanges code for access token, extracts primary verified email, creates or looks up user, sets session cookie, redirects to `/settings?first_run=1` or `/digest`.
+Handles GitHub's OAuth redirect. Validates `state`, exchanges code for access token, extracts primary verified email, creates or looks up user, sets session cookie, redirects to `/digest` for all users (new and returning).
+
+New accounts are inserted with complete onboarding defaults at the moment of first login — 20 seeded hashtags (`DEFAULT_HASHTAGS`), `digest_hour=8`, `digest_minute=0`, and `email_enabled=1`. The browser auto-corrects timezone on first `/digest` load via a client-side POST to `/api/auth/set-tz`. No `/settings` detour is required for new users.
 
 **Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-github), [REQ-AUTH-004](../sdd/authentication.md#req-auth-004-oauth-error-surfacing)
 

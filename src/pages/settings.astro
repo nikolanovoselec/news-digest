@@ -445,15 +445,20 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
         el.textContent = '';
         return;
       }
+      // Bucketed progress — 0 / 25 / 50 / 75 / 100 %. Snap DOWN to
+      // the nearest quarter (floor), so a run that's finished 3 of
+      // 4 chunks reads as 75%, not 100%. Total unknown → show a
+      // plain 'Scrape in progress' line until the coordinator's
+      // chunk_count write lands.
       const parts: string[] = ['Scrape in progress'];
       if (
         typeof body.chunks_total === 'number' && body.chunks_total > 0 &&
         typeof body.chunks_remaining === 'number'
       ) {
         const done = Math.max(0, body.chunks_total - body.chunks_remaining);
-        parts.push(`${done}/${body.chunks_total} chunks`);
-      } else if (typeof body.chunks_remaining === 'number') {
-        parts.push(`${body.chunks_remaining} chunks remaining`);
+        const ratio = done / body.chunks_total;
+        const pct = Math.min(100, Math.floor(ratio * 4) * 25);
+        parts.push(`${pct}%`);
       }
       const ing = body.articles_ingested;
       if (typeof ing === 'number' && ing > 0) {

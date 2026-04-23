@@ -315,16 +315,10 @@ const sortedUserTags = [...userTags].sort((a, b) => {
       if (body.running) {
         el.dataset['running'] = '1';
         headerEl.textContent = 'Update in progress';
-        // Small per-run progress if we have a denominator.
-        if (
-          typeof body.chunks_total === 'number' && body.chunks_total > 0 &&
-          typeof body.chunks_remaining === 'number'
-        ) {
-          const done = Math.max(0, body.chunks_total - body.chunks_remaining);
-          textEl.textContent = ` — ${done}/${body.chunks_total} chunks`;
-        } else {
-          textEl.textContent = '';
-        }
+        // Dashboard shows only the status line — no chunk numbers
+        // (the per-chunk math belongs on /settings, not in the
+        // user's reading-surface header).
+        textEl.textContent = '';
       } else if (el.dataset['running'] === '1') {
         // Run just finished — pull in fresh articles + next_scrape_at.
         delete el.dataset['running'];
