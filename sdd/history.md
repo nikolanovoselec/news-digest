@@ -6,15 +6,15 @@ Past digests paginated on `/history`, 30 per page. A four-tile stats widget on `
 
 ### REQ-HIST-001: Day-grouped article history
 
-**Intent:** Users can browse how the global pool has grown over time, grouped by day of publication, and drill into the per-tick detail for any day when they want to see what each scrape run contributed.
+**Intent:** Users can browse how the global pool has grown over time, grouped by day of publication, expand any day to see the articles it produced, and search across the full pool when they remember a keyword instead of a date.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
 1. `/history` renders a day-grouped list of days on which articles were published, newest day first.
 2. Each day row shows the date (user-local), the story count for that day, the aggregated cost for that day, and the aggregated token count for that day.
-3. Clicking a day row expands inline to reveal each scrape-run tick that contributed to that day, showing the tick time, articles added, tokens, and cost.
-4. Clicking an expanded day row again collapses the per-tick list.
+3. Clicking a day row expands inline to reveal the articles published that day; clicking again collapses the row. No per-scrape-run breakdown is shown — the summary row already carries cumulative tokens and cost for the day.
+4. Typing 3 or more characters into the search input hides the day-grouped list and renders matching articles in a flat dashboard-style grid above it; clearing back below 3 characters restores the day-grouped view instantly and preserves scroll position.
 5. Per-day aggregates are read from the scrape-run aggregation rather than re-derived from article rows.
 
 **Constraints:** CON-DATA-001
