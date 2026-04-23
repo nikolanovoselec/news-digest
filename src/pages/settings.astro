@@ -85,6 +85,21 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       <p class="settings__subtitle">{heroBody}</p>
     </header>
 
+    {!isFirstRun && (
+      <div class="settings__sponsor" aria-label="Project sponsor">
+        <img
+          src="/swiss-post.svg"
+          alt="Swiss Post"
+          class="settings__sponsor-logo"
+          width="56"
+          height="56"
+        />
+        <span class="settings__sponsor-caption">
+          Powered by Security Architecture @ Swiss Post
+        </span>
+      </div>
+    )}
+
     {!isFirstRun && <StatsWidget />}
 
     <form class="settings__form" data-settings-form>
@@ -460,6 +475,29 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  /* Sponsor/credit block between hero and stats — small-caps caption
+     to the right of the Swiss Post logo so it reads as chrome-attribution,
+     not a content section. */
+  .settings__sponsor {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 0;
+  }
+  .settings__sponsor-logo {
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+  }
+  .settings__sponsor-caption {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    line-height: 1.4;
   }
 
   .settings__title {

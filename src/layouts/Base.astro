@@ -115,6 +115,9 @@ const initialTheme = cookieTheme ?? 'light';
 
     <footer class="site-footer safe-x" aria-label="Site footer">
       <p class="site-footer__copy">
+        Built with <a class="site-footer__link" href="https://codeflare.ch/" target="_blank" rel="noopener noreferrer">Codeflare</a>
+      </p>
+      <p class="site-footer__copy">
         © 2026 <a class="site-footer__link" href="https://graymatter.ch" target="_blank" rel="noopener noreferrer">Gray Matter GmbH</a>
       </p>
     </footer>
@@ -200,6 +203,11 @@ const initialTheme = cookieTheme ?? 'light';
       }
       .site-footer__copy {
         margin: 0;
+      }
+      /* Stack the two lines (Codeflare credit + Gray Matter copyright)
+         with a tight gap so they read as a single footer block. */
+      .site-footer__copy + .site-footer__copy {
+        margin-top: 0.25rem;
       }
       .site-footer__link {
         color: var(--text-muted);

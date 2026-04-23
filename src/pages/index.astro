@@ -71,7 +71,12 @@ const errorMessage =
   .landing {
     display: grid;
     place-items: center;
-    min-height: calc(100svh - 4rem);
+    /* Leave room for the sticky header (~60px) + global footer (~80px
+       including top-margin + padding) so the footer lands inside the
+       viewport on short content. Without this, landing fills 100svh-4rem
+       which combined with header + footer pushes the footer below
+       the fold and forces the user to scroll. */
+    min-height: calc(100svh - 12rem);
     padding: 2rem 1.25rem;
   }
   .landing__hero {
