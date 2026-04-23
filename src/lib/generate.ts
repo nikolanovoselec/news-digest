@@ -66,7 +66,7 @@ export interface GenerateDigestResult {
  * under slightly different keys — the reader at the usage site tolerates all
  * the common variants (`usage.input_tokens`, `usage.prompt_tokens`,
  * top-level `tokens_in`). */
-interface AIRunResponse {
+export interface AIRunResponse {
   response?: string;
   usage?: {
     input_tokens?: number;
@@ -570,7 +570,7 @@ function extractFeeds(parsed: unknown): DiscoveredFeed[] {
  * Any other shape returns `undefined`, which `parseLLMPayload` then
  * treats as `llm_invalid_json`.
  */
-function extractResponsePayload(aiResult: AIRunResponse): unknown {
+export function extractResponsePayload(aiResult: AIRunResponse): unknown {
   // `typeof null === 'object'`, so guard against a null `response`
   // explicitly — we want to fall through to the OpenAI envelope branch
   // rather than accept a null payload as valid.
@@ -604,7 +604,7 @@ function extractResponsePayload(aiResult: AIRunResponse): unknown {
  * preamble like "Here is the JSON:", or a trailing comment block. Falls
  * back to extracting the first brace-balanced object in the string when
  * a direct parse fails. */
-function parseLLMPayload(response: unknown): LLMDigestPayload | null {
+export function parseLLMPayload(response: unknown): LLMDigestPayload | null {
   // Some Workers AI models honour `response_format: json_object` by
   // returning an already-parsed object on `response` instead of a JSON
   // string. Accept that shape directly — the shape check below is the
@@ -925,7 +925,7 @@ async function markFailed(
 /** Extract input-token count from a Workers AI response. Tolerates the
  * several key names different models use. Returns 0 when no count is
  * present (the cost/UI layer handles the "unknown" display). */
-function extractTokensIn(r: AIRunResponse): number {
+export function extractTokensIn(r: AIRunResponse): number {
   if (typeof r.usage?.input_tokens === 'number') return r.usage.input_tokens;
   if (typeof r.usage?.prompt_tokens === 'number') return r.usage.prompt_tokens;
   if (typeof r.tokens_in === 'number') return r.tokens_in;
@@ -933,7 +933,7 @@ function extractTokensIn(r: AIRunResponse): number {
 }
 
 /** Extract output-token count. Mirrors {@link extractTokensIn}. */
-function extractTokensOut(r: AIRunResponse): number {
+export function extractTokensOut(r: AIRunResponse): number {
   if (typeof r.usage?.output_tokens === 'number') return r.usage.output_tokens;
   if (typeof r.usage?.completion_tokens === 'number')
     return r.usage.completion_tokens;

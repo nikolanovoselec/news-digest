@@ -103,6 +103,98 @@ Return between 15 and 30 articles in this JSON shape:
 Each details entry is a full paragraph (~200 words) of plaintext prose — context, specifics, and why the story matters. No bullet prefixes, no lists, no code fences.`;
 }
 
+// Implements REQ-PIPE-002
+//
+// Chunk prompt for the global-feed pipeline. The coordinator splits the
+// scraped candidate pool into ~100-item chunks and the chunk consumer
+// calls the LLM once per chunk with this system prompt + a per-chunk
+// user message built by `processChunkUserPrompt()`. The LLM output is
+// strict JSON: `{articles: [{title, details, tags}], dedup_groups:
+// [[idx,...]]}`. Each output article is index-aligned to the candidate
+// list so the chunk consumer can look up the original source URL + name
+// by position. `dedup_groups` carry intra-chunk "these are the same
+// story" hints — the chunk consumer collapses each group to one primary
+// article (earliest-published wins) and the rest land in
+// `article_sources` rows.
+export const PROCESS_CHUNK_SYSTEM = `You are a JSON API. You read a chunk of scraped news candidates and output JSON.
+
+CRITICAL OUTPUT CONTRACT:
+- Your entire response MUST be a single valid JSON object.
+- DO NOT write any text before the opening "{" or after the closing "}".
+- DO NOT wrap the JSON in \`\`\` code fences.
+- DO NOT write "Here is the JSON" or any prose at all.
+- If the chunk has no usable candidates, output {"articles": [], "dedup_groups": []}.
+
+The object shape is always:
+{"articles":[{"title":"string","details":"string","tags":["string"]}],"dedup_groups":[[0,3],[1,2,5]]}
+
+Content rules:
+- "articles" MUST contain exactly one entry per input candidate, in the SAME ORDER as the input. The candidate at index N becomes articles[N]. Never reorder, never skip, never insert — use an empty-tags entry if a candidate is unusable and rely on dedup_groups to merge duplicates.
+- "title" MUST be a punchy New-York-Times-style headline you have written — concrete, specific, active voice, roughly 45–80 characters, plaintext only. Do NOT copy the source headline verbatim when it reads like a press-release or feed title.
+- "details" is a plaintext long-form body of 1–3 paragraphs, each paragraph roughly 40–300 characters, separated by a single newline. No Markdown, no HTML, no bullet prefixes.
+- "tags" MUST be chosen ONLY from the tag allowlist in the user message. Do NOT invent tags. Do NOT include any tag that is not in the allowlist. Return the FULL set of allowlist tags that the article is genuinely about, not just one — an article about Cloudflare Workers AI must be tagged ["cloudflare", "workers", "ai"] if all three appear in the allowlist.
+- "dedup_groups" is an array of arrays. Each inner array is a list of 0-based indices into the "articles" output array that describe the SAME underlying story. Use this when two candidates with different canonical URLs cover the same event (a vendor blog + a Hacker News mirror, a press release + a reporter's write-up). Singleton groups are useless — only emit groups of size ≥2. Omit the field entirely as [] when no duplicates exist.
+- All strings are plaintext: no HTML, no Markdown, no inline links.
+- Skip pure advertising and content-free press releases by returning an empty-tags entry for them (so the chunk consumer can drop them).`;
+
+/**
+ * Build the user message for a single chunk-processing call. Wraps the
+ * tag allowlist and the numbered candidate list in triple-backtick
+ * fences so the model treats untrusted candidate text as data. The
+ * allowlist is the union of `DEFAULT_HASHTAGS` + discovered-tag KV keys
+ * at the time of fan-out; the chunk consumer validates every output tag
+ * against this same set so a hallucinated tag never reaches D1.
+ */
+export function processChunkUserPrompt(
+  candidates: Array<{
+    index: number;
+    title: string;
+    url: string;
+    source_name: string;
+    published_at: number;
+    body_snippet?: string;
+  }>,
+  allowedTags: readonly string[],
+): string {
+  const tagList = allowedTags.join(', ');
+  // Candidates are rendered as a numbered list so the model has an
+  // obvious, stable mapping between input index and output index. The
+  // body_snippet is optional; omit the line when absent to keep the
+  // prompt small.
+  const lines: string[] = [];
+  for (const c of candidates) {
+    lines.push(`[${c.index}] ${c.title}`);
+    lines.push(`    source: ${c.source_name}`);
+    lines.push(`    url: ${c.url}`);
+    lines.push(`    published_at: ${c.published_at}`);
+    if (typeof c.body_snippet === 'string' && c.body_snippet !== '') {
+      lines.push(`    snippet: ${c.body_snippet}`);
+    }
+  }
+
+  return `Tag allowlist (output tags MUST be a subset of this list — never invent tags outside it):
+\`\`\`
+${tagList}
+\`\`\`
+
+Candidates (${candidates.length} entries, 0-indexed). Output exactly ${candidates.length} entries in the "articles" array in the same order — the candidate at index N must become articles[N]:
+\`\`\`
+${lines.join('\n')}
+\`\`\`
+
+Return JSON:
+{
+  "articles": [
+    {
+      "title": "punchy NYT-style headline, 45–80 characters",
+      "details": "1–3 paragraphs of plaintext prose, each 40–300 characters",
+      "tags": ["only tags from the allowlist above"]
+    }
+  ],
+  "dedup_groups": [[0, 3], [1, 2, 5]]
+}`;
+}
+
 export const DISCOVERY_SYSTEM = `You are a JSON API. You suggest authoritative, stable, publicly accessible RSS/Atom/JSON feed URLs for a given technology or topic, and output JSON.
 
 CRITICAL OUTPUT CONTRACT:

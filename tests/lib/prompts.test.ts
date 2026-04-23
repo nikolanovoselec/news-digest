@@ -1,11 +1,14 @@
-// Tests for src/lib/prompts.ts — REQ-GEN-005, REQ-DISC-001, REQ-DISC-005.
+// Tests for src/lib/prompts.ts — REQ-GEN-005, REQ-DISC-001, REQ-DISC-005,
+// and REQ-PIPE-002 (chunk processing).
 import { describe, it, expect } from 'vitest';
 import {
   LLM_PARAMS,
   DIGEST_SYSTEM,
   DISCOVERY_SYSTEM,
+  PROCESS_CHUNK_SYSTEM,
   digestUserPrompt,
   discoveryUserPrompt,
+  processChunkUserPrompt,
 } from '~/lib/prompts';
 import type { Headline } from '~/lib/types';
 
@@ -177,5 +180,92 @@ describe('discoveryUserPrompt', () => {
         '[\\s\\S]*?```',
     );
     expect(prompt).toMatch(fenceRe);
+  });
+});
+
+describe('PROCESS_CHUNK_SYSTEM + processChunkUserPrompt — REQ-PIPE-002', () => {
+  const sampleCandidates = [
+    {
+      index: 0,
+      title: 'Cloudflare ships Workers AI upgrade',
+      url: 'https://blog.cloudflare.com/workers-ai-upgrade',
+      source_name: 'Cloudflare Blog',
+      published_at: 1713_900_000,
+      body_snippet: 'Snippet A',
+    },
+    {
+      index: 1,
+      title: 'AWS re:Invent announces Bedrock',
+      url: 'https://aws.amazon.com/blog/bedrock',
+      source_name: 'AWS News',
+      published_at: 1713_900_100,
+    },
+  ];
+
+  it('REQ-PIPE-002: PROCESS_CHUNK_SYSTEM is a non-empty exported string', () => {
+    expect(typeof PROCESS_CHUNK_SYSTEM).toBe('string');
+    expect(PROCESS_CHUNK_SYSTEM.length).toBeGreaterThan(0);
+  });
+
+  it('REQ-PIPE-002: PROCESS_CHUNK_SYSTEM demands JSON output with articles + dedup_groups', () => {
+    expect(PROCESS_CHUNK_SYSTEM.toLowerCase()).toContain('json');
+    expect(PROCESS_CHUNK_SYSTEM).toContain('articles');
+    expect(PROCESS_CHUNK_SYSTEM).toContain('dedup_groups');
+  });
+
+  it('REQ-PIPE-002: PROCESS_CHUNK_SYSTEM forbids inventing tags outside the allowlist', () => {
+    const lower = PROCESS_CHUNK_SYSTEM.toLowerCase();
+    // Either explicit prohibition ("do not invent") or a subset assertion
+    // ("only from the allowlist") satisfies the contract.
+    const forbidsInvention =
+      /do not invent/i.test(PROCESS_CHUNK_SYSTEM) ||
+      /never invent/i.test(PROCESS_CHUNK_SYSTEM);
+    const subsetAssertion = lower.includes('allowlist');
+    expect(forbidsInvention || subsetAssertion).toBe(true);
+  });
+
+  it('REQ-PIPE-002: PROCESS_CHUNK_SYSTEM instructs plaintext-only body output', () => {
+    expect(PROCESS_CHUNK_SYSTEM.toLowerCase()).toContain('plaintext');
+  });
+
+  it('REQ-PIPE-002: processChunkUserPrompt injects the full tag allowlist', () => {
+    const allowlist = ['cloudflare', 'ai', 'aws', 'kubernetes'];
+    const prompt = processChunkUserPrompt(sampleCandidates, allowlist);
+    for (const tag of allowlist) {
+      expect(prompt).toContain(tag);
+    }
+  });
+
+  it('REQ-PIPE-002: processChunkUserPrompt lists candidates with index-stable numbering', () => {
+    const prompt = processChunkUserPrompt(sampleCandidates, ['cloudflare', 'aws']);
+    expect(prompt).toContain('[0]');
+    expect(prompt).toContain('[1]');
+    expect(prompt).toContain('Cloudflare ships Workers AI upgrade');
+    expect(prompt).toContain('AWS re:Invent announces Bedrock');
+    // Order matters: [0] must appear before [1] in the rendered prompt.
+    expect(prompt.indexOf('[0]')).toBeLessThan(prompt.indexOf('[1]'));
+  });
+
+  it('REQ-PIPE-002: processChunkUserPrompt fences untrusted candidate content with triple backticks', () => {
+    const prompt = processChunkUserPrompt(sampleCandidates, ['cloudflare']);
+    // At least two fences (allowlist + candidates) → ≥4 backtick runs.
+    const fenceCount = prompt.match(/```/g)?.length ?? 0;
+    expect(fenceCount).toBeGreaterThanOrEqual(4);
+  });
+
+  it('REQ-PIPE-002: processChunkUserPrompt forbids the LLM from inventing tags outside the allowlist', () => {
+    const prompt = processChunkUserPrompt(sampleCandidates, ['cloudflare']);
+    // The user message tells the model the output tags must be a subset
+    // of the allowlist. Assert on the contract words, not exact phrasing.
+    expect(prompt.toLowerCase()).toMatch(/allowlist|subset of|never invent/i);
+  });
+
+  it('REQ-PIPE-002: processChunkUserPrompt documents the expected JSON response shape', () => {
+    const prompt = processChunkUserPrompt(sampleCandidates, ['cloudflare']);
+    expect(prompt).toContain('articles');
+    expect(prompt).toContain('title');
+    expect(prompt).toContain('details');
+    expect(prompt).toContain('tags');
+    expect(prompt).toContain('dedup_groups');
   });
 });
