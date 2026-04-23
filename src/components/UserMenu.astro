@@ -238,11 +238,15 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     padding: 0;
   }
 
+  /* Text label sits immediately next to the glyph instead of flexing
+     to the panel edges — the old space-between layout pushed icons
+     to the far right and left a wide empty gap in the middle of
+     every row. Compact left-aligned layout reads as a tight list. */
   .user-menu__row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    justify-content: flex-start;
+    gap: 12px;
   }
   .user-menu__row-icon {
     display: inline-flex;
