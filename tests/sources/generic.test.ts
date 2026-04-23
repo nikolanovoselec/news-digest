@@ -119,16 +119,29 @@ describe('GENERIC_SOURCES', () => {
       };
       const out = gn.extract(parsed);
       expect(out).toHaveLength(2);
-      expect(out[0]).toEqual({
+      // Assert field-by-field instead of toEqual so future shape
+      // additions (published_at, source_tags, etc.) don't require
+      // touching this test — the contract it pins is "title + url +
+      // source_name survive the extraction."
+      expect(out[0]).toMatchObject({
         title: 'TypeScript 6 lands',
         url: 'https://example.com/ts6',
         source_name: 'googlenews',
       });
-      expect(out[1]).toEqual({
+      // Regression guard for the "every article stamped today" bug:
+      // the extractor must thread the feed's <pubDate> through to
+      // the Headline so the coordinator doesn't fall back to nowSec.
+      expect(out[0]?.published_at).toBe(
+        Math.floor(Date.parse('2026-04-22T10:00:00Z') / 1000),
+      );
+      expect(out[1]).toMatchObject({
         title: 'Article two',
         url: 'https://example.com/two',
         source_name: 'googlenews',
       });
+      // Second item omitted pubDate → no published_at field — the
+      // coordinator's `?? nowSec` fallback kicks in.
+      expect(out[1]?.published_at).toBeUndefined();
     });
 
     it('REQ-GEN-003: extract() handles a single <item> (non-array shape from fxp)', () => {

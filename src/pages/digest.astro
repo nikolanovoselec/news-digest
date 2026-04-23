@@ -383,9 +383,16 @@ const sortedUserTags = [...userTags].sort((a, b) => {
     slot.appendChild(remove);
     chip.appendChild(slot);
 
-    const addButton = strip.querySelector<HTMLButtonElement>('[data-tag-add]');
-    if (addButton !== null) strip.insertBefore(chip, addButton);
-    else strip.appendChild(chip);
+    // The +add button was hoisted OUT of [data-tag-strip] and now
+    // lives as a sibling under [data-tag-strip-wrap] so the strip's
+    // mask-fade can't paint over it. That means the strip contains
+    // ONLY chips — append the new chip to the end; the +add button
+    // sits absolute-positioned on top of the right edge via CSS.
+    // The old `strip.querySelector('[data-tag-add]')` always returned
+    // null post-hoist and fell through to the same appendChild
+    // anyway, but kept a misleading branch that would silently
+    // mis-order anything non-chip added to the strip later.
+    strip.appendChild(chip);
     return chip;
   }
 

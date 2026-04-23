@@ -100,24 +100,28 @@ describe('digest.astro — REQ-READ-001 grid', () => {
     expect(digestPageSource).toContain('wireTagStrip');
   });
 
-  it('REQ-READ-001: wireTagStrip queries the +add button and input from the wrapper, not the (now-mask-fading) inner strip', () => {
+  it('REQ-READ-001: the stale strip.querySelector lookup for [data-tag-add] / [data-tag-add-input] is NOT reintroduced', () => {
     // Regression guard for the "clicking a tag doesn't select it"
     // bug. The +add button and its input were hoisted OUT of
-    // `[data-tag-strip]` and are now siblings inside
-    // `[data-tag-strip-wrap]` so the mask fade on the strip doesn't
-    // paint them. If wireTagStrip queries addButton/input from
-    // `strip` instead of the wrapper, the null-guard early-returns
-    // and the whole chip/remove click handler never binds.
-    expect(digestPageSource).toMatch(/data-tag-strip-wrap/);
-    expect(digestPageSource).toMatch(
-      /const\s+wrap\s*=\s*strip\.closest<HTMLElement>\(['"]?\[data-tag-strip-wrap\]['"]?\)/,
+    // `[data-tag-strip]` and now live as siblings inside
+    // `[data-tag-strip-wrap]`. Querying them from the inner strip
+    // always returned null → null-guard tripped → the chip/remove
+    // click handler never bound.
+    //
+    // The positive assertion is fragile to renames (wrap → wrapEl),
+    // so pin the NEGATION instead: the stale selector MUST NOT
+    // reappear in the source. Any resurrection of the bug trips
+    // this guard regardless of surrounding variable names.
+    expect(digestPageSource).not.toMatch(
+      /strip\.querySelector<HTMLButtonElement>\(\s*['"]\[data-tag-add\]['"]\s*\)/,
     );
-    expect(digestPageSource).toMatch(
-      /wrap\.querySelector<HTMLButtonElement>\(['"]?\[data-tag-add\]['"]?\)/,
+    expect(digestPageSource).not.toMatch(
+      /strip\.querySelector<HTMLInputElement>\(\s*['"]\[data-tag-add-input\]['"]\s*\)/,
     );
-    expect(digestPageSource).toMatch(
-      /wrap\.querySelector<HTMLInputElement>\(['"]?\[data-tag-add-input\]['"]?\)/,
-    );
+    // And confirm the wrapper element is referenced at least once
+    // somewhere in the file, so the hoisted-outside-strip structure
+    // isn't silently removed in a future refactor.
+    expect(digestPageSource).toContain('data-tag-strip-wrap');
   });
 });
 

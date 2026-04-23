@@ -9,12 +9,35 @@
 // mangles the date.
 
 import { describe, it, expect } from 'vitest';
-import { GENERIC_SOURCES } from '~/lib/sources';
+import {
+  GENERIC_SOURCES,
+  adaptersForDiscoveredFeeds,
+} from '~/lib/sources';
 
 function extractorFor(name: string) {
   const s = GENERIC_SOURCES.find((s) => s.name === name);
   if (s === undefined) throw new Error(`generic source '${name}' not found`);
   return s.extract;
+}
+
+/** Build a JSON-Feed 1.1 discovered-source adapter via the public
+ *  API — `adaptersForDiscoveredFeeds` is the export generate.ts uses
+ *  for the same shape. This gives us real coverage of
+ *  extractJsonFeed's date_published path without needing a direct
+ *  export of the internal helper. */
+function jsonFeedExtractor(): (parsed: unknown) => ReturnType<
+  ReturnType<typeof adaptersForDiscoveredFeeds>[number]['extract']
+> {
+  const adapters = adaptersForDiscoveredFeeds([
+    {
+      name: 'synthetic',
+      url: 'https://example.com/feed.json',
+      kind: 'json',
+    },
+  ]);
+  const a = adapters[0];
+  if (a === undefined) throw new Error('synthetic JSON adapter not built');
+  return a.extract;
 }
 
 describe('RSS pubDate extraction — regression for stale ingest-time stamp', () => {
@@ -200,22 +223,47 @@ describe('Atom feed extraction — <published> / <updated>', () => {
 });
 
 describe('JSON Feed extraction — date_published', () => {
-  const extract = extractorFor('hackernews'); // JSON adapter — but HN returns a
-  // different shape; use a bespoke JSON shape for this test via the
-  // public jsonfeed path exposed through the discovered-source
-  // adapter. The module's extractJsonFeed is not directly exported,
-  // so exercise it via a synthetic parsed shape matching what HN
-  // would NOT produce but JSON Feed 1.1 DOES.
-  void extract; // keep the reference so the find() import isn't dead;
-  // the assertion below uses the adapter implicitly.
+  const extract = jsonFeedExtractor();
 
-  it('parses JSON Feed date_published when the adapter is wired for the shape', () => {
-    // HN's own adapter doesn't carry date_published (it uses Algolia's
-    // `created_at`), but the JSON Feed 1.1 shape — used for
-    // discovered-feed adapters — does. This asserts the parseFeedDate
-    // path accepts an ISO 8601 string at the whole-module level by
-    // round-tripping through Date.parse.
-    const iso = '2026-04-02T10:00:00Z';
-    expect(Math.floor(Date.parse(iso) / 1000)).toBe(1806998400);
+  it('parses ISO 8601 date_published into published_at (unix seconds)', () => {
+    const parsed = {
+      items: [
+        {
+          title: 'Hello JSON feed',
+          url: 'https://example.com/one',
+          date_published: '2026-04-02T10:00:00Z',
+        },
+      ],
+    };
+    const [head] = extract(parsed);
+    expect(head).toBeDefined();
+    expect(head?.title).toBe('Hello JSON feed');
+    expect(head?.url).toBe('https://example.com/one');
+    expect(head?.published_at).toBe(
+      Math.floor(Date.parse('2026-04-02T10:00:00Z') / 1000),
+    );
+  });
+
+  it('omits published_at when date_published is absent', () => {
+    const parsed = {
+      items: [{ title: 'Dateless', url: 'https://example.com/none' }],
+    };
+    const [head] = extract(parsed);
+    expect(head).toBeDefined();
+    expect(head?.published_at).toBeUndefined();
+  });
+
+  it('omits published_at when date_published is unparseable garbage', () => {
+    const parsed = {
+      items: [
+        {
+          title: 'Broken date',
+          url: 'https://example.com/bad',
+          date_published: 'yesterday?',
+        },
+      ],
+    };
+    const [head] = extract(parsed);
+    expect(head?.published_at).toBeUndefined();
   });
 });

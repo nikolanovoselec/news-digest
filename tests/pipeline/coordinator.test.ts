@@ -217,6 +217,87 @@ describe('scrape-coordinator — REQ-PIPE-001', () => {
     expect(opts.expirationTtl).toBe(3 * 3600);
   });
 
+  it('REQ-PIPE-001: candidates inherit published_at from the feed pubDate (not ingestion time)', async () => {
+    // Regression guard for the "digest says today, source is 3 weeks
+    // old" bug. The coordinator used to stamp every candidate with
+    // nowSec; it must now read <pubDate> and thread it through to the
+    // chunk message.
+    const oldIso = '2026-04-02T10:00:00Z';
+    const oldSec = Math.floor(Date.parse(oldIso) / 1000);
+    const pubDateRfc = new Date(oldIso).toUTCString();
+    const rss =
+      `<rss><channel><item>` +
+      `<title>Old story</title>` +
+      `<link>https://feed0.example.com/old</link>` +
+      `<pubDate>${pubDateRfc}</pubDate>` +
+      `</item></channel></rss>`;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(rss, {
+          status: 200,
+          headers: { 'content-type': 'application/rss+xml' },
+        }),
+      ),
+    );
+
+    const { db } = makeDb();
+    const { kv } = makeKv();
+    const { queue, sends } = makeChunksQueue();
+    const env = makeEnv(db, kv, queue);
+    const nowSec = Math.floor(Date.now() / 1000);
+    await runCoordinator(env, { scrape_run_id: 'run-pubdate' });
+
+    expect(sends.length).toBeGreaterThanOrEqual(1);
+    const allCandidates = (sends as Array<{ candidates: Array<{ published_at: number }> }>)
+      .flatMap((m) => m.candidates);
+    expect(allCandidates.length).toBeGreaterThan(0);
+    // Every candidate must carry the old pubDate — NOT the ingestion
+    // clock. A deviation of more than a minute from the parsed value
+    // means nowSec leaked back in.
+    for (const c of allCandidates) {
+      expect(Math.abs(c.published_at - oldSec)).toBeLessThanOrEqual(1);
+      // And strictly in the past relative to when the test ran.
+      expect(c.published_at).toBeLessThan(nowSec);
+    }
+  });
+
+  it('REQ-PIPE-001: candidates fall back to ingestion time when the feed omits a pubDate', async () => {
+    // No <pubDate> on the RSS item → Headline.published_at is
+    // undefined → coordinator falls back to nowSec. Guards against
+    // the fallback branch quietly breaking after the pubDate fix.
+    const rss =
+      `<rss><channel><item>` +
+      `<title>Dateless</title>` +
+      `<link>https://feed0.example.com/nodate</link>` +
+      `</item></channel></rss>`;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(rss, {
+          status: 200,
+          headers: { 'content-type': 'application/rss+xml' },
+        }),
+      ),
+    );
+
+    const { db } = makeDb();
+    const { kv } = makeKv();
+    const { queue, sends } = makeChunksQueue();
+    const env = makeEnv(db, kv, queue);
+    const before = Math.floor(Date.now() / 1000);
+    await runCoordinator(env, { scrape_run_id: 'run-no-pubdate' });
+    const after = Math.floor(Date.now() / 1000);
+
+    const allCandidates = (sends as Array<{ candidates: Array<{ published_at: number }> }>)
+      .flatMap((m) => m.candidates);
+    expect(allCandidates.length).toBeGreaterThan(0);
+    for (const c of allCandidates) {
+      expect(c.published_at).toBeGreaterThanOrEqual(before);
+      expect(c.published_at).toBeLessThanOrEqual(after + 1);
+    }
+  });
+
   it('REQ-PIPE-001: when pool is empty, finishRun(ready) is called immediately', async () => {
     stubFetchEmpty();
     const { db, records } = makeDb();
