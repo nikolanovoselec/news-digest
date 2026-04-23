@@ -48,12 +48,12 @@ max_retries = 3
 binding = "AI"
 
 # Cron triggers:
-#   0 * * * *   — hourly global-feed coordinator (REQ-PIPE-001)
+#   0 */4 * * * — global-feed coordinator every 4 hours (REQ-PIPE-001)
 #   0 3 * * *   — daily retention cleanup (REQ-PIPE-005)
 #   */5 * * * * — email dispatcher + discovery drain (REQ-MAIL-001 +
 #                 REQ-DISC-003)
 [triggers]
-crons = ["0 * * * *", "0 3 * * *", "*/5 * * * *"]
+crons = ["0 */4 * * *", "0 3 * * *", "*/5 * * * *"]
 
 [vars]
 # APP_URL is set as a Worker secret (different per deployment target)

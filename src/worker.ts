@@ -7,8 +7,9 @@
 // batch.queue name), and `fetch` (delegates to the Astro-generated
 // handler in production; minimal fallback in tests).
 //
-// Cron schedule (wrangler.toml: `crons = ["0 * * * *", "0 3 * * *", "*/5 * * * *"]`):
-//   - `0 * * * *`   — hourly global-feed coordinator enqueue.
+// Cron schedule (wrangler.toml: `crons = ["0 */4 * * *", "0 3 * * *", "*/5 * * * *"]`):
+//   - `0 */4 * * *` — global-feed coordinator enqueue, every 4 hours
+//                     (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC).
 //                     Creates a `scrape_runs` row (ULID, status=running)
 //                     and sends one `{scrape_run_id}` message to
 //                     SCRAPE_COORDINATOR. Work runs in queue isolates.
@@ -62,7 +63,7 @@ export async function scheduled(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<void> {
-  if (controller.cron === '0 * * * *') {
+  if (controller.cron === '0 */4 * * *') {
     await handleHourlyScrape(env, ctx);
     return;
   }

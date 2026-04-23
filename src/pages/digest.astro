@@ -110,39 +110,47 @@ const sortedUserTags = [...userTags].sort((a, b) => {
       no tag configuration in /settings anymore. Empty state renders
       just the "+ add" pill which expands into an input on click.
     */}
-    <div class="tag-strip" data-tag-strip>
-      {sortedUserTags.map((tag) => {
-        const count = tagCounts.get(tag) ?? 0;
-        return (
-          <button
-            type="button"
-            class="tag-chip"
-            data-tag-chip
-            data-tag={tag}
-            data-count={count}
-            aria-pressed="false"
-            aria-label={`${tag} — ${count} articles today. Click to filter, click again to deselect.`}
-          >
-            <span class="tag-chip__label">
-              <span class="tag-chip__hash" aria-hidden="true">#</span>{tag}
-            </span>
-            <span class="tag-chip__slot" aria-hidden="true">
-              <span class="tag-chip__count">{count > 0 ? count : ''}</span>
-              <span
-                class="tag-chip__remove"
-                data-tag-remove
-                role="button"
-                tabindex="-1"
-                aria-label={`Remove ${tag} from your hashtags`}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z" />
-                </svg>
+    <div class="tag-strip-wrap" data-tag-strip-wrap>
+      <div class="tag-strip" data-tag-strip>
+        {sortedUserTags.map((tag) => {
+          const count = tagCounts.get(tag) ?? 0;
+          return (
+            <button
+              type="button"
+              class="tag-chip"
+              data-tag-chip
+              data-tag={tag}
+              data-count={count}
+              aria-pressed="false"
+              aria-label={`${tag} — ${count} articles today. Click to filter, click again to deselect.`}
+            >
+              <span class="tag-chip__label">
+                <span class="tag-chip__hash" aria-hidden="true">#</span>{tag}
               </span>
-            </span>
-          </button>
-        );
-      })}
+              <span class="tag-chip__slot" aria-hidden="true">
+                <span class="tag-chip__count">{count > 0 ? count : ''}</span>
+                <span
+                  class="tag-chip__remove"
+                  data-tag-remove
+                  role="button"
+                  tabindex="-1"
+                  aria-label={`Remove ${tag} from your hashtags`}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z" />
+                  </svg>
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {/* The + add button + input are SIBLINGS of the scrolling strip,
+          not children. The strip has a mask-image fade on its right
+          edge so chips dissolve BEFORE reaching the button; the button
+          sits absolutely on top, unaffected by the fade. This was the
+          only reliable way to kill the "chips scrolling under +add"
+          overlap on mobile. */}
       <button type="button" class="tag-add" data-tag-add aria-label="Add a hashtag">
         <span class="tag-add__plus" aria-hidden="true">+</span>
         <span class="tag-add__label">add</span>
@@ -656,21 +664,56 @@ const sortedUserTags = [...userTags].sort((a, b) => {
     fell back to default button sizing and looked visibly bigger than
     the SSR'd ones until the next page reload. */}
 <style is:global>
+  /* Wrapper: establishes the positioning context for the floating
+     + add button and the horizontal mask on the inner scroll area. */
+  .tag-strip-wrap {
+    position: relative;
+  }
   .tag-strip {
     display: flex;
     flex-wrap: nowrap;
     gap: 0.5rem;
     align-items: center;
     padding: 0.25rem 1rem;
+    /* Reserve space on the right for the absolutely-positioned + add
+       button (~5rem incl. gap) so the last chip can scroll into view
+       without sitting under the button permanently. */
+    padding-right: 6rem;
     overflow-x: auto;
     overflow-y: visible;
     scroll-snap-type: x proximity;
     scrollbar-width: none;
+    /* Mask the right edge: chips visibly fade to transparent as they
+       approach the button, so they NEVER appear to overlap it. The
+       button itself is a sibling outside this mask, so it renders
+       crisp on top. This is the fix for the "tags scroll under +add"
+       complaint — rendered masking is unaffected by z-index or
+       sticky-position quirks. */
+    mask-image: linear-gradient(
+      to right,
+      black 0,
+      black calc(100% - 5rem),
+      transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+      to right,
+      black 0,
+      black calc(100% - 5rem),
+      transparent 100%
+    );
   }
   @media (hover: hover) and (pointer: fine) {
+    .tag-strip-wrap {
+      /* Desktop: strip wraps to multiple lines, no scroll. Disable
+         the mask and let + add sit at the natural end of flow. */
+      position: static;
+    }
     .tag-strip {
       flex-wrap: wrap;
       overflow: visible;
+      padding-right: 1rem;
+      mask-image: none;
+      -webkit-mask-image: none;
     }
     .tag-add {
       position: static;
@@ -757,9 +800,15 @@ const sortedUserTags = [...userTags].sort((a, b) => {
     transition: opacity 150ms var(--ease, ease);
   }
   .tag-chip__count {
-    font-size: 11px;
+    /* Match the label's font-size so both sit on the same optical
+       line. 11px was the prior value and rendered visibly lower than
+       the tag text because the smaller glyph metrics offset the
+       flex-center baseline. Using the same text-sm size as the label
+       makes the count's baseline and the label's baseline identical. */
+    font-size: var(--text-sm);
     font-weight: 600;
     font-variant-numeric: tabular-nums;
+    line-height: 1;
     color: var(--text-muted);
     opacity: 1;
   }
@@ -810,35 +859,19 @@ const sortedUserTags = [...userTags].sort((a, b) => {
     font-size: var(--text-sm);
     font-weight: 500;
     flex-shrink: 0;
-    position: sticky;
-    right: 0.5rem;
+    /* Float over the masked scroll area — absolute inside .tag-strip-wrap.
+       The strip's mask-image fades chips to transparent before they
+       reach here, so the button is always crisp on a clean background. */
+    position: absolute;
+    right: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
     z-index: 2;
     -webkit-tap-highlight-color: transparent;
     transition:
       color 150ms var(--ease, ease),
       border-color 150ms var(--ease, ease),
       background 150ms var(--ease, ease);
-  }
-  /* Left-side gradient mask: as tags scroll past the + add pill on
-     mobile, the ::before sits to its immediate left with a fade from
-     transparent to --bg so chips vanish smoothly instead of visibly
-     clipping mid-width against the pill's edge. Desktop is static
-     position (see the hover+pointer media query above) — the mask is
-     harmless there but invisible. */
-  .tag-add::before {
-    content: '';
-    position: absolute;
-    right: 100%;
-    top: 0;
-    bottom: 0;
-    width: 1.5rem;
-    background: linear-gradient(to right, transparent, var(--bg));
-    pointer-events: none;
-  }
-  @media (hover: hover) and (pointer: fine) {
-    .tag-add::before {
-      display: none;
-    }
   }
   .tag-add:hover {
     color: var(--text);

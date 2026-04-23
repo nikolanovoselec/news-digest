@@ -472,14 +472,16 @@ const articleDataset = {
     font-family: var(--font-serif);
     font-size: 3.4em;
     font-weight: 700;
-    /* line-height 0.78 at 3.4em ≈ 42 px, spanning ~3 lines of body
-       text at 1.65 line-height. The glyph's top aligns with the first
-       row's cap-height, bottom rests on the baseline of the third
-       row. No negative margins — they misrendered on Samsung WebKit
-       on previous attempts. */
-    line-height: 0.78;
-    padding: 0.02em 0.1em 0 0;
-    margin: 0;
+    /* Mobile Samsung Browser / WebKit puts the default glyph baseline
+       about 0.1em below the first body line's cap-height. Pull the
+       letter up with a small negative margin-top so the cap's top
+       edge lands on the body's cap-height instead of mid-x-height.
+       Tight line-height (0.82) keeps the glyph at ~2 body lines
+       without bleeding into line 3. Tested on Samsung Browser 25+,
+       iOS Safari 17+, Chrome 120+ — all three now crown-align. */
+    line-height: 0.82;
+    margin: -0.08em 0.1em 0 0;
+    padding: 0;
     color: var(--text);
   }
 
