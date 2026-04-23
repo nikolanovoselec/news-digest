@@ -34,7 +34,7 @@ function hasPngIcon(m: WebManifest, size: string, purpose: string): boolean {
       i.sizes === size &&
       (i.purpose ?? 'any').split(/\s+/).includes(purpose) &&
       i.type === 'image/png' &&
-      /\.png$/.test(i.src),
+      i.src.endsWith('.png'),
   );
 }
 
@@ -45,7 +45,7 @@ function hasSvgIcon(m: WebManifest, purpose: string): boolean {
       i.type === 'image/svg+xml' &&
       i.sizes === 'any' &&
       (i.purpose ?? 'any').split(/\s+/).includes(purpose) &&
-      /\.svg$/.test(i.src),
+      i.src.endsWith('.svg'),
   );
 }
 
