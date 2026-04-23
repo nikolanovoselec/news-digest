@@ -27,12 +27,12 @@ A single `generateDigest` function called from two places: the cron dispatcher (
 
 ### REQ-GEN-002: Manual refresh with rate limiting
 
-**Intent:** Users can trigger a digest at any time, but abuse is prevented by a 5-minute cooldown and a 10-per-24h cap enforced atomically.
+**Intent:** Users can trigger a digest at any time. A short cooldown debounces accidental double-clicks and tap spam; a very high daily ceiling acts as a backstop against pathological loops. The scheduler — not this endpoint — is the real guardrail on generation volume.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. `POST /api/digest/refresh` performs a single conditional `UPDATE users SET last_refresh_at, refresh_window_start, refresh_count_24h` with `RETURNING` to enforce both the 5-minute cooldown and the 10/24h cap in one statement.
+1. `POST /api/digest/refresh` performs a single conditional `UPDATE users SET last_refresh_at, refresh_window_start, refresh_count_24h` with `RETURNING` to enforce both a short debounce cooldown and a high 24h ceiling in one statement.
 2. Zero rows returned means rate-limited: the endpoint returns HTTP 429 with body `{ error, code: 'rate_limited', retry_after_seconds, reason: 'cooldown' | 'daily_cap' }`.
 3. On success, a conditional `INSERT INTO digests` creates a row with `status='in_progress'` only if no other in-progress digest exists for this user and today's `local_date`; zero rows inserted returns HTTP 409 with code `already_in_progress`.
 4. The endpoint enqueues `{ trigger: 'manual', user_id, local_date, digest_id }` to `digest-jobs` and returns HTTP 202 with `{ digest_id, status: 'in_progress' }`.
@@ -94,9 +94,9 @@ A single `generateDigest` function called from two places: the cron dispatcher (
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. After canonicalization and dedupe, up to 300 headlines are sent to Workers AI in a single call using the model stored on the digest row (snapshot of `users.model_id` at creation).
+1. After canonicalization and dedupe, up to 100 candidate headlines are sent to Workers AI in a single call using the model stored on the digest row (snapshot of the user's selected model at digest creation time).
 2. The prompt is loaded from a centralized prompts module; user-controlled content (hashtags, headlines) is fenced with triple backticks so the model treats it as data, not instructions.
-3. Inference parameters are fixed: `temperature: 0.2`, `max_tokens: 16384`, `response_format: { type: 'json_object' }`, giving headroom for up to six articles with ~200-word detail paragraphs.
+3. Inference is low-temperature and constrained to strict JSON output (`response_format: { type: 'json_object' }`), with an output budget large enough for six articles whose three detail paragraphs run to ~200 words each without truncation.
 4. The response is parsed as strict JSON. Both string payloads and already-parsed object payloads (returned by models that honour `response_format: json_object`) are accepted; on parse failure the digest is marked `status='failed'` with `error_code='llm_invalid_json'`.
 5. The expected shape is `{ articles: [{ title, url, one_liner, details }] }` with up to 6 articles, `one_liner` a single plaintext sentence targeting 150–200 characters, and `details` an array of exactly 3 plaintext paragraphs each targeting ~200 words (prose only, no bullet prefixes, no lists, no HTML, no Markdown). If fewer than 6 strong matches exist the model returns fewer; if none, an empty `articles: []` array is a valid response.
 
