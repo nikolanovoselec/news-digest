@@ -17,7 +17,7 @@
     "knip": "knip"
   },
   "dependencies": {
-    "@astrojs/cloudflare": "^12.6.13",
+    "@astrojs/cloudflare": "^13.2.1",
     "@tailwindcss/vite": "^4.2.4",
     "astro": "^5.18.1",
     "fast-xml-parser": "^5.0.9",
