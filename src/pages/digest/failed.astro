@@ -66,6 +66,12 @@ const errorCode =
       </button>
       <a class="failure-page__settings-link" href="/settings">Go to settings</a>
     </div>
+    <p
+      class="failure-page__status"
+      data-retry-status
+      role="status"
+      aria-live="polite"
+    ></p>
     <footer class="failure-page__code">
       <code>{errorCode}</code>
     </footer>
@@ -78,10 +84,22 @@ const errorCode =
 
   interface RefreshResponse {
     retry_after_seconds?: number;
+    reason?: 'cooldown' | 'daily_cap';
+    error?: string;
   }
 
-  async function handleRetry(button: HTMLButtonElement): Promise<void> {
+  function formatDuration(seconds: number): string {
+    if (seconds < 60) return `${Math.ceil(seconds)}s`;
+    if (seconds < 3600) return `${Math.ceil(seconds / 60)}m`;
+    return `${Math.ceil(seconds / 3600)}h`;
+  }
+
+  async function handleRetry(
+    button: HTMLButtonElement,
+    status: HTMLElement,
+  ): Promise<void> {
     button.disabled = true;
+    status.textContent = 'Retrying…';
     let res: Response;
     try {
       res = await fetch('/api/digest/refresh', {
@@ -90,6 +108,7 @@ const errorCode =
         credentials: 'same-origin',
       });
     } catch {
+      status.textContent = 'Network error. Please try again in a moment.';
       button.disabled = false;
       return;
     }
@@ -102,23 +121,41 @@ const errorCode =
       }
       const seconds =
         typeof body.retry_after_seconds === 'number' ? body.retry_after_seconds : 300;
-      window.location.assign(`/rate-limited?seconds=${encodeURIComponent(seconds)}`);
+      const label = formatDuration(seconds);
+      status.textContent =
+        body.reason === 'daily_cap'
+          ? `Daily limit reached. Try again in ${label}.`
+          : `Please wait ${label} before retrying.`;
+      // Keep the user on the failure page (no surprise nav) so they can
+      // read the reason. /rate-limited is still reachable via the link.
+      button.disabled = false;
       return;
     }
     if (res.status === 202 || res.status === 409) {
+      status.textContent = 'Generating…';
       window.location.assign('/digest');
       return;
     }
+    // Any other non-OK response → surface the error code.
+    let body: RefreshResponse = {};
+    try {
+      body = (await res.json()) as RefreshResponse;
+    } catch {
+      /* ignore */
+    }
+    status.textContent =
+      body.error ?? `Retry failed (HTTP ${res.status}). Please try again.`;
     button.disabled = false;
   }
 
   function init(): void {
     const button = document.querySelector<HTMLButtonElement>('[data-retry-button]');
-    if (button === null) return;
+    const status = document.querySelector<HTMLElement>('[data-retry-status]');
+    if (button === null || status === null) return;
     if (button.dataset['bound'] === '1') return;
     button.dataset['bound'] = '1';
     button.addEventListener('click', () => {
-      void handleRetry(button);
+      void handleRetry(button, status);
     });
   }
 
@@ -191,6 +228,13 @@ const errorCode =
 
   .failure-page__settings-link:hover {
     color: var(--text);
+  }
+
+  .failure-page__status {
+    margin: 0.5rem 0 0;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    min-height: 1.25rem;
   }
 
   .failure-page__code {
