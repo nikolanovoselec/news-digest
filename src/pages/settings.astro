@@ -590,14 +590,54 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     min-height: 20px;
   }
 
-  /* Colour the email checkbox so the check glyph matches the primary
-     button fill — black on light theme, white on dark — instead of the
-     browser default blue. `accent-color` is the least-invasive way to
-     recolour a native checkbox. */
+  /* Custom-styled checkbox so the fill AND the check glyph invert
+     correctly across themes. `accent-color: var(--text)` alone broke
+     in dark mode — the native checkmark is always white, so a white
+     fill + white checkmark rendered the tick invisible. Here we draw
+     a solid box in var(--text) when checked and paint an inline SVG
+     checkmark in var(--bg) (opposite contrast, same rule the primary
+     button uses). */
   .settings__email-checkbox {
-    accent-color: var(--text);
+    -webkit-appearance: none;
+    appearance: none;
     width: 20px;
     height: 20px;
+    margin: 0;
+    background-color: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background-color 150ms ease, border-color 150ms ease;
+  }
+  .settings__email-checkbox:hover {
+    border-color: var(--text-muted);
+  }
+  .settings__email-checkbox:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .settings__email-checkbox:checked {
+    background-color: var(--text);
+    border-color: var(--text);
+    /* Inline SVG check glyph tinted with var(--bg). Encoded as data
+       URL so it rides the checked-state and has no extra HTTP request.
+       The SVG's stroke inherits currentColor via the `stroke` attr;
+       mask-image keeps the glyph clean even when Safari's default
+       tick-rendering tries to draw its own mark. */
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8l3.5 3.5L13 5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 14px 14px;
+  }
+  /* Dark theme: invert the checkmark so a white fill gets a black tick. */
+  :global([data-theme='dark']) .settings__email-checkbox:checked {
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 8l3.5 3.5L13 5'/%3E%3C/svg%3E");
   }
 
   .settings__actions {
