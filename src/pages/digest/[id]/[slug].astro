@@ -172,7 +172,19 @@ if (rawSource !== '') {
 <Base title={articleRow.title}>
   <article class="article-detail" data-article-detail>
     <nav class="article-detail__back" aria-label="Back navigation">
-      <a href="/digest" class="article-detail__back-link">&larr; Back to digest</a>
+      <a href="/digest" class="article-detail__back-link" aria-label="Back to digest">
+        <svg
+          class="article-detail__back-icon"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          {/* MDI arrow-left — https://pictogrammers.com/library/mdi/icon/arrow-left/ */}
+          <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />
+        </svg>
+      </a>
     </nav>
 
     <header class="article-detail__header" transition:name={transitionName}>
@@ -228,13 +240,33 @@ if (rawSource !== '') {
     gap: 1.75rem;
   }
 
+  /* Back arrow — icon-only, centred inside a tap-sized square. The
+     MDI arrow-left glyph sits at the top-left of the reading column,
+     giving a clear "leave this article" affordance without competing
+     with the headline below. */
+  .article-detail__back {
+    display: flex;
+  }
   .article-detail__back-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    min-width: 0;
+    min-height: 0;
+    margin-left: -8px;
     color: var(--text-muted);
     text-decoration: none;
-    font-size: var(--text-sm);
+    border-radius: 6px;
+    transition: color 150ms var(--ease, ease), background 150ms var(--ease, ease);
   }
   .article-detail__back-link:hover {
     color: var(--text);
+    background: var(--surface);
+  }
+  .article-detail__back-icon {
+    display: block;
   }
 
   .article-detail__header {
@@ -306,9 +338,13 @@ if (rawSource !== '') {
     font-family: var(--font-serif);
     font-size: 3.2em;
     font-weight: 700;
-    line-height: 0.88;
-    padding-top: 0.08em;
-    margin-right: 0.08em;
+    line-height: 0.82;
+    /* No top padding — the lead cap's top edge aligns with the first
+       running-text line's cap-height. A tiny negative margin-top pulls
+       the visually-ascendant serif top in line with Inter's cap-height
+       on the first body row. Tuned for Charter/Georgia; visible offset
+       is ≤1 px across the stack. */
+    margin: -0.02em 0.1em 0 0;
     color: var(--text);
   }
 

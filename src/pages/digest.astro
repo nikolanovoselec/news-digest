@@ -217,7 +217,9 @@ if (isReadyToday && articles.length < 3) {
             aria-pressed="false"
             aria-label={`${tag} — ${count} articles today. Click to filter, click again to deselect.`}
           >
-            <span class="tag-chip__label">#{tag}</span>
+            <span class="tag-chip__label">
+              <span class="tag-chip__hash" aria-hidden="true">#</span>{tag}
+            </span>
             {/*
               The right-edge slot is a single width. Unselected: count
               (or middle-dot when 0). Selected: an × remove affordance.
@@ -550,7 +552,12 @@ if (isReadyToday && articles.length < 3) {
     );
     const label = document.createElement('span');
     label.className = 'tag-chip__label';
-    label.textContent = '#' + tag;
+    const hash = document.createElement('span');
+    hash.className = 'tag-chip__hash';
+    hash.setAttribute('aria-hidden', 'true');
+    hash.textContent = '#';
+    label.appendChild(hash);
+    label.appendChild(document.createTextNode(tag));
     chip.appendChild(label);
 
     const slot = document.createElement('span');
@@ -926,26 +933,15 @@ if (isReadyToday && articles.length < 3) {
     flex-wrap: nowrap;
     gap: 0.5rem;
     align-items: center;
-    /* Balanced internal padding — let the parent .digest-page flex
-       gap handle the separation from the header below instead of
-       stacking margins that make the layout feel cramped. */
     padding: 0.25rem 1rem;
     overflow-x: auto;
     overflow-y: visible;
     scroll-snap-type: x proximity;
     scrollbar-width: none;
-    /* Gradient fade on the right edge hints there's more off-screen
-       when the rail overflows. No-op when everything fits. */
-    mask-image: linear-gradient(
-      to right,
-      black calc(100% - 32px),
-      transparent
-    );
-    -webkit-mask-image: linear-gradient(
-      to right,
-      black calc(100% - 32px),
-      transparent
-    );
+    /* No mask-image gradient: the fade made the chip immediately
+       behind the sticky `+ add` bleed through at ~25 % opacity, which
+       looked like a tab peeking under the add button. Sticky + add
+       with a solid background is the sole 'more off-screen' signal. */
   }
   .tag-strip::-webkit-scrollbar {
     display: none;
@@ -954,9 +950,9 @@ if (isReadyToday && articles.length < 3) {
   .tag-chip {
     display: inline-flex;
     align-items: center;
-    gap: 0.55rem;
+    gap: 0.45rem;
     min-height: 32px;
-    padding: 0.25rem 0.5rem 0.25rem 0.75rem;
+    padding: 0.25rem 0.75rem;
     background: var(--surface);
     color: var(--text);
     border: 1px solid var(--border);
@@ -965,7 +961,7 @@ if (isReadyToday && articles.length < 3) {
     font-weight: 500;
     font-family: inherit;
     line-height: 1;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.005em;
     cursor: pointer;
     flex-shrink: 0;
     scroll-snap-align: start;
@@ -973,14 +969,40 @@ if (isReadyToday && articles.length < 3) {
     transition:
       background 150ms var(--ease, ease),
       color 150ms var(--ease, ease),
-      border-color 150ms var(--ease, ease);
+      border-color 150ms var(--ease, ease),
+      padding-right 150ms var(--ease, ease),
+      gap 150ms var(--ease, ease);
   }
   .tag-chip:hover {
     border-color: var(--text-muted);
   }
   .tag-chip__label {
-    display: inline-block;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.15em;
     white-space: nowrap;
+  }
+  /* Hash marker — bolder + muted so the tag slug reads as the focus
+     and the '#' reads as a typographic accent, not a competing glyph. */
+  .tag-chip__hash {
+    font-weight: 700;
+    color: var(--text-muted);
+    opacity: 0.8;
+  }
+  .tag-chip.is-selected .tag-chip__hash {
+    color: var(--bg);
+    opacity: 0.7;
+  }
+  /* When the tag has zero articles AND isn't selected, collapse the
+     right-edge slot entirely so the chip snugs around the label.
+     Selecting the tag re-expands the slot so the × fits. */
+  .tag-chip[data-count='0']:not(.is-selected) {
+    gap: 0;
+    padding-right: 0.75rem;
+  }
+  .tag-chip[data-count='0']:not(.is-selected) .tag-chip__slot {
+    width: 0;
+    overflow: hidden;
   }
 
   /* Right-edge slot — count and × live here stacked, swapped via
