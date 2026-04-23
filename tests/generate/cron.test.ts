@@ -2,7 +2,10 @@
 // REQ-DISC-003 / REQ-MAIL-001.
 //
 // The cron dispatcher branches on `controller.cron`:
-//   - `0 * * * *`   → starts a scrape_run and enqueues SCRAPE_COORDINATOR.
+//   - `0 */4 * * *` → starts a scrape_run and enqueues SCRAPE_COORDINATOR
+//                     (00/04/08/12/16/20 UTC). Hourly is the retired
+//                     shape; a regression guard asserts the dispatcher
+//                     no longer fires for `0 * * * *`.
 //   - `0 3 * * *`   → runs cleanup (REQ-PIPE-005).
 //   - `*/5 * * * *` → discovery drain + daily-email dispatcher (per-user
 //                     digest enqueue is retired).
@@ -146,7 +149,7 @@ describe('cron dispatch — REQ-PIPE-001 / REQ-PIPE-005', () => {
     vi.unstubAllGlobals();
   });
 
-  it('REQ-PIPE-001: cron "0 * * * *" starts a scrape_run and sends a SCRAPE_COORDINATOR message', async () => {
+  it('REQ-PIPE-001: cron "0 */4 * * *" starts a scrape_run and sends a SCRAPE_COORDINATOR message', async () => {
     const { db, calls } = makeDb();
     const kv = makeKv();
     const coordinator = makeQueue();
@@ -154,7 +157,10 @@ describe('cron dispatch — REQ-PIPE-001 / REQ-PIPE-005', () => {
     const digestJobs = makeQueue();
     const env = makeEnv(db, kv, coordinator.queue, chunks.queue, digestJobs.queue);
     const { ctx, waitUntils } = makeCtx();
-    await scheduled(makeController('0 * * * *'), env, ctx);
+    // The scrape cron fires every 4 hours (00/04/08/12/16/20 UTC), not
+    // hourly. The worker dispatcher branches on the literal cron string
+    // so this regression guard uses the real expression.
+    await scheduled(makeController('0 */4 * * *'), env, ctx);
     // Wait for any queue sends the handler deferred to waitUntil.
     await Promise.all(waitUntils);
 
@@ -168,6 +174,26 @@ describe('cron dispatch — REQ-PIPE-001 / REQ-PIPE-005', () => {
     const msg = coordinator.sendCalls[0] as { scrape_run_id: string };
     expect(typeof msg.scrape_run_id).toBe('string');
     expect(msg.scrape_run_id.length).toBeGreaterThan(0);
+  });
+
+  it('REQ-PIPE-001: legacy hourly cron "0 * * * *" is NOT handled by the dispatcher (regression guard for the 4h rollout)', async () => {
+    const { db, calls } = makeDb();
+    const kv = makeKv();
+    const coordinator = makeQueue();
+    const chunks = makeQueue();
+    const digestJobs = makeQueue();
+    const env = makeEnv(db, kv, coordinator.queue, chunks.queue, digestJobs.queue);
+    const { ctx, waitUntils } = makeCtx();
+    await scheduled(makeController('0 * * * *'), env, ctx);
+    await Promise.all(waitUntils);
+
+    // No scrape_runs row, no coordinator send. The dispatcher falls
+    // through to the "unknown_cron" warn branch (see src/worker.ts).
+    const insert = calls.find(
+      (c) => c.sql.includes('INSERT INTO scrape_runs') && c.kind === 'run',
+    );
+    expect(insert).toBeUndefined();
+    expect(coordinator.sendCalls).toHaveLength(0);
   });
 
   it('REQ-PIPE-005: cron "0 3 * * *" invokes runCleanup', async () => {
