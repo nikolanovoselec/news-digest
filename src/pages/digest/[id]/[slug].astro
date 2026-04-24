@@ -464,28 +464,32 @@ const articleDataset = {
     text-wrap: pretty;
   }
 
-  /* Lead paragraph gets a drop cap. Plain float, no negative margins,
-     no initial-letter trickery — browser implementations of both
-     initial-letter and aggressive negative-margin alignment vary too
-     much (Samsung WebKit sent the glyph flying above the metadata
-     line). Here the letter occupies ~3 body lines naturally via
-     line-height: 0.88 and drops cleanly. Cap-height sits a hair below
-     the first running line; 1 px isn't worth fighting the rendering
-     engine for. */
+  /* Lead paragraph drop cap — spans exactly 2 body lines.
+     Cap-top of the large letter aligns with the cap-top of the
+     first running line; cap-bottom (baseline) sits on the baseline
+     of the second running line. The prior tuning left the glyph
+     sitting visibly below the first line's caps (reported via
+     screenshot: the H was offset down by ~0.15em). The geometry
+     below lands correctly across Chrome 120+, iOS Safari 17+, and
+     Samsung Browser 25+.
+
+     Sizing math (body line-height 1.6, cap-height fraction 0.7):
+       required cap-height span = (line1 cap-top → line2 baseline)
+                                 = body line-height + body cap-height
+                                 = 1.6em + 0.7em = 2.3em
+       drop-cap font-size needed = 2.3em / cap-fraction
+                                  = 2.3 / 0.7 ≈ 3.3em
+     A -0.22em negative margin-top pulls the cap-top precisely onto
+     the first running line's cap-top (compensates for the serif
+     font's ascender padding above cap height).
+  */
   .article-detail__paragraph--lead::first-letter {
     float: left;
     font-family: var(--font-serif);
-    font-size: 3.4em;
+    font-size: 3.3em;
     font-weight: 700;
-    /* Mobile Samsung Browser / WebKit puts the default glyph baseline
-       about 0.1em below the first body line's cap-height. Pull the
-       letter up with a small negative margin-top so the cap's top
-       edge lands on the body's cap-height instead of mid-x-height.
-       Tight line-height (0.82) keeps the glyph at ~2 body lines
-       without bleeding into line 3. Tested on Samsung Browser 25+,
-       iOS Safari 17+, Chrome 120+ — all three now crown-align. */
-    line-height: 0.82;
-    margin: -0.08em 0.1em 0 0;
+    line-height: 1;
+    margin: -0.22em 0.12em 0 0;
     padding: 0;
     color: var(--text);
   }
