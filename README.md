@@ -1,6 +1,6 @@
 # News Digest
 
-Keeping up with tech news was a part-time job I didn't sign up for, didn't get paid for, and couldn't quit. So I fired myself and hired an LLM — 99% pay cut, zero complaints. Pick your hashtags: it reads the industry, you read the summaries, and Hacker News at 2 a.m. is quietly empty for the first time in a decade.
+Keeping up with tech news was a part-time job I didn't sign up for, didn't get paid for, and couldn't quit. So I fired myself and hired an LLM — 99% pay cut, zero complaints. Pick your hashtags: it reads the industry, you read the summaries, and nothing on the internet is waiting for you anymore.
 
 **Live:** <https://news.graymatter.ch> · GitHub sign-in · pick your hashtags · done.
 
