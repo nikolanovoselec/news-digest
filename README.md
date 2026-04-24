@@ -1,6 +1,6 @@
 # News Digest
 
-Pick your hashtags. An LLM reads the news so you don't have to. You get the stories worth reading, summarised; the rest expires quietly, never having wasted your attention. The attention economy made an offer. I told it no.
+Tech news is a firehose. This is a tap. Pick your hashtags — an LLM reads the ten thousand things they wrote today and hands you the ones worth finishing. The rest vanishes quietly, never auditioning for your attention.
 
 **Live:** <https://news.graymatter.ch> · GitHub sign-in · pick your hashtags · done.
 
