@@ -59,9 +59,11 @@ function isFormEncoded(request: Request): boolean {
  * possibly prefixed with `#`). Returns an empty set for null/invalid
  * JSON so callers always get a stable lookup.
  *
- * Tags are compared case-sensitively and with the leading `#`
- * stripped, so `"#ai"` in storage matches a body value of `"ai"` or
- * `"#ai"`.
+ * Tags are stripped of a leading `#` and lowercased before insertion,
+ * matching the normalisation applied on the write path
+ * (`HASHTAG_REGEX = /[a-z0-9-]/`). The lookup side lowercases too, so
+ * a legacy row carrying mixed-case entries (e.g. `["#AI"]`) still
+ * matches a button click posting `tag=ai`.
  */
 function userHashtagSet(hashtagsJson: string | null): Set<string> {
   const out = new Set<string>();
@@ -71,7 +73,8 @@ function userHashtagSet(hashtagsJson: string | null): Set<string> {
     if (!Array.isArray(parsed)) return out;
     for (const entry of parsed) {
       if (typeof entry !== 'string') continue;
-      const normalized = entry.startsWith('#') ? entry.slice(1) : entry;
+      const stripped = entry.startsWith('#') ? entry.slice(1) : entry;
+      const normalized = stripped.toLowerCase();
       if (normalized !== '') out.add(normalized);
     }
   } catch {
@@ -126,7 +129,9 @@ export async function POST(context: APIContext): Promise<Response> {
   if (rawTag === '') {
     return errorResponse('bad_request');
   }
-  const tag = rawTag.startsWith('#') ? rawTag.slice(1) : rawTag;
+  // Normalise the submitted tag the same way as the stored set so the
+  // membership check is insensitive to leading `#` and case.
+  const tag = (rawTag.startsWith('#') ? rawTag.slice(1) : rawTag).toLowerCase();
 
   // Only retry tags the user has actually saved — otherwise anyone
   // with a session could queue arbitrary LLM calls for arbitrary

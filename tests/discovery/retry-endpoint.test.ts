@@ -358,6 +358,31 @@ describe('POST /api/discovery/retry', () => {
     expect(location.startsWith('/settings?rediscover=ok&tag=')).toBe(true);
   });
 
+  it('REQ-DISC-004: tag membership is case-insensitive (legacy mixed-case storage)', async () => {
+    // Regression guard: a legacy row stored as `["#AI"]` must still
+    // accept a button click posting `tag=ai` (the on-disk format was
+    // case-sensitive before the settings write path lowercased).
+    const cookie = await validSessionCookie();
+    const { db, runCalls } = makeDb(baseRow('["#AI"]'));
+    const { kv, deletes } = makeKv();
+    const req = await retryRequest({
+      origin: APP_ORIGIN,
+      cookie,
+      body: { tag: 'ai' },
+    });
+    const res = await POST(makeContext(req, envWith(db, kv)) as never);
+    expect(res.status).toBe(200);
+    // KV keys are always the normalised lowercase form, matching the
+    // chunk consumer + coordinator's view of sources:{tag}.
+    expect(deletes).toContain('sources:ai');
+    const insert = runCalls.find(
+      (c) =>
+        typeof c.sql === 'string' &&
+        c.sql.startsWith('INSERT OR IGNORE INTO pending_discoveries'),
+    );
+    expect(insert!.params[1]).toBe('ai');
+  });
+
   it('REQ-DISC-004: JSON POST response shape unchanged (regression guard)', async () => {
     // The form-encoded branch must not accidentally shadow the JSON
     // contract. A JSON POST still returns 200 with {ok: true}.

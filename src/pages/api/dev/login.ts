@@ -22,6 +22,7 @@
 import type { APIContext } from 'astro';
 import { signSession } from '~/lib/session-jwt';
 import { buildSessionCookie } from '~/middleware/auth';
+import { SYSTEM_USER_ID } from '~/lib/system-user';
 
 interface BypassEnv {
   DEV_BYPASS_TOKEN?: string;
@@ -57,12 +58,13 @@ export async function POST(context: APIContext): Promise<Response> {
 
   // Target user: explicit override via DEV_BYPASS_USER_ID, otherwise the
   // first user row. Caller cannot influence selection.
-  // Exclude the '__system__' sentinel row (REQ-DISC-003) — it carries
+  // Exclude the SYSTEM_USER_ID sentinel row (REQ-DISC-003) — it carries
   // no digest config and is not a signable identity.
   let userId = env.DEV_BYPASS_USER_ID;
   if (typeof userId !== 'string' || userId === '') {
     const row = await env.DB
-      .prepare("SELECT id FROM users WHERE id != '__system__' ORDER BY created_at ASC LIMIT 1")
+      .prepare('SELECT id FROM users WHERE id != ?1 ORDER BY created_at ASC LIMIT 1')
+      .bind(SYSTEM_USER_ID)
       .first<{ id: string }>();
     if (row === null) {
       return new Response('no users in db', { status: 404 });

@@ -30,13 +30,9 @@ import { canonicalize } from '~/lib/canonical-url';
 import { clusterByCanonical, type Candidate } from '~/lib/dedupe';
 import { finishRun } from '~/lib/scrape-run';
 import { clearHealth, recordFetchResult } from '~/lib/feed-health';
+import { SYSTEM_USER_ID } from '~/lib/system-user';
 import { log } from '~/lib/log';
 import type { DiscoveredFeed, SourcesCacheValue, Headline } from '~/lib/types';
-
-/** User id stamped on system-queued re-discovery rows. Distinguished
- *  from real user ids (ULIDs) by the leading double underscore so
- *  downstream queries that scope to a real user naturally exclude it. */
-const SYSTEM_USER_ID = '__system__';
 
 /** Max candidates per chunk. Matches the LLM's ~8K input-token budget
  * at the gpt-oss-20b default: ~50 candidate headlines per chunk
@@ -579,6 +575,10 @@ async function fetchAllSources(
       // kills the rest of the pool. Empty result keeps the worker
       // loop going; the logged event gives operators enough signal
       // to swap the URL later.
+      // Health tracking only applies to discovered (KV-sourced) feeds
+      // — curated URLs can't be runtime-evicted, so writing their
+      // counter just burns KV budget without enabling any action.
+      const trackHealth = job.discoveredTag !== null && job.discoveredTag !== '';
       try {
         const { headlines, fetched, success } = await fetchFromSourceWithResult(
           job.adapter,
@@ -593,17 +593,13 @@ async function fetchAllSources(
         }));
         results[i] = capped;
 
-        // Only record health for live fetches — cache hits are neither
-        // a liveness signal nor a failure.
-        if (fetched) {
+        // Only record health for live fetches on discovered feeds —
+        // cache hits are neither a liveness signal nor a failure.
+        if (trackHealth && fetched) {
           const health = await recordFetchResult(env, job.feedUrl, success);
-          if (
-            health.evicted &&
-            job.discoveredTag !== null &&
-            job.discoveredTag !== ''
-          ) {
+          if (health.evicted) {
             evictionSlots[i] = {
-              tag: job.discoveredTag,
+              tag: job.discoveredTag as string,
               url: job.feedUrl,
               failureCount: health.count,
             };
@@ -615,22 +611,28 @@ async function fetchAllSources(
           detail: String(err).slice(0, 200),
         });
         results[i] = [];
-        // Unexpected throw still counts as a failure against the URL.
-        try {
-          const health = await recordFetchResult(env, job.feedUrl, false);
-          if (
-            health.evicted &&
-            job.discoveredTag !== null &&
-            job.discoveredTag !== ''
-          ) {
-            evictionSlots[i] = {
-              tag: job.discoveredTag,
-              url: job.feedUrl,
-              failureCount: health.count,
-            };
+        // Unexpected throw still counts as a failure against the URL,
+        // but only for discovered feeds.
+        if (trackHealth) {
+          try {
+            const health = await recordFetchResult(env, job.feedUrl, false);
+            if (health.evicted) {
+              evictionSlots[i] = {
+                tag: job.discoveredTag as string,
+                url: job.feedUrl,
+                failureCount: health.count,
+              };
+            }
+          } catch (healthErr) {
+            // Persistent KV outage — surface once per job so
+            // `wrangler tail` shows the degradation instead of
+            // silently dropping signals.
+            log('warn', 'source.fetch.failed', {
+              source_name: job.sourceName,
+              status: 'health_double_throw',
+              detail: String(healthErr).slice(0, 200),
+            });
           }
-        } catch {
-          // health tracking is best-effort — swallow.
         }
       }
     }
@@ -704,6 +706,26 @@ async function applyEvictions(
       const survivingFeeds: DiscoveredFeed[] = existingFeeds.filter(
         (f) => typeof f?.url === 'string' && !evictedUrls.has(f.url),
       );
+
+      // Re-read sources:{tag} immediately before the write to shrink
+      // the read-modify-write race window. KV has no conditional-put,
+      // so if the 5-minute discovery cron has already replaced the
+      // entry between our initial read and this re-check, we'd
+      // otherwise silently clobber its freshly-discovered feeds. Bail
+      // on any mismatch — health counters are already cleared above,
+      // and the next scrape tick will re-evaluate health against the
+      // new feed set.
+      const latestRaw = await env.KV.get(`sources:${tag}`, 'text');
+      if (latestRaw !== raw) {
+        log('info', 'discovery.completed', {
+          status: 'eviction_skipped_raced',
+          scrape_run_id,
+          tag,
+        });
+        for (const url of evictedUrls) await clearHealth(env, url);
+        continue;
+      }
+
       const nextCache: SourcesCacheValue = {
         feeds: survivingFeeds,
         discovered_at: Date.now(),
