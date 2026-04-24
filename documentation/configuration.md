@@ -53,6 +53,18 @@ Three triggers are declared in `wrangler.toml`:
 | `0 3 * * *` | Daily retention cleanup — removes articles older than 7 days ([REQ-PIPE-005](../sdd/generation.md#req-pipe-005-seven-day-retention-with-starred-exempt-cleanup)) |
 | `*/5 * * * *` | Every-5-minute tick — email dispatcher and discovery drain ([REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-feed-health-tracking-and-auto-eviction) *(Deprecated 2026-04-24)*) |
 
+## KV Key Conventions
+
+The `KV` namespace uses a structured key scheme. All keys are shared across all users unless noted.
+
+| Key pattern | Value shape | TTL | Purpose |
+|---|---|---|---|
+| `sources:{tag}` | `{ feeds: [{ name, url, kind }], discovered_at }` | None (permanent until evicted) | LLM-discovered feed list for a tag — globally shared; written by the discovery cron, cleared by `POST /api/discovery/retry` and by the coordinator's eviction pass when all feeds for a tag are removed |
+| `discovery_failures:{tag}` | per-tag failure counter (string integer) | — | Per-tag failure bookkeeping; cleared by `POST /api/discovery/retry` |
+| `source_health:{url}` | Consecutive failure count (UTF-8 integer string) | 7 days | Per-URL fetch-health counter; incremented on each failed fetch, deleted on success. When the count reaches 30 (`CONSECUTIVE_FETCH_FAILURE_LIMIT`) the coordinator evicts the URL from its `sources:{tag}` entry. Implements [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking). |
+| `headlines:{source}:{tag}` | Array of headline objects | 10 min (600 s) | Per-source/per-tag headline cache shared across all chunk invocations within a single scrape tick. Implements [REQ-GEN-003](../sdd/generation.md#req-gen-003-source-fan-out-with-caching). |
+| `scrape_run:{id}:chunks_remaining` | Integer string | — | Running chunk countdown written by the coordinator and polled by `GET /api/scrape-status`. |
+
 ## Compatibility
 
 `compatibility_date = "2026-04-01"` with `compatibility_flags = ["nodejs_compat"]`. The `nodejs_compat` flag is required because some transitive dependencies use Node.js built-ins. The Worker runtime is otherwise web-standard.

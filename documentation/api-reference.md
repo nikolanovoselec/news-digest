@@ -190,11 +190,21 @@ Reads one `scrape_runs` row (most recent by `started_at DESC`) plus one KV key (
 
 ### POST /api/discovery/retry
 
-**Request:** `{ tag: string }`
+Verifies the submitted tag is in the session user's `hashtags_json`, clears `sources:{tag}` and `discovery_failures:{tag}` KV entries, then inserts a fresh `pending_discoveries` row so the next 5-minute discovery cron repopulates the tag.
 
-**Response:** `200 { ok: true }` | `400 unknown_tag` | `401`
+The endpoint is additionally gated by Cloudflare Access at the zone level — see [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Only the configured admin email can reach it in production regardless of session state.
 
-Verifies the tag is in the user's `hashtags_json`, clears `sources:{tag}` and `discovery_failures:{tag}` KV entries, inserts a fresh `pending_discoveries` row.
+**Content-type: application/json**
+
+**Request:** `{ "tag": "<tag>" }`
+
+**Response:** `200 { "ok": true }` | `400 bad_request` | `400 unknown_tag` | `401 unauthorized` | `403 forbidden_origin`
+
+**Content-type: application/x-www-form-urlencoded**
+
+**Request:** form field `tag=<tag>` (native HTML form POST from the Stuck tags fieldset on `/settings`)
+
+**Response:** `303` redirect to `/settings?rediscover=ok&tag=<tag>` — returns the operator to the settings page with a visible confirmation banner. Error responses are identical in status code to the JSON path; the redirect is only issued on success.
 
 **Implements:** [REQ-DISC-004](../sdd/discovery.md#req-disc-004-manual-re-discover)
 
