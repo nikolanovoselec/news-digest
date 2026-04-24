@@ -213,3 +213,52 @@ describe('POST /api/auth/set-tz', () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe('REQ-SET-007 silent tz auto-correct — Base.astro', () => {
+  // Static source assertions — Base.astro cannot be rendered in
+  // vitest without the Astro runtime, so we verify the contract via
+  // ?raw import the same way the design-system tests do.
+  it('REQ-SET-007: <body> carries data-user-tz for the authenticated session user', async () => {
+    const src = await import('../../src/layouts/Base.astro?raw').then((m) => m.default);
+    // The attribute is present and bound to Astro.locals.user.tz with
+    // an empty-string fallback so anonymous pages render a harmless
+    // empty attribute rather than `undefined`.
+    expect(src).toMatch(/data-user-tz=\{Astro\.locals\.user\?\.tz\s*\?\?\s*''\}/);
+  });
+
+  it('REQ-SET-007: inline module compares Intl.DateTimeFormat().resolvedOptions().timeZone to data-user-tz and POSTs when they differ', async () => {
+    const src = await import('../../src/layouts/Base.astro?raw').then((m) => m.default);
+    // The browser tz is read via Intl.
+    expect(src).toContain("Intl.DateTimeFormat().resolvedOptions().timeZone");
+    // The stored tz is read from the body data attribute.
+    expect(src).toContain("dataset['userTz']");
+    // A silent POST goes to /api/auth/set-tz when the two differ.
+    expect(src).toContain('/api/auth/set-tz');
+    expect(src).toMatch(/method:\s*['"]POST['"]/);
+  });
+
+  it('REQ-SET-007: sync runs once per session (tzAutoBound flag on documentElement) and survives View Transitions via astro:page-load', async () => {
+    const src = await import('../../src/layouts/Base.astro?raw').then((m) => m.default);
+    // Guard flag prevents stacking across ClientRouter navigations.
+    expect(src).toContain("dataset['tzAutoBound']");
+    expect(src).toMatch(/dataset\['tzAutoBound'\]\s*=\s*'1'/);
+    // astro:page-load listener re-runs the sync on every
+    // View-Transition-based navigation.
+    expect(src).toMatch(/astro:page-load[\s\S]*?syncBrowserTz/);
+  });
+
+  it('REQ-SET-007: early-return when the browser tz equals the stored tz or the stored tz is empty (no network traffic on matching anon page loads)', async () => {
+    const src = await import('../../src/layouts/Base.astro?raw').then((m) => m.default);
+    // An empty stored tz (anonymous visitor) bails before any
+    // Intl lookup so the anon landing page never fires the POST.
+    expect(src).toMatch(/stored\s*===\s*''[\s\S]{0,50}return/);
+    // A matching browser-vs-stored tz also bails before POST.
+    expect(src).toMatch(/browser\s*===\s*stored[\s\S]{0,80}return/);
+  });
+
+  it('REQ-SET-007: on successful POST, updates data-user-tz in place so the next page load skips the POST', async () => {
+    const src = await import('../../src/layouts/Base.astro?raw').then((m) => m.default);
+    // After res.ok, the dataset attribute is patched to the new tz.
+    expect(src).toMatch(/res\.ok[\s\S]{0,120}dataset\['userTz'\]\s*=\s*browser/);
+  });
+});

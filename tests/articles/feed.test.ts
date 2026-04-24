@@ -253,6 +253,96 @@ describe('GET /api/digest/today — REQ-READ-001', () => {
     }
   });
 
+  it('REQ-READ-001: primary sort is ingested_at DESC — a newly-ingested article with an older pubDate still wins over an earlier-ingested article with a newer pubDate', async () => {
+    // Regression guard for the "HashiCorp Vault stuck on top for 8h
+    // despite fresh scrapes" bug. Two articles:
+    //   old-pub-new-ingest: pubDate yesterday, ingested now
+    //   new-pub-old-ingest: pubDate 10 minutes ago, ingested 1h ago
+    // Under plain `published_at DESC` the new-pub row wins. Under
+    // `ingested_at DESC, published_at DESC` the old-pub-new-ingest
+    // wins — which is the shipped behaviour.
+    const now = Math.floor(Date.now() / 1000);
+    const yesterday = now - 86_400;
+    const tenMinAgo = now - 600;
+    const hourAgo = now - 3600;
+    const articles: RawArticle[] = [
+      {
+        id: 'old-pub-new-ingest',
+        canonical_url: 'https://example.com/a',
+        primary_source_name: 'Cloudflare Blog',
+        primary_source_url: 'https://blog.cloudflare.com/a',
+        title: 'older pubDate, just ingested',
+        details_json: JSON.stringify(['body']),
+        published_at: yesterday,
+        ingested_at: now,
+        tags: ['cloudflare'],
+      },
+      {
+        id: 'new-pub-old-ingest',
+        canonical_url: 'https://example.com/b',
+        primary_source_name: 'Cloudflare Blog',
+        primary_source_url: 'https://blog.cloudflare.com/b',
+        title: 'newer pubDate, ingested earlier',
+        details_json: JSON.stringify(['body']),
+        published_at: tenMinAgo,
+        ingested_at: hourAgo,
+        tags: ['cloudflare'],
+      },
+    ];
+    const db = makeDb({
+      user: baseUser(),
+      articles,
+      lastRun: null,
+    });
+    const res = await GET(makeContext(await authedRequest(), makeEnv(db)) as never);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as WireResponse;
+    // ingested_at DESC is the primary sort → the row ingested NOW
+    // comes first even though its pubDate is a day older.
+    expect(body.articles[0]?.id).toBe('old-pub-new-ingest');
+    expect(body.articles[1]?.id).toBe('new-pub-old-ingest');
+  });
+
+  it('REQ-READ-001: primary sort is ingested_at DESC — two articles in the same ingest batch fall back to published_at DESC as tiebreaker', async () => {
+    // Within a single scrape's batch every article shares the same
+    // ingested_at (they land in one D1 BATCH). Published_at then
+    // decides order — newer publication time first.
+    const now = Math.floor(Date.now() / 1000);
+    const articles: RawArticle[] = [
+      {
+        id: 'same-batch-older-pub',
+        canonical_url: 'https://example.com/a',
+        primary_source_name: 'Source',
+        primary_source_url: 'https://example.com/a',
+        title: 'older pub in same batch',
+        details_json: JSON.stringify(['body']),
+        published_at: now - 7200,
+        ingested_at: now,
+        tags: ['cloudflare'],
+      },
+      {
+        id: 'same-batch-newer-pub',
+        canonical_url: 'https://example.com/b',
+        primary_source_name: 'Source',
+        primary_source_url: 'https://example.com/b',
+        title: 'newer pub in same batch',
+        details_json: JSON.stringify(['body']),
+        published_at: now - 600,
+        ingested_at: now,
+        tags: ['cloudflare'],
+      },
+    ];
+    const db = makeDb({
+      user: baseUser(),
+      articles,
+      lastRun: null,
+    });
+    const res = await GET(makeContext(await authedRequest(), makeEnv(db)) as never);
+    const body = (await res.json()) as WireResponse;
+    expect(body.articles[0]?.id).toBe('same-batch-newer-pub');
+    expect(body.articles[1]?.id).toBe('same-batch-older-pub');
+  });
+
   it('REQ-READ-001: returns last_scrape_run metadata and next_scrape_at on the next 4-hour UTC cron boundary', async () => {
     const now = Math.floor(Date.now() / 1000);
     const lastRun: ScrapeRunRow = {
