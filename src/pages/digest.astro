@@ -605,11 +605,14 @@ const todayLocalDate = localDateInTz(Math.floor(Date.now() / 1000), userTz);
       const selected = Array.from(
         strip.querySelectorAll<HTMLElement>('[data-tag-chip].is-selected'),
       );
-      // Prepend in reverse so the first selected chip ends up
-      // leftmost — prepend(node) on an element inserts at index 0,
-      // so reversed iteration yields the intended order-of-appearance.
+      // Insert in reverse at index 0 so the first selected chip ends
+      // up leftmost — each insertBefore at firstChild pushes earlier
+      // entries one slot to the right, so reversed iteration yields
+      // the intended order-of-appearance. Uses insertBefore rather
+      // than prepend because Astro's emitted Workers + DOM type
+      // overlap pollutes ParentNode.prepend's overload resolution.
       for (let i = selected.length - 1; i >= 0; i -= 1) {
-        strip.prepend(selected[i]!);
+        strip.insertBefore(selected[i]!, strip.firstChild);
       }
     };
 
@@ -655,8 +658,10 @@ const todayLocalDate = localDateInTz(Math.floor(Date.now() / 1000), userTz);
       if (nowSelected) {
         // Move the just-selected chip to scroll-position 0 so the
         // filter chip is always visible without the user having to
-        // scroll the mobile tag strip back to find it.
-        strip.prepend(chip);
+        // scroll the mobile tag strip back to find it. insertBefore
+        // at firstChild avoids the prepend-overload collision between
+        // DOM and Workers types.
+        strip.insertBefore(chip, strip.firstChild);
       }
       applyFilter();
     });

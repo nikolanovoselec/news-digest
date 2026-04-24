@@ -452,9 +452,12 @@ function formatCostUsd(value: number | null | undefined): string {
       if (!wasSelected) {
         // Pin the just-selected chip to scroll-position 0 of the
         // (mobile-scrollable) strip so it stays visible without the
-        // user having to scroll back to find it.
+        // user having to scroll back to find it. insertBefore rather
+        // than prepend — the Workers + DOM type overlap in this
+        // repo's tsconfig gives prepend an ambiguous signature that
+        // astro check rejects.
         const thisStrip = chip.closest<HTMLElement>('[data-tag-strip]');
-        if (thisStrip !== null) thisStrip.prepend(chip);
+        if (thisStrip !== null) thisStrip.insertBefore(chip, thisStrip.firstChild);
       }
       apply();
     };
@@ -494,7 +497,7 @@ function formatCostUsd(value: number | null | undefined): string {
           strip.querySelectorAll<HTMLElement>('[data-tag-chip].is-selected'),
         );
         for (let i = selected.length - 1; i >= 0; i -= 1) {
-          strip.prepend(selected[i]!);
+          strip.insertBefore(selected[i]!, strip.firstChild);
         }
       }
       needsApply = true;
