@@ -26,6 +26,7 @@ Also gone:
 - **No exit-intent modal** demanding your email in exchange for a 10% discount on nothing, because you're exiting, which means you've already decided, which should be respected rather than litigated.
 - **No chat widget** pinned to the bottom-right corner going "Hi there 👋 can I help you find what you're looking for?" No. I was looking for the article. Which you covered up. With yourself.
 - **No tracking pixels, no analytics dashboard I stare at hoping the line goes up, no Hotjar recording every mouse movement, no A/B test that occasionally serves you a version with a paywall just to see how you'd feel about it.**
+- **No fake news. No AI-generated hot takes. No "BREAKING: experts say…" wrapped around 2,000 words of filler.** The LLM summarises what real sources actually published; it doesn't invent stories, embellish numbers, or pick a side. Every card links straight back to the publisher so you can verify the thing. If the source is lying, the source is lying, and I haven't laundered it through a second LLM to make it sound plausible.
 
 Also included, because why not: **PWA-installable, dark mode out of the box, an offline banner when the network drops, and the entire site loads faster than the average ad network's third handshake.**
 

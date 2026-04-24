@@ -47,14 +47,16 @@ npx wrangler d1 migrations apply DB --remote
 npx wrangler deploy
 ```
 
-Or via GitHub Actions (`.github/workflows/deploy.yml`), which:
-1. Runs tests.
-2. Applies D1 migrations against the production database.
-3. Pushes Worker secrets (Resend credentials, etc.) via `wrangler secret put`.
-4. Deploys the Worker.
-5. Binds the custom domain: extracts the hostname from the `APP_URL` secret, walks parent domains to find the matching Cloudflare zone in the account, then calls the Workers Custom Domains API (`PUT /accounts/{id}/workers/domains`) to attach the hostname to the Worker. The call is idempotent — safe to re-run on every deploy. Skipped if `APP_URL` is not set.
-6. Smoke-tests `GET /` against `APP_URL` first (the hostname users actually reach); falls back to the `*.workers.dev` URL if the custom domain has not propagated yet. Accepts `200` or `303` as passing. Uses `--max-time 15` to avoid hung connections.
-7. Runs `scripts/e2e-test.sh --force-prod` against the freshly-deployed Worker. Requires the `DEV_BYPASS_TOKEN` repository secret (used both to acquire a session via `/api/dev/login` and to trigger the full-cycle scrape via `POST /api/dev/trigger-scrape`). **If the secret is absent the step exits 0 and the deploy is still considered successful** — the e2e suite is an optional safety net, not a gate. The script exercises auth, tags, stars, discovery, and the account-delete transport. The full-cycle scrape section triggers a real scrape (coordinator → chunks → LLM → D1), polls `/api/scrape-status` until the run completes, then asserts that at least one article was ingested and that the first article's `details` field is ≥ 150 words (the prompt target is 150–250 words, 2–3 paragraphs per [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) AC 3). Every mutating assertion follows a snapshot-save → mutate → assert → restore cycle, so the owner account is left in exactly the state it was found in. The suite is safe to run against production — not just preview deploys — because all mutations are reverted before the script exits.
+Or via GitHub Actions (`.github/workflows/deploy.yml`), which triggers on a `workflow_run` event — it fires only when the "PR Checks" workflow on `main` completes with a `success` conclusion. This closes the window where a plain `push: [main]` trigger would have run the deploy in parallel with checks off the same SHA. `workflow_dispatch` is retained for manual re-runs of a stuck deploy.
+
+The deploy job:
+1. Applies D1 migrations against the production database.
+2. Pushes Worker secrets (Resend credentials, etc.) via `wrangler secret put`.
+3. Deploys the Worker.
+4. Binds the custom domain: extracts the hostname from the `APP_URL` secret, walks parent domains to find the matching Cloudflare zone in the account, then calls the Workers Custom Domains API (`PUT /accounts/{id}/workers/domains`) to attach the hostname to the Worker. The call is idempotent — safe to re-run on every deploy. Skipped if `APP_URL` is not set.
+5. Smoke-tests `GET /` against `APP_URL` first (the hostname users actually reach); falls back to the `*.workers.dev` URL if the custom domain has not propagated yet. Accepts `200` or `303` as passing. Uses `--max-time 15` to avoid hung connections.
+
+The `scripts/e2e-test.sh` script still exists for manual invocation (`bash scripts/e2e-test.sh --force-prod`) but no longer runs automatically on every deploy — running it on every deploy triggers a full-cycle scrape (LLM cost and ~10 min wall-clock) and mutates the owner's account state (tags/stars/settings). The reachability smoke above plus PR Checks on the preceding commit are sufficient to confirm a healthy deploy.
 
 > **Fork-friendly:** set `APP_URL` to any hostname whose apex domain is a Cloudflare zone in the same account — the deploy step binds it automatically. No edits to `wrangler.toml` are required.
 
@@ -62,8 +64,8 @@ Or via GitHub Actions (`.github/workflows/deploy.yml`), which:
 
 | Environment | Branch | Notes |
 |---|---|---|
-| Development | any local | `wrangler d1 --local`; dev server at localhost:4321 |
-| Production | `main` | CI deploys on push to main |
+| Development | `develop` | Active development branch; PR Checks (`test.yml`) fire on every push |
+| Production | `main` | CI deploys on merge to main; deploy is gated on PR Checks success |
 
 ## Cloudflare Resources
 

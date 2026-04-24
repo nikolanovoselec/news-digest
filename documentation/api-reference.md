@@ -137,9 +137,9 @@ Native-form transport path for account deletion. Accepts a `application/x-www-fo
 }
 ```
 
-Returns up to 29 articles from the global pool filtered by the session user's active hashtags, ordered by `published_at DESC`. The 30th position in the digest grid is always the "see today" tile (a fixed MDI `gradient-vertical` icon card that deep-links to `/history?date=YYYY-MM-DD`). `last_scrape_run` is the most recent completed `scrape_runs` row; `next_scrape_at` is `started_at + 3600` (unix seconds). The pool is always populated — no `live` flag or skeleton state.
+Returns up to 29 articles from the global pool filtered by the session user's active hashtags, ordered by `ingested_at DESC, published_at DESC` — newest ingest wins so a fresh scrape always bubbles its articles to the top of the dashboard. The 30th position in the digest grid is always the "see today" tile (a fixed icon card that deep-links to `/history?date=YYYY-MM-DD`). `last_scrape_run` is the most recent completed `scrape_runs` row; `next_scrape_at` is `started_at + 3600` (unix seconds). The pool is always populated — no `live` flag or skeleton state.
 
-**Implements:** [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest)
+**Implements:** [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) AC 5
 
 ### GET /api/digest/:id
 
@@ -334,7 +334,9 @@ Extended machine-readable agents policy (`public/llms-full.txt`). Superset of `l
 
 **Response:** `{ digests: [...], has_more: bool }` — up to 30 per page ordered by `generated_at DESC`. When `date` is supplied, only digests whose `generated_at` falls on that calendar day are returned and `has_more` is always `false`. Each digest row includes `article_count` (correlated subquery), `model_name` (human-readable, resolved from the model catalog — falls back to the raw `model_id` for removed models), `execution_ms`, `tokens_in`, `tokens_out`, `estimated_cost_usd`, `status`, `error_code`, and `trigger`.
 
-**Implements:** [REQ-HIST-001](../sdd/history.md#req-hist-001-paginated-past-digests)
+The `/history` page also reads `?q=` (search query, ≥3 chars) and `?tags=` (comma-separated tag list) from the URL client-side to restore the exact filter state when the user returns via the browser back button from an opened article. These parameters are written to the URL via `replaceState` — they are not sent to `/api/history` on the server; the page filters the already-rendered cards in the browser.
+
+**Implements:** [REQ-HIST-001](../sdd/history.md#req-hist-001-paginated-past-digests) AC 4, AC 5
 
 ### GET /api/stats
 
