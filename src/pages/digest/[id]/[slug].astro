@@ -25,6 +25,7 @@ import AltSourcesModal from '~/components/AltSourcesModal.astro';
 import { loadSession } from '~/middleware/auth';
 import { requireSettingsComplete } from '~/middleware/settings-gate';
 import { slugify } from '~/lib/slug';
+import { splitIntoParagraphs } from '~/lib/paragraph-split';
 
 interface ArticleRow {
   id: string;
@@ -150,12 +151,16 @@ if (!alreadyRead) {
 
 // Parse the stored `details_json` array. The write path sanitizes and
 // guarantees an array-of-1-to-3, but be defensive against malformed
-// rows so a corrupt entry doesn't crash the render.
+// rows so a corrupt entry doesn't crash the render. Some legacy rows
+// store paragraph breaks as a literal "\n" escape sequence rather than
+// a real newline — splitIntoParagraphs normalises both forms.
 let details: string[] = [];
 try {
   const parsed = JSON.parse(articleRow.details_json) as unknown;
   if (Array.isArray(parsed)) {
-    details = parsed.filter((v): v is string => typeof v === 'string');
+    details = parsed
+      .filter((v): v is string => typeof v === 'string')
+      .flatMap((s) => splitIntoParagraphs(s));
   }
 } catch {
   details = [];

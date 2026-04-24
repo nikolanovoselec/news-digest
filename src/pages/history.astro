@@ -451,13 +451,13 @@ function formatCostUsd(value: number | null | undefined): string {
       chip.setAttribute('aria-pressed', wasSelected ? 'false' : 'true');
       apply();
     };
-    // Bind ONCE per page load. `reinit` runs this function on every
-    // View Transition, but the document-level listener set on the
-    // first call is reused; the flag below prevents stacking.
-    if (document.documentElement.dataset['historyTagStripBound'] !== '1') {
-      document.documentElement.dataset['historyTagStripBound'] = '1';
-      document.addEventListener('click', historyClickHandler);
-    }
+    // Bind per-init and remove in the teardown returned below. Binding
+    // once with a flag would freeze the handler's closure over the DOM
+    // captured on first visit; the next time the user returns to
+    // /history via ClientRouter, the new DOM is live but the old
+    // handler still calls the detached `apply` → chip clicks silently
+    // do nothing until the user hard-reloads.
+    document.addEventListener('click', historyClickHandler);
 
     // Hydrate from URL on load: restore q + tag selections so that
     // navigating back to /history?q=foo&tags=a,b brings the user to
@@ -489,6 +489,7 @@ function formatCostUsd(value: number | null | undefined): string {
       if (input !== null) {
         input.removeEventListener('input', apply);
       }
+      document.removeEventListener('click', historyClickHandler);
     };
   }
 

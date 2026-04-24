@@ -29,6 +29,8 @@ describe('robots.txt — REQ-OPS-004 AC 2', () => {
     expect(robots).toMatch(/Allow:\s*\/manifest\.webmanifest/);
     expect(robots).toMatch(/Allow:\s*\/favicon\.svg/);
     expect(robots).toMatch(/Allow:\s*\/sitemap\.xml/);
+    // og:image default points at /og.svg — robots must not block it.
+    expect(robots).toMatch(/Allow:\s*\/og\.svg/);
   });
 
   it('REQ-OPS-004: every authenticated surface is explicitly Disallowed for the default UA', () => {
@@ -179,6 +181,25 @@ describe('SEO metadata in Base.astro — REQ-OPS-004 AC 1', () => {
     expect(baseSource).toMatch(/property="og:image"/);
     expect(baseSource).toMatch(/name="twitter:card"/);
     expect(baseSource).toMatch(/application\/ld\+json/);
+  });
+
+  it('REQ-OPS-004: og:image defaults to /og.svg with explicit type + dimensions + alt so Twitter/LinkedIn render summary_large_image', () => {
+    expect(baseSource).toMatch(/\/og\.svg/);
+    expect(baseSource).toMatch(/property="og:image:type"/);
+    expect(baseSource).toMatch(/property="og:image:width"\s+content="1200"/);
+    expect(baseSource).toMatch(/property="og:image:height"\s+content="630"/);
+    expect(baseSource).toMatch(/property="og:image:alt"/);
+    expect(baseSource).toMatch(/name="twitter:card"\s+content="summary_large_image"/);
+  });
+
+  it('REQ-OPS-004: emits dual theme-color metas for light + dark OS schemes', () => {
+    expect(baseSource).toMatch(
+      /theme-color[\s\S]{0,120}media="\(prefers-color-scheme:\s*light\)"/,
+    );
+    expect(baseSource).toMatch(
+      /theme-color[\s\S]{0,120}media="\(prefers-color-scheme:\s*dark\)"/,
+    );
+    expect(baseSource).toMatch(/name="color-scheme"\s+content="light dark"/);
   });
 
   it('REQ-OPS-004: JSON-LD declares both a WebSite and an Organization node', () => {

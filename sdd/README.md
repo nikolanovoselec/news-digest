@@ -26,15 +26,15 @@ A personalized daily tech news digest. Users sign in with GitHub, curate interes
 
 | # | Domain | File | Priority | Description |
 |---|--------|------|----------|-------------|
-| 1 | Authentication | [authentication.md](authentication.md) | P0 | GitHub OAuth, HMAC-JWT sessions, revocation, CSRF, auth rate limiting, account deletion |
-| 2 | Onboarding & Settings | [settings.md](settings.md) | P0 | First-run flow, hashtag curation, schedule (HH:MM + tz), model selection, email toggle |
-| 3 | Source Discovery | [discovery.md](discovery.md) | P0 | LLM-assisted per-tag feed discovery, SSRF-filtered validation, health tracking, retry |
+| 1 | Authentication | [authentication.md](authentication.md) | P0 | GitHub OAuth, HMAC-JWT sessions, revocation, CSRF, account deletion |
+| 2 | Onboarding & Settings | [settings.md](settings.md) | P0 | First-run flow, hashtag curation, schedule (HH:MM + tz), email toggle |
+| 3 | Source Discovery | [discovery.md](discovery.md) | P0 | LLM-assisted per-tag feed discovery, SSRF-filtered validation, manual re-discover, prompt injection protection |
 | 4 | Digest Generation | [generation.md](generation.md) | P0 | Cron dispatcher, Queue consumer, source fan-out, LLM summarization, rate limits, stuck-sweeper |
 | 5 | Reading Experience | [reading.md](reading.md) | P0 | Overview grid, article detail with bullets, loading/error states, polling, read tracking |
 | 6 | Email Notifications | [email.md](email.md) | P0 | Resend integration, digest-ready template, per-user email_enabled toggle |
 | 7 | History & Stats | [history.md](history.md) | P1 | Past digests paginated, stats widget (digests, articles read, tokens, cost) |
 | 8 | Design System | [design.md](design.md) | P0 | Typography, palette, light/dark toggle, motion, prefers-reduced-motion |
-| 9 | PWA & Mobile | [pwa.md](pwa.md) | P1 | Manifest, service worker, offline, install prompt, mobile layout, safe-area insets |
+| 9 | PWA & Mobile | [pwa.md](pwa.md) | P1 | Manifest, install prompt, mobile layout, safe-area insets |
 | 10 | Observability | [observability.md](observability.md) | P1 | Structured JSON logs, sanitized error surfaces, security headers |
 
 ## Out of Scope
@@ -48,9 +48,9 @@ The following were considered and intentionally excluded from the MVP:
 - **Embeddings or vector search** — a single LLM call handles ranking; embeddings would add a dependency without measurable quality gain at this scale
 - **Fetching article page bodies** — summaries are produced from search-API headlines and snippets; this eliminates an entire class of SSRF risk
 - **Admin actor / multi-tenancy** — single actor (User) for MVP
-- **Cloudflare WAF-based OAuth rate limiting** — infrastructure policy, not product behaviour; handled outside the spec if ever needed
-- **Sender domain verification walkthrough** — operational setup task; deployment docs already cover Resend DNS configuration
-- **Offline reading via service worker cache** — PWA installability (REQ-PWA-001) ships without offline content caching; the dashboard requires network on launch
+- **Cloudflare WAF-based OAuth rate limiting** (was REQ-AUTH-006) — infrastructure policy, not product behaviour; handled outside the spec if ever needed
+- **Sender domain verification walkthrough** (was REQ-MAIL-003) — operational setup task; deployment docs already cover Resend DNS configuration
+- **Offline reading via service worker cache** (was REQ-PWA-002) — PWA installability (REQ-PWA-001) ships without offline content caching; the dashboard requires network on launch
 
 ## Constraints
 

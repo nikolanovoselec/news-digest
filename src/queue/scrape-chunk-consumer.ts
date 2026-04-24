@@ -48,6 +48,7 @@ import {
 } from '~/lib/dedupe';
 import { fetchArticleBodies } from '~/lib/article-fetch';
 import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
+import { splitIntoParagraphs } from '~/lib/paragraph-split';
 import { DEFAULT_MODEL_ID, FALLBACK_MODEL_ID, estimateCost } from '~/lib/models';
 import { addChunkStats, finishRun } from '~/lib/scrape-run';
 import { generateUlid } from '~/lib/ulid';
@@ -433,16 +434,17 @@ export async function processOneChunk(
     const title = sanitizeText(s.llmArticle.title);
     const detailsRaw = s.llmArticle.details;
     // The prompt contract asks the LLM for a single string with
-    // paragraphs separated by `\n`. Split on any run of newlines so a
-    // model that returns `\n\n` between paragraphs still produces
-    // multiple entries. If the model ignores the contract and returns
-    // an array, keep the per-element path.
+    // paragraphs separated by `\n`. A minority of responses escape the
+    // separator as the two-character sequence `\n` (backslash + n)
+    // rather than a real newline — splitIntoParagraphs normalises both
+    // forms before splitting. If the model ignores the contract and
+    // returns an array, apply the same normaliser per element.
     const rawPieces: string[] = Array.isArray(detailsRaw)
       ? detailsRaw.flatMap((p) =>
-          typeof p === 'string' ? p.split(/\n+/) : [],
+          typeof p === 'string' ? splitIntoParagraphs(p) : [],
         )
       : typeof detailsRaw === 'string'
-        ? detailsRaw.split(/\n+/)
+        ? splitIntoParagraphs(detailsRaw)
         : [];
     const details = rawPieces
       .map((p) => sanitizeText(p))

@@ -109,6 +109,26 @@ describe('history.astro — REQ-HIST-001', () => {
     );
   });
 
+  it('REQ-HIST-001: tag-chip click handler is bound and torn down per-init so ClientRouter return does not leave a stale closure', () => {
+    // Regression: with a documentElement-level `historyTagStripBound`
+    // flag, the document click listener was installed once on first
+    // visit and froze its closure over the initial DOM. Returning to
+    // /history via View Transitions replaced the DOM but the old
+    // handler kept calling the detached `apply()` — tag clicks did
+    // nothing until the user hard-reloaded. The fix binds the handler
+    // inside initHistorySearch and removes it in the returned
+    // teardown so every reinit gets a fresh closure over live DOM.
+    expect(historyPageSource).not.toMatch(/historyTagStripBound/);
+    // Bind lives inside initHistorySearch, not behind a documentElement flag.
+    expect(historyPageSource).toMatch(
+      /document\.addEventListener\(\s*'click',\s*historyClickHandler/,
+    );
+    // Teardown returned by initHistorySearch removes the same handler.
+    expect(historyPageSource).toMatch(
+      /document\.removeEventListener\(\s*'click',\s*historyClickHandler/,
+    );
+  });
+
   it('REQ-HIST-001: empty state reads "No articles in the last 7 days."', () => {
     expect(historyPageSource).toContain('No articles in the last 7 days.');
   });

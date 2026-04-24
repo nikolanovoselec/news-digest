@@ -14,12 +14,16 @@ interface ManifestIcon {
 }
 
 interface WebManifest {
+  id?: string;
   name?: string;
   short_name?: string;
   description?: string;
   start_url?: string;
   scope?: string;
   display?: string;
+  lang?: string;
+  dir?: string;
+  categories?: string[];
   theme_color?: string;
   background_color?: string;
   icons?: ManifestIcon[];
@@ -88,6 +92,22 @@ describe('manifest.webmanifest', () => {
       svgMaskable || pngMaskable,
       'manifest must ship either a scalable SVG maskable icon or a 512x512 PNG maskable',
     ).toBe(true);
+  });
+
+  it('REQ-PWA-001: declares id, lang, dir, and categories so install discovery has disambiguating metadata', () => {
+    // id: unique install identity so a future start_url change does
+    // not spawn a second app on the user's device.
+    expect(manifest.id).toBe('/');
+    // lang + dir let the install dialog and OS app switcher render
+    // correctly in RTL locales; ltr + en are our current only content.
+    expect(manifest.lang).toBe('en');
+    expect(manifest.dir).toBe('ltr');
+    // categories surface the app in Android's Play-install UI +
+    // Samsung's install dialog. "news" and "productivity" match the
+    // product better than Chrome's default bucket.
+    expect(Array.isArray(manifest.categories)).toBe(true);
+    expect(manifest.categories).toContain('news');
+    expect(manifest.categories).toContain('productivity');
   });
 
   it('REQ-PWA-001: every icon src is absolute and matches its declared type', () => {

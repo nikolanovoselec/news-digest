@@ -51,7 +51,7 @@ Three triggers are declared in `wrangler.toml`:
 |---|---|
 | `0 * * * *` | Hourly global-feed coordinator — fires the scrape pipeline ([REQ-PIPE-001](../sdd/generation.md#req-pipe-001-hourly-global-scrape-and-summarise-pipeline)) |
 | `0 3 * * *` | Daily retention cleanup — removes articles older than 7 days ([REQ-PIPE-005](../sdd/generation.md#req-pipe-005-seven-day-retention-with-starred-exempt-cleanup)) |
-| `*/5 * * * *` | Every-5-minute tick — email dispatcher and discovery drain ([REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-feed-health-tracking-and-auto-eviction)) |
+| `*/5 * * * *` | Every-5-minute tick — email dispatcher and discovery drain ([REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-feed-health-tracking-and-auto-eviction) *(Deprecated 2026-04-24)*) |
 
 ## Compatibility
 
