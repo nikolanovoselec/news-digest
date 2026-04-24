@@ -23,8 +23,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 **Priority:** P0
 **Dependencies:** REQ-PIPE-004
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** AC 7 (48-hour freshness filter) ships in code (src/queue/scrape-coordinator.ts) but no automated test verifies that stale candidates are dropped.
+**Status:** Implemented
 
 ---
 
@@ -131,8 +130,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 **Priority:** P1
 **Dependencies:** REQ-PIPE-001
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** AC 1–4 have automated coverage via the global-feed rework tests. AC 5 (in-flight progress endpoint and reading/settings indicators) ships in code but is not yet covered by automated tests.
+**Status:** Implemented
 
 ---
 
