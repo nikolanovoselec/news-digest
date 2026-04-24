@@ -464,26 +464,18 @@ const articleDataset = {
     text-wrap: pretty;
   }
 
-  /* Lead paragraph drop cap — spans 2 body lines.
-     Cap-top of the drop-cap aligns with cap-top of line 1; baseline
-     sits on line 2's baseline.
-
-     The values are iteratively tuned — the font's metrics (cap
-     height ≈ 0.7 × font-size, ascender adds padding above the cap)
-     mean the purely-math derivation overshot. Keep line-height
-     tight (< 1) so negative half-leading pulls the cap-top up
-     toward the line-box top, then nudge with a small negative
-     margin-top. Values below produce the right landing on Chrome
-     120+; initial-letter is intentionally avoided — Samsung WebKit
-     sent the glyph flying above the metadata line when we tried it
-     previously. */
+  /* Lead paragraph drop cap — values restored to the pre-tuning
+     state from earlier this session. Further changes require a
+     live visual reference (screenshot of current vs. desired);
+     iterating in the dark was moving the glyph in the wrong
+     direction. */
   .article-detail__paragraph--lead::first-letter {
     float: left;
     font-family: var(--font-serif);
     font-size: 3.4em;
     font-weight: 700;
     line-height: 0.82;
-    margin: -0.2em 0.1em 0 0;
+    margin: -0.08em 0.1em 0 0;
     padding: 0;
     color: var(--text);
   }
