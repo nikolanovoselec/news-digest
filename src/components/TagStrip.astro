@@ -94,3 +94,277 @@ const selected = initialSelected ?? new Set<string>();
     hidden
   />
 </div>
+
+{/* Styles are `is:global` so they survive onto whichever page
+    embeds this component (dashboard + Search & History both use
+    it). They also cover chips created client-side via the DOM API
+    after an "+ add" — those new nodes don't carry the Astro
+    scoped-attribute that component-local styles match on. */}
+<style is:global>
+  /* Wrapper: establishes the positioning context for the floating
+     + add button and the horizontal mask on the inner scroll area. */
+  .tag-strip-wrap {
+    position: relative;
+  }
+  .tag-strip {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.25rem 1rem;
+    /* Reserve space on the right for the absolutely-positioned + add
+       button (~5rem incl. gap) so the last chip can scroll into view
+       without sitting under the button permanently. */
+    padding-right: 6rem;
+    overflow-x: auto;
+    overflow-y: visible;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    /* Mask the right edge: chips visibly fade to transparent as they
+       approach the button, so they NEVER appear to overlap it. The
+       button itself is a sibling outside this mask, so it renders
+       crisp on top. This is the fix for the "tags scroll under +add"
+       complaint — rendered masking is unaffected by z-index or
+       sticky-position quirks. */
+    mask-image: linear-gradient(
+      to right,
+      black 0,
+      black calc(100% - 5rem),
+      transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+      to right,
+      black 0,
+      black calc(100% - 5rem),
+      transparent 100%
+    );
+  }
+  /* Desktop layout — strip chips + the + add button flow as a
+     single wrapping line. The + add button is a SIBLING of
+     .tag-strip in the DOM (the strip has a mask-image fade on the
+     right edge for mobile scroll, and the button sits over it), so
+     on desktop we need to collapse .tag-strip's layout role and
+     promote .tag-strip-wrap to be the actual flex container — then
+     chips and + add live at the same level and wrap together. The
+     `.tag-add` position override below MUST live AFTER the base
+     .tag-add rule (see "Desktop tag-add override" further down)
+     because source-order cascade beats a later same-specificity
+     rule inside this media query. */
+  @media (min-width: 768px) {
+    .tag-strip-wrap {
+      position: static;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      padding: 0.25rem 1rem;
+    }
+    .tag-strip {
+      /* display: contents dissolves .tag-strip's own layout box so
+         its chip children become direct flex items of
+         .tag-strip-wrap above. padding / flex / mask / overflow on
+         .tag-strip become inert on desktop — which is exactly what
+         we want, since the desktop layout needs wrap + inline-
+         flowing + add, not a scrolling masked strip. */
+      display: contents;
+    }
+  }
+  .tag-strip::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 32px;
+    padding: 0.25rem 0.75rem;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 9999px;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    font-family: inherit;
+    line-height: 1;
+    letter-spacing: -0.005em;
+    cursor: pointer;
+    flex-shrink: 0;
+    scroll-snap-align: start;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+      background 150ms var(--ease, ease),
+      color 150ms var(--ease, ease),
+      border-color 150ms var(--ease, ease),
+      padding-right 150ms var(--ease, ease),
+      gap 150ms var(--ease, ease);
+  }
+  .tag-chip:hover {
+    border-color: var(--text-muted);
+  }
+  .tag-chip__label {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.15em;
+    white-space: nowrap;
+  }
+  .tag-chip__hash {
+    font-weight: 700;
+    color: var(--text-muted);
+    opacity: 0.8;
+  }
+  .tag-chip.is-selected .tag-chip__hash {
+    color: var(--bg);
+    opacity: 0.7;
+  }
+  .tag-chip[data-count='0']:not(.is-selected) {
+    gap: 0;
+    padding-right: 0.75rem;
+  }
+  .tag-chip[data-count='0']:not(.is-selected) .tag-chip__slot {
+    width: 0;
+    overflow: hidden;
+  }
+
+  .tag-chip__slot {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+  .tag-chip__count,
+  .tag-chip__remove {
+    position: absolute;
+    inset: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 9999px;
+    transition: opacity 150ms var(--ease, ease);
+  }
+  .tag-chip__count {
+    /* Match the label's font-size so both sit on the same optical
+       line. 11px was the prior value and rendered visibly lower than
+       the tag text because the smaller glyph metrics offset the
+       flex-center baseline. Using the same text-sm size as the label
+       makes the count's baseline and the label's baseline identical. */
+    font-size: var(--text-sm);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    color: var(--text-muted);
+    opacity: 1;
+  }
+  .tag-chip__remove {
+    background: #dc2626;
+    color: #fff;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .tag-chip__remove:hover {
+    background: #b91c1c;
+  }
+
+  .tag-chip.is-selected {
+    background: var(--text);
+    color: var(--bg);
+    border-color: var(--text);
+  }
+  .tag-chip.is-selected .tag-chip__count {
+    opacity: 0;
+  }
+  .tag-chip.is-selected .tag-chip__remove {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .tag-strip__nomatch {
+    margin: 0 1rem 0.5rem;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+  .tag-strip__nomatch[hidden] {
+    display: none;
+  }
+
+  .tag-add {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 32px;
+    padding: 0.25rem 0.75rem;
+    background: var(--bg);
+    color: var(--text-muted);
+    border: 1px dashed var(--border);
+    border-radius: 9999px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    flex-shrink: 0;
+    /* Float over the masked scroll area — absolute inside .tag-strip-wrap.
+       The strip's mask-image fades chips to transparent before they
+       reach here, so the button is always crisp on a clean background. */
+    position: absolute;
+    right: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+      color 150ms var(--ease, ease),
+      border-color 150ms var(--ease, ease),
+      background 150ms var(--ease, ease);
+  }
+  .tag-add:hover {
+    color: var(--text);
+    border-color: var(--text);
+    background: var(--surface);
+  }
+  .tag-add__plus {
+    font-size: var(--text-lg);
+    line-height: 1;
+    font-weight: 400;
+  }
+
+  .tag-add-input {
+    display: inline-flex;
+    min-height: 32px;
+    padding: 0.25rem 0.75rem;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--text);
+    border-radius: 9999px;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    outline: none;
+    min-width: 140px;
+  }
+
+  .tag-strip__error {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    margin-left: 0.5rem;
+    transition: opacity 0.2s ease;
+  }
+
+  /* Desktop tag-add override — MUST live here, below the base
+     .tag-add rule (`position: absolute; top: 50%; right: 0.75rem`),
+     so the cascade resolves in the intended direction when the
+     desktop breakpoint is active. */
+  @media (min-width: 768px) {
+    .tag-add {
+      position: static;
+      top: auto;
+      right: auto;
+      transform: none;
+    }
+  }
+</style>
