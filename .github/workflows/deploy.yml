@@ -202,33 +202,10 @@ jobs:
           echo "No reachable smoke-test URL"
           exit 1
 
-      - name: End-to-end API smoke (scripts/e2e-test.sh)
-        # Runs the full HTTP e2e suite against the freshly-deployed
-        # Worker. Needs DEV_BYPASS_TOKEN (to acquire a session without
-        # OAuth) — skip silently if the repo secret is unset. The
-        # script mutates tags + stars for the owner account; that's
-        # expected and idempotent across re-runs (it also re-adds a
-        # star at the end).
-        env:
-          BASE: ${{ secrets.APP_URL }}
-          WORKER_URL: ${{ steps.deploy.outputs.worker_url }}
-          DEV_BYPASS_TOKEN: ${{ secrets.DEV_BYPASS_TOKEN }}
-        run: |
-          if [ -z "${DEV_BYPASS_TOKEN:-}" ]; then
-            echo "DEV_BYPASS_TOKEN not set — skipping e2e (deploy still considered successful)."
-            exit 0
-          fi
-          # Prefer APP_URL; fall back to the workers.dev URL if the
-          # custom domain hasn't been set up for this project.
-          if [ -z "${BASE:-}" ]; then
-            export BASE="$WORKER_URL"
-          fi
-          if [ -z "${BASE:-}" ]; then
-            echo "No BASE URL available (APP_URL + worker_url both empty) — cannot run e2e"
-            exit 1
-          fi
-          echo "Running e2e against $BASE"
-          # `--force-prod` opts past the production-host refusal the
-          # script has for local developers; in CI the test state
-          # mutation IS the intent.
-          bash scripts/e2e-test.sh --force-prod
+      # End-to-end API smoke step intentionally removed. scripts/e2e-test.sh
+      # still exists in the repo for manual invocation when needed, but
+      # running it on every deploy triggers a full-cycle scrape (LLM cost
+      # and ~10 min wall-clock) and mutates the owner's account state
+      # (tags/stars/settings). The reachability smoke above plus
+      # PR Checks on the preceding commit are enough to confirm a deploy
+      # is healthy. Manual run-once: `bash scripts/e2e-test.sh --force-prod`.
