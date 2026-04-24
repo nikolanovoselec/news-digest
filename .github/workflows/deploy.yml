@@ -21,11 +21,6 @@ concurrency:
 permissions:
   contents: read
 
-# Opt actions/checkout@v4 + actions/setup-node@v4 into the runner's
-# Node.js 24 interpreter so the Node-20 deprecation warning goes away.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   deploy:
     name: Deploy to Cloudflare Workers
@@ -39,9 +34,9 @@ jobs:
     environment: production
     needs: []
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
 
@@ -104,7 +99,23 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -o pipefail
-          npx --yes wrangler deploy 2>&1 | tee deploy.log
+          # Wrangler's esbuild pass re-bundles dist/_worker.js/ and
+          # emits "Duplicate key" warnings for legitimate HTML5 entity
+          # aliases in Astro's bundled `entities` dependency (nrarr,
+          # acute, euro, Vdash). They're harmless — later-declared
+          # keys win in the resulting object — but they flood the
+          # deploy log. Filter the whole warning block (header line
+          # + context up to the next blank line) out of the tee'd
+          # output; the raw log still lands in deploy.log for
+          # reference. We also drop any leftover "The original key"
+          # context lines so partial blocks don't bleed through.
+          npx --yes wrangler deploy 2>&1 | tee deploy.log | \
+            awk '
+              /^▲ \[WARNING\] Duplicate key ".*" in object literal \[duplicate-object-key\]/ { skip=1; next }
+              skip && /^$/ { skip=0; next }
+              skip { next }
+              { print }
+            '
           # Extract the workers.dev URL wrangler prints on success.
           WORKER_URL=$(grep -oE 'https://[^ ]+\.workers\.dev' deploy.log | head -n1 || true)
           echo "worker_url=$WORKER_URL" >> "$GITHUB_OUTPUT"

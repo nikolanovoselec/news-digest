@@ -30,6 +30,14 @@ export default defineConfig({
     include: ['tests/**/*.test.ts'],
     // Suppress structured-log noise from src/lib/log.ts during tests.
     // Real failures still print via vitest's own reporter.
-    silent: true
+    silent: true,
+    // Compact per-file output in CI — a dot per passing test, a full
+    // stack for failing tests. The default reporter prints every
+    // single test name + file which floods the GitHub Actions log
+    // (800+ test lines on every push). dot mode keeps the summary
+    // + failure diff but drops the per-test noise.
+    reporters: process.env['CI'] === 'true' ? ['dot'] : ['default'],
+    // Drop the per-task timing noise in CI — still shown in local runs.
+    printConsoleTrace: false
   }
 });

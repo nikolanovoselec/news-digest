@@ -14,13 +14,6 @@ concurrency:
 
 permissions: read-all
 
-# Opt every JS action in this workflow into Node.js 24. actions/checkout
-# and actions/setup-node at v4 still ship a Node-20 bundle; the flag
-# below forces the runner to execute them under Node 24. Without it,
-# GitHub logs a deprecation warning until 2026-06-02 and then hard-fails.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   analyze:
     name: Analyze
@@ -30,9 +23,9 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
 

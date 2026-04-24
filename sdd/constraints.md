@@ -6,7 +6,7 @@ Cross-cutting architectural and technology decisions that apply to every domain.
 
 | Layer | Choice | Rationale |
 |-------|--------|-----------|
-| Framework | Astro 5 on Cloudflare Workers | Server-rendered Astro with the `astrojs/cloudflare` adapter; islands for interactive UI only where needed. |
+| Framework | Astro on Cloudflare Workers | Server-rendered Astro with the `astrojs/cloudflare` adapter; islands for interactive UI only where needed. |
 | Database | Cloudflare D1 | Strong consistency for users, digests, articles, pending discoveries. |
 | Cache / KV | Cloudflare KV | Eventually-consistent edge-distributed cache for discovered sources, headlines, source health. |
 | Job queue | Cloudflare Queues | Single `digest-jobs` queue absorbs thundering herds; consumer runs with isolate-per-message concurrency. |

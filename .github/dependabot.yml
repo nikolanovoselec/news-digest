@@ -13,6 +13,11 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: /
+    # main is PR-only (protected). develop is the working branch,
+    # and all merges to main go through a PR develop -> main. Point
+    # Dependabot at develop so its PRs land in the same review +
+    # CI cycle as every other change.
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
@@ -35,6 +40,7 @@ updates:
 
   - package-ecosystem: github-actions
     directory: /
+    target-branch: develop
     schedule:
       interval: weekly
       day: monday
