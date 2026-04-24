@@ -34,7 +34,7 @@ AI-summarised tech news keyed to the hashtags you actually care about. One globa
 
 ## About this repo — Codeflare SDD test run
 
-This project is a test drive of [Codeflare](https://codeflare.ai)'s spec-driven development framework. Every feature landed via the same loop:
+This project is a test drive of [Codeflare](https://codeflare.ch)'s spec-driven development framework. Every feature landed via the same loop:
 
 1. **Spec edit first** — `sdd/{domain}.md` gets a REQ with Intent + Acceptance Criteria, committed before any code touches `src/`.
 2. **Failing test** — a `tests/{domain}/*.test.ts` names the REQ ID in its `describe` block and asserts the AC.
@@ -44,7 +44,7 @@ This project is a test drive of [Codeflare](https://codeflare.ai)'s spec-driven 
 
 40+ REQs across 10 domains, with `enforce_tdd: true`. Nothing is hand-waved.
 
-- Codeflare: <https://codeflare.ai>
+- Codeflare: <https://codeflare.ch>
 - Specification: [sdd/README.md](sdd/README.md)
 - Architecture: [documentation/architecture.md](documentation/architecture.md)
 - Changelog: [sdd/changes.md](sdd/changes.md)
