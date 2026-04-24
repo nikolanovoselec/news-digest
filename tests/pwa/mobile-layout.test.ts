@@ -132,3 +132,34 @@ describe('tap / focus styling — REQ-PWA-003 AC 5', () => {
     expect(globalCss).toMatch(/:focus-visible|\.focus-ring/);
   });
 });
+
+describe('header tap-target minimums — REQ-PWA-003 AC 6', () => {
+  // AC 6 — every interactive header control (theme toggle, user
+  // menu trigger, anonymous theme toggle) carries the 44×44 CSS-pixel
+  // minimum from WCAG 2.5.5 / Apple HIG. Regressing a single one
+  // (min-height stripped, compact icon button) breaks one-handed
+  // mobile thumbs. The assertions scan the component sources directly
+  // so a refactor that drops the rule is visible in CI.
+
+  it('REQ-PWA-003: HeaderThemeToggle trigger has min-width: 44px and min-height: 44px', () => {
+    // `<button class="header-theme-toggle">` on every authenticated
+    // page. The rule block below declares both — stripping either
+    // would shrink the tap target.
+    expect(headerThemeToggleSource).toMatch(/min-width:\s*44px/);
+    expect(headerThemeToggleSource).toMatch(/min-height:\s*44px/);
+  });
+
+  it('REQ-PWA-003: UserMenu trigger (avatar <summary>) has min-width: 44px and min-height: 44px', () => {
+    expect(userMenuSource).toMatch(/min-width:\s*44px/);
+    expect(userMenuSource).toMatch(/min-height:\s*44px/);
+  });
+
+  it('REQ-PWA-003: anonymous ThemeToggle has min-width: 44px and min-height: 44px', async () => {
+    // Shown on signed-out pages (landing, auth error). Same control,
+    // same tap-target contract so the affordance is identical before
+    // and after sign-in.
+    const themeToggle = await import('../../src/components/ThemeToggle.astro?raw').then((m) => m.default);
+    expect(themeToggle).toMatch(/min-width:\s*44px/);
+    expect(themeToggle).toMatch(/min-height:\s*44px/);
+  });
+});
