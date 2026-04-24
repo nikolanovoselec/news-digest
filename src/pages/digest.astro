@@ -97,6 +97,29 @@ const sortedUserTags = [...userTags].sort((a, b) => {
 const rawUserTz = user.tz === '' ? DEFAULT_TZ : user.tz;
 const userTz = isValidTz(rawUserTz) ? rawUserTz : DEFAULT_TZ;
 const todayLocalDate = localDateInTz(Math.floor(Date.now() / 1000), userTz);
+
+// SSR the tag filter from `?tags=` so the initial HTML already
+// reflects the user's active filter. Without this, the server
+// renders every card visible, Astro's ClientRouter swaps that body
+// in on back-nav, the View-Transitions snapshot captures the
+// unfiltered layout, Astro's scrollTo(historyState.scrollY) lands
+// on the wrong content, and the animation morphs between
+// incompatible geometries (outgoing filtered → incoming unfiltered).
+// Emitting the filter state server-side eliminates the entire race.
+// Client-side `applyFilter()` still drives chip-toggle interactions.
+const rawSelectedTags = Astro.url.searchParams.get('tags');
+const selectedTagSet = new Set<string>(
+  typeof rawSelectedTags === 'string' && rawSelectedTags !== ''
+    ? rawSelectedTags
+        .split(',')
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t !== '')
+    : [],
+);
+function isCardHidden(articleTags: readonly string[]): boolean {
+  if (selectedTagSet.size === 0) return false;
+  return !articleTags.some((t) => selectedTagSet.has(t));
+}
 ---
 
 <Base title="Today's digest">
@@ -124,7 +147,12 @@ const todayLocalDate = localDateInTz(Math.floor(Date.now() / 1000), userTz);
       to toggle `is-selected`, + add, remove) is wired in the page
       script below against the data-* attributes the component ships.
     */}
-    <TagStrip tags={sortedUserTags} counts={tagCounts} countNoun="articles today" />
+    <TagStrip
+      tags={sortedUserTags}
+      counts={tagCounts}
+      initialSelected={selectedTagSet}
+      countNoun="articles today"
+    />
     <p
       class="tag-strip__nomatch"
       data-tag-nomatch
@@ -171,6 +199,7 @@ const todayLocalDate = localDateInTz(Math.floor(Date.now() / 1000), userTz);
               tags={a.tags}
               starred={a.starred}
               index={i}
+              filterHide={isCardHidden(a.tags)}
             />
           ))}
           {/* REQ-READ-001 AC 5 — slot 30 deep-links to Search &

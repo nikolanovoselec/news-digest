@@ -102,9 +102,36 @@ const isFocused = deepLinkedDay !== null;
 const rawTagsParam = Astro.url.searchParams.get('tags');
 const initialSelectedTagSet = new Set<string>(
   typeof rawTagsParam === 'string' && rawTagsParam !== ''
-    ? rawTagsParam.split(',').map((t) => t.trim()).filter((t) => t !== '')
+    ? rawTagsParam
+        .split(',')
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t !== '')
     : [],
 );
+
+// SSR the filtered search-grid when tags are active. Without this,
+// server-rendered HTML shows the day-grouped list and the client-
+// script later hides it and populates the search-grid — which means
+// the View-Transition snapshot and Astro's scrollTo(historyState)
+// both operate on a layout the user never actually sees. On back-
+// nav this broke scroll restoration and the transition animation.
+// Emitting the filtered flat grid server-side eliminates the race.
+// Flatten articles from every day in the 7-day window that match
+// the selected tag set; sort newest-first (matches the dashboard
+// ingested_at DESC contract).
+const isFilteringByTag = initialSelectedTagSet.size > 0 && !isFocused;
+const filteredArticles: WireArticle[] = [];
+if (isFilteringByTag) {
+  for (const day of days) {
+    for (const a of day.articles) {
+      const anyMatch = a.tags.some((t) =>
+        initialSelectedTagSet.has(t.toLowerCase()),
+      );
+      if (anyMatch) filteredArticles.push(a);
+    }
+  }
+  filteredArticles.sort((a, b) => b.published_at - a.published_at);
+}
 
 // User's active hashtags (from the session row) — drives the chip
 // set. Parsing mirrors digest.astro.
@@ -202,11 +229,39 @@ function formatCostUsd(value: number | null | undefined): string {
 
     {/* Flat grid of matching cards — same breakpoint math as
         .digest-page__grid on the dashboard so search results feel
-        like a dashboard view filtered by query. Only visible when
-        the search query has ≥3 characters; the day-grouped list
-        below hides while this is showing. */}
-    <div class="history__search-grid" data-search-grid hidden></div>
-    <p class="history__search-empty" data-search-empty hidden aria-live="polite"></p>
+        like a dashboard view filtered by query. Pre-populated
+        server-side when `?tags=` is active so View-Transition
+        snapshots and scroll restore see the final rendered layout
+        on back-nav. Client script keeps re-rendering this on live
+        chip-toggle and search-input typing. */}
+    <div
+      class="history__search-grid"
+      data-search-grid
+      hidden={!isFilteringByTag}
+    >
+      {isFilteringByTag && filteredArticles.map((a) => (
+        <DigestCard
+          digestId={a.id}
+          articleId={a.id}
+          slug={slugify(a.title)}
+          title={a.title}
+          sourceName={a.primary_source_name}
+          sourceUrl={a.primary_source_url}
+          oneLiner={a.details[0] ?? ''}
+          tags={a.tags}
+        />
+      ))}
+    </div>
+    <p
+      class="history__search-empty"
+      data-search-empty
+      hidden={!(isFilteringByTag && filteredArticles.length === 0)}
+      aria-live="polite"
+    >
+      {isFilteringByTag && filteredArticles.length === 0
+        ? `No articles match ${[...initialSelectedTagSet].map((t) => `#${t}`).join(' ')}.`
+        : ''}
+    </p>
 
     {
       visibleDays.length === 0 ? (
@@ -216,7 +271,7 @@ function formatCostUsd(value: number | null | undefined): string {
             : 'No articles in the last 7 days.'}
         </p>
       ) : (
-        <ol class="history__list" data-history-list>
+        <ol class="history__list" data-history-list hidden={isFilteringByTag}>
           {visibleDays.map((day) => (
             <li class="history__day" data-history-day data-date={day.local_date}>
               <details class="history__details" open={isFocused}>

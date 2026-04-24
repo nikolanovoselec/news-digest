@@ -46,6 +46,16 @@ interface Props {
    * don't need an ordering churn.
    */
   index?: number;
+  /**
+   * When true, render the card with `data-filter-hide="1"` so the
+   * CSS rule on the card hides it via `display: none`. Used for SSR
+   * of filtered views (dashboard with `?tags=` in URL): emitting the
+   * filter state in the initial HTML avoids the client-side reflow
+   * that wrecked View-Transition snapshots and scroll-restore on
+   * back navigation. Client-side `applyFilter()` still toggles the
+   * same attribute on tag-strip interactions.
+   */
+  filterHide?: boolean;
 }
 
 const {
@@ -59,6 +69,7 @@ const {
   tags = [],
   starred = false,
   index = 0,
+  filterHide = false,
 } = Astro.props;
 
 const href = `/digest/${digestId}/${slug}`;
@@ -103,6 +114,7 @@ const displaySourceName = resolveDisplaySource();
   data-starred={starred ? 'true' : 'false'}
   data-stagger-index={stagger}
   data-tags={tagAttr}
+  data-filter-hide={filterHide ? '1' : undefined}
   style={`--stagger-delay: ${stagger * 40}ms`}
 >
   {/* Anchor wraps ONLY the read area (title + excerpt). The footer
