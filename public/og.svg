@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="News Digest — your daily tech digest, distilled by AI.">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f4f4f5"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <g transform="translate(96 184)">
+    <svg width="144" height="144" viewBox="0 0 24 24" fill="#111111">
+      <path d="M20,11H4V8H20M20,15H13V13H20M20,19H13V17H20M11,19H4V13H11M20.33,4.67L18.67,3L17,4.67L15.33,3L13.67,4.67L12,3L10.33,4.67L8.67,3L7,4.67L5.33,3L3.67,4.67L2,3V19A2,2 0 0,0 4,21H20A2,2 0 0,0 22,19V3L20.33,4.67Z"/>
+    </svg>
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+    <text x="280" y="276" font-size="112" font-weight="700" letter-spacing="-4">
+      <tspan fill="#7a7a80">news</tspan><tspan fill="#111111">digest</tspan>
+    </text>
+    <text x="280" y="360" font-size="38" font-weight="400" fill="#4a4a50" letter-spacing="-0.5">
+      Your daily tech digest, distilled by AI.
+    </text>
+  </g>
+  <line x1="96" y1="530" x2="1104" y2="530" stroke="#e4e4e7" stroke-width="1"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+    <text x="96" y="580" font-size="22" font-weight="600" fill="#111111" letter-spacing="4">NEWS.GRAYMATTER.CH</text>
+    <text x="1104" y="580" text-anchor="end" font-size="18" font-weight="500" fill="#7a7a80" letter-spacing="2">GRAY MATTER GMBH</text>
+  </g>
+</svg>

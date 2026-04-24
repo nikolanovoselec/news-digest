@@ -10,7 +10,7 @@ Allow: /$
 Allow: /manifest.webmanifest
 Allow: /favicon.svg
 Allow: /icons/
-Allow: /og.png
+Allow: /og.svg
 Allow: /swiss-post.svg
 Allow: /llms.txt
 Allow: /llms-full.txt

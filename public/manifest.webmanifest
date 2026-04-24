@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "News Digest",
   "short_name": "Digest",
   "description": "A daily, AI-curated digest of the news and sources you follow.",
@@ -6,6 +7,9 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["news", "productivity"],
   "theme_color": "#ffffff",
   "background_color": "#ffffff",
   "icons": [
