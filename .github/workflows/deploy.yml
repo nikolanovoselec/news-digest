@@ -1,7 +1,16 @@
 name: Deploy
 
+# main is a protected branch; the only push that reaches it is a
+# merged PR. workflow_run waits for that PR's "PR Checks" to finish
+# on the merge commit and only deploys when it ended green. This
+# closes the "we shipped a broken main" window that plain
+# `push: [main]` left open when the checks and deploy triggered
+# in parallel off the same SHA. workflow_dispatch stays so a
+# stuck deploy can be re-run manually.
 on:
-  push:
+  workflow_run:
+    workflows: ['PR Checks']
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -20,6 +29,11 @@ env:
 jobs:
   deploy:
     name: Deploy to Cloudflare Workers
+    # On workflow_run: only deploy when the preceding PR Checks run
+    # ended green. On workflow_dispatch (manual re-run): always run.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production

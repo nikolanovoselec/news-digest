@@ -1,7 +1,12 @@
 name: PR Checks
+# Fires on:
+#   - push to develop (fast feedback on work-in-progress)
+#   - push to main (post-merge regression gate; deploy fires only on green)
+#   - pull_request targeting main (pre-merge gate)
+#   - workflow_dispatch (manual re-run)
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
     branches: [main]
   workflow_dispatch:
