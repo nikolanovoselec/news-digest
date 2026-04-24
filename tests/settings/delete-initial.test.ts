@@ -216,8 +216,9 @@ describe('settings.astro — Restore + Delete visibility (REQ-SET-002 AC 8)', ()
   });
 
   it('REQ-SET-002: showRestoreButton is computed as "at least one default is missing from the user list"', () => {
+    // Arrow function params contain parens, so [\s\S] is required.
     expect(settingsPage).toMatch(
-      /showRestoreButton\s*=\s*DEFAULT_HASHTAGS\.some\([^)]*!userHashtagSet\.has/,
+      /showRestoreButton\s*=\s*DEFAULT_HASHTAGS\.some\([\s\S]{0,60}!userHashtagSet\.has/,
     );
   });
 
