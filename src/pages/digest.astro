@@ -348,6 +348,15 @@ const todayLocalDate = localDateInTz(Math.floor(Date.now() / 1000), userTz);
   }
 
   function init(): void {
+    // The astro:page-load listener below is bound to `document` and
+    // survives ClientRouter navigations — meaning it ALSO fires when
+    // the user lands on /history (which shares <TagStrip /> with
+    // this page). Without a page-marker guard, init() would
+    // re-attach a click handler to [data-tag-strip] on /history,
+    // stomping on /history's own handler and silently cancelling
+    // every chip toggle. data-digest-page is only present on this
+    // route, so the check keeps /digest's bindings scoped to it.
+    if (document.querySelector('[data-digest-page]') === null) return;
     wireCountdown();
     wireOfflineBanner();
     wireTagStrip();
