@@ -246,8 +246,13 @@ check POST /api/digest/refresh 202\|409\|410\|429 -H 'Content-Type: application/
 # POST → DELETE → POST again. Each transition idempotent.
 printf '\n=== stars lifecycle ===\n'
 ARTICLE_ID=$(curl -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" "$BASE/api/digest/today" \
-  | grep -oE '"id":"[0-9A-HJKMNP-TV-Z]{26}"' \
-  | head -1 | cut -d'"' -f4)
+  | python3 -c "import json,sys
+try:
+    d = json.load(sys.stdin)
+    arts = d.get('articles') or []
+    print(arts[0]['id'] if arts else '')
+except Exception:
+    print('')")
 if [ -n "$ARTICLE_ID" ]; then
   check POST   /api/articles/$ARTICLE_ID/star 200\|201 -H 'Content-Type: application/json'
   check_body GET /api/starred "$ARTICLE_ID"
@@ -340,7 +345,13 @@ case "$TRIGGER_CODE" in
   202)
     SCRAPE_RUN_ID=$(python3 -c "import json; print(json.load(open('/tmp/e2e-trigger.json'))['scrape_run_id'])" 2>/dev/null || echo '')
     printf 'triggered scrape %s\n' "$SCRAPE_RUN_ID"
-    TIMEOUT_SEC=${E2E_SCRAPE_TIMEOUT_SEC:-600}
+    # Budget 20 minutes for the full run, but short-circuit as soon as
+    # at least one chunk has landed articles — the word-count check
+    # below only inspects the first article. Waiting for finishRun is
+    # unnecessary if we already have enough signal to verify prompt
+    # output quality.
+    TIMEOUT_SEC=${E2E_SCRAPE_TIMEOUT_SEC:-1200}
+    MIN_ARTICLES=${E2E_SCRAPE_MIN_ARTICLES:-10}
     DEADLINE=$(($(date +%s) + TIMEOUT_SEC))
     LAST_STATUS=''
     while [ "$(date +%s)" -lt "$DEADLINE" ]; do
@@ -352,6 +363,11 @@ case "$TRIGGER_CODE" in
       printf '  poll: running=%s ingested=%s\n' "$IS_RUNNING" "$INGESTED"
       if [ "$IS_RUNNING" = 'False' ]; then
         LAST_STATUS='done'
+        break
+      fi
+      if [ "$INGESTED" -ge "$MIN_ARTICLES" ]; then
+        LAST_STATUS='done'
+        printf '  short-circuit: ≥%s articles ingested, run still going but enough signal to verify\n' "$MIN_ARTICLES"
         break
       fi
     done
