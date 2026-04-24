@@ -48,6 +48,9 @@ The following were considered and intentionally excluded from the MVP:
 - **Embeddings or vector search** — a single LLM call handles ranking; embeddings would add a dependency without measurable quality gain at this scale
 - **Fetching article page bodies** — summaries are produced from search-API headlines and snippets; this eliminates an entire class of SSRF risk
 - **Admin actor / multi-tenancy** — single actor (User) for MVP
+- **Cloudflare WAF-based OAuth rate limiting** — infrastructure policy, not product behaviour; handled outside the spec if ever needed
+- **Sender domain verification walkthrough** — operational setup task; deployment docs already cover Resend DNS configuration
+- **Offline reading via service worker cache** — PWA installability (REQ-PWA-001) ships without offline content caching; the dashboard requires network on launch
 
 ## Constraints
 

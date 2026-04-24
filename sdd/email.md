@@ -43,22 +43,3 @@ Resend-backed notification sent after every successful digest — whether genera
 **Dependencies:** REQ-MAIL-001
 **Verification:** Integration test
 **Status:** Implemented
-
----
-
-### REQ-MAIL-003: Sender domain verification
-
-**Intent:** Emails arrive in the inbox, not the spam folder.
-
-**Applies To:** User
-
-**Acceptance Criteria:**
-1. The `RESEND_FROM` env var contains a sender email whose domain has SPF, DKIM, and DMARC records configured and verified in the Resend dashboard.
-2. Until a domain is verified, the system can run but the operator is aware email reliability will be low (Resend falls back to its default sandbox sender, flagged as "from sandbox" by many providers).
-3. Deployment documentation walks operators through the domain verification steps.
-
-**Constraints:** None
-**Priority:** P2
-**Dependencies:** REQ-MAIL-001
-**Verification:** Manual check
-**Status:** Planned

@@ -40,8 +40,8 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 **Priority:** P1
 **Dependencies:** REQ-DISC-001
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** AC 1 (session-scoped discovery-status endpoint) has automated coverage. AC 2 and AC 3 (in-app banner on the reading surface) are deferred — tracked in pending.md.
+**Status:** Deprecated
+**Removed In:** 2026-04-24
 
 ---
 
@@ -62,8 +62,8 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 **Priority:** P2
 **Dependencies:** REQ-DISC-001
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** Discovery-time failure counting and tag re-queue on auto-eviction have automated coverage. Feed-level health tracking during the hourly coordinator run is deferred — tracked in pending.md.
+**Status:** Deprecated
+**Removed In:** 2026-04-24
 
 ---
 

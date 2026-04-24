@@ -86,8 +86,8 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 **Priority:** P1
 **Dependencies:** REQ-SET-003
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** ModelSelect hidden while the global pipeline uses a single default model; UI code preserved to simplify re-enable.
+**Status:** Deprecated
+**Removed In:** 2026-04-24
 
 ---
 

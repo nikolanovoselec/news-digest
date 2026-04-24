@@ -103,23 +103,3 @@ GitHub OAuth as the only sign-in method. Stateless HMAC-SHA256 JWT sessions with
 **Dependencies:** REQ-AUTH-001
 **Verification:** Integration test
 **Status:** Implemented
-
----
-
-### REQ-AUTH-006: Authentication endpoint rate limiting
-
-**Intent:** Prevent abuse of the OAuth login and callback endpoints from a single source IP without adding application-layer counters.
-
-**Applies To:** User
-
-**Acceptance Criteria:**
-1. `/api/auth/github/login` accepts no more than 10 requests per minute per source IP.
-2. `/api/auth/github/callback` accepts no more than 10 requests per minute per source IP.
-3. Rate limits are enforced by a Cloudflare WAF rule, not by application code.
-4. Rejected requests receive an HTTP 429 response.
-
-**Constraints:** CON-SEC-001
-**Priority:** P1
-**Dependencies:** REQ-AUTH-001
-**Verification:** Manual check
-**Status:** Planned
