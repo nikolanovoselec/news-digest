@@ -3,7 +3,7 @@
 // discovery for tags missing from KV.
 
 import { describe, it, expect, vi } from 'vitest';
-import { GET, PUT } from '~/pages/api/settings';
+import { GET, PUT, MAX_HASHTAGS } from '~/pages/api/settings';
 import { SESSION_COOKIE_NAME } from '~/middleware/auth';
 import { signSession } from '~/lib/session-jwt';
 
@@ -319,10 +319,12 @@ describe('PUT /api/settings', () => {
     expect(res.status).toBe(400);
   });
 
-  it('REQ-SET-002: rejects more than 20 hashtags', async () => {
+  it('REQ-SET-002: rejects more than MAX_HASHTAGS tags', async () => {
+    // Derive the array length from the exported constant so a future
+    // cap bump doesn't silently break this test.
     const { db } = makeDb(baseRow());
     const { kv } = makeKv();
-    const tags = Array.from({ length: 21 }, (_, i) => `tag${i}a`);
+    const tags = Array.from({ length: MAX_HASHTAGS + 1 }, (_, i) => `tag${i}a`);
     const req = await authedRequest('PUT', {
       hashtags: tags,
       digest_hour: 8,

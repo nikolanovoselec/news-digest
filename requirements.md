@@ -178,7 +178,7 @@ Shown as toggleable chips on `/settings` (the same route handles first-run onboa
 - Allowed characters: `a-z`, `0-9`, `-` (hyphen). Everything else is stripped on submit.
 - Normalization: lowercase, strip leading `#` (optional when typing, never stored).
 - Min length 2, max length 32 per tag.
-- Max 20 tags per user (enforced server-side).
+- Max 25 tags per user (enforced server-side).
 - Deduped before storage.
 
 ## Model selection

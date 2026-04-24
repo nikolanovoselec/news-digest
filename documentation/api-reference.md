@@ -230,7 +230,7 @@ Unstars an article. Same auth and error contract as POST.
 
 ### PUT /api/tags
 
-Add or remove a single hashtag from the user's tag list. Persists immediately — no form submit required. Normalises to lowercase, strips `#`, rejects characters outside `[a-z0-9-]`, enforces 2–32 char length and max 20 tags.
+Add or remove a single hashtag from the user's tag list. Persists immediately — no form submit required. Normalises to lowercase, strips `#`, rejects characters outside `[a-z0-9-]`, enforces 2–32 char length and max 25 tags.
 
 **Request:** `{ tag: string, action: "add" | "remove" }`
 

@@ -1,19 +1,27 @@
-// Implements REQ-SET-002 AC 8 (delete initials) + REQ-AUTH-003 (Origin check).
+// Implements REQ-SET-002 AC 8 (delete all tags) + REQ-AUTH-003 (Origin check).
 //
-// POST /api/tags/delete-initial — strip every DEFAULT_HASHTAGS entry
-// from the authenticated user's hashtag list, leaving custom tags
-// the user added themselves intact. 303-redirect to /digest.
+// POST /api/tags/delete-initial — clear the authenticated user's
+// entire hashtag list, regardless of whether a tag came from the
+// default seed or was added custom. 303-redirects to /digest. The
+// typical flow is "I want a completely custom interest set, not the
+// 20 defaults I was seeded with" — previously this required clicking
+// × on every default chip, which was hostile UX.
 //
-// Paired with POST /api/tags/restore. Same transport contract
-// (native form submit + 303) so both buttons work with JS disabled
-// or a stale SW bundle. No request body is read.
+// Filename kept as `delete-initial.ts` (and URL as `/api/tags/delete-initial`)
+// for git-blame continuity; the semantic shifted from "strip defaults,
+// keep customs" to "clear everything" when REQ-SET-002 AC 8 was
+// rewritten. Pair with /api/tags/restore to get back to the default
+// seed after clearing.
+//
+// Transport contract: native form submit + 303, same as
+// /api/tags/restore so both buttons work with JS disabled or a stale
+// SW bundle. No request body is read.
 
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
 import { loadSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
-import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
 
 export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env;
@@ -35,34 +43,15 @@ export async function POST(context: APIContext): Promise<Response> {
     });
   }
 
-  // Parse the user's current hashtag list. Anything the coordinator
-  // can't parse as a string array is treated as empty so a corrupt
-  // row doesn't hard-fail the form submit.
-  let current: string[] = [];
-  const raw = session.user.hashtags_json;
-  if (typeof raw === 'string' && raw !== '') {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (Array.isArray(parsed)) {
-        current = parsed.filter((v): v is string => typeof v === 'string');
-      }
-    } catch {
-      current = [];
-    }
-  }
-
-  const defaultSet = new Set<string>(DEFAULT_HASHTAGS);
-  const next = current.filter((t) => !defaultSet.has(t));
-
   try {
     await env.DB
       .prepare('UPDATE users SET hashtags_json = ?1 WHERE id = ?2')
-      .bind(JSON.stringify(next), session.user.id)
+      .bind('[]', session.user.id)
       .run();
   } catch (err) {
     log('error', 'settings.update.failed', {
       user_id: session.user.id,
-      op: 'tags-delete-initial',
+      op: 'tags-delete-all',
       error_code: 'internal_error',
       detail: String(err).slice(0, 500),
     });

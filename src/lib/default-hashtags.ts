@@ -34,7 +34,10 @@ export const DEFAULT_HASHTAGS: readonly string[] = [
  * truth so UI + tests never drift. */
 export const RESTORE_DEFAULTS_LABEL = 'Restore initial tags';
 
-/** Label used by the settings-page delete-initials button. Shown
- * alongside Restore; strips just the default tags from the user's
- * list, keeping any custom tags they've added. */
-export const DELETE_INITIALS_LABEL = 'Delete initial tags';
+/** Label used by the settings-page clear-tags button. Clears the
+ * user's entire tag list in one click — the typical use case is "I
+ * want a completely custom tag set, not the 20 defaults I was seeded
+ * with" and the alternative was removing 20 chips one-by-one via the
+ * tag strip. Visible whenever the user has at least one tag; hidden
+ * when the list is already empty. */
+export const DELETE_ALL_TAGS_LABEL = 'Delete all tags';

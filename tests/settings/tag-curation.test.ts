@@ -2,7 +2,7 @@
 // that lives on /digest (the reading page, not /settings).
 //
 // Earlier coverage (tests/settings/api.test.ts) already verifies the
-// server-side validation, normalisation, and the 20-tag cap (AC 5/6).
+// server-side validation, normalisation, and the 25-tag cap (AC 5/6).
 // This file closes the gap the spec-reviewer flagged:
 //   - AC 2: tag toggle inverts the chip + reveals a remove affordance
 //   - AC 4: selection toggles are client-only (no POST on click)

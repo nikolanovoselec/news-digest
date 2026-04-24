@@ -6,6 +6,7 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-24
 
+- REQ-SET-002 AC 8 rewrote the second settings action as "Delete all tags" (not "Delete initial tags"): one click clears the whole list so a user can build a completely custom set without removing 20 default chips one-by-one. Visibility simplified to "show whenever the user has at least one tag".
 - REQ-SET-002 AC 6 raised the hashtag cap from 20 to 25 so a new account, seeded with the 20-default set, has 5 slots of headroom to add custom interests immediately without having to delete a default first.
 - REQ-READ-001 AC 5 and REQ-PIPE-001 AC 4 tightened to describe live-feed freshness: the dashboard now orders by "last feed sighting" (re-seen canonical URLs get re-stamped on every scrape tick) rather than first ingestion, so articles currently trending in any feed bubble to the top on every tick and stale items that have fallen out of every feed sink naturally. "Last feed sighting" is defined in the glossary.
 - CON-SEC-002 reshaped to reflect the shipped boundary: the pipeline now fetches article bodies directly (HTTPS-only, SSRF-guarded, bounded timeout, size-capped) when a feed snippet is too thin to ground a faithful summary. REQ-PIPE-001 AC 8 adds the matching contract and tests/pipeline/article-fetch.test.ts pins the behaviour.

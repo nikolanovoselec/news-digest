@@ -20,7 +20,7 @@ import { DEFAULT_TZ } from '~/lib/tz';
 import { DEFAULT_MODEL_ID } from '~/lib/models';
 import {
   DEFAULT_HASHTAGS,
-  DELETE_INITIALS_LABEL,
+  DELETE_ALL_TAGS_LABEL,
   RESTORE_DEFAULTS_LABEL,
 } from '~/lib/default-hashtags';
 
@@ -97,18 +97,15 @@ if (typeof user.hashtags_json === 'string' && user.hashtags_json !== '') {
     userHashtags = [];
   }
 }
-const defaultHashtagSet = new Set<string>(DEFAULT_HASHTAGS);
 const userHashtagSet = new Set<string>(userHashtags);
 // Restore is shown when at least one default tag is missing — the
 // button would actually add something.
 const showRestoreButton = DEFAULT_HASHTAGS.some((t) => !userHashtagSet.has(t));
-// Delete is shown only when the user has both defaults AND customs.
-// If they have only defaults, deleting wipes them to zero (we don't
-// want that; that's what the restore-initials flow exists for).
-// If they have only customs, there are no initials to strip.
-const userHasAnyDefault = DEFAULT_HASHTAGS.some((t) => userHashtagSet.has(t));
-const userHasAnyCustom = userHashtags.some((t) => !defaultHashtagSet.has(t));
-const showDeleteInitialsButton = userHasAnyDefault && userHasAnyCustom;
+// Delete is shown whenever the user has at least one tag — the
+// button clears the whole list so the user can start over with a
+// completely custom set. Hides only when the list is already empty,
+// because clearing nothing is a no-op.
+const showDeleteAllButton = userHashtags.length > 0;
 
 const heroTitle = isFirstRun
   ? 'Welcome — pick a time, we handle the rest'
@@ -247,33 +244,33 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               </form>
             )}
             {/*
-              Companion POST to /api/tags/delete-initial. Strips just
-              the DEFAULT_HASHTAGS entries from the user's list so any
-              custom tags they've added survive. Shown only when the
-              user has BOTH defaults AND customs — deleting the
-              initials when the user has only defaults would wipe them
-              to zero; deleting when the user has only customs is a
-              no-op. Visibility rules (REQ-SET-002 AC 8):
-                - Restore + Delete both shown → user has a mix
-                - Restore only → user is missing some defaults and
-                  has no defaults to strip
-                - Delete only → user has all defaults + customs
-                - Neither → user's list is identical to the initials
-                  (or empty AND would leave them empty)
+              Companion POST to /api/tags/delete-initial (endpoint kept
+              for git-blame continuity; behaviour rewritten to clear
+              the whole list). The button is a one-click "start from
+              scratch" so a user can build a completely custom tag
+              set without removing 20 default chips one-by-one.
+              Visibility rules (REQ-SET-002 AC 8):
+                - Restore + Delete both shown → user has at least one
+                  tag AND is missing at least one default
+                - Restore only → user has every default (nothing to
+                  clear... wait, they still HAVE tags, so Delete too).
+                  In practice this branch means empty list.
+                - Delete only → user has every default (Restore hidden)
+                - Neither → user's list is already empty
             */}
-            {showDeleteInitialsButton && (
+            {showDeleteAllButton && (
               <form
                 method="post"
                 action="/api/tags/delete-initial"
-                class="settings__delete-initial-form"
-                data-delete-initial-form
+                class="settings__delete-all-form"
+                data-delete-all-form
               >
                 <button
                   type="submit"
                   class="settings__secondary-button"
-                  data-delete-initial-tags
+                  data-delete-all-tags
                 >
-                  {DELETE_INITIALS_LABEL}
+                  {DELETE_ALL_TAGS_LABEL}
                 </button>
               </form>
             )}

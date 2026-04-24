@@ -5,7 +5,7 @@ Canonical definitions for terms used across the spec, code, and documentation. U
 | Term | Definition |
 |------|-----------|
 | **Digest** | A user's curated set of up to 10 articles for a given local date, produced by a single LLM call and stored as one `digests` row + its `articles` rows. |
-| **Hashtag** | A lowercase alphanumeric-plus-hyphen interest label (no leading `#` stored) that drives source fetching and LLM ranking. Each user has between 1 and 20. |
+| **Hashtag** | A lowercase alphanumeric-plus-hyphen interest label (no leading `#` stored) that drives source fetching and LLM ranking. Each user has between 1 and 25. |
 | **Generic source** | A search-API-backed source that runs for every hashtag regardless of topic: Hacker News Algolia, Google News RSS, Reddit. |
 | **Tag-specific source** | A first-party feed (blog, changelog) discovered once per tag via the LLM and stored in the `sources:{tag}` KV entry. |
 | **Pending discovery** | A `(user_id, tag)` row in D1 awaiting LLM-assisted source discovery during the next cron invocation. |

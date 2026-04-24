@@ -1,9 +1,11 @@
 // Tests for src/pages/api/tags/delete-initial.ts + the conditional
-// Restore / Delete buttons on /settings — REQ-SET-002 AC 8.
+// Restore / Delete-all buttons on /settings — REQ-SET-002 AC 8.
 //
-// Endpoint contract:
-//   - POST /api/tags/delete-initial strips DEFAULT_HASHTAGS entries
-//     from the user's hashtags_json, keeping custom tags intact.
+// Endpoint contract (rewritten; filename + URL kept for git-blame
+// continuity):
+//   - POST /api/tags/delete-initial clears the user's entire
+//     hashtags_json to '[]' regardless of whether a tag came from the
+//     default seed or was added custom.
 //   - 303-redirects to /digest on success.
 //   - Origin check enforced (REQ-AUTH-003).
 //   - Unauthenticated callers get a 303 back to the login flow, not
@@ -12,7 +14,7 @@
 //
 // Visibility contract (from the settings.astro ?raw source):
 //   - Restore shown ⇔ at least one default is missing from the user's list
-//   - Delete  shown ⇔ user has at least one default AND at least one custom
+//   - Delete all shown ⇔ user has at least one tag (hides when list empty)
 
 import { describe, it, expect, vi } from 'vitest';
 import { POST } from '~/pages/api/tags/delete-initial';
@@ -20,7 +22,7 @@ import { SESSION_COOKIE_NAME } from '~/middleware/auth';
 import { signSession } from '~/lib/session-jwt';
 import {
   DEFAULT_HASHTAGS,
-  DELETE_INITIALS_LABEL,
+  DELETE_ALL_TAGS_LABEL,
 } from '~/lib/default-hashtags';
 import settingsPage from '../../src/pages/settings.astro?raw';
 
@@ -133,11 +135,12 @@ describe('POST /api/tags/delete-initial — REQ-SET-002 AC 8', () => {
     expect(res.headers.get('Location')).toContain('/api/auth/github/login');
   });
 
-  it('REQ-SET-002: strips every DEFAULT_HASHTAGS entry, keeps custom tags', async () => {
-    const custom = ['ikea', 'dostoevsky'];
+  it('REQ-SET-002: clears the entire list when the user has defaults + customs', async () => {
     const bindings: { sql: string; params: unknown[] }[] = [];
     const db = makeDb(
-      userWith(JSON.stringify([...DEFAULT_HASHTAGS, ...custom])),
+      userWith(
+        JSON.stringify([...DEFAULT_HASHTAGS, 'ikea', 'dostoevsky']),
+      ),
       bindings,
     );
     const req = await postRequest(await signedCookie());
@@ -147,27 +150,25 @@ describe('POST /api/tags/delete-initial — REQ-SET-002 AC 8', () => {
     const upd = bindings.find((b) => b.sql.includes('UPDATE users'));
     expect(upd).toBeDefined();
     const persisted = JSON.parse(upd!.params[0] as string) as string[];
-    // Only customs remain; no default survived.
-    expect(persisted).toEqual(custom);
-    for (const d of DEFAULT_HASHTAGS) {
-      expect(persisted).not.toContain(d);
-    }
+    expect(persisted).toEqual([]);
   });
 
-  it('REQ-SET-002: leaves custom-only lists unchanged (no defaults to strip)', async () => {
-    const custom = ['ikea', 'dostoevsky'];
+  it('REQ-SET-002: clears a custom-only list (no defaults preserved)', async () => {
     const bindings: { sql: string; params: unknown[] }[] = [];
-    const db = makeDb(userWith(JSON.stringify(custom)), bindings);
+    const db = makeDb(
+      userWith(JSON.stringify(['ikea', 'dostoevsky'])),
+      bindings,
+    );
     const req = await postRequest(await signedCookie());
     const res = await POST(makeContext(req, env(db)) as never);
     expect(res.status).toBe(303);
     const upd = bindings.find((b) => b.sql.includes('UPDATE users'));
     expect(upd).toBeDefined();
     const persisted = JSON.parse(upd!.params[0] as string) as string[];
-    expect(persisted).toEqual(custom);
+    expect(persisted).toEqual([]);
   });
 
-  it('REQ-SET-002: empties the list when the user had only defaults', async () => {
+  it('REQ-SET-002: clears a defaults-only list', async () => {
     const bindings: { sql: string; params: unknown[] }[] = [];
     const db = makeDb(
       userWith(JSON.stringify([...DEFAULT_HASHTAGS])),
@@ -182,7 +183,10 @@ describe('POST /api/tags/delete-initial — REQ-SET-002 AC 8', () => {
     expect(persisted).toEqual([]);
   });
 
-  it('REQ-SET-002: handles malformed hashtags_json gracefully (treats as empty, persists empty list)', async () => {
+  it('REQ-SET-002: persists an empty list even when hashtags_json is malformed', async () => {
+    // Endpoint ignores the incoming value and hard-writes '[]', so a
+    // corrupt row is recovered-to-empty by a single click — a useful
+    // safety valve for legacy data shapes.
     const bindings: { sql: string; params: unknown[] }[] = [];
     const db = makeDb(userWith('not-valid-json{{'), bindings);
     const req = await postRequest(await signedCookie());
@@ -194,39 +198,38 @@ describe('POST /api/tags/delete-initial — REQ-SET-002 AC 8', () => {
   });
 });
 
-describe('settings.astro — Restore + Delete visibility (REQ-SET-002 AC 8)', () => {
-  it('REQ-SET-002: settings.astro imports DELETE_INITIALS_LABEL and uses it as the button label', () => {
-    expect(settingsPage).toContain('DELETE_INITIALS_LABEL');
-    expect(DELETE_INITIALS_LABEL).toBe('Delete initial tags');
+describe('settings.astro — Restore + Delete-all visibility (REQ-SET-002 AC 8)', () => {
+  it('REQ-SET-002: settings.astro imports DELETE_ALL_TAGS_LABEL and uses it as the button label', () => {
+    expect(settingsPage).toContain('DELETE_ALL_TAGS_LABEL');
+    expect(DELETE_ALL_TAGS_LABEL).toBe('Delete all tags');
   });
 
   it('REQ-SET-002: the Restore form is wrapped in a showRestoreButton guard so it disappears when every default is already present', () => {
     expect(settingsPage).toContain('showRestoreButton');
-    // The guard surrounds the <form action="/api/tags/restore"> block.
     expect(settingsPage).toMatch(
       /\{showRestoreButton\s*&&[\s\S]{0,200}action="\/api\/tags\/restore"/,
     );
   });
 
-  it('REQ-SET-002: the Delete-initials form is wrapped in a showDeleteInitialsButton guard so it only appears when the user has both defaults and customs', () => {
-    expect(settingsPage).toContain('showDeleteInitialsButton');
+  it('REQ-SET-002: the Delete-all form is wrapped in a showDeleteAllButton guard so it only appears when the user has at least one tag', () => {
+    expect(settingsPage).toContain('showDeleteAllButton');
     expect(settingsPage).toMatch(
-      /\{showDeleteInitialsButton\s*&&[\s\S]{0,200}action="\/api\/tags\/delete-initial"/,
+      /\{showDeleteAllButton\s*&&[\s\S]{0,200}action="\/api\/tags\/delete-initial"/,
     );
   });
 
   it('REQ-SET-002: showRestoreButton is computed as "at least one default is missing from the user list"', () => {
-    // Arrow function params contain parens, so [\s\S] is required.
     expect(settingsPage).toMatch(
       /showRestoreButton\s*=\s*DEFAULT_HASHTAGS\.some\([\s\S]{0,60}!userHashtagSet\.has/,
     );
   });
 
-  it('REQ-SET-002: showDeleteInitialsButton is computed as "user has at least one default AND at least one custom"', () => {
-    expect(settingsPage).toContain('userHasAnyDefault');
-    expect(settingsPage).toContain('userHasAnyCustom');
+  it('REQ-SET-002: showDeleteAllButton is computed as "user has at least one tag"', () => {
     expect(settingsPage).toMatch(
-      /showDeleteInitialsButton\s*=\s*userHasAnyDefault\s*&&\s*userHasAnyCustom/,
+      /showDeleteAllButton\s*=\s*userHashtags\.length\s*>\s*0/,
     );
+    // Regression guard: the old defaults+customs composite condition
+    // is gone.
+    expect(settingsPage).not.toMatch(/userHasAnyDefault\s*&&\s*userHasAnyCustom/);
   });
 });
