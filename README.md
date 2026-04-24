@@ -1,6 +1,6 @@
 # News Digest
 
-AI-summarised tech news, keyed to the hashtags you actually care about. Every 4 hours one scrape, one LLM pass, one shared pool. Your dashboard filters it down to you.
+Pick your hashtags. An LLM reads the news so you don't have to. You get ten tight summaries; the other two thousand headlines expire quietly, never having wasted your attention.
 
 **Live:** <https://news.graymatter.ch> · GitHub sign-in · pick your hashtags · done.
 
@@ -30,7 +30,7 @@ No fake news either. The LLM summarises real sources and links straight back. If
 
 Newsletters arrive on someone else's clock. RSS readers turn into 3,000-item guilt-trips. Social feeds optimise for outrage. Asking an LLM requires remembering to ask.
 
-News Digest hires the LLM. Every 4 hours. On its clock.
+News Digest hires the LLM. It remembers so you don't.
 
 ## Codeflare SDD test run
 
