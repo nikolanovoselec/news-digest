@@ -37,9 +37,9 @@ All responses include a strict CSP with no inline scripts (`script-src 'self'`),
 
 **Applies To:** All responses
 
-### CON-SEC-002: No server-side article-body fetching
+### CON-SEC-002: Outbound article-body fetches flow through the SSRF-guarded helper
 
-The system never issues server-side GET requests to article URLs. LLM summaries are produced from titles and snippets returned by the search APIs. This eliminates SSRF, redirect-chasing, and bot-detection concerns entirely.
+Server-side article-body fetches are allowed only through the shared SSRF-guarded helper used by the scrape coordinator to ground thin feed snippets. Every outbound request is HTTPS-only, refuses private, loopback, link-local, and Cloudflare-internal address ranges, enforces a bounded timeout, caps the downloaded body at a fixed size, and strips scripts, styles, and chrome from the extracted text before it reaches the LLM prompt. Discovery and LLM-ranking paths still never issue raw outbound GETs to URLs supplied by users or the model.
 
 **Applies To:** Digest generation, source discovery
 
@@ -83,7 +83,7 @@ All LLM prompts (digest generation, source discovery) live in `src/lib/prompts.t
 
 Things the system intentionally does NOT do:
 
-- **Fetch article page bodies** — see CON-SEC-002
+- **Fetch article page bodies outside the SSRF-guarded helper** — any direct `fetch()` to a user- or LLM-supplied URL must go through that helper; see CON-SEC-002
 - **Use a third-party auth library** — see CON-AUTH-001
 - **Support multiple digests per day per user** — one scheduled + rate-limited manual refreshes
 - **Persist cache state in D1** — caches live in KV; D1 is reserved for consistent state

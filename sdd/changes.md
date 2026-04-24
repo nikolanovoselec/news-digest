@@ -6,6 +6,7 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-24
 
+- CON-SEC-002 reshaped to reflect the shipped boundary: the pipeline now fetches article bodies directly (HTTPS-only, SSRF-guarded, bounded timeout, size-capped) when a feed snippet is too thin to ground a faithful summary. REQ-PIPE-001 AC 8 adds the matching contract and tests/pipeline/article-fetch.test.ts pins the behaviour.
 - REQ-DISC-002 (discovery progress banner), REQ-DISC-003 (feed health tracking), and REQ-SET-004 (model selection) marked Deprecated with Removed In 2026-04-24 — the first two were partially built and no longer worth the maintenance, and model selection has been hidden since the pipeline moved to a single global model.
 - REQ-AUTH-006 (WAF OAuth rate limiting), REQ-MAIL-003 (sender-domain verification walkthrough), and REQ-PWA-002 (offline service-worker caching) were never built and have been moved to the Out of Scope list so the active backlog reflects only shipped or about-to-ship behaviour.
 - REQ-PIPE-001, REQ-PIPE-006, REQ-SET-007, REQ-PWA-003 promoted from Partial to Implemented — each now has dedicated automated coverage (48-hour freshness-filter regression test; scrape-status endpoint contract + UI indicator tests; browser-tz silent auto-correct assertions against Base.astro; header-control 44×44 tap-target assertions). The four Partials were stale flags; the code had shipped earlier this week.
