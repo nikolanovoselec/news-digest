@@ -381,8 +381,8 @@ case "$TRIGGER_CODE" in
         printf 'PASS full-cycle scrape → %s articles ingested\n' "$ART_COUNT"
 
         # Assert AVERAGE details length across all articles in the
-        # response. The prompt target is 200-250 words per article;
-        # we set the floor at 180 on the mean. Checking the mean
+        # response. The prompt target is 150-250 words per article;
+        # we set the floor at 150 on the mean. Checking the mean
         # (not the first article) smooths over individual articles
         # with thin source snippets that justifiably produce shorter
         # output.
@@ -409,13 +409,13 @@ print(f'{n} {mean} {p50} {lo} {hi}')
         set -- $WORD_STATS
         N=$1; MEAN=$2; P50=$3; LO=$4; HI=$5
         printf 'article details word-count stats: n=%s mean=%s p50=%s min=%s max=%s\n' "$N" "$MEAN" "$P50" "$LO" "$HI"
-        if [ "$MEAN" -ge 180 ]; then
+        if [ "$MEAN" -ge 150 ]; then
           PASSED=$((PASSED + 1))
-          printf 'PASS mean article details length ≥ 180 words (target 200-250)\n'
+          printf 'PASS mean article details length ≥ 150 words (target 150-250)\n'
         else
           FAILED=$((FAILED + 1))
-          FAIL_LINES+=("FAIL mean article details length — got $MEAN words, want ≥ 180 (target 200-250)")
-          printf 'FAIL mean article details length — got %s words, want ≥ 180\n' "$MEAN"
+          FAIL_LINES+=("FAIL mean article details length — got $MEAN words, want ≥ 150 (target 150-250)")
+          printf 'FAIL mean article details length — got %s words, want ≥ 150\n' "$MEAN"
         fi
       else
         FAILED=$((FAILED + 1))

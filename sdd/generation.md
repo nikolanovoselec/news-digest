@@ -35,7 +35,8 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 **Acceptance Criteria:**
 1. Each chunk yields a JSON payload shaped `{articles: [{title, details[], tags[]}], dedup_groups: [[…]]}` and no other top-level keys.
 2. Titles are NYT-style headlines, 45–80 characters, active voice, rewritten rather than copied from the source feed.
-3. `details` is a plaintext body of 200–250 words split into exactly 3 paragraphs (WHAT happened, HOW it works, IMPACT for the reader), each 3–4 sentences, with no lists, HTML, or Markdown. Responses under ~180 words are treated as malformed.
+3. `details` is a plaintext body of 150–250 words split into 2 or 3 paragraphs (WHAT happened, HOW it works, and optionally IMPACT for the reader), each 3–5 sentences, with no lists, HTML, or Markdown. Responses under ~120 words are treated as malformed.
+7. Every article returned by the LLM echoes its input candidate's index; the consumer aligns output back to the input by that echoed value, dropping any article whose index is missing, invalid, or does not match an input candidate so a summary can never be stapled to the wrong canonical URL.
 4. `tags` values come exclusively from the system-approved allowlist; any tag the LLM invents outside that list is discarded server-side before persistence.
 5. Intra-chunk duplicates collapse via the `dedup_groups` hints: the earliest-published source becomes the primary article and the others are recorded as alternative sources.
 6. A chunk failure marks only that chunk's portion of the run as failed; other chunks in the same tick still persist their articles.

@@ -13,7 +13,7 @@ import {
 
 describe('LLM_PARAMS', () => {
   it('LLM_PARAMS pins inference parameters', () => {
-    expect(LLM_PARAMS.temperature).toBe(0.7);
+    expect(LLM_PARAMS.temperature).toBe(0.6);
     expect(LLM_PARAMS.max_tokens).toBe(50_000);
     expect(LLM_PARAMS.response_format.type).toBe('json_object');
   });
@@ -106,6 +106,15 @@ describe('PROCESS_CHUNK_SYSTEM + processChunkUserPrompt — REQ-PIPE-002', () =>
     expect(PROCESS_CHUNK_SYSTEM.toLowerCase()).toContain('json');
     expect(PROCESS_CHUNK_SYSTEM).toContain('articles');
     expect(PROCESS_CHUNK_SYSTEM).toContain('dedup_groups');
+  });
+
+  it('REQ-PIPE-002: PROCESS_CHUNK_SYSTEM requires each article to echo its candidate index', () => {
+    // Alignment contract: the consumer pairs LLM output ↔ input
+    // candidate by the echoed `index` field, not by position. The
+    // prompt must demand this echo explicitly.
+    expect(PROCESS_CHUNK_SYSTEM).toContain('"index"');
+    // And the JSON shape at the top of the prompt must document it.
+    expect(PROCESS_CHUNK_SYSTEM).toMatch(/"index"\s*:\s*N/);
   });
 
   it('REQ-PIPE-002: PROCESS_CHUNK_SYSTEM forbids inventing tags outside the allowlist', () => {

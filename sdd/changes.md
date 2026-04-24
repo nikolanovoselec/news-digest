@@ -6,7 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-24
 
-- REQ-PIPE-002 AC 3 tightens the summary length contract from "1–3 paragraphs" to "200–250 words in exactly 3 paragraphs (WHAT / HOW / IMPACT)" to match the restructured chunk prompt and the raised LLM temperature (0.2 → 0.5) that gives the model room to hit the word target. Observable as richer, more specific per-article summaries with no 50-word stubs.
+- REQ-PIPE-002 AC 3 relaxes the summary length contract to 150–250 words across 2 or 3 paragraphs (WHAT / HOW / optional IMPACT) — the earlier "exactly 3 paragraphs, 200–250 words" target over-constrained the model on thinner snippets and produced padded output; the shorter range is easier for the model to hit honestly without fabricating detail.
+- REQ-PIPE-002 gains AC 7: every article returned by the LLM echoes its input candidate's index, and the consumer aligns output to input by that echoed value — an article whose summary ever gets stapled to the wrong canonical URL is now a dropped article, not a wire bug shown to users.
 
 ## 2026-04-23
 

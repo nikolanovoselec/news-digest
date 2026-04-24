@@ -83,6 +83,12 @@ export interface ChunkJobMessage {
 
 /** One article the LLM returned, after shape validation. */
 interface LLMChunkArticle {
+  /** Candidate index the LLM claims this entry corresponds to. Required
+   * in the prompt contract (REQ-PIPE-002) so the consumer can align LLM
+   * output back to the input candidate by VALUE, not by position —
+   * models occasionally reorder, skip, or invent entries, which caused
+   * summaries to be stapled to the wrong canonical URL. */
+  index?: unknown;
   title?: unknown;
   details?: unknown;
   tags?: unknown;
@@ -333,12 +339,51 @@ export async function processOneChunk(
   // "anchor" input index — the cluster's primary's original position —
   // to pick the matching LLM article.
   const anchorByCluster = buildAnchorIndices(perInputClusters, dedupGroups);
+
+  // Align LLM output to input candidates BY VALUE using the echoed
+  // `index` field, not by positional order. Models occasionally reorder
+  // entries, skip candidates, or invent articles that weren't in the
+  // input — when that happens, positional alignment staples the wrong
+  // summary to the wrong canonical URL. Require each LLM article to
+  // echo its candidate index and look it up by that key; fall back to
+  // positional only when the index is missing (legacy model behaviour)
+  // to preserve backwards compatibility on the first deploy after this
+  // change.
+  const articleByIndex = new Map<number, LLMChunkArticle>();
+  let articlesWithEchoedIndex = 0;
+  for (let i = 0; i < rawArticles.length; i += 1) {
+    const art = rawArticles[i];
+    if (art === undefined) continue;
+    const echoed = art.index;
+    if (
+      typeof echoed === 'number' &&
+      Number.isInteger(echoed) &&
+      echoed >= 0 &&
+      echoed < perInputClusters.length
+    ) {
+      articlesWithEchoedIndex += 1;
+      if (!articleByIndex.has(echoed)) {
+        articleByIndex.set(echoed, art);
+      }
+    }
+  }
+  // If no article echoed an index (old model/prompt), fall back to
+  // positional alignment — strictly worse, but keeps the pipeline
+  // flowing until the model adopts the new contract.
+  const useEchoedIndex = articlesWithEchoedIndex > 0;
+  let droppedForMissingAlignment = 0;
+
   let clusterCursor = 0;
   for (const merged of mergedClusters) {
     const anchor = anchorByCluster[clusterCursor] ?? 0;
     clusterCursor++;
-    const llmArticle = rawArticles[anchor];
-    if (llmArticle === undefined) continue;
+    const llmArticle = useEchoedIndex
+      ? articleByIndex.get(anchor)
+      : rawArticles[anchor];
+    if (llmArticle === undefined) {
+      droppedForMissingAlignment += 1;
+      continue;
+    }
     survivors.push({ cluster: merged, articleIdx: anchor, llmArticle });
   }
 
@@ -503,6 +548,9 @@ export async function processOneChunk(
     tokens_in: tokensIn,
     tokens_out: tokensOut,
     estimated_cost_usd: costUsd,
+    alignment_mode: useEchoedIndex ? 'echoed_index' : 'positional_fallback',
+    articles_with_echoed_index: articlesWithEchoedIndex,
+    dropped_for_missing_alignment: droppedForMissingAlignment,
   });
 
   // Suppress unused-variable warning for collapsedSet; kept for future

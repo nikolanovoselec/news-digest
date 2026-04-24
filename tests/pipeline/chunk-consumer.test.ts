@@ -465,4 +465,87 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     expect(addStats!.params[4]).toBe(2);
     expect(addStats!.params[5]).toBe(0);
   });
+
+  it('REQ-PIPE-002: aligns LLM output to input candidates by echoed `index` field, not by position', async () => {
+    // Simulates the real-world bug that shipped to prod: the LLM
+    // returned two entries but in REVERSE order. With positional
+    // alignment, candidate[0]'s canonical_url would get stapled to
+    // candidate[1]'s summary and vice versa. With `index`-echo
+    // alignment, each summary lands on its correct candidate.
+    const aiResponse = {
+      response: JSON.stringify({
+        articles: [
+          { index: 1, title: 'Summary of B', details: 'B-body.', tags: ['ai'] },
+          { index: 0, title: 'Summary of A', details: 'A-body.', tags: ['cloudflare'] },
+        ],
+        dedup_groups: [],
+      }),
+      usage: { input_tokens: 10, output_tokens: 10 },
+    };
+    const { db, records } = makeDb();
+    const { kv } = makeKv({ chunksRemaining: '1' });
+    const env = makeEnv(db, kv, aiResponse);
+    await processOneChunk(env, makeChunk());
+
+    // Two `INSERT OR IGNORE INTO articles` statements in the batch —
+    // each binds (id, canonical_url, title, details_json, tags_json?,
+    // primary_source_*). We assert canonical_url ↔ title pairing.
+    const articleInserts = records.filter(
+      (r) =>
+        r.via === 'batch' &&
+        r.sql.startsWith('INSERT OR IGNORE INTO articles'),
+    );
+    expect(articleInserts.length).toBe(2);
+
+    // Find the row whose canonical_url is candidate[0] — its title
+    // MUST be 'Summary of A', not 'Summary of B', because the LLM
+    // echoed index=0 for the A summary.
+    const rowA = articleInserts.find((r) =>
+      r.params.includes('https://example.com/a'),
+    );
+    const rowB = articleInserts.find((r) =>
+      r.params.includes('https://example.com/b'),
+    );
+    expect(rowA).toBeDefined();
+    expect(rowB).toBeDefined();
+    // The INSERT binds include the title string as a separate param;
+    // finding it in the params array is enough to verify pairing.
+    expect(rowA!.params).toContain('Summary of A');
+    expect(rowB!.params).toContain('Summary of B');
+    // And the mismatched pairing is explicitly absent.
+    expect(rowA!.params).not.toContain('Summary of B');
+    expect(rowB!.params).not.toContain('Summary of A');
+  });
+
+  it('REQ-PIPE-002: drops articles whose echoed `index` matches no input candidate', async () => {
+    // The LLM hallucinates an extra entry with index=99. The consumer
+    // must drop it silently rather than staple its summary to an
+    // unrelated canonical URL.
+    const aiResponse = {
+      response: JSON.stringify({
+        articles: [
+          { index: 0, title: 'A', details: 'body.', tags: ['cloudflare'] },
+          { index: 99, title: 'Hallucinated', details: 'body.', tags: ['ai'] },
+        ],
+        dedup_groups: [],
+      }),
+      usage: { input_tokens: 10, output_tokens: 10 },
+    };
+    const { db, records } = makeDb();
+    const { kv } = makeKv({ chunksRemaining: '1' });
+    const env = makeEnv(db, kv, aiResponse);
+    await processOneChunk(env, makeChunk());
+
+    const articleInserts = records.filter(
+      (r) =>
+        r.via === 'batch' &&
+        r.sql.startsWith('INSERT OR IGNORE INTO articles'),
+    );
+    // Only candidate[0] has a matching LLM article by index.
+    // candidate[1] has no LLM article (index=1 never appeared) and is
+    // dropped; the hallucinated index=99 is also dropped.
+    expect(articleInserts.length).toBe(1);
+    expect(articleInserts[0]!.params).toContain('A');
+    expect(articleInserts[0]!.params).not.toContain('Hallucinated');
+  });
 });
