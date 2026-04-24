@@ -25,10 +25,13 @@ describe('history.astro — REQ-HIST-001', () => {
   });
 
   it('REQ-HIST-001: renders a day-grouped list (not a flat per-digest list)', () => {
-    // The day-grouped layout iterates `days.map((day) => ...)` rather
-    // than the legacy per-digest iteration, and renders the day's
-    // aggregate metrics in a summary row.
-    expect(historyPageSource).toMatch(/days\.map\(\(day\)/);
+    // The day-grouped layout iterates `visibleDays.map((day) => ...)`
+    // rather than the legacy per-digest iteration, and renders the
+    // day's aggregate metrics in a summary row. The variable is
+    // `visibleDays` (not `days`) so the deep-link mode can filter
+    // the list down to a single day without touching the underlying
+    // data source.
+    expect(historyPageSource).toMatch(/visibleDays\.map\(\(day\)/);
     expect(historyPageSource).toContain('local_date');
     expect(historyPageSource).toContain('article_count');
     // Legacy shape must be gone — no per-digest iteration, no

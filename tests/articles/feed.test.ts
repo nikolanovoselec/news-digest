@@ -116,7 +116,7 @@ function makeDb(opts: MockOpts): D1Database {
                 a.tags.some((t) => tagSet.has(t)),
               );
               matching.sort((a, b) => (b.published_at ?? 0) - (a.published_at ?? 0));
-              const limited = matching.slice(0, 50);
+              const limited = matching.slice(0, 29);
               const results = limited.map((a) => ({
                 id: a.id,
                 canonical_url: a.canonical_url,
