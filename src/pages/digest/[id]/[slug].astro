@@ -464,20 +464,43 @@ const articleDataset = {
     text-wrap: pretty;
   }
 
-  /* Lead paragraph drop cap — values restored to the pre-tuning
-     state from earlier this session. Further changes require a
-     live visual reference (screenshot of current vs. desired);
-     iterating in the dark was moving the glyph in the wrong
-     direction. */
+  /* Lead paragraph drop cap — spans 2 body lines with the cap-top
+     aligned to line 1's cap-top and the baseline on line 2's
+     baseline.
+
+     Uses the CSS `initial-letter` property — the spec was literally
+     written for this exact alignment, and the browser handles all
+     the font-metric math internally. Support as of 2026 (caniuse):
+       - Chrome / Edge 110+  → `initial-letter: 2` (unflagged)
+       - Safari 9+ / iOS 9+  → `-webkit-initial-letter: 2`
+       - Firefox             → still no support — needs the fallback below
+
+     The @supports block below handles Firefox (and any Chromium
+     build without initial-letter) via a tuned float.
+  */
   .article-detail__paragraph--lead::first-letter {
-    float: left;
     font-family: var(--font-serif);
-    font-size: 3.4em;
     font-weight: 700;
-    line-height: 0.82;
-    margin: -0.08em 0.1em 0 0;
-    padding: 0;
     color: var(--text);
+    padding: 0;
+    margin-right: 0.1em;
+    -webkit-initial-letter: 2;
+    initial-letter: 2;
+  }
+
+  /* Firefox (and older Chromium) fallback — uses float + tight
+     line-height so the cap-top sinks to line 1's cap-top
+     naturally. Math: body line-height 1.65 × 2 lines = 3.3em of
+     vertical room; a 3.4em serif font with line-height 1 puts the
+     cap-top at the paragraph top and baseline at line 2's baseline,
+     within ~1px. */
+  @supports not ((initial-letter: 2) or (-webkit-initial-letter: 2)) {
+    .article-detail__paragraph--lead::first-letter {
+      float: left;
+      font-size: 3.4em;
+      line-height: 1;
+      margin: 0 0.1em 0 0;
+    }
   }
 
   /* Primary source link — stays solid-inverted like the other primary
