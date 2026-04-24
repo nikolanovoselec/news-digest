@@ -65,8 +65,19 @@ export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed
   const userPrompt = discoveryUserPrompt(tag);
   let payloadRaw: unknown;
   try {
+    // The `@cf/openai/*` family (incl. the current default
+    // gpt-oss-120b) only accepts the chat-completions `messages`
+    // shape — calling with `{prompt: "..."}` returns an
+    // effectively-empty envelope, which shows up as
+    // `empty_llm_response` on every tick. Mirror the chunk consumer
+    // (src/queue/scrape-chunk-consumer.ts) and send role-tagged
+    // messages so the same call shape works across every model in
+    // MODELS.
     const runParams = {
-      prompt: `${DISCOVERY_SYSTEM}\n\n${userPrompt}`,
+      messages: [
+        { role: 'system', content: DISCOVERY_SYSTEM },
+        { role: 'user', content: userPrompt },
+      ],
       ...LLM_PARAMS,
     };
     // Preserve `this` binding — `env.AI.run` may be a method that
@@ -79,9 +90,7 @@ export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed
     // Workers AI returns two shapes: flat `{response: "..."}` for
     // Llama/Mistral/Kimi, and the OpenAI envelope
     // `{choices:[{message:{content:"..."}}]}` for every @cf/openai/*
-    // model. extractResponsePayload tolerates both. Without this,
-    // every discovery call on gpt-oss-120b (the current default)
-    // looked like an `empty_llm_response` to the cron loop.
+    // model. extractResponsePayload tolerates both.
     payloadRaw = extractResponsePayload(result);
     if (
       payloadRaw === undefined ||

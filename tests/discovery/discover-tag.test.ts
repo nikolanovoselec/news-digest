@@ -177,22 +177,27 @@ describe('discoverTag', () => {
 
     expect(aiRun).toHaveBeenCalledTimes(1);
     const args = aiRun.mock.calls[0]!;
-    const params = args[1] as { prompt?: string };
-    expect(typeof params.prompt).toBe('string');
-    const prompt = params.prompt!;
+    const params = args[1] as {
+      messages?: Array<{ role: string; content: string }>;
+    };
+    expect(Array.isArray(params.messages)).toBe(true);
+    const systemMsg = params.messages!.find((m) => m.role === 'system');
+    const userMsg = params.messages!.find((m) => m.role === 'user');
+    expect(systemMsg).toBeDefined();
+    expect(userMsg).toBeDefined();
 
     // The adversarial text must appear inside a triple-backtick fence in
-    // the user-message portion, not as loose instructions.
+    // the user-message, not as loose instructions.
     const fenceRe = new RegExp(
       '```[\\s\\S]*?' +
         adversarial.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&') +
         '[\\s\\S]*?```',
     );
-    expect(prompt).toMatch(fenceRe);
+    expect(userMsg!.content).toMatch(fenceRe);
 
     // The system prompt's non-guessing rule must still be present — the
     // tag did not manage to override it.
-    expect(prompt).toContain(DISCOVERY_SYSTEM);
+    expect(systemMsg!.content).toContain(DISCOVERY_SYSTEM);
   });
 
   it('REQ-DISC-001: returns [] when LLM response is unparseable JSON', async () => {
