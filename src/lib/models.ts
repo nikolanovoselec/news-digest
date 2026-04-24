@@ -5,7 +5,7 @@
 // the settings dropdown is rendered from it, and per-digest cost is computed
 // from its per-million-token prices. Updating the catalog is a code edit +
 // deploy; there is no runtime fetch, no KV cache, no Cloudflare API token
-// path. See /sdd/settings.md REQ-SET-004 and requirements.md "Model selection".
+// path. See /sdd/settings.md REQ-SET-004 and REQUIREMENTS.md "Model selection".
 
 export interface ModelOption {
   id: string;

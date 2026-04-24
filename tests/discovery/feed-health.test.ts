@@ -46,7 +46,7 @@ function makeKv(): KvStub {
             failNext.write = false;
             throw new Error('KV put failed');
           }
-          puts.push({ key, value, opts });
+          puts.push(opts === undefined ? { key, value } : { key, value, opts });
           store.set(key, value);
         },
       ),
