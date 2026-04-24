@@ -849,10 +849,15 @@ const todayLocalDate = localDateInTz(Math.floor(Date.now() / 1000), userTz);
       transparent 100%
     );
   }
-  @media (hover: hover) and (pointer: fine) {
+  /* Desktop layout — strip wraps, + add sits at end of flow instead
+     of floating absolutely. Gate on viewport width, NOT input
+     capability (hover: hover): Samsung Browser and other hybrid
+     devices sometimes report hover:none on a wide desktop viewport,
+     which left the absolute + add button anchored at `top: 50%` of
+     a tall wrapped strip, landing it visibly in the middle of the
+     card grid. Width-based gating is deterministic across browsers. */
+  @media (min-width: 768px) {
     .tag-strip-wrap {
-      /* Desktop: strip wraps to multiple lines, no scroll. Disable
-         the mask and let + add sit at the natural end of flow. */
       position: static;
     }
     .tag-strip {
