@@ -32,6 +32,8 @@ Also included, because why not: **PWA-installable, dark mode out of the box, an 
 
 The internet became a dark-pattern theme park where every ride ends at the gift shop. News Digest is one ride that just runs.
 
+*Full disclosure: the footer says **"Built with Codeflare · © Gray Matter"**. Both of those are me. I'm allowed to sign the bottom of my own work in six words of quiet grey text. That's not a sponsorship, it's a signature. If anyone wants to call this out as an ad, I'll refund them the $0 they paid.*
+
 ## Features
 
 - **One global LLM run, every user benefits.** GPT-OSS-120B summarises the whole pool every 4 hours, billed to my Cloudflare account, not yours, and way cheaper than the coffee I was going to drink while ignoring Hacker News anyway.

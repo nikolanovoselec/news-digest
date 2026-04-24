@@ -31,8 +31,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
       - name: Run Scorecard
         uses: ossf/scorecard-action@v2.4.3
@@ -47,12 +45,8 @@ jobs:
           name: SARIF file
           path: results.sarif
           retention-days: 5
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
       - name: Upload to code-scanning
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
