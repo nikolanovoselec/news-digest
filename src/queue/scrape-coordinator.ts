@@ -32,17 +32,17 @@ import { log } from '~/lib/log';
 import type { DiscoveredFeed, SourcesCacheValue, Headline } from '~/lib/types';
 
 /** Max candidates per chunk. Matches the LLM's ~8K input-token budget
- * at the gpt-oss-20b default: ~25 candidate headlines per chunk
- * leave per-article budget at ~1200 output tokens (enough for the
- * 200-250-word prompt contract), plus headroom for
- * PROCESS_CHUNK_SYSTEM + JSON overhead. Shrunk from 100 → 25
- * because gpt-oss-20b was budget-dividing across bigger chunks
- * and emitting 55-140-word summaries regardless of the prompt's
- * hard word-count contract. Smaller chunks = more output per
- * article. Trade-off: more chunks = more LLM invocations per run
- * (~10-20 vs ~5), marginally higher fixed-cost (system prompt
- * is re-sent), but worth it for quality. */
-const CHUNK_SIZE = 25;
+ * at the gpt-oss-20b default: ~50 candidate headlines per chunk
+ * leaves per-article budget at ~1K output tokens (enough for the
+ * 200-250-word prompt contract at ~350 toks/article + JSON
+ * overhead), plus headroom for PROCESS_CHUNK_SYSTEM. Was 100 at
+ * Gemma; 50 at gpt-oss-20b gives more per-article breathing
+ * room without exploding the chunk count. The chunk size isn't
+ * the primary lever on output length — the INPUT snippet length
+ * is. A model with 300 chars of source material can't honestly
+ * write 250 words regardless of how much output budget you give
+ * it. Body-fetch quality matters more than chunk count. */
+const CHUNK_SIZE = 50;
 
 /** 10-worker semaphore cap for the fetch fan-out, mirroring
  * src/lib/sources.ts#GLOBAL_CONCURRENCY. The curated registry (~50
@@ -67,13 +67,10 @@ const PER_SOURCE_ITEM_CAP = 10;
 
 /** Upper bound on chunks enqueued per tick. Guards against a discovered-
  * tag explosion inflating the candidate pool to unsafe levels. Normal
- * load: 52 curated × 10 items = 520 candidates / 25 per chunk =
- * 21 chunks. After the CHUNK_SIZE 100→25 shrink the cap went up
- * 20→80 to preserve the same per-tick candidate headroom. Cost
- * stays bounded because gpt-oss-20b only pays for actual tokens,
- * and a chunk with fewer articles emits proportionally fewer
- * output tokens. */
-const MAX_CHUNKS_PER_TICK = 80;
+ * load: 52 curated × 10 items = 520 candidates / 50 per chunk =
+ * 11 chunks. Cap at 40 leaves plenty of headroom for a discovered-
+ * tag set without exploding LLM cost. */
+const MAX_CHUNKS_PER_TICK = 40;
 
 /** Return true if the URL is a plain http(s) URL. Rejects
  * `javascript:`, `data:`, `file:`, mailto:, etc. at the coordinator

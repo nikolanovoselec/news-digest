@@ -287,9 +287,17 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     if (!(target instanceof Element)) return;
     const button = target.closest<HTMLButtonElement>('[data-theme-toggle]');
     if (button === null) return;
-    // Let the <details> stay open so the user can see the Theme: line
-    // flip, but stop propagation so the outside-click close handler
-    // doesn't immediately shut the menu behind us.
+    // Bail when UserMenu is NOT rendered on the current page.
+    // Astro's ClientRouter preserves the document across
+    // navigations, so this document-level listener (bound on an
+    // authenticated page) survives onto subsequent anonymous
+    // pages — where ThemeToggle.astro has ALSO bound its own
+    // document-level listener. Without this guard, both fire on
+    // a single tap and the theme flips twice (net zero — user
+    // sees "tap does nothing until I reload"). Any page that
+    // actually has UserMenu in DOM also has `[data-user-menu]`,
+    // so this cheap query is the fingerprint.
+    if (document.querySelector('[data-user-menu]') === null) return;
     e.preventDefault();
     toggleTheme(document, localStorage, (q) => window.matchMedia(q));
   }
