@@ -2,44 +2,17 @@
 
 Try it live: **<https://news.graymatter.ch>** — sign in with GitHub, pick a few hashtags, wait for the next hourly tick.
 
-<table>
-<tr>
-<td width="60%" valign="top">
+<p align="center">
+  <img alt="Mobile dashboard"  src="docs/screenshots/dashboard-mobile.jpg"  height="260">
+  <img alt="Desktop dashboard" src="docs/screenshots/dashboard-desktop.png" height="260">
+  <img alt="Article detail"    src="docs/screenshots/article-detail.png"    height="260">
+</p>
 
-AI-summarised tech news keyed to the hashtags you actually care about.
+AI-summarised tech news keyed to the hashtags you actually care about. One global pipeline scrapes ~50 curated sources every hour, runs ~500 fresh candidates through Workers AI, and serves the result as a shared pool. Your dashboard is a filter over that pool, keyed to your tags. You see the stories worth reading; the rest vanish after seven days and you don't have to feel bad about it.
 
-One global pipeline scrapes ~50 curated sources every hour, runs ~500 fresh candidates through Workers AI, and serves the result as a shared pool. Your dashboard is a filter over that pool, keyed to your tags. You see the stories worth reading; the rest vanish after seven days and you don't have to feel bad about it.
+The tag strip is the sole editor for your hashtags — no tag form in settings. Type a tag, hit enter, it's persisted. Tap the × on a chip to drop it. Tap the chip itself to filter. The same strip lives on Search & History with counts scoped to the 7-day window, so you can narrow *"cloudflare articles from this week that mention 'london'"* in three taps.
 
-The mobile surface on the right is the whole contract — a pool that already did the reading for you, a tag strip to narrow it, a countdown to the next tick. No infinite scroll, no engagement-optimised noise, no inbox guilt. Tap a card to read the summary; tap `Read at source` to jump to the original. When the next scrape lands, the dashboard refreshes itself.
-
-The tag strip is the sole editor for your hashtags — there's no tag form in settings. Type a tag, hit enter, it's persisted. Tap the × on a chip to drop it. Tap the chip itself to filter. The same strip shows up on Search & History with counts scoped to the 7-day window, so you can narrow *"cloudflare articles from this week that mention 'london'"* in three taps.
-
-</td>
-<td width="40%" align="center" valign="top">
-<img alt="Mobile dashboard" src="docs/screenshots/dashboard-mobile.jpg" width="260">
-</td>
-</tr>
-</table>
-
-## Desktop
-
-![Desktop dashboard](docs/screenshots/dashboard-desktop.png)
-
-On a wide viewport the grid reflows to three columns and the tag strip wraps inline across two or three rows with the `+ add` pill at the natural end of the flow. Same pool, same filtering — the layout is the only thing that changes. The final slot at position 30 is a tile that deep-links to Search & History scoped to today, so a user who wants "everything today, not just the top 29" is one tap away.
-
-Each card shows the source name (small-caps, muted), a 2-3 paragraph summary (150–250 words, structured as *what happened / how it works / why you care*), a star toggle, and a tag count badge. Hovering a card fades in the outline, clicking it opens the article detail. If the story exists in multiple feeds (vendor blog + Hacker News mirror + aggregator), the card carries a `(+2)` chip and the detail-page `Read at source` button opens a modal listing every source.
-
-Tag counts on the dashboard are scoped to today; on Search & History they reflect the full 7-day window. That distinction matters — a niche tag might say "0" on the dashboard because nothing landed in today's scrape, while the same tag says "3" on Search & History because there *are* matches in the pool, just from yesterday.
-
-## Article detail
-
-![Article detail](docs/screenshots/article-detail.png)
-
-The reading surface is deliberately narrow — column width is capped around 62 characters, the body is sans for scanning speed, and the headline is serif because it should feel like the start of something worth reading. The lead paragraph gets a drop-cap via CSS `initial-letter: 2` (with a tuned float fallback for Firefox), sized so the cap-top of the large letter aligns with the cap-top of line 1 and the baseline sits on line 2 — the classical newspaper cut.
-
-The metadata line carries four pieces: source name, publication date, estimated read time, and a star toggle. The `Read at source` button is the primary affordance — solid-inverted, full-width on mobile, self-sized on desktop. For multi-source articles it fans out into a modal showing every known source with its per-source timestamp, because if a story broke on a vendor blog but you heard about it on Hacker News, both matter.
-
-The back control returns you to wherever you came from — dashboard, Search & History results, starred list, history day view — not always `/digest`. A same-origin `document.referrer` check drives `window.history.back()` with the `href="/digest"` as a fallback for direct-link visitors.
+Articles show a 2–3 paragraph summary (150–250 words, structured as *what happened / how it works / why you care*), a star toggle, and a tag count badge. Multi-source stories (vendor blog + Hacker News mirror + aggregator) collapse into one card with a `(+N)` chip; the detail-page `Read at source` button fans them out in a modal when tapped. The lead paragraph on the detail page gets a newspaper-style drop-cap via CSS `initial-letter: 2`, with a tuned float fallback for browsers that don't support it yet. The back control returns you to wherever you came from — search results, starred list, history day view — not always `/digest`.
 
 ## Why it was built
 
