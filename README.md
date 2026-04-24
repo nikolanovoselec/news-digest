@@ -1,6 +1,6 @@
 # News Digest
 
-Pick your hashtags. An LLM reads the news so you don't have to. You get ten tight summaries; the other two thousand headlines expire quietly, never having wasted your attention.
+Pick your hashtags. An LLM reads the news so you don't have to. You get the stories worth reading, summarised; the rest expires quietly, never having wasted your attention.
 
 **Live:** <https://news.graymatter.ch> · GitHub sign-in · pick your hashtags · done.
 
