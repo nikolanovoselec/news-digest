@@ -115,10 +115,11 @@ const initialSelectedTagSet = new Set<string>(
 // the View-Transition snapshot and Astro's scrollTo(historyState)
 // both operate on a layout the user never actually sees. On back-
 // nav this broke scroll restoration and the transition animation.
-// Emitting the filtered flat grid server-side eliminates the race.
-// Flatten articles from every day in the 7-day window that match
-// the selected tag set; sort newest-first (matches the dashboard
-// ingested_at DESC contract).
+// Iterate days + day.articles in the order /api/history returns them
+// (ingested_at DESC per day, days newest-first) — same order the
+// client-side clone path would produce when it walks the day-list
+// DOM. Matching orders makes the client's `apply()` rebuild visually
+// idempotent (the DOM gets wiped and rebuilt but looks identical).
 const isFilteringByTag = initialSelectedTagSet.size > 0 && !isFocused;
 const filteredArticles: WireArticle[] = [];
 if (isFilteringByTag) {
@@ -130,7 +131,6 @@ if (isFilteringByTag) {
       if (anyMatch) filteredArticles.push(a);
     }
   }
-  filteredArticles.sort((a, b) => b.published_at - a.published_at);
 }
 
 // User's active hashtags (from the session row) — drives the chip
@@ -306,6 +306,7 @@ function formatCostUsd(value: number | null | undefined): string {
                           sourceUrl={a.primary_source_url}
                           tags={a.tags}
                           index={i}
+                          suppressTransition={isFilteringByTag}
                         />
                       ))}
                     </div>
@@ -542,7 +543,18 @@ function formatCostUsd(value: number | null | undefined): string {
       }
       needsApply = true;
     }
-    if (needsApply) apply();
+    // Skip the initial apply() when the server already rendered the
+    // filtered search-grid matching the URL's ?tags= state. Without
+    // this, apply() would wipe the SSR'd grid with innerHTML = '' and
+    // rebuild from day-list clones — identical content but the DOM
+    // churn happens mid-animation, flickers, and disrupts the View-
+    // Transition pseudos. Idempotence check: search-grid already has
+    // children AND user hasn't typed a search query.
+    const ssrAlreadyPopulated =
+      searchGrid.children.length > 0 &&
+      searchGrid.hidden === false &&
+      (input === null || input.value.trim() === '');
+    if (needsApply && !ssrAlreadyPopulated) apply();
 
     return () => {
       if (input !== null) {
