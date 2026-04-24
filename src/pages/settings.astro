@@ -82,7 +82,16 @@ if (typeof user.hashtags_json === 'string' && user.hashtags_json !== '') {
   try {
     const parsed = JSON.parse(user.hashtags_json) as unknown;
     if (Array.isArray(parsed)) {
-      userHashtags = parsed.filter((v): v is string => typeof v === 'string');
+      // Normalise on read so legacy rows that were stored before the
+      // write-path normalisation landed (mixed case, leading `#`,
+      // stray whitespace) still match DEFAULT_HASHTAGS set-membership
+      // comparisons below. Without this, showDelete stayed false for
+      // an account seeded with `['#ai', 'AI', ...]` because
+      // userHashtagSet.has('ai') returned false on case mismatch.
+      userHashtags = parsed
+        .filter((v): v is string => typeof v === 'string')
+        .map((t) => t.trim().toLowerCase().replace(/^#/, ''))
+        .filter((t) => t !== '');
     }
   } catch {
     userHashtags = [];

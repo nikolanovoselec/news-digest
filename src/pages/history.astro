@@ -499,35 +499,48 @@ function formatCostUsd(value: number | null | undefined): string {
     };
   }
 
-  /** POST /api/tags to add a tag to the session user's hashtag list,
-   *  then reload so both the tag strip and per-tag counts reflect
-   *  the new state. Reload (instead of surgical DOM patching) keeps
-   *  history and dashboard add-tag flows behaving identically. */
-  async function addTag(tag: string): Promise<void> {
+  /** Read every tag currently rendered in the strip — the source of
+   *  truth for the user's active hashtag list on this page. Used by
+   *  addTag/removeTag to POST the NEW FULL list to /api/tags (which
+   *  expects a replacement array, not a per-tag add/remove). Earlier
+   *  versions here posted `{tag}` (singular) and DELETE'd a
+   *  non-existent /api/tags/:tag route, so removals looked
+   *  successful client-side but never persisted. */
+  function currentStripTags(): string[] {
+    const strip = document.querySelector<HTMLElement>('[data-tag-strip]');
+    if (strip === null) return [];
+    return Array.from(strip.querySelectorAll<HTMLElement>('[data-tag-chip]'))
+      .map((chip) => chip.dataset['tag'] ?? '')
+      .filter((t) => t !== '');
+  }
+
+  async function saveTagsList(tags: string[]): Promise<boolean> {
     try {
       const res = await fetch('/api/tags', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tag }),
+        body: JSON.stringify({ tags }),
       });
-      if (res.ok) window.location.reload();
+      return res.ok;
     } catch {
-      // leave the input untouched so the user can retry
+      return false;
     }
   }
 
-  /** DELETE /api/tags/<tag> + reload. */
+  /** Append `tag` to the user's list via POST /api/tags, then reload
+   *  so the strip and per-tag counts reflect the new state. */
+  async function addTag(tag: string): Promise<void> {
+    const next = currentStripTags();
+    if (!next.includes(tag)) next.push(tag);
+    if (await saveTagsList(next)) window.location.reload();
+  }
+
+  /** Remove `tag` from the user's list. Posts the filtered array so
+   *  the server UPDATE writes the authoritative new state. */
   async function removeTag(tag: string): Promise<void> {
-    try {
-      const res = await fetch(`/api/tags/${encodeURIComponent(tag)}`, {
-        method: 'DELETE',
-        credentials: 'same-origin',
-      });
-      if (res.ok) window.location.reload();
-    } catch {
-      // swallow — user can retry
-    }
+    const next = currentStripTags().filter((t) => t !== tag);
+    if (await saveTagsList(next)) window.location.reload();
   }
 
   /** Wire the "+ add" pill: reveal input, submit on Enter / blur,
