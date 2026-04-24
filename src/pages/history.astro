@@ -95,6 +95,50 @@ const deepLinkedDay =
 const visibleDays = deepLinkedDay !== null ? [deepLinkedDay] : days;
 const isFocused = deepLinkedDay !== null;
 
+// Implements REQ-HIST-001 AC 4/7 — tag railing on Search & History.
+// Reads ?tags=a,b,c to pre-select chips server-side; the client-side
+// script wires click + URL sync + combined filter (tag AND search).
+const rawTagsParam = Astro.url.searchParams.get('tags');
+const initialSelectedTagSet = new Set<string>(
+  typeof rawTagsParam === 'string' && rawTagsParam !== ''
+    ? rawTagsParam.split(',').map((t) => t.trim()).filter((t) => t !== '')
+    : [],
+);
+
+// User's active hashtags (from the session row) — drives the chip
+// set. Parsing mirrors digest.astro.
+const sessionUser = session.user;
+let userTags: string[] = [];
+if (sessionUser.hashtags_json !== null && sessionUser.hashtags_json !== '') {
+  try {
+    const parsed = JSON.parse(sessionUser.hashtags_json) as unknown;
+    if (Array.isArray(parsed)) {
+      userTags = parsed.filter((v): v is string => typeof v === 'string');
+    }
+  } catch {
+    userTags = [];
+  }
+}
+
+// Count tag occurrences across every article in the 7-day window so
+// each chip can render its count (distinct from dashboard's today-
+// scoped count — here we want the full search pool).
+const tagCounts = new Map<string, number>();
+for (const t of userTags) tagCounts.set(t, 0);
+for (const day of days) {
+  for (const a of day.articles) {
+    for (const t of a.tags) {
+      if (!tagCounts.has(t)) continue;
+      tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
+    }
+  }
+}
+const sortedUserTags = [...userTags].sort((a, b) => {
+  const diff = (tagCounts.get(b) ?? 0) - (tagCounts.get(a) ?? 0);
+  if (diff !== 0) return diff;
+  return a.localeCompare(b);
+});
+
 /** Comma-grouped integer, em-dash when null/undefined. */
 function formatInt(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return '\u2014';
@@ -127,11 +171,9 @@ function formatCostUsd(value: number | null | undefined): string {
         </a>
       )}
       <h1 class="history__title">Search &amp; History</h1>
-      <p class="history__subtitle">
-        {isFocused
-          ? `Articles from ${dateParam}.`
-          : 'The last 7 days of articles matching your tags.'}
-      </p>
+      {isFocused && (
+        <p class="history__subtitle">Articles from {dateParam}.</p>
+      )}
       {!isFocused && (
         <label class="history__search" aria-label="Search history">
           <input
@@ -145,6 +187,59 @@ function formatCostUsd(value: number | null | undefined): string {
         </label>
       )}
     </header>
+
+    {!isFocused && (
+      <div class="tag-strip-wrap history__tag-strip" data-tag-strip-wrap>
+        <div class="tag-strip" data-tag-strip>
+          {sortedUserTags.map((tag) => {
+            const count = tagCounts.get(tag) ?? 0;
+            const preselected = initialSelectedTagSet.has(tag);
+            return (
+              <button
+                type="button"
+                class={preselected ? 'tag-chip is-selected' : 'tag-chip'}
+                data-tag-chip
+                data-tag={tag}
+                data-count={count}
+                aria-pressed={preselected ? 'true' : 'false'}
+                aria-label={`${tag} — ${count} articles in the last 7 days. Click to filter, click again to deselect.`}
+              >
+                <span class="tag-chip__label">
+                  <span class="tag-chip__hash" aria-hidden="true">#</span>{tag}
+                </span>
+                <span class="tag-chip__slot" aria-hidden="true">
+                  <span class="tag-chip__count">{count > 0 ? count : ''}</span>
+                  <span
+                    class="tag-chip__remove"
+                    data-tag-remove
+                    role="button"
+                    tabindex="-1"
+                    aria-label={`Remove ${tag} from your hashtags`}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z" />
+                    </svg>
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <button type="button" class="tag-add" data-tag-add aria-label="Add a hashtag">
+          <span class="tag-add__plus" aria-hidden="true">+</span>
+          <span class="tag-add__label">add</span>
+        </button>
+        <input
+          type="text"
+          class="tag-add-input"
+          data-tag-add-input
+          placeholder="type a tag"
+          autocomplete="off"
+          maxlength="33"
+          hidden
+        />
+      </div>
+    )}
 
     {/* Flat grid of matching cards — same breakpoint math as
         .digest-page__grid on the dashboard so search results feel
@@ -241,11 +336,12 @@ function formatCostUsd(value: number | null | undefined): string {
     const searchGrid = document.querySelector<HTMLElement>('[data-search-grid]');
     const searchEmpty = document.querySelector<HTMLElement>('[data-search-empty]');
     const list = document.querySelector<HTMLElement>('[data-history-list]');
-    if (input === null || searchGrid === null || searchEmpty === null) {
+    const strip = document.querySelector<HTMLElement>('[data-tag-strip]');
+    if (searchGrid === null || searchEmpty === null) {
       return () => {};
     }
 
-    type CardEntry = { el: HTMLElement; haystack: string };
+    type CardEntry = { el: HTMLElement; haystack: string; tags: Set<string> };
     const cards: CardEntry[] = [];
     const source = document.querySelectorAll<HTMLElement>(
       '[data-history-list] [data-digest-card]',
@@ -255,20 +351,37 @@ function formatCostUsd(value: number | null | undefined): string {
         card.querySelector('.digest-card__title')?.textContent ?? '';
       const excerpt =
         card.querySelector('.digest-card__one-liner')?.textContent ?? '';
-      cards.push({ el: card, haystack: (title + ' ' + excerpt).toLowerCase() });
+      const rawTags = card.dataset['tags'] ?? '';
+      const tagSet = new Set(rawTags === '' ? [] : rawTags.split(','));
+      cards.push({ el: card, haystack: (title + ' ' + excerpt).toLowerCase(), tags: tagSet });
     }
 
-    const syncUrlQuery = (q: string, searching: boolean): void => {
-      // Sync the search query to the URL via replaceState so the
-      // user can bookmark / share / navigate-back to a specific
-      // result set. replaceState (not pushState) on every keystroke
-      // avoids clogging the back stack — only the first keystroke
-      // creates a new history entry, subsequent edits overwrite it.
+    /** Read the currently-selected tag chips from the DOM. */
+    const readSelectedTags = (): string[] => {
+      if (strip === null) return [];
+      const out: string[] = [];
+      strip.querySelectorAll<HTMLElement>('[data-tag-chip].is-selected').forEach((chip) => {
+        const t = chip.dataset['tag'];
+        if (t !== undefined && t !== '') out.push(t);
+      });
+      return out;
+    };
+
+    /** Sync q + tags into the URL via replaceState. Keeps the back
+     *  stack clean — a user typing or clicking doesn't append per
+     *  keystroke. The /api/auth/... paths and `date` param are
+     *  preserved untouched. */
+    const syncUrl = (qRaw: string, tags: string[]): void => {
       const url = new URL(window.location.href);
-      if (searching) {
-        url.searchParams.set('q', q);
+      if (qRaw.length >= MIN_QUERY_LEN) {
+        url.searchParams.set('q', qRaw);
       } else {
         url.searchParams.delete('q');
+      }
+      if (tags.length > 0) {
+        url.searchParams.set('tags', tags.join(','));
+      } else {
+        url.searchParams.delete('tags');
       }
       const next = url.pathname + (url.search === '' ? '' : url.search);
       if (next !== window.location.pathname + window.location.search) {
@@ -277,12 +390,16 @@ function formatCostUsd(value: number | null | undefined): string {
     };
 
     const apply = (): void => {
-      const q = input.value.trim().toLowerCase();
+      const qRaw = input !== null ? input.value.trim() : '';
+      const q = qRaw.toLowerCase();
       const searching = q.length >= MIN_QUERY_LEN;
-      syncUrlQuery(input.value.trim(), searching);
+      const selectedTags = readSelectedTags();
+      const tagFiltering = selectedTags.length > 0;
+      const selectedSet = new Set(selectedTags);
+      syncUrl(qRaw, selectedTags);
 
-      // Short / empty query → restore day-grouped view.
-      if (!searching) {
+      // No search AND no tag → restore day-grouped view.
+      if (!searching && !tagFiltering) {
         searchGrid.innerHTML = '';
         searchGrid.hidden = true;
         searchEmpty.hidden = true;
@@ -290,28 +407,27 @@ function formatCostUsd(value: number | null | undefined): string {
         return;
       }
 
-      // ≥3 chars → flat grid of matches, day list hidden.
+      // Either filter active → flat grid of matches, day list hidden.
+      // AND logic: a card must match the query (if searching) AND
+      // share at least one tag with the selected set (if tag-filtering).
       if (list !== null) list.hidden = true;
       searchGrid.innerHTML = '';
       let matches = 0;
-      for (const { el, haystack } of cards) {
-        if (!haystack.includes(q)) continue;
+      for (const { el, haystack, tags } of cards) {
+        if (searching && !haystack.includes(q)) continue;
+        if (tagFiltering) {
+          let any = false;
+          for (const t of tags) {
+            if (selectedSet.has(t)) { any = true; break; }
+          }
+          if (!any) continue;
+        }
         const clone = el.cloneNode(true) as HTMLElement;
-        // Clear the per-button bound flags so initCardInteractions
-        // re-binds click handlers on this fresh DOM subtree.
         clone
           .querySelectorAll<HTMLElement>('[data-bound="1"]')
           .forEach((b) => {
             b.removeAttribute('data-bound');
           });
-        // Strip Astro's view-transition scope from the clone so it
-        // cannot conflict with the ORIGINAL card's `transition:name`
-        // that still sits in the hidden day list. The spec only
-        // allows a single element per `view-transition-name` value
-        // during a transition; duplicates silently abort the
-        // animation. The animation here is polish, not contract, so
-        // it's safe to drop it on the search clone rather than
-        // rewrite the scope to a unique value.
         clone
           .querySelectorAll<HTMLElement>('[data-astro-transition-scope]')
           .forEach((scoped) => {
@@ -322,29 +438,145 @@ function formatCostUsd(value: number | null | undefined): string {
       }
       searchGrid.hidden = false;
       if (matches === 0) {
-        searchEmpty.textContent = `No articles match "${input.value.trim()}".`;
+        const parts: string[] = [];
+        if (searching) parts.push(`"${qRaw}"`);
+        if (tagFiltering) parts.push(selectedTags.map((t) => `#${t}`).join(' '));
+        searchEmpty.textContent = `No articles match ${parts.join(' + ')}.`;
         searchEmpty.hidden = false;
       } else {
         searchEmpty.hidden = true;
       }
-      // Rebind star + tag-disclosure handlers on the cloned buttons.
       initCardInteractions(searchGrid);
     };
 
-    input.addEventListener('input', apply);
-
-    // Hydrate from URL on load: if ?q= is present, populate the
-    // input and run the filter so navigating back to /history?q=foo
-    // restores the exact search results the user left.
-    const urlQ = new URL(window.location.href).searchParams.get('q');
-    if (urlQ !== null && urlQ.length >= MIN_QUERY_LEN) {
-      input.value = urlQ;
-      apply();
+    if (input !== null) {
+      input.addEventListener('input', apply);
     }
 
+    // Tag chip click handlers — toggle is-selected and re-run the
+    // combined filter. Tag remove (× inside chip) and + add pill are
+    // handled separately below.
+    if (strip !== null) {
+      strip.addEventListener('click', (e) => {
+        const target = e.target;
+        if (!(target instanceof Element)) return;
+        // Remove (×) takes precedence — it's inside the chip.
+        const removeHit = target.closest<HTMLElement>('[data-tag-remove]');
+        if (removeHit !== null) {
+          e.preventDefault();
+          e.stopPropagation();
+          const chip = removeHit.closest<HTMLElement>('[data-tag-chip]');
+          const tag = chip?.dataset['tag'];
+          if (tag !== undefined && tag !== '') {
+            void removeTag(tag);
+          }
+          return;
+        }
+        const chip = target.closest<HTMLElement>('[data-tag-chip]');
+        if (chip === null) return;
+        const wasSelected = chip.classList.contains('is-selected');
+        chip.classList.toggle('is-selected', !wasSelected);
+        chip.setAttribute('aria-pressed', wasSelected ? 'false' : 'true');
+        apply();
+      });
+    }
+
+    // Hydrate from URL on load: restore q + tag selections so that
+    // navigating back to /history?q=foo&tags=a,b brings the user to
+    // the exact result set they left.
+    const url = new URL(window.location.href);
+    const urlQ = url.searchParams.get('q');
+    const urlTags = url.searchParams.get('tags');
+    let needsApply = false;
+    if (input !== null && urlQ !== null && urlQ.length >= MIN_QUERY_LEN) {
+      input.value = urlQ;
+      needsApply = true;
+    }
+    if (urlTags !== null && urlTags !== '') {
+      const set = new Set(urlTags.split(',').map((t) => t.trim()).filter(Boolean));
+      if (strip !== null) {
+        strip.querySelectorAll<HTMLElement>('[data-tag-chip]').forEach((chip) => {
+          const tag = chip.dataset['tag'];
+          if (tag !== undefined && set.has(tag)) {
+            chip.classList.add('is-selected');
+            chip.setAttribute('aria-pressed', 'true');
+          }
+        });
+      }
+      needsApply = true;
+    }
+    if (needsApply) apply();
+
     return () => {
-      input.removeEventListener('input', apply);
+      if (input !== null) {
+        input.removeEventListener('input', apply);
+      }
     };
+  }
+
+  /** POST /api/tags to add a tag to the session user's hashtag list,
+   *  then reload so both the tag strip and per-tag counts reflect
+   *  the new state. Reload (instead of surgical DOM patching) keeps
+   *  history and dashboard add-tag flows behaving identically. */
+  async function addTag(tag: string): Promise<void> {
+    try {
+      const res = await fetch('/api/tags', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag }),
+      });
+      if (res.ok) window.location.reload();
+    } catch {
+      // leave the input untouched so the user can retry
+    }
+  }
+
+  /** DELETE /api/tags/<tag> + reload. */
+  async function removeTag(tag: string): Promise<void> {
+    try {
+      const res = await fetch(`/api/tags/${encodeURIComponent(tag)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (res.ok) window.location.reload();
+    } catch {
+      // swallow — user can retry
+    }
+  }
+
+  /** Wire the "+ add" pill: reveal input, submit on Enter / blur,
+   *  cancel on Escape. Mirrors the dashboard's add-tag UX. */
+  function initTagAdd(): void {
+    const addButton = document.querySelector<HTMLButtonElement>('[data-tag-add]');
+    const addInput = document.querySelector<HTMLInputElement>('[data-tag-add-input]');
+    if (addButton === null || addInput === null) return;
+    if (addButton.dataset['addBound'] === '1') return;
+    addButton.dataset['addBound'] = '1';
+    const reveal = (): void => {
+      addButton.hidden = true;
+      addInput.hidden = false;
+      addInput.focus();
+    };
+    const cancel = (): void => {
+      addInput.value = '';
+      addInput.hidden = true;
+      addButton.hidden = false;
+    };
+    const submit = (): void => {
+      const raw = addInput.value.trim().toLowerCase().replace(/^#/, '');
+      if (raw === '') { cancel(); return; }
+      void addTag(raw);
+    };
+    addButton.addEventListener('click', reveal);
+    addInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); submit(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); cancel(); return; }
+    });
+    addInput.addEventListener('blur', () => {
+      if (addInput.value.trim() === '') cancel();
+      else submit();
+    });
   }
 
   // Gate EVERY side effect on the same documentElement flag so
@@ -370,6 +602,7 @@ function formatCostUsd(value: number | null | undefined): string {
       hwin.__historySearchTeardown();
     }
     hwin.__historySearchTeardown = initHistorySearch();
+    initTagAdd();
   }
 
   if (document.documentElement.dataset['historySearchBound'] !== '1') {
@@ -449,6 +682,12 @@ function formatCostUsd(value: number | null | undefined): string {
 
   .history__search {
     display: flex;
+  }
+
+  /* Tag railing on /history — same visual component as the
+     dashboard, inserted between the search input and the day list. */
+  .history__tag-strip {
+    margin: 0.75rem 0 0.25rem;
   }
 
   .history__search-input {

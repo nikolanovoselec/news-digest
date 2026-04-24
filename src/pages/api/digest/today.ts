@@ -103,16 +103,13 @@ export interface TodayResponse {
 }
 
 /**
- * Load the dashboard payload for a user — up to the 100 newest articles
- * from the global pool whose tag set intersects the user's active
- * tags, plus the most recent `ready` scrape_run metadata. The first
- * 29 are shown in the grid by default (slot 30 is a "see today in
- * Search & History" tile); the rest are rendered but hidden via CSS
- * so the client-side tag filter can surface them when the user
- * selects a specific tag. This keeps the initial visual density
- * capped at 30 tiles while still allowing deep-filter to reach
- * articles outside the newest 29 (previously a common complaint:
- * "my 'cloudflare' tag says 3 but the filter shows 0").
+ * Load the dashboard payload for a user — the 29 newest articles from
+ * the global pool whose tag set intersects the user's active tags,
+ * plus the most recent `ready` scrape_run metadata. The grid renders
+ * those 29 cards and slot 30 is a "see today in Search & History"
+ * tile. Per-tag filtering that reaches beyond the newest-29 window
+ * lives on Search & History, not here — the dashboard is
+ * deliberately a narrow "just the top 29" view.
  *
  * Exported so `src/pages/digest.astro` can call it in-process without
  * a subrequest hop; the HTTP GET handler below is a thin wrapper.
@@ -171,7 +168,7 @@ export async function loadTodayPayload(
        SELECT DISTINCT article_id FROM article_tags WHERE tag IN (${tagPlaceholders})
      )
      ORDER BY a.published_at DESC
-     LIMIT 100
+     LIMIT 29
   `;
 
   let rows: ArticleRow[] = [];

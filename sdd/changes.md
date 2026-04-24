@@ -6,9 +6,9 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-24
 
-- REQ-READ-001 AC 5 extended: the dashboard still shows 29 newest articles but the server now returns up to 100 so the tag filter can surface low-volume tags whose articles fell outside the top-29 window. Previously clicking a niche tag chip (e.g., "cloudflare 3") could filter to zero visible cards even though the articles existed.
+- REQ-HIST-001 AC 7 added: Search & History now carries the same tag railing as the dashboard, scoped to the 7-day window (counts, add/remove, URL `?tags=` state). Selecting a tag renders the same flat grid the search uses, and tag + search filters combine with AND logic so a user can narrow to "cloudflare articles containing 'london'" in one view.
+- REQ-HIST-001 AC 4 extended: search queries and tag selections are reflected in the URL (`?q=`, `?tags=`); opening an article from the filtered view and pressing browser Back restores the exact result set.
 - REQ-READ-002 AC 4 updated: the article detail "Back" control now returns to the page the user arrived from (search results, starred list, history day view, etc.) rather than always going to the dashboard; direct-link visitors still land on `/digest`.
-- REQ-HIST-001 AC 4 extended: the search query is reflected in the URL as `?q=`, so opening an article from search and returning via browser Back restores the exact result set.
 - REQ-PIPE-002 AC 3 relaxes the summary length contract to 150–250 words across 2 or 3 paragraphs (WHAT / HOW / optional IMPACT) — the earlier "exactly 3 paragraphs, 200–250 words" target over-constrained the model on thinner snippets and produced padded output; the shorter range is easier for the model to hit honestly without fabricating detail.
 - REQ-PIPE-002 gains AC 7: every article returned by the LLM echoes its input candidate's index, and the consumer aligns output to input by that echoed value — an article whose summary ever gets stapled to the wrong canonical URL is now a dropped article, not a wire bug shown to users.
 - REQ-READ-001 AC 5 cap drops from 50 to 29 articles and gains AC 6: the dashboard grid reserves slot 30 for a "see today in Search & History" tile that deep-links the user to the Search & History page scoped to today's local date.
