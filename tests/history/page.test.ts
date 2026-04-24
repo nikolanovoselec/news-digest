@@ -116,4 +116,30 @@ describe('history.astro — REQ-HIST-001', () => {
     // the /history page. Route is unchanged so bookmarks survive.
     expect(userMenuSource).toMatch(/Search\s*&amp;\s*History/);
   });
+
+  it('REQ-HIST-001 AC 6: reads ?date= query param, validates YYYY-MM-DD, and filters the rendered list to the matching day', () => {
+    // Validation regex present.
+    expect(historyPageSource).toMatch(/\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//);
+    // Deep-link variable is threaded into the visible-days selection
+    // (not into an unrelated block) so a valid date collapses the list.
+    expect(historyPageSource).toContain('deepLinkedDay');
+    expect(historyPageSource).toContain('visibleDays');
+  });
+
+  it('REQ-HIST-001 AC 6: renders a "Back to all days" control in deep-link mode that returns to /history', () => {
+    expect(historyPageSource).toContain('history__back');
+    // href must strip the query param — the back button is a plain
+    // link to the unparamterised route.
+    expect(historyPageSource).toMatch(/class="history__back"\s+href="\/history"/);
+    expect(historyPageSource).toContain('Back to all days');
+  });
+
+  it('REQ-HIST-001 AC 6: in deep-link mode the day row is opened by default and the search input is suppressed', () => {
+    // <details ... open={isFocused}> — the isFocused flag controls
+    // the open attribute so navigation directly to a day gets it
+    // already expanded.
+    expect(historyPageSource).toMatch(/<details[^>]*open=\{isFocused\}/);
+    // The search input is conditional on !isFocused.
+    expect(historyPageSource).toMatch(/\{!isFocused\s*&&\s*\(/);
+  });
 });

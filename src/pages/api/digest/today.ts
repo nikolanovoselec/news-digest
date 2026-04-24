@@ -103,9 +103,11 @@ export interface TodayResponse {
 }
 
 /**
- * Load the dashboard payload for a user — the 50 newest articles from
+ * Load the dashboard payload for a user — the 29 newest articles from
  * the global pool whose tag set intersects the user's active tags, plus
- * the most recent `ready` scrape_run metadata.
+ * the most recent `ready` scrape_run metadata. The dashboard grid
+ * reserves slot 30 for a "see today in Search & History" tile that
+ * deep-links to /history?date=<today-local>.
  *
  * Exported so `src/pages/digest.astro` can call it in-process without
  * a subrequest hop; the HTTP GET handler below is a thin wrapper.
@@ -164,7 +166,7 @@ export async function loadTodayPayload(
        SELECT DISTINCT article_id FROM article_tags WHERE tag IN (${tagPlaceholders})
      )
      ORDER BY a.published_at DESC
-     LIMIT 50
+     LIMIT 29
   `;
 
   let rows: ArticleRow[] = [];

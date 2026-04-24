@@ -8,6 +8,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 - REQ-PIPE-002 AC 3 relaxes the summary length contract to 150–250 words across 2 or 3 paragraphs (WHAT / HOW / optional IMPACT) — the earlier "exactly 3 paragraphs, 200–250 words" target over-constrained the model on thinner snippets and produced padded output; the shorter range is easier for the model to hit honestly without fabricating detail.
 - REQ-PIPE-002 gains AC 7: every article returned by the LLM echoes its input candidate's index, and the consumer aligns output to input by that echoed value — an article whose summary ever gets stapled to the wrong canonical URL is now a dropped article, not a wire bug shown to users.
+- REQ-READ-001 AC 5 cap drops from 50 to 29 articles and gains AC 6: the dashboard grid reserves slot 30 for a "see today in Search & History" tile (centred gradient-vertical icon) that deep-links the user to the Search & History page scoped to today's local date.
+- REQ-HIST-001 gains AC 6: a date query parameter renders the Search & History page in a focused single-day mode — only that day row, pre-expanded, with a Back control that returns to the full 7-day list.
 
 ## 2026-04-23
 

@@ -16,6 +16,7 @@ Past digests paginated on `/history`, 30 per page. A four-tile stats widget on `
 3. Clicking a day row expands inline to reveal the articles published that day; clicking again collapses the row. No per-scrape-run breakdown is shown — the summary row already carries cumulative tokens and cost for the day.
 4. Typing 3 or more characters into the search input hides the day-grouped list and renders matching articles in a flat dashboard-style grid above it; clearing back below 3 characters restores the day-grouped view instantly and preserves scroll position.
 5. Per-day aggregates are read from the scrape-run aggregation rather than re-derived from article rows.
+6. `/history` accepts a deep-link query parameter specifying a single local calendar date; when present and the date matches one of the available days, the page renders only that day's row pre-expanded (the search input and other day rows are suppressed) and shows a "Back to all days" control that returns the user to the full 7-day list without the query parameter. An unknown or malformed date parameter is ignored and the full list is shown.
 
 **Constraints:** CON-DATA-001
 **Priority:** P1

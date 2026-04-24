@@ -80,6 +80,21 @@ try {
 
 const days = data.days;
 
+// Implements REQ-HIST-001 — deep-link support: /history?date=YYYY-MM-DD
+// opens the matching day pre-expanded and filters the list to just
+// that day so users arriving from the dashboard "see today" tile land
+// on a focused single-day view. The back button strips the param and
+// returns to the full 7-day list.
+const rawDateParam = Astro.url.searchParams.get('date');
+const dateParam =
+  typeof rawDateParam === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDateParam)
+    ? rawDateParam
+    : null;
+const deepLinkedDay =
+  dateParam !== null ? days.find((d) => d.local_date === dateParam) ?? null : null;
+const visibleDays = deepLinkedDay !== null ? [deepLinkedDay] : days;
+const isFocused = deepLinkedDay !== null;
+
 /** Comma-grouped integer, em-dash when null/undefined. */
 function formatInt(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return '\u2014';
@@ -102,18 +117,33 @@ function formatCostUsd(value: number | null | undefined): string {
 <Base title="Search & History">
   <section class="history">
     <header class="history__hero">
+      {isFocused && (
+        <a class="history__back" href="/history">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            {/* MDI arrow-left — https://pictogrammers.com/library/mdi/icon/arrow-left/ */}
+            <path d="M20 11H7.83L13.42 5.41L12 4L4 12L12 20L13.41 18.59L7.83 13H20V11Z" />
+          </svg>
+          <span>Back to all days</span>
+        </a>
+      )}
       <h1 class="history__title">Search &amp; History</h1>
-      <p class="history__subtitle">The last 7 days of articles matching your tags.</p>
-      <label class="history__search" aria-label="Search history">
-        <input
-          type="search"
-          class="history__search-input"
-          placeholder="Search titles and summaries (3+ chars)…"
-          data-history-search
-          autocomplete="off"
-          minlength="3"
-        />
-      </label>
+      <p class="history__subtitle">
+        {isFocused
+          ? `Articles from ${dateParam}.`
+          : 'The last 7 days of articles matching your tags.'}
+      </p>
+      {!isFocused && (
+        <label class="history__search" aria-label="Search history">
+          <input
+            type="search"
+            class="history__search-input"
+            placeholder="Search titles and summaries (3+ chars)…"
+            data-history-search
+            autocomplete="off"
+            minlength="3"
+          />
+        </label>
+      )}
     </header>
 
     {/* Flat grid of matching cards — same breakpoint math as
@@ -125,15 +155,17 @@ function formatCostUsd(value: number | null | undefined): string {
     <p class="history__search-empty" data-search-empty hidden aria-live="polite"></p>
 
     {
-      days.length === 0 ? (
+      visibleDays.length === 0 ? (
         <p class="history__empty" data-history-empty>
-          No articles in the last 7 days.
+          {isFocused
+            ? `No articles on ${dateParam}.`
+            : 'No articles in the last 7 days.'}
         </p>
       ) : (
         <ol class="history__list" data-history-list>
-          {days.map((day) => (
+          {visibleDays.map((day) => (
             <li class="history__day" data-history-day data-date={day.local_date}>
-              <details class="history__details">
+              <details class="history__details" open={isFocused}>
                 <summary class="history__summary">
                   <span class="history__date">{day.local_date}</span>
                   <span class="history__sep" aria-hidden="true">·</span>
@@ -341,6 +373,30 @@ function formatCostUsd(value: number | null | undefined): string {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  /* Back button shown only in single-day deep-link mode. Strips
+     ?date= and returns the user to the full 7-day history list. */
+  .history__back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 6px 12px 6px 8px;
+    margin-bottom: 0.25rem;
+    color: var(--text);
+    text-decoration: none;
+    font-size: var(--text-sm);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+  }
+  .history__back:hover,
+  .history__back:focus-visible {
+    background: var(--bg);
+    border-color: var(--accent);
+    color: var(--accent);
+    outline: none;
   }
 
   .history__title {

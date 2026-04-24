@@ -20,6 +20,7 @@ import DigestCard from '~/components/DigestCard.astro';
 import { loadSession } from '~/middleware/auth';
 import { requireSettingsComplete } from '~/middleware/settings-gate';
 import { loadTodayPayload } from '~/pages/api/digest/today';
+import { localDateInTz, DEFAULT_TZ } from '~/lib/tz';
 
 const env = Astro.locals.runtime.env;
 if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
@@ -84,6 +85,12 @@ const sortedUserTags = [...userTags].sort((a, b) => {
   if (diff !== 0) return diff;
   return a.localeCompare(b);
 });
+
+// The dashboard grid caps at 29 real cards; slot 30 is a tile that
+// deep-links to /history?date=<today-local>. Compute the user's local
+// calendar date so the href resolves to today in their timezone.
+const userTz = user.tz === '' ? DEFAULT_TZ : user.tz;
+const todayLocalDate = localDateInTz(Math.floor(Date.now() / 1000), userTz);
 ---
 
 <Base title="Today's digest">
@@ -211,6 +218,25 @@ const sortedUserTags = [...userTags].sort((a, b) => {
               index={i}
             />
           ))}
+          {/* REQ-READ-001 AC 5 — the 30th slot deep-links to the
+              Search & History page for today. The icon is MDI
+              gradient-vertical. */}
+          <a
+            class="digest-page__more-card"
+            data-digest-more-tile
+            href={`/history?date=${todayLocalDate}`}
+            aria-label="See all of today's articles in Search & History"
+          >
+            <svg
+              class="digest-page__more-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              fill="currentColor"
+            >
+              {/* MDI gradient-vertical — https://pictogrammers.com/library/mdi/icon/gradient-vertical/ */}
+              <path d="M11,9H13V11H11V9M9,11H11V13H9V11M13,11H15V13H13V11M15,9H17V11H15V9M7,9H9V11H7V9M19,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5A2,2 0 0,0 19,3M9,18H7V16H9V18M13,18H11V16H13V18M17,18H15V16H17V18M19,11H17V13H19V15H17V13H15V15H13V13H11V15H9V13H7V15H5V13H7V11H5V5H19V11Z" />
+            </svg>
+          </a>
         </div>
       )
     }
@@ -727,6 +753,44 @@ const sortedUserTags = [...userTags].sort((a, b) => {
     .digest-page__grid {
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 1.5rem;
+    }
+  }
+
+  /* REQ-READ-001 AC 5 — the 30th grid slot is a tile that deep-links
+     to /history?date=<today>. Same dimensions as a regular card so it
+     reads as part of the grid, just an icon centred inside. */
+  .digest-page__more-card {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 180px;
+    padding: 1.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text-muted);
+    text-decoration: none;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  }
+  .digest-page__more-card:hover,
+  .digest-page__more-card:focus-visible {
+    background: var(--bg);
+    border-color: var(--accent);
+    color: var(--accent);
+    outline: none;
+  }
+  .digest-page__more-icon {
+    width: 56px;
+    height: 56px;
+    display: block;
+  }
+  @media (min-width: 768px) {
+    .digest-page__more-card {
+      min-height: 220px;
+    }
+    .digest-page__more-icon {
+      width: 64px;
+      height: 64px;
     }
   }
 </style>

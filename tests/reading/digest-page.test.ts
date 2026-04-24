@@ -182,3 +182,33 @@ describe('DigestCard.astro — REQ-READ-001 AC 2/3', () => {
     );
   });
 });
+
+describe('digest.astro — REQ-READ-001 AC 5 "see today" tile', () => {
+  it('REQ-READ-001 AC 5: a 30th grid slot is rendered after the article cards as a link to /history with today\'s local date', () => {
+    // The tile must be inside the grid (after the articles.map) and
+    // its href must be dynamically built from the server-computed
+    // todayLocalDate so it resolves to the user's local calendar day.
+    expect(digestPageSource).toContain('digest-page__more-card');
+    expect(digestPageSource).toMatch(
+      /href=\{`\/history\?date=\$\{todayLocalDate\}`\}/,
+    );
+    expect(digestPageSource).toContain('data-digest-more-tile');
+  });
+
+  it('REQ-READ-001 AC 5: tile uses the MDI gradient-vertical icon, centred, with no title/body text', () => {
+    // The canonical MDI gradient-vertical path starts with M11,9H13V11...
+    expect(digestPageSource).toContain('M11,9H13V11H11V9');
+    // Icon must be centered in the card — flex with center justify.
+    expect(digestPageSource).toMatch(
+      /\.digest-page__more-card\s*\{[^}]*justify-content:\s*center/,
+    );
+    expect(digestPageSource).toMatch(
+      /\.digest-page__more-card\s*\{[^}]*align-items:\s*center/,
+    );
+  });
+
+  it('REQ-READ-001 AC 5: todayLocalDate is computed server-side from the user timezone, not hard-coded', () => {
+    expect(digestPageSource).toContain('localDateInTz');
+    expect(digestPageSource).toContain('todayLocalDate');
+  });
+});
