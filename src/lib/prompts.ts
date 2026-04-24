@@ -157,8 +157,8 @@ Return JSON:
 {
   "articles": [
     {
-      "title": "punchy NYT-style headline, 45–80 characters",
-      "details": "2–3 paragraphs of plaintext prose totalling 200–250 words, paragraphs separated by a single \\n newline",
+      "title": "punchy NYT-style headline, 45-80 characters",
+      "details": "3 paragraphs of 3-4 sentences each, 200-250 words total, separated by \\n (WHAT happened / HOW it works / IMPACT for the reader)",
       "tags": ["only tags from the allowlist above"]
     }
   ],
