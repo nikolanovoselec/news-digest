@@ -258,9 +258,28 @@ function formatCostUsd(value: number | null | undefined): string {
       cards.push({ el: card, haystack: (title + ' ' + excerpt).toLowerCase() });
     }
 
+    const syncUrlQuery = (q: string, searching: boolean): void => {
+      // Sync the search query to the URL via replaceState so the
+      // user can bookmark / share / navigate-back to a specific
+      // result set. replaceState (not pushState) on every keystroke
+      // avoids clogging the back stack — only the first keystroke
+      // creates a new history entry, subsequent edits overwrite it.
+      const url = new URL(window.location.href);
+      if (searching) {
+        url.searchParams.set('q', q);
+      } else {
+        url.searchParams.delete('q');
+      }
+      const next = url.pathname + (url.search === '' ? '' : url.search);
+      if (next !== window.location.pathname + window.location.search) {
+        window.history.replaceState({}, '', next);
+      }
+    };
+
     const apply = (): void => {
       const q = input.value.trim().toLowerCase();
       const searching = q.length >= MIN_QUERY_LEN;
+      syncUrlQuery(input.value.trim(), searching);
 
       // Short / empty query → restore day-grouped view.
       if (!searching) {
@@ -313,6 +332,16 @@ function formatCostUsd(value: number | null | undefined): string {
     };
 
     input.addEventListener('input', apply);
+
+    // Hydrate from URL on load: if ?q= is present, populate the
+    // input and run the filter so navigating back to /history?q=foo
+    // restores the exact search results the user left.
+    const urlQ = new URL(window.location.href).searchParams.get('q');
+    if (urlQ !== null && urlQ.length >= MIN_QUERY_LEN) {
+      input.value = urlQ;
+      apply();
+    }
+
     return () => {
       input.removeEventListener('input', apply);
     };

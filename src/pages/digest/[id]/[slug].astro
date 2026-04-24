@@ -231,7 +231,12 @@ const articleDataset = {
     data-starred={articleDataset.starred}
   >
     <nav class="article-detail__back" aria-label="Back navigation">
-      <a href="/digest" class="article-detail__back-link" aria-label="Back to digest">
+      {/* Plain <a> keeps this working without JS (direct-link users
+          land on the dashboard). The inline script below upgrades
+          the href to a history.back() call when the user arrived
+          via in-app navigation (search results, dashboard, /starred)
+          — so "Back" actually returns to where they came from. */}
+      <a href="/digest" class="article-detail__back-link" aria-label="Go back" data-article-back>
         <svg
           class="article-detail__back-icon"
           width="24"
@@ -638,4 +643,37 @@ const articleDataset = {
   init();
   document.addEventListener('astro:page-load', init);
   document.addEventListener('astro:before-swap', teardown);
+
+  // Back button — return to the exact previous page (search results,
+  // dashboard, /starred, etc.) when the user arrived via in-app
+  // navigation. Falls through to the plain href="/digest" when the
+  // user direct-linked here (history.length === 1 or navigation type
+  // is "reload") so the anchor stays a valid link without JS.
+  function handleBackClick(this: HTMLAnchorElement, e: MouseEvent): void {
+    // Don't override middle-click, cmd/ctrl-click, etc.
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+      return;
+    }
+    // Only hijack when there IS a back entry that's on our own origin.
+    // document.referrer is the cheapest signal — the reliable hint
+    // that the user came from another page on this site.
+    const sameOrigin =
+      document.referrer !== '' &&
+      new URL(document.referrer).origin === window.location.origin;
+    if (!sameOrigin) {
+      return; // let the href="/digest" fallback do its job
+    }
+    e.preventDefault();
+    window.history.back();
+  }
+
+  function bindBack(): void {
+    const link = document.querySelector<HTMLAnchorElement>('[data-article-back]');
+    if (link === null) return;
+    if (link.dataset['backBound'] === '1') return;
+    link.dataset['backBound'] = '1';
+    link.addEventListener('click', handleBackClick);
+  }
+  bindBack();
+  document.addEventListener('astro:page-load', bindBack);
 </script>

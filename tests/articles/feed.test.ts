@@ -116,7 +116,7 @@ function makeDb(opts: MockOpts): D1Database {
                 a.tags.some((t) => tagSet.has(t)),
               );
               matching.sort((a, b) => (b.published_at ?? 0) - (a.published_at ?? 0));
-              const limited = matching.slice(0, 29);
+              const limited = matching.slice(0, 100);
               const results = limited.map((a) => ({
                 id: a.id,
                 canonical_url: a.canonical_url,
@@ -202,10 +202,10 @@ describe('GET /api/digest/today — REQ-READ-001', () => {
     expect(res.status).toBe(401);
   });
 
-  it('REQ-READ-001: returns 29 newest articles from the global pool filtered by user tags (slot 30 is the "see today" tile)', async () => {
+  it('REQ-READ-001: returns up to 100 newest articles from the global pool filtered by user tags; the grid renders 29 + see-today tile, the rest are overflow that surface when tag filter is active', async () => {
     const now = Math.floor(Date.now() / 1000);
-    // 60 articles tagged `cloudflare`; each newer than the next by 60s.
-    const articles: RawArticle[] = Array.from({ length: 60 }, (_, i) => ({
+    // 120 articles to exercise the LIMIT cap — API returns 100.
+    const articles: RawArticle[] = Array.from({ length: 120 }, (_, i) => ({
       id: `art-${String(i).padStart(3, '0')}`,
       canonical_url: `https://example.com/a/${i}`,
       primary_source_name: 'Cloudflare Blog',
@@ -229,10 +229,10 @@ describe('GET /api/digest/today — REQ-READ-001', () => {
     const res = await GET(makeContext(await authedRequest(), makeEnv(db)) as never);
     expect(res.status).toBe(200);
     const body = (await res.json()) as WireResponse;
-    expect(body.articles).toHaveLength(29);
+    expect(body.articles).toHaveLength(100);
     // Newest first — art-000 (published_at = now) must be the first row.
     expect(body.articles[0]?.id).toBe('art-000');
-    expect(body.articles[28]?.id).toBe('art-028');
+    expect(body.articles[99]?.id).toBe('art-099');
     for (let i = 0; i < body.articles.length - 1; i++) {
       const a = body.articles[i]!.published_at ?? 0;
       const b = body.articles[i + 1]!.published_at ?? 0;

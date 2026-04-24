@@ -15,8 +15,8 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 2. The top of the page shows "Last updated at HH:MM" with the most-recent scrape time, and a live "Next update in Xm" countdown (formatted "Xh Ym" when more than an hour remains, "Xm" otherwise) that counts down toward the next scheduled scrape tick and is visibly updated as time passes.
 3. No manual Refresh button is rendered and no live-state skeleton cards are shown — the pool is always populated so the grid renders directly.
 4. When the user has no tag filters selected, the grid shows every article whose tags intersect the user's full tag list; when one or more filter tags are selected, the grid narrows to articles matching those filters.
-5. The grid shows the 29 newest articles ordered by published-at descending.
-6. The grid's final slot (slot 30) is a "see all of today's articles in Search & History" tile containing a centred list-style icon; activating it navigates the user to the Search & History page scoped to today's local date.
+5. The grid shows 29 newest articles ordered by published-at descending; the server returns up to 100 matching articles so the tag filter can surface articles beyond the newest-29 window when a user selects a low-volume tag whose articles fell outside that slice.
+6. The grid's final slot (slot 30) is a "see all of today's articles in Search & History" tile containing a centred list-style icon; activating it navigates the user to the Search & History page scoped to today's local date. When any tag filter is active, the tile is suppressed and the overflow articles become candidates for filter-match surfacing.
 
 **Constraints:** CON-A11Y-001
 **Priority:** P0
@@ -36,7 +36,7 @@ The heart of the product. Overview grid of today's digest, detail view per artic
 1. `/digest/:id/:slug` renders the article title, the detail paragraphs as long-form reading prose, a small-caps metadata line (source · publish date · estimated read time), and a prominent "Read at source" affordance. The first paragraph carries a drop-cap initial and the reading column is capped around 62 characters with hyphenation.
 2. All text is rendered with `textContent` — no markdown parsing, no HTML sanitizer, no `innerHTML`.
 3. The slug is derived from the title and enforced unique per article.
-4. A back control returns to `/digest` using the View Transitions shared-element morph for the card→detail transition, and reverses it on back.
+4. A back control returns the user to the page they navigated FROM (the dashboard, search results, starred page, history day view, etc.) when they arrived via in-app navigation; direct-link visitors land on `/digest`. The View Transitions shared-element morph plays in reverse when returning to a page that renders the same card.
 5. When the article has at least one alternative source, activating "Read at source" opens a modal listing every known source (primary + alternatives) with each source's name and per-source timestamp; when the article has only one source, the affordance links directly to that source in a new tab with `rel="noopener noreferrer"`.
 6. The modal closes on Escape and on backdrop click.
 
