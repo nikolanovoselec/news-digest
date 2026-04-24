@@ -1,5 +1,7 @@
 # News Digest
 
+Try it live: **<https://news.graymatter.ch>** — sign in with GitHub, pick a few hashtags, wait for the next hourly tick.
+
 <table>
 <tr>
 <td width="60%" valign="top">
