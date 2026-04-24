@@ -278,7 +278,7 @@ describe('discoverTag', () => {
     expect(feeds).toHaveLength(1);
   });
 
-  it('REQ-DISC-001: returns [] and logs empty_llm_response when neither envelope shape is present', async () => {
+  it('REQ-DISC-001: returns [] when neither envelope shape is present', async () => {
     const aiRun = vi.fn().mockResolvedValue({ totally: 'different shape' });
     const env = {
       AI: { run: aiRun } as unknown as Ai,

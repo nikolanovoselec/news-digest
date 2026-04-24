@@ -22,8 +22,9 @@
  *   stable JSON output. 0.7 was working but 0.6 trims variance on
  *   the shorter 150-200 word target.
  * - `max_tokens: 50000` — budget for ~50 articles per chunk at
- *   150-200 words each (~230 toks/article → ~12K total). Input side
- *   is ~8K tokens for the prompt + candidate list.
+ *   150-200 words each (~280 toks/article → ~14K total with JSON
+ *   overhead). Input side is ~8K tokens for the prompt +
+ *   candidate list.
  * - `response_format` — force JSON output on models that support it.
  */
 export const LLM_PARAMS = {
@@ -89,9 +90,9 @@ PARAGRAPH ROLES:
 
 GROUNDING: Every sentence MUST be grounded in the candidate's snippet. Do not state facts that contradict the snippet. If the snippet is thin, keep the summary short rather than invent detail.
 
-Format example — a 3-paragraph, ~180-word summary in the exact format your output must follow:
+Format example — a 3-paragraph, ~170-word summary in the exact format your output must follow:
 
-  "Cloudflare released Emdash, an open-source WordPress-inspired platform for Workers. The announcement lands with a public GitHub repo, a curated plugin compatibility layer, and a managed D1-backed content schema. Emdash targets small teams that want the WordPress authoring UX without the self-hosted maintenance burden.\\nTechnically, Emdash replaces PHP + MySQL with a TypeScript runtime and an R2-backed media store. The editor is a Gutenberg-style block editor; every block serialises to structured JSON and renders at the edge. A compatibility layer imports Yoast, Advanced Custom Fields, and a curated set of popular plugins, giving migrating sites a realistic path forward.\\nFor developers, the practical effect is a WordPress-grade editing UI without the PHP tax. Sites deploy as a single Worker with sub-100ms TTFB globally and the managed schema removes the 'plugin updated, site broke' operations class. Teams running WordPress for marketing sites can pilot Emdash on a single domain without retraining their team."
+  "Cloudflare released Emdash, an open-source WordPress-inspired platform for Workers. The announcement lands with a public GitHub repo, a curated plugin compatibility layer, and a managed D1-backed content schema. Emdash targets small teams that want the WordPress authoring UX without the self-hosted maintenance burden of running PHP.\\nTechnically, Emdash replaces PHP + MySQL with a TypeScript runtime and an R2-backed media store. The editor is a Gutenberg-style block editor; every block serialises to structured JSON and renders at the edge with no round-trip to an origin database. A compatibility layer imports Yoast, Advanced Custom Fields, and a curated set of popular plugins, giving migrating sites a realistic path forward.\\nFor developers, the practical effect is a WordPress-grade editing UI without the PHP tax. Sites deploy as a single Worker with sub-100ms TTFB globally, the managed schema removes the 'plugin updated, site broke' operations class, and hashed-asset CDN caching is automatic. Teams running WordPress for marketing sites can pilot Emdash on a single domain without retraining the editors they hired."
 
 # TAGS RULES
 

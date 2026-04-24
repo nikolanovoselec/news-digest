@@ -14,7 +14,7 @@
 //   - 20-worker concurrency bucket when called in bulk so 500
 //     candidates don't stampede the network.
 //   - Plaintext output capped at 3000 characters — enough for a
-//     200-250 word summary with context, not so much that the
+//     150-200 word summary with context, not so much that the
 //     per-chunk prompt balloons.
 
 import { isUrlSafe } from '~/lib/ssrf';

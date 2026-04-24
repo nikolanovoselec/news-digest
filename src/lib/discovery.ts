@@ -128,7 +128,18 @@ export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed
     return [];
   }
 
-  const suggestions = Array.isArray(payload.feeds) ? payload.feeds : [];
+  // Log the missing-feeds case explicitly so operators see a breadcrumb
+  // when the model returns a shaped object with no `feeds` key (e.g.
+  // `{feeds_list: [...]}` — a known deviation from the prompt that
+  // produced silent no-ops before this guard was added).
+  if (!Array.isArray(payload.feeds)) {
+    log('warn', 'discovery.completed', {
+      tag,
+      status: 'llm_missing_feeds_field',
+    });
+    return [];
+  }
+  const suggestions = payload.feeds;
   const validated: DiscoveredFeed[] = [];
 
   // 3. Independently validate each suggestion — a malicious or broken

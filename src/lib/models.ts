@@ -22,11 +22,11 @@ export interface ModelOption {
 // (response_format: json_object is HARD-guaranteed), 128K context,
 // $0.35/$0.75 per M tokens. Promoted from fallback to default after
 // @cf/openai/gpt-oss-20b consistently produced ~145-word summaries
-// against the 200-250 word target — even after the structured
-// prompt rewrite and temperature bump to 0.5. 20B has the context
-// window but not the long-form coherence at the target length;
-// 120B demonstrably produced 500+ word summaries on the same prompt
-// in earlier runs with no complaint.
+// against the then-current 200-250 word target — even after the
+// structured prompt rewrite and temperature bump to 0.5. 20B has
+// the context window but not the long-form coherence; 120B hits
+// the current 150-200 band reliably. The earlier target was later
+// tightened (REQ-PIPE-002 AC 3) but the model choice still stands.
 //
 // Fallback stays at @cf/openai/gpt-oss-20b — cheaper and faster for
 // the malformed-JSON retry path where we just need a parsable payload,
