@@ -6,6 +6,7 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-24
 
+- REQ-PIPE-002 AC 3 tightens the summary length contract from 150–250 to 150–200 words. The earlier 50-word ceiling headroom pushed the model toward padded 230-word summaries that repeated facts; capping at 200 keeps the story tight without touching the 120-word floor that drops malformed output.
 - REQ-DISC-004 tightened: the Re-discover affordance now actually exists in the UI (a "Re-discover #{tag}" button under a "Stuck tags" section on /settings, surfacing only for tags whose cached feeds are empty), the endpoint accepts both JSON and native form submissions, and the route is gated by Cloudflare Access at the zone level so only the admin operator can trigger it.
 - REQ-DISC-003 un-deprecated and rewritten as a self-healing system: each discovered feed carries a per-URL fetch-failure counter, a URL is evicted from its tag's cache after 30 consecutive failures (about five days at the six-times-daily scrape cadence), and a tag whose cache empties is automatically re-queued for a fresh discovery pass — users never see a permanently empty tag when a feed goes dark.
 - REQ-DISC-001 Intent and AC 3 broadened: the discovery prompt now names a Google News query-RSS fallback for tags without a first-party feed, so consumer/brand tags (ikea, tesla, netflix, etc.) produce at least one working source instead of looping through Re-discover with zero results.

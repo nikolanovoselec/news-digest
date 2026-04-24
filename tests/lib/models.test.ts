@@ -43,13 +43,12 @@ describe('MODELS catalog', () => {
 });
 
 describe('DEFAULT_MODEL_ID', () => {
-  it('REQ-SET-004: DEFAULT_MODEL_ID is @cf/openai/gpt-oss-120b — native OpenAI JSON mode, long-form coherent at 200-250 words', () => {
+  it('REQ-SET-004: DEFAULT_MODEL_ID is @cf/openai/gpt-oss-120b — native OpenAI JSON mode, long-form coherent at 150-200 words', () => {
     // Promoted from fallback to default after @cf/openai/gpt-oss-20b
-    // consistently produced ~145-word summaries against the 200-250
-    // word target, even after the structured prompt rewrite and the
-    // temperature bump to 0.5. 20B has the context window but not
-    // the long-form coherence at the target length; 120B produced
-    // 500+ word summaries on the same prompt in earlier runs.
+    // consistently produced ~145-word summaries against the earlier
+    // 200-250 target, even after the structured prompt rewrite and
+    // the temperature bump. 20B has the context window but not the
+    // long-form coherence; 120B hits the 150-200 band reliably.
     expect(DEFAULT_MODEL_ID).toBe('@cf/openai/gpt-oss-120b');
   });
 

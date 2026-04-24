@@ -279,7 +279,7 @@ The pipeline runs asynchronously via Queues. Poll `GET /api/scrape-status` to wa
 
 **Error responses:** `500 { ok: false, error: "start_run_failed" | "enqueue_failed" }` — if the D1 insert or queue send throws.
 
-**Used by:** `scripts/e2e-test.sh` full-cycle scrape section — triggers the real pipeline and asserts that at least one article is ingested and that the first article's `details` field is ≥ 150 words (target contract: 150–250 words, 2–3 paragraphs per [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) AC 3).
+**Used by:** `scripts/e2e-test.sh` full-cycle scrape section — triggers the real pipeline and asserts that at least one article is ingested and that the first article's `details` field is ≥ 150 words (target contract: 150–200 words, 2–3 paragraphs per [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) AC 3).
 
 ---
 

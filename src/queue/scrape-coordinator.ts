@@ -36,14 +36,14 @@ import type { DiscoveredFeed, SourcesCacheValue, Headline } from '~/lib/types';
 
 /** Max candidates per chunk. Matches the LLM's ~8K input-token budget
  * at the gpt-oss-20b default: ~50 candidate headlines per chunk
- * leaves per-article budget at ~1K output tokens (enough for the
- * 200-250-word prompt contract at ~350 toks/article + JSON
+ * leaves per-article budget at ~800 output tokens (enough for the
+ * 150-200-word prompt contract at ~280 toks/article + JSON
  * overhead), plus headroom for PROCESS_CHUNK_SYSTEM. Was 100 at
  * Gemma; 50 at gpt-oss-20b gives more per-article breathing
  * room without exploding the chunk count. The chunk size isn't
  * the primary lever on output length — the INPUT snippet length
  * is. A model with 300 chars of source material can't honestly
- * write 250 words regardless of how much output budget you give
+ * write 200 words regardless of how much output budget you give
  * it. Body-fetch quality matters more than chunk count. */
 const CHUNK_SIZE = 50;
 

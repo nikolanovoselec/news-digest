@@ -20,9 +20,9 @@
  * - `temperature: 0.6` — warm enough for the model to pick longer
  *   completions over minimum-entropy short replies, cool enough for
  *   stable JSON output. 0.7 was working but 0.6 trims variance on
- *   the shorter 150-250 word target.
+ *   the shorter 150-200 word target.
  * - `max_tokens: 50000` — budget for ~50 articles per chunk at
- *   150-250 words each (~280 toks/article → ~14K total). Input side
+ *   150-200 words each (~230 toks/article → ~12K total). Input side
  *   is ~8K tokens for the prompt + candidate list.
  * - `response_format` — force JSON output on models that support it.
  */
@@ -69,11 +69,10 @@ Shape:
 
 # DETAILS RULES — THIS IS THE CORE TASK
 
-LENGTH — 150 to 250 WORDS:
+LENGTH — 150 to 200 WORDS:
 
   - Minimum 150 words. Under 120 words is malformed and will be dropped.
-  - Maximum 250 words. Do not pad or repeat.
-  - Target 180-220 words.
+  - Maximum 200 words. Do not pad or repeat.
 
 STRUCTURE — 2 to 3 PARAGRAPHS:
 
@@ -90,9 +89,9 @@ PARAGRAPH ROLES:
 
 GROUNDING: Every sentence MUST be grounded in the candidate's snippet. Do not state facts that contradict the snippet. If the snippet is thin, keep the summary short rather than invent detail.
 
-Format example — a 3-paragraph, ~200-word summary in the exact format your output must follow:
+Format example — a 3-paragraph, ~180-word summary in the exact format your output must follow:
 
-  "Cloudflare released Emdash, an open-source WordPress-inspired platform for Workers. The announcement lands with a public GitHub repo, a curated plugin compatibility layer, and a managed D1-backed content schema. Emdash targets small teams that want the WordPress authoring UX without the self-hosted maintenance burden.\\nTechnically, Emdash replaces PHP + MySQL with a TypeScript runtime and an R2-backed media store. The editor is a Gutenberg-style block editor; every block serialises to structured JSON and renders at the edge. A compatibility layer imports Yoast, Advanced Custom Fields, and a curated set of popular plugins, giving migrating sites a realistic path forward.\\nFor developers, the practical effect is a WordPress-grade editing UI without the PHP tax. Sites deploy as a single Worker with sub-100ms TTFB globally, the managed schema removes the 'plugin updated, site broke' Sunday-morning operations class, and hashed-asset CDN caching happens automatically. Teams already running WordPress for marketing sites can pilot Emdash on a single domain without giving up the editor their marketing team trained on."
+  "Cloudflare released Emdash, an open-source WordPress-inspired platform for Workers. The announcement lands with a public GitHub repo, a curated plugin compatibility layer, and a managed D1-backed content schema. Emdash targets small teams that want the WordPress authoring UX without the self-hosted maintenance burden.\\nTechnically, Emdash replaces PHP + MySQL with a TypeScript runtime and an R2-backed media store. The editor is a Gutenberg-style block editor; every block serialises to structured JSON and renders at the edge. A compatibility layer imports Yoast, Advanced Custom Fields, and a curated set of popular plugins, giving migrating sites a realistic path forward.\\nFor developers, the practical effect is a WordPress-grade editing UI without the PHP tax. Sites deploy as a single Worker with sub-100ms TTFB globally and the managed schema removes the 'plugin updated, site broke' operations class. Teams running WordPress for marketing sites can pilot Emdash on a single domain without retraining their team."
 
 # TAGS RULES
 
@@ -167,7 +166,7 @@ Return JSON:
     {
       "index": 0,
       "title": "punchy NYT-style headline, 45-80 characters, about candidate [0] specifically",
-      "details": "2-3 paragraphs of 3-5 sentences each, 150-250 words total, separated by \\n (WHAT happened / HOW it works / IMPACT for the reader) — grounded in candidate [0]'s snippet only",
+      "details": "2-3 paragraphs of 3-5 sentences each, 150-200 words total, separated by \\n (WHAT happened / HOW it works / IMPACT for the reader) — grounded in candidate [0]'s snippet only",
       "tags": ["only tags from the allowlist above"]
     }
   ],
