@@ -147,5 +147,4 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 **Priority:** P2
 **Dependencies:** REQ-SET-003
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** Silent auto-correct ships in code (src/layouts/Base.astro) but no automated test verifies the cross-page behaviour or the stale-value retry.
+**Status:** Implemented
