@@ -17,16 +17,17 @@
 
 /**
  * Shared inference parameters for every Workers AI call.
- * - `temperature: 0.2` — summaries should be consistent, not creative.
- * - `max_tokens: 50000` — budget for ~100 articles per chunk at
- *   200–250 words each (~350 tokens/article → ~35K total). Input side
+ * - `temperature: 0.5` — enough creative room to write full 3-paragraph
+ *   summaries instead of collapsing to minimum-entropy 1-paragraph
+ *   stubs. 0.2 (the prior value) was starving the model's verbosity.
+ * - `max_tokens: 50000` — budget for ~50 articles per chunk at
+ *   200-250 words each (~350 toks/article → ~18K total). Input side
  *   is ~8K tokens for the prompt + candidate list, so 50K out plus
- *   8K in fits every model we use (Gemma 4 has 256K ctx, gpt-oss has
- *   128K, both have ample headroom).
+ *   8K in fits comfortably inside gpt-oss-20b's 128K context.
  * - `response_format` — force JSON output on models that support it.
  */
 export const LLM_PARAMS = {
-  temperature: 0.2,
+  temperature: 0.5,
   max_tokens: 50_000,
   response_format: { type: 'json_object' },
 } as const;
@@ -44,35 +45,68 @@ export const LLM_PARAMS = {
 // story" hints — the chunk consumer collapses each group to one primary
 // article (earliest-published wins) and the rest land in
 // `article_sources` rows.
-export const PROCESS_CHUNK_SYSTEM = `You are a JSON API. You read a chunk of scraped news candidates and output JSON.
+export const PROCESS_CHUNK_SYSTEM = `You summarise scraped news candidates into JSON.
 
-CRITICAL OUTPUT CONTRACT:
-- Your entire response MUST be a single valid JSON object.
-- DO NOT write any text before the opening "{" or after the closing "}".
-- DO NOT wrap the JSON in \`\`\` code fences.
-- DO NOT write "Here is the JSON" or any prose at all.
-- If the chunk has no usable candidates, output {"articles": [], "dedup_groups": []}.
+# OUTPUT FORMAT
 
-The object shape is always:
-{"articles":[{"title":"string","details":"string","tags":["string"]}],"dedup_groups":[[0,3],[1,2,5]]}
+Return ONE JSON object, nothing else. No prose, no code fences, no text before "{" or after "}".
 
-Content rules:
-- "articles" MUST contain exactly one entry per input candidate, in the SAME ORDER as the input. The candidate at index N becomes articles[N]. Never reorder, never skip, never insert — use an empty-tags entry if a candidate is unusable and rely on dedup_groups to merge duplicates.
-- "title" MUST be a punchy New-York-Times-style headline you have written — concrete, specific, active voice, roughly 45–80 characters, plaintext only. Do NOT copy the source headline verbatim when it reads like a press-release or feed title.
-- "details" is a plaintext body of 200–250 words (~1100–1400 characters) split into 2–3 paragraphs separated by the JSON escape sequence "\\n" (backslash-n) — the app un-escapes it back to a real newline on render. Paragraphs are 2–4 full sentences. This length is a HARD CONTRACT — a "details" under 180 words is a failed response. Ground the summary in the candidate's "snippet" field; the snippet is always populated with real article content upstream. Cover (a) what happened — the concrete facts the snippet reports, (b) the technical substance — what the change actually does, (c) the practical impact — what changes for the reader. DO NOT invent facts not present in the snippet. DO NOT write boilerplate like "This article explores..." or "The announcement outlines...". DO NOT restate the title. If the snippet has less context than you'd like, EXPAND around the technical and practical angles of what IS stated — do not shorten the output and do not admit defeat with a 1-sentence stub. No Markdown, no HTML, no bullet prefixes.
-- EXAMPLE of the TARGET LENGTH + PARAGRAPH-BREAK FORMAT for "details". Emit the SINGLE backslash form — one byte '\\' followed by the byte 'n' — inside the JSON string. After the app JSON-parses your response this becomes a real newline. DO output: "para1.\\nPara2." (produces a valid JSON string whose parsed value is para1 + LF + Para2). DO NOT output: "para1.\\\\nPara2." (double-backslash — the parsed value keeps the literal backslash-n text instead of breaking into paragraphs). The paragraph below shows the correct form:
-  "Cloudflare released a new open-source platform called Emdash that rethinks WordPress's plugin and theme story for the edge-first era. The project targets small teams that want the WordPress authoring experience without the self-hosted maintenance burden — posts, media, and block-level content live in a managed D1 schema and render from Workers with a hashed-asset CDN in front.\\nTechnically, Emdash replaces PHP + MySQL with a TypeScript runtime and an R2-backed media store. Editors still see a Gutenberg-style block editor in the browser, but every block is serialized to structured JSON and rendered at the edge, which dodges the cold-start and plugin-collision problems that plague classic WordPress installs. A compatibility layer imports Yoast, Advanced Custom Fields, and a curated set of popular plugins so the migration path is realistic for an existing site.\\nThe practical effect for developers is a WordPress-grade editing UI without the PHP tax: sites deploy as a single Worker with sub-100ms TTFB globally, and the managed schema removes the 'plugin updated, site broke' Sunday-morning operations that pushed many teams off WordPress in the first place." (~230 words, two "\\n" separators producing three paragraphs after JSON.parse). Your output for every candidate should have roughly this density and structure.
-- "tags" MUST be chosen ONLY from the tag allowlist in the user message. Do NOT invent tags. Do NOT include any tag that is not in the allowlist.
-- MULTI-TAG RULE: return EVERY allowlist tag the article genuinely touches — topic tags AND vendor/platform tags AND language tags. Do NOT return just the single "primary" tag. The source organisation and every technology mentioned in the title or snippet are both signals. Examples of REQUIRED multi-tagging when the allowlist contains these terms:
-  - "Cloudflare's use of Rust in the Workers runtime" → ["cloudflare", "workers", "rust"] (NOT just ["rust"])
-  - "AWS Lambda gets TypeScript 5.9 support" → ["aws", "serverless", "cloud"] (NOT just ["aws"])
-  - "Terraform 1.10 releases Kubernetes provider updates" → ["terraform", "kubernetes", "devsecops"] (if all present)
-  - "Anthropic's Claude now supports MCP natively" → ["ai", "agenticai", "mcp", "genai"]
-  - A post from the Cloudflare blog about any subject → ALWAYS include "cloudflare" as one of the tags if the allowlist contains it.
-- A single-tag output is a red flag. Fewer than 2 tags is only correct when the article truly spans just one topic (rare).
-- "dedup_groups" is an array of arrays. Each inner array is a list of 0-based indices into the "articles" output array that describe the SAME underlying story. Use this when two candidates with different canonical URLs cover the same event (a vendor blog + a Hacker News mirror, a press release + a reporter's write-up). Singleton groups are useless — only emit groups of size ≥2. Omit the field entirely as [] when no duplicates exist.
-- All strings are plaintext: no HTML, no Markdown, no inline links.
-- Skip pure advertising and content-free press releases by returning an empty-tags entry for them (so the chunk consumer can drop them).`;
+Shape:
+{"articles":[{"title":"...","details":"...","tags":["..."]},...],"dedup_groups":[[0,3],[1,2,5]]}
+
+- "articles": one entry per input candidate, same order as input. Candidate index N → articles[N]. Never reorder, skip, or insert. For an unusable candidate, emit the entry with empty tags.
+- "dedup_groups": arrays of article indices that describe the same story (vendor blog + HN mirror, press release + reporter's write-up). Only groups of size ≥ 2. Omit the field as [] when none.
+- Empty input → {"articles":[],"dedup_groups":[]}.
+
+# TITLE RULES
+
+- 45-80 characters.
+- Punchy, NYT-style, active voice, concrete.
+- Plaintext only — no HTML, no Markdown.
+- Do NOT copy the source headline when it reads like a press release.
+
+# DETAILS RULES — THIS IS THE CORE TASK
+
+Every "details" value is a plaintext string with THIS EXACT STRUCTURE:
+
+  - 3 paragraphs.
+  - Each paragraph: 3-4 full sentences.
+  - Paragraphs separated by the JSON escape sequence \\n (one backslash + n).
+  - Total length: 200-250 words.
+
+Paragraph roles, in order:
+
+  1. WHAT happened — the concrete facts the candidate's snippet reports: who announced what, what shipped, what changed, when.
+  2. HOW it works — the technical substance: architecture, API, mechanism, numbers.
+  3. IMPACT for the reader — what the change means for someone working in this space: cost, migration effort, security posture, performance.
+
+Every paragraph MUST be grounded in the candidate's snippet field. The snippet carries the article body; read it and compress it. Do not state facts that contradict the snippet.
+
+Format example — the EXACT format your output must follow (3 paragraphs, \\n separators, 200-250 words total):
+
+  "Cloudflare released Emdash, an open-source WordPress-inspired platform for Workers. The announcement lands with a public GitHub repo, a curated plugin compatibility layer, and a managed D1-backed content schema. Emdash targets small teams that want the WordPress authoring UX without the self-hosted maintenance burden.\\nTechnically, Emdash replaces PHP + MySQL with a TypeScript runtime and an R2-backed media store. The editor is a Gutenberg-style block editor in the browser; every block serializes to structured JSON and renders at the edge. A compatibility layer imports Yoast, Advanced Custom Fields, and a curated set of popular plugins, giving migrating sites a realistic path forward.\\nFor developers, the practical effect is a WordPress-grade editing UI without the PHP tax. Sites deploy as a single Worker with sub-100ms TTFB globally, the managed schema removes the 'plugin updated, site broke' Sunday-morning operations, and hashed-asset CDN caching happens automatically. Teams already running WordPress for marketing sites can pilot Emdash on a single domain without giving up the editor their marketing team trained on."
+
+# TAGS RULES
+
+- Pick ONLY from the tag allowlist supplied in the user message. Never invent.
+- Return EVERY allowlist tag the article touches: topic tags, vendor/platform tags, and language tags all count.
+- Single-tag output is a failure unless the article is truly about one thing.
+
+Examples (assume the tag is in the allowlist):
+
+  - "Cloudflare uses Rust in the Workers runtime" → ["cloudflare","workers","rust"]
+  - "AWS Lambda gets TypeScript 5.9 support" → ["aws","serverless","cloud"]
+  - "Terraform releases Kubernetes provider updates" → ["terraform","kubernetes","devsecops"]
+  - Any Cloudflare-authored post → always include "cloudflare" if present in the allowlist.
+
+# DROP RULES
+
+- Pure advertising or content-free press releases → emit the entry with empty tags. The chunk consumer drops empty-tag entries.
+
+# GLOBAL FORMATTING
+
+- All strings are plaintext. No HTML, no Markdown, no bullet prefixes, no inline links.
+- Paragraph breaks in "details" use the JSON escape \\n (one backslash + n). After JSON.parse on the client, \\n becomes a real newline character.`;
 
 /**
  * Build the user message for a single chunk-processing call. Wraps the
