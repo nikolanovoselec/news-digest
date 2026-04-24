@@ -196,28 +196,48 @@ export async function runCoordinator(
   // prevents HTML injection but a `javascript:` href is valid HTML).
   const candidates: Candidate[] = [];
   const nowSec = Math.floor(Date.now() / 1000);
+  // Drop candidates whose source pubDate is more than 48 hours old.
+  // Cron runs every 4 hours, so anything older than two days has
+  // either been seen on a prior tick (and is already in the pool)
+  // or is a backlog item the feed happens to still emit. Either way,
+  // summarising it wastes LLM budget and clutters the dashboard with
+  // 'new ingest, old publish_at' cards that sort below genuinely
+  // fresh stories and make the feed look stuck. candidates with an
+  // unparsable pubDate (we fall back to nowSec) are kept — a missing
+  // date is not the same as a stale date.
+  const FRESHNESS_WINDOW_SEC = 48 * 60 * 60;
+  const staleCutoff = nowSec - FRESHNESS_WINDOW_SEC;
+  let droppedStale = 0;
   for (const row of rawHeadlines) {
     if (!isSafeWebUrl(row.headline.url)) continue;
     const canonical = canonicalize(row.headline.url);
     if (!isSafeWebUrl(canonical)) continue;
+    const pub =
+      typeof row.headline.published_at === 'number' &&
+      row.headline.published_at > 0
+        ? row.headline.published_at
+        : nowSec;
+    if (pub < staleCutoff) {
+      droppedStale += 1;
+      continue;
+    }
     candidates.push({
       canonical_url: canonical,
       source_url: row.headline.url,
       source_name: row.headline.source_name,
       title: row.headline.title,
-      // Prefer the feed's real publication timestamp; fall back to
-      // ingestion time only when the feed omitted a parsable pubDate.
-      // Without this, every article was stamped "now" on ingest, so a
-      // 3-week-old Cloudflare blog post picked up by the cron looked
-      // like today's news on the digest card.
-      published_at:
-        typeof row.headline.published_at === 'number' &&
-        row.headline.published_at > 0
-          ? row.headline.published_at
-          : nowSec,
+      published_at: pub,
       ...(typeof row.headline.snippet === 'string' && row.headline.snippet !== ''
         ? { body_snippet: row.headline.snippet }
         : {}),
+    });
+  }
+  if (droppedStale > 0) {
+    log('info', 'digest.generation', {
+      op: 'coordinator_drop_stale',
+      scrape_run_id,
+      dropped_stale_backlog: droppedStale,
+      freshness_window_hours: 48,
     });
   }
 

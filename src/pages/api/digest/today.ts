@@ -103,13 +103,25 @@ export interface TodayResponse {
 }
 
 /**
- * Load the dashboard payload for a user — the 29 newest articles from
- * the global pool whose tag set intersects the user's active tags,
- * plus the most recent `ready` scrape_run metadata. The grid renders
- * those 29 cards and slot 30 is a "see today in Search & History"
- * tile. Per-tag filtering that reaches beyond the newest-29 window
- * lives on Search & History, not here — the dashboard is
- * deliberately a narrow "just the top 29" view.
+ * Load the dashboard payload for a user — the 29 most-recently-ingested
+ * articles from the global pool whose tag set intersects the user's
+ * active tags, plus the most recent `ready` scrape_run metadata. The
+ * grid renders those 29 cards and slot 30 is a "see today in Search &
+ * History" tile.
+ *
+ * Ordering is `ingested_at DESC, published_at DESC` (not plain
+ * `published_at DESC`) so a new scrape always bubbles its articles to
+ * the top of the dashboard. The prior order sorted by feed pubDate,
+ * which meant a backlog item published two weeks ago could still
+ * dominate the top of the dashboard when it was ingested AFTER a
+ * very-recent article because the very-recent article had an even
+ * newer pubDate. Users saw the same card for 8 hours despite refreshes;
+ * `ingested_at DESC` makes "newest ingest wins" the primary sort so
+ * the feed always feels alive.
+ *
+ * Per-tag filtering that reaches beyond the newest-29 window lives on
+ * Search & History, not here — the dashboard is deliberately a narrow
+ * "just the top 29 you haven't seen" view.
  *
  * Exported so `src/pages/digest.astro` can call it in-process without
  * a subrequest hop; the HTTP GET handler below is a thin wrapper.
@@ -167,7 +179,7 @@ export async function loadTodayPayload(
      WHERE a.id IN (
        SELECT DISTINCT article_id FROM article_tags WHERE tag IN (${tagPlaceholders})
      )
-     ORDER BY a.published_at DESC
+     ORDER BY a.ingested_at DESC, a.published_at DESC
      LIMIT 29
   `;
 
