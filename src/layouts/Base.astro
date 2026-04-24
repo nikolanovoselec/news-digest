@@ -173,7 +173,10 @@ const initialTheme = cookieTheme ?? 'light';
 
     <ClientRouter />
   </head>
-  <body data-first-run={firstRun ? 'true' : 'false'}>
+  <body
+    data-first-run={firstRun ? 'true' : 'false'}
+    data-user-tz={Astro.locals.user?.tz ?? ''}
+  >
     <header class="site-header safe-top safe-x">
       <a href="/" class="site-header__brand focus-ring" aria-label="News Digest home">
         <svg
@@ -226,6 +229,46 @@ const initialTheme = cookieTheme ?? 'light';
         bundled modules work too but this keeps the payload out of
         Astro's build graph for a zero-failure-surface static asset. */}
     <script is:inline src="/scramble.js" defer></script>
+
+    {/* Best-effort browser-tz auto-correct for every authenticated
+        page, not just /settings. When the server-stored tz differs
+        from the browser's Intl-resolved tz, POST the correction so
+        the daily-email dispatcher picks it up on the next /5 cron.
+        This is the fix for users who signed up, landed on /digest,
+        never visited /settings, and received their digest at 08:00
+        UTC instead of 08:00 local. CSP allows inline modules; we
+        ship a bundled module instead of an inline script to stay
+        under the 'script-src: self' policy. */}
+    <script>
+      async function syncBrowserTz(): Promise<void> {
+        const body = document.body;
+        const stored = body.dataset['userTz'] ?? '';
+        if (stored === '') return;
+        let browser = '';
+        try {
+          browser = Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
+        } catch { return; }
+        if (browser === '' || browser === stored) return;
+        try {
+          const res = await fetch('/api/auth/set-tz', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ tz: browser }),
+          });
+          if (res.ok) {
+            body.dataset['userTz'] = browser;
+          }
+        } catch {
+          // Network hiccup — next page load will retry.
+        }
+      }
+      if (document.documentElement.dataset['tzAutoBound'] !== '1') {
+        document.documentElement.dataset['tzAutoBound'] = '1';
+        void syncBrowserTz();
+        document.addEventListener('astro:page-load', () => { void syncBrowserTz(); });
+      }
+    </script>
 
     <style>
       /* Sticky header with a tasteful backdrop blur on scroll — no solid
