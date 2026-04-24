@@ -12,15 +12,24 @@ Tech news for people who would rather read ten good summaries than three thousan
 
 Every 4 hours, ~50 curated sources get scraped, ~500 fresh candidates get batched into ~10 chunks and fed to GPT-OSS-120B on [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/), and the output lands in a shared pool. Your dashboard is a filter over that pool. The rest expires in seven days. Your inbox is left alone.
 
-## The feature I'm the most proud of: nothing is trying to sell you anything
+## The best thing about News Digest is everything it doesn't do
 
-**No ads. Zero. Not one. Not "display ads that respect your privacy", not "sponsored content clearly labelled", not "a gentle reminder from our partners". Nothing.**
+**No ads. Not a single one.** Not a banner, not a billboard, not a sponsorship, not a "brought to you by", not a native-advertising unit that pretends to be a story, not an affiliate link tucked inside a summary. Nothing.
 
-Also missing: cookie banners, "accept all" dark patterns that pretend a red X is a close button, newsletter pop-ups from a LinkedIn thought leader whose last nine posts are variations of "AGI is closer than you think", paywalls that let you read three articles a month and call it generosity, "we value your privacy" preambles quoted directly above a list of 487 advertising partners who value it slightly less, auto-playing video ads that hijack the scroll position, exit-intent promo-code modals, chat widgets pinned to the bottom-right corner asking if you'd like a demo, and "you've read 3 of your 4 free articles this month" breadcrumbs trained on your cortisol levels.
+Also gone:
 
-Also: PWA-installable, dark mode out of the box, and an offline banner when the network drops.
+- **No cookie banner.** No "reject all" button buried behind three nested modals. No "legitimate interest" pre-checked toggle in the twelfth sub-tab. I don't set cookies that need consent, so I don't ask.
+- **No "we value your privacy" preamble** followed by a list of 487 advertising partners who value it considerably less. My privacy policy is I don't have the data in the first place.
+- **No paywall counting down your free articles like a casino tracking how close you are to tilt.** All 100% of articles are 100% free 100% of the time. There isn't a metering layer. There isn't a subscription tier. There isn't a loyalty funnel. There's news.
+- **No newsletter pop-up.** No "join 42,000 builders who get insights every Tuesday" from some LinkedIn thought leader whose last nine posts are variations on "AGI is closer than you think". There is no second newsletter. This is the newsletter.
+- **No auto-playing video ad** that hijacks your scroll position, reloads when you scroll past it, and sets off the stadium speakers on your laptop at 11 pm.
+- **No exit-intent modal** demanding your email in exchange for a 10% discount on nothing, because you're exiting, which means you've already decided, which should be respected rather than litigated.
+- **No chat widget** pinned to the bottom-right corner going "Hi there 👋 can I help you find what you're looking for?" No. I was looking for the article. Which you covered up. With yourself.
+- **No tracking pixels, no analytics dashboard I stare at hoping the line goes up, no Hotjar recording every mouse movement, no A/B test that occasionally serves you a version with a paywall just to see how you'd feel about it.**
 
-The internet became a dark-pattern theme park. News Digest is one ride that still just runs.
+Also included, because why not: **PWA-installable, dark mode out of the box, an offline banner when the network drops, and the entire site loads faster than the average ad network's third handshake.**
+
+The internet became a dark-pattern theme park where every ride ends at the gift shop. News Digest is one ride that just runs.
 
 ## Features
 
