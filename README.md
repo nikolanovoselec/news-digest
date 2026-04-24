@@ -37,7 +37,7 @@ News Digest hires the LLM instead. Every 4 hours, 6 times a day. On its own cloc
 
 ## Built with Codeflare SDD
 
-This repo is a test drive of [Codeflare](https://codeflare.ch)'s spec-driven development framework. Every feature travels through the same loop:
+This repo is a test drive of [Codeflare](https://codeflare.ch)'s ([GitHub](https://github.com/nikolanovoselec/codeflare)) spec-driven development framework. Every feature travels through the same loop:
 
 1. **Spec first.** A REQ with Intent + Acceptance Criteria lands in `sdd/{domain}.md` before any code touches `src/`.
 2. **Failing test.** `tests/{domain}/*.test.ts` names the REQ ID and asserts the AC.
