@@ -300,14 +300,21 @@ const initialTheme = cookieTheme ?? 'light';
         } catch { /* storage quota / disabled — nothing to do */ }
       }
       // Retry-based restore: the naive "single rAF after page-load"
-      // race-loses against image-heavy pages on mobile, where the
-      // layout height isn't established until lazy images have
-      // decoded. If we call scrollTo(0, 1200) on a page that's only
-      // 600px tall, the browser clamps to 600px and the real target
-      // is lost. We retry on each frame for up to a second, stopping
-      // as soon as scrollY matches target (within 2px) or the user
-      // scrolls manually (which cancels the attempt to avoid a jump
-      // under their finger).
+      // race-loses against two mobile problems:
+      //   (a) image-heavy pages whose layout height isn't established
+      //       until lazy images have decoded — scrollTo(0, 1200) on a
+      //       page that's only 600px tall clamps to 600 and the real
+      //       target is lost forever;
+      //   (b) pages that shrink AFTER the initial restore when the
+      //       tag-strip filter's `applyFilter()` sets
+      //       `display:none` on non-matching cards, collapsing the
+      //       grid's height — the browser silently clamps scrollY and
+      //       a simple "stop on first match" tick loop terminates
+      //       before the collapse happens.
+      // We tick every frame for 3 seconds AND observe document
+      // height changes via ResizeObserver, re-asserting scrollTo on
+      // every mutation. Stop on user wheel/touchmove so we never
+      // jump under their finger.
       function restoreScroll(): void {
         // Advance currentPath to the page we're now on. Any future
         // saveScroll calls before the next navigation will correctly
@@ -320,17 +327,33 @@ const initialTheme = cookieTheme ?? 'light';
           if (!Number.isFinite(target) || target < 0) return;
           if (target === 0) return;
           const started = performance.now();
-          const DURATION_MS = 1000;
+          const DURATION_MS = 3000;
           let cancelled = false;
-          const cancel = (): void => { cancelled = true; };
-          window.addEventListener('wheel', cancel, { once: true, passive: true });
-          window.addEventListener('touchmove', cancel, { once: true, passive: true });
+          let ro: ResizeObserver | null = null;
+          const teardown = (): void => {
+            cancelled = true;
+            if (ro !== null) { ro.disconnect(); ro = null; }
+          };
+          window.addEventListener('wheel', teardown, { once: true, passive: true });
+          window.addEventListener('touchmove', teardown, { once: true, passive: true });
+          // ResizeObserver catches the dashboard's tag-filter layout
+          // shrink as well as lazy-image layout growth — any time the
+          // document height changes while we're in the restore window,
+          // re-assert the target so the clamp can't strand us.
+          if (typeof ResizeObserver !== 'undefined') {
+            ro = new ResizeObserver(() => {
+              if (cancelled) return;
+              window.scrollTo(0, target);
+            });
+            ro.observe(document.documentElement);
+          }
           const tick = (): void => {
             if (cancelled) return;
-            const now = performance.now();
             window.scrollTo(0, target);
-            if (Math.abs(window.scrollY - target) <= 2) return;
-            if (now - started > DURATION_MS) return;
+            if (performance.now() - started > DURATION_MS) {
+              teardown();
+              return;
+            }
             requestAnimationFrame(tick);
           };
           requestAnimationFrame(tick);

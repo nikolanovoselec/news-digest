@@ -458,13 +458,20 @@ const articleDataset = {
   .article-detail__body {
     display: flex;
     flex-direction: column;
-    gap: 1.1rem;
+    /* Editorial long-form reading density — was 1.1rem; the prior
+       news-article-dense spacing made the detail page feel compressed
+       next to the dashboard cards. */
+    gap: 1.4rem;
   }
 
   .article-detail__paragraph {
     margin: 0;
     font-family: var(--font-sans);
-    font-size: var(--text-base);
+    /* 17px is the editorial long-form sweet spot on mobile (NYT,
+       Stratechery, Medium sit between 17–18px). The dashboard card
+       one-liners stay at --text-base (16px) so the detail surface
+       reads as "slow down and focus" and the grid reads as "scan". */
+    font-size: 17px;
     line-height: 1.65;
     color: var(--text);
     /* Proper reading prose controls: allow hyphenation, ask the
@@ -508,7 +515,16 @@ const articleDataset = {
     color: var(--text);
     font-size: 3.4em;
     line-height: 1;
-    margin: 0 0.1em 0 0;
+    /* Float box math: the glyph is 3.4em tall at line-height 1 and
+       body lines are 1.65em each → 2 body lines = 3.30em. Without a
+       negative margin-bottom, the float's 3.4em box spills 0.10em
+       into line 3 and shifts that line's leading edge right — the
+       "third line indented" bug reported on Samsung Browser. Capital
+       letters have no descender so clipping the float footprint by
+       0.15em (a bit more than the 0.10em overrun, to absorb mobile
+       pixel-rounding) leaves the rendered glyph unchanged while
+       letting line 3 flow full-width. */
+    margin: 0 0.1em -0.15em 0;
     padding: 0;
   }
 
