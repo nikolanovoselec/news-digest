@@ -33,7 +33,7 @@ Tech news in 2026 has four shapes, all broken:
 - **Social feeds.** Outrage optimised for engagement, which is not the same thing as information.
 - **Asking an LLM.** Requires remembering to ask. If remembering were the user's strong suit, none of this would be a problem.
 
-News Digest hires the LLM instead. Every 4 hours. On its own clock.
+News Digest hires the LLM instead. Every 4 hours, 6 times a day. On its own clock.
 
 ## Built with Codeflare SDD
 
