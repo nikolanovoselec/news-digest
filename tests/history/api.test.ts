@@ -32,6 +32,7 @@ interface ArticleRow {
   primary_source_name: string | null;
   primary_source_url: string | null;
   published_at: number;
+  ingested_at: number;
   details_json: string | null;
   tags_json: string | null;
 }

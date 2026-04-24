@@ -38,6 +38,7 @@ interface ArticleRow {
   primary_source_name: string | null;
   primary_source_url: string | null;
   published_at: number;
+  ingested_at: number;
   details_json: string | null;
   tags_json: string | null;
 }
@@ -143,15 +144,30 @@ export async function GET(context: APIContext): Promise<Response> {
   let articleRows: ArticleRow[] = [];
   if (userTags.length > 0) {
     const tagPlaceholders = userTags.map((_, i) => `?${i + 2}`).join(', ');
+    // History groups by `ingested_at` — the day the scrape pipeline
+    // processed the article — NOT `published_at` (the feed's original
+    // publication timestamp). Rationale: a per-day row on /history
+    // ALSO shows tokens / cost / articles-ingested from
+    // scrape_runs whose `started_at` falls on that day; those are
+    // ingest-side numbers. If we grouped articles by published_at
+    // instead, a fresh wipe + rescrape would show articles
+    // distributed across ~10 days (feeds return ~10-day backlog)
+    // while tokens/cost concentrate on the one or two days the runs
+    // actually happened — a misleading schism.
+    //
+    // Keep selecting `published_at` so the wire payload still emits
+    // the feed's real publication time on each card (users read
+    // articles by when the news happened); the GROUPING key is
+    // ingested_at, the DISPLAY key is published_at.
     const articlesSql =
       `SELECT a.id, a.title, a.primary_source_name, a.primary_source_url, ` +
-      `a.published_at, a.details_json, ` +
+      `a.published_at, a.ingested_at, a.details_json, ` +
       `(SELECT json_group_array(DISTINCT at.tag) FROM article_tags at ` +
       `WHERE at.article_id = a.id) AS tags_json ` +
       `FROM articles a ` +
-      `WHERE a.published_at >= ?1 ` +
+      `WHERE a.ingested_at >= ?1 ` +
       `AND a.id IN (SELECT DISTINCT article_id FROM article_tags WHERE tag IN (${tagPlaceholders})) ` +
-      `ORDER BY a.published_at DESC`;
+      `ORDER BY a.ingested_at DESC`;
     try {
       const result = await env.DB
         .prepare(articlesSql)
@@ -196,7 +212,10 @@ export async function GET(context: APIContext): Promise<Response> {
   const dayMap = new Map<string, DayGroup>();
 
   for (const row of articleRows) {
-    const localDate = localDateInTz(row.published_at, tz);
+    // Grouping key = ingested_at (when the pipeline processed the
+    // article). published_at stays on the wire payload so cards
+    // display the feed's real publication date.
+    const localDate = localDateInTz(row.ingested_at, tz);
     const group = upsertDay(dayMap, localDate);
     group.articles.push({
       id: row.id,
