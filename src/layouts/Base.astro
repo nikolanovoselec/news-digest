@@ -288,21 +288,36 @@ const initialTheme = cookieTheme ?? 'light';
           sessionStorage.setItem(KEY(), String(window.scrollY));
         } catch { /* storage quota / disabled — nothing to do */ }
       }
+      // Retry-based restore: the naive "single rAF after page-load"
+      // race-loses against image-heavy pages on mobile, where the
+      // layout height isn't established until lazy images have
+      // decoded. If we call scrollTo(0, 1200) on a page that's only
+      // 600px tall, the browser clamps to 600px and the real target
+      // is lost. We retry on each frame for up to a second, stopping
+      // as soon as scrollY matches target (within 2px) or the user
+      // scrolls manually (which cancels the attempt to avoid a jump
+      // under their finger).
       function restoreScroll(): void {
         try {
           const raw = sessionStorage.getItem(KEY());
           if (raw === null) return;
-          const y = Number.parseInt(raw, 10);
-          if (!Number.isFinite(y) || y <= 0) return;
-          // Defer so page-specific init (filter hydration, tag-
-          // chip DOM reorder, etc.) has settled before we scroll.
-          // A single rAF is enough in practice; two-rAF would be
-          // belt-and-suspenders if layout depends on images loading.
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              window.scrollTo(0, y);
-            });
-          });
+          const target = Number.parseInt(raw, 10);
+          if (!Number.isFinite(target) || target <= 0) return;
+          const started = performance.now();
+          const DURATION_MS = 1000;
+          let cancelled = false;
+          const cancel = (): void => { cancelled = true; };
+          window.addEventListener('wheel', cancel, { once: true, passive: true });
+          window.addEventListener('touchmove', cancel, { once: true, passive: true });
+          const tick = (): void => {
+            if (cancelled) return;
+            const now = performance.now();
+            window.scrollTo(0, target);
+            if (Math.abs(window.scrollY - target) <= 2) return;
+            if (now - started > DURATION_MS) return;
+            requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
         } catch { /* ditto */ }
       }
       if (document.documentElement.dataset['scrollRestoreBound'] !== '1') {

@@ -412,27 +412,20 @@ function formatCostUsd(value: number | null | undefined): string {
       input.addEventListener('input', apply);
     }
 
-    // Tag chip click handlers — toggle is-selected and re-run the
-    // combined filter. Delegate from `document` rather than binding
-    // to the strip element: (a) it survives View-Transition DOM
-    // replacements without a rebind step, (b) a document-level
-    // listener keeps working even when a client-added chip gets
-    // appended after the strip was first scanned. Scoped to clicks
-    // inside a [data-tag-strip-wrap] that's ON THIS PAGE by checking
-    // `[data-history-search]` exists — this prevents the handler
-    // from firing on the dashboard (which has its own click
-    // handler) when the user navigates via ClientRouter.
-    const historyClickHandler = (e: MouseEvent): void => {
-      // Scope by pathname — the listener is bound to `document` once
-      // per session and survives View-Transition navigations, so a
-      // DOM-selector check ('[data-history-search]') would fire on any
-      // page that happens to share the selector. pathname is the
-      // cheapest, least-entangled guard.
-      if (window.location.pathname !== '/history') return;
+    // Tag chip click handler — toggle is-selected and re-run the
+    // combined filter. Bound DIRECTLY to the strip element (not via
+    // document-level delegation). Earlier attempts to delegate from
+    // `document` survived in theory but kept breaking in practice on
+    // SPA return — most likely because the handler's closure over
+    // `apply` / `input` got stale even with teardown in place. Binding
+    // to the strip itself ties the handler's lifetime to the DOM node
+    // it acts on: when the node is swapped out by ClientRouter, its
+    // listeners go with it, no explicit teardown needed.
+    const stripWrap = document.querySelector<HTMLElement>('[data-tag-strip-wrap]');
+    const stripClickHandler = (e: Event): void => {
       const target = e.target;
       if (!(target instanceof Element)) return;
-      if (target.closest('[data-tag-strip-wrap]') === null) return;
-      // Remove (×) takes precedence — it's inside the chip.
+      // Remove (×) takes precedence — it sits inside the chip.
       const removeHit = target.closest<HTMLElement>('[data-tag-remove]');
       if (removeHit !== null) {
         e.preventDefault();
@@ -450,24 +443,16 @@ function formatCostUsd(value: number | null | undefined): string {
       chip.classList.toggle('is-selected', !wasSelected);
       chip.setAttribute('aria-pressed', wasSelected ? 'false' : 'true');
       if (!wasSelected) {
-        // Pin the just-selected chip to scroll-position 0 of the
-        // (mobile-scrollable) strip so it stays visible without the
-        // user having to scroll back to find it. insertBefore rather
-        // than prepend — the Workers + DOM type overlap in this
-        // repo's tsconfig gives prepend an ambiguous signature that
-        // astro check rejects.
         const thisStrip = chip.closest<HTMLElement>('[data-tag-strip]');
-        if (thisStrip !== null) thisStrip.insertBefore(chip, thisStrip.firstChild);
+        if (thisStrip !== null) {
+          thisStrip.insertBefore(chip, thisStrip.firstChild);
+        }
       }
       apply();
     };
-    // Bind per-init and remove in the teardown returned below. Binding
-    // once with a flag would freeze the handler's closure over the DOM
-    // captured on first visit; the next time the user returns to
-    // /history via ClientRouter, the new DOM is live but the old
-    // handler still calls the detached `apply` → chip clicks silently
-    // do nothing until the user hard-reloads.
-    document.addEventListener('click', historyClickHandler);
+    if (stripWrap !== null) {
+      stripWrap.addEventListener('click', stripClickHandler);
+    }
 
     // Hydrate from URL on load: restore q + tag selections so that
     // navigating back to /history?q=foo&tags=a,b brings the user to
@@ -508,7 +493,9 @@ function formatCostUsd(value: number | null | undefined): string {
       if (input !== null) {
         input.removeEventListener('input', apply);
       }
-      document.removeEventListener('click', historyClickHandler);
+      if (stripWrap !== null) {
+        stripWrap.removeEventListener('click', stripClickHandler);
+      }
     };
   }
 
