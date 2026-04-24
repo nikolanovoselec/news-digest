@@ -18,30 +18,25 @@ export interface ModelOption {
   category: 'featured' | 'budget';
 }
 
-// Default model: @cf/openai/gpt-oss-20b. Native OpenAI JSON mode
-// (response_format: json_object is HARD-guaranteed, not aspirational),
-// 128K context, $0.20/$0.30 per M tokens. Swapped in as default after
-// the Gemma-4 experiment failed — Gemma-4 is a REASONING model that
-// emits chain-of-thought into choices[0].message.reasoning and only
-// writes the final JSON to .content AFTER reasoning completes. With a
-// 100-article chunk at 200-250 words each, Gemma's chain-of-thought
-// ate the entire 50K max_tokens budget before producing any JSON, so
-// every call landed with finish_reason=length + content=null, which
-// extractResponsePayload correctly treats as malformed → fallback →
-// (if fallback also failed, which it did) chunk dead-lettered.
+// Default model: @cf/openai/gpt-oss-120b. Native OpenAI JSON mode
+// (response_format: json_object is HARD-guaranteed), 128K context,
+// $0.35/$0.75 per M tokens. Promoted from fallback to default after
+// @cf/openai/gpt-oss-20b consistently produced ~145-word summaries
+// against the 200-250 word target — even after the structured
+// prompt rewrite and temperature bump to 0.5. 20B has the context
+// window but not the long-form coherence at the target length;
+// 120B demonstrably produced 500+ word summaries on the same prompt
+// in earlier runs with no complaint.
 //
-// gpt-oss-20b is proven, the format is deterministic, and the price
-// delta vs Gemma ($0.30/M out → same) is zero. The original fallback
-// path (retry with gpt-oss-20b) is redundant when gpt-oss-20b IS the
-// primary, so we promote gpt-oss-120b to fallback — more capable
-// model in case 20B chokes on a weird candidate.
-export const DEFAULT_MODEL_ID = '@cf/openai/gpt-oss-20b';
+// Fallback stays at @cf/openai/gpt-oss-20b — cheaper and faster for
+// the malformed-JSON retry path where we just need a parsable payload,
+// not maximum verbosity.
+export const DEFAULT_MODEL_ID = '@cf/openai/gpt-oss-120b';
 
 /** Fallback model the chunk consumer retries with on malformed-JSON
- * output. `@cf/openai/gpt-oss-120b` is the larger sibling of the
- * default — same OpenAI JSON contract but more parameters, so when
- * 20B trips on a pathological chunk the 120B pass is the safety net. */
-export const FALLBACK_MODEL_ID = '@cf/openai/gpt-oss-120b';
+ * output. `@cf/openai/gpt-oss-20b` is the smaller sibling — cheaper
+ * and faster, used only when the 120B output fails JSON parsing. */
+export const FALLBACK_MODEL_ID = '@cf/openai/gpt-oss-20b';
 
 export const MODELS: ModelOption[] = [
   // Featured — the four headline choices users see at the top of the dropdown.
