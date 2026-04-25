@@ -30,6 +30,8 @@ The bar for "doesn't spy on you or sell you anything" is, in fairness, embarrass
 
 ## Why
 
+Honestly? I wanted to read news like it's 1995 — before ads outnumbered words and every outlet copy-pasted the same wire story under a different headline. The internet promised choice. It delivered the same article, twelve times, behind twelve cookie banners.
+
 Newsletters arrive on someone else's clock. RSS readers turn into 3,000-item guilt-trips. Social feeds optimise for outrage. Asking an LLM requires remembering to ask.
 
 News Digest hires the LLM. It remembers so you don't. This isn't enlightenment. This is delegation.
