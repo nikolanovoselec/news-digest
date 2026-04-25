@@ -137,7 +137,7 @@ Native-form transport path for account deletion. Accepts a `application/x-www-fo
 }
 ```
 
-Returns up to 29 articles from the global pool filtered by the session user's active hashtags, ordered by `ingested_at DESC, published_at DESC` — newest ingest wins so a fresh scrape always bubbles its articles to the top of the dashboard. The 30th position in the digest grid is always the "see today" tile (a fixed icon card that deep-links to `/history?date=YYYY-MM-DD`). `last_scrape_run` is the most recent completed `scrape_runs` row; `next_scrape_at` is `started_at + 3600` (unix seconds). The pool is always populated — no `live` flag or skeleton state.
+Returns up to 29 articles from the global pool filtered by the session user's active hashtags, ordered by `ingested_at DESC, published_at DESC` — newest ingest wins so a fresh scrape always bubbles its articles to the top of the dashboard. The 30th position in the digest grid is always the "see today" tile (a fixed icon card that deep-links to `/history?date=YYYY-MM-DD`). `last_scrape_run` is the most recent completed `scrape_runs` row; `next_scrape_at` is `started_at + 14400` (unix seconds — the cron fires every 4 hours). The pool is always populated — no `live` flag or skeleton state.
 
 **Implements:** [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) AC 5
 
