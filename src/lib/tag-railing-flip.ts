@@ -144,7 +144,36 @@ export async function flipChipToFront(
       firstRects.set(chip, chip.getBoundingClientRect());
     }
 
+    // CRITICAL — defeat two browser implicit behaviours that would
+    // otherwise shift `strip.scrollLeft` between FIRST and LAST
+    // captures and break the inverse-transform math (especially for
+    // the tapped chip itself):
+    //   (a) :focus auto-scroll: when insertBefore moves a focused
+    //       button to a different DOM position inside a scrollable
+    //       container, Blink/WebKit scroll the container to keep the
+    //       focused element visible. We blur the chip first; later we
+    //       re-focus it with preventScroll: true once the cascade is
+    //       settled (preserves keyboard accessibility).
+    //   (b) scroll-snap re-evaluation: the strip uses
+    //       `scroll-snap-type: x proximity` and chips have
+    //       `scroll-snap-align: start`. DOM mutation re-evaluates
+    //       snap points and may re-snap scrollLeft. We temporarily
+    //       disable scroll-snap for the duration of the FLIP and
+    //       restore it after settle.
+    // Plus a synchronous scrollLeft snapshot/restore around
+    // insertBefore as belt-and-braces in case the browser still
+    // moves scrollLeft despite (a) and (b).
+    const prevSnap = strip.style.scrollSnapType;
+    strip.style.scrollSnapType = 'none';
+    const savedScrollLeft = strip.scrollLeft;
+    const hadFocus = document.activeElement === tappedChip;
+    if (hadFocus) tappedChip.blur();
+
     strip.insertBefore(tappedChip, strip.firstChild);
+
+    if (strip.scrollLeft !== savedScrollLeft) {
+      strip.scrollLeft = savedScrollLeft;
+    }
 
     // INVERT: for each chip whose position changed by more than half
     // a pixel, set transform so it appears to still be in its old
@@ -247,6 +276,13 @@ export async function flipChipToFront(
         }
       }
     }
+
+    // Restore scroll-snap (AFTER the cascade — re-enabling it
+    // mid-transition would re-snap during the slide). Re-focus
+    // the tapped chip with `preventScroll: true` so the keyboard
+    // user doesn't lose their place AND no implicit scroll fires.
+    strip.style.scrollSnapType = prevSnap;
+    if (hadFocus) tappedChip.focus({ preventScroll: true });
   } finally {
     strip.removeAttribute(ANIM_LOCK_ATTR);
   }

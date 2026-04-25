@@ -113,6 +113,12 @@ const selected = initialSelected ?? new Set<string>();
     gap: 0.5rem;
     align-items: center;
     padding: 0.25rem 1rem;
+    /* REQ-READ-007 — defeat scroll-anchoring (Chrome implicit
+       behaviour that adjusts scrollLeft when DOM mutates near the
+       scroll position). The FLIP cascade already snapshots and
+       restores scrollLeft around insertBefore, but disabling
+       scroll-anchoring entirely is belt-and-braces. */
+    overflow-anchor: none;
     /* Reserve space on the right for the absolutely-positioned + add
        button (~5rem incl. gap) so the last chip can scroll into view
        without sitting under the button permanently. */
