@@ -2,13 +2,14 @@
 
 ## Vision
 
-A personalized daily tech news digest. Users sign in with GitHub, curate interests as hashtags, and receive an AI-curated digest at their chosen time each day. Swiss-minimal reading experience with cost transparency on every digest, email notifications, and PWA-installable on mobile.
+A personalized daily tech news digest. Users sign in with a federated identity provider (GitHub or Google), curate interests as hashtags, and receive an AI-curated digest at their chosen time each day. Swiss-minimal reading experience with cost transparency on every digest, email notifications, and PWA-installable on mobile.
 
 ## Actors
 
 | Actor | Description |
 |-------|-------------|
-| **User** | A signed-in GitHub user curating hashtags and reading digests |
+| **User** | A signed-in user (federated via GitHub or Google) curating hashtags and reading digests |
+| **Admin** | The deployment operator — gated by Cloudflare Access at the zone level — who can force a fresh scrape tick and bulk-re-discover feeds for stuck tags |
 
 "System" (cron, Queue consumer, service worker) is a qualifier, not an actor.
 
@@ -26,7 +27,7 @@ A personalized daily tech news digest. Users sign in with GitHub, curate interes
 
 | # | Domain | File | Priority | Description |
 |---|--------|------|----------|-------------|
-| 1 | Authentication | [authentication.md](authentication.md) | P0 | GitHub OAuth, HMAC-JWT sessions, revocation, CSRF, account deletion |
+| 1 | Authentication | [authentication.md](authentication.md) | P0 | Federated OAuth/OIDC (GitHub or Google), HMAC-JWT sessions, revocation, CSRF, account deletion |
 | 2 | Onboarding & Settings | [settings.md](settings.md) | P0 | First-run flow, hashtag curation, schedule (HH:MM + tz), email toggle |
 | 3 | Source Discovery | [discovery.md](discovery.md) | P0 | LLM-assisted per-tag feed discovery, SSRF-filtered validation, manual re-discover, prompt injection protection |
 | 4 | Digest Generation | [generation.md](generation.md) | P0 | Cron dispatcher, Queue consumer, source fan-out, LLM summarization, rate limits, stuck-sweeper |
