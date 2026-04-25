@@ -123,7 +123,10 @@ export async function flipChipToFront(
   // Lock the strip immediately so any re-entrant tap during the
   // pop / hold / cascade is suppressed. The try/finally below
   // guarantees the lock is cleared even if any DOM op throws.
+  // hadFocus is hoisted above the try so the finally block can
+  // restore focus regardless of where in the cascade we throw.
   strip.setAttribute(ANIM_LOCK_ATTR, '1');
+  const hadFocus = document.activeElement === tappedChip;
   try {
     // PHASE 2 — HOLD: deliberate pause so the user's eye lands on
     // the popped chip before anything else moves. The chip is still
@@ -144,7 +147,35 @@ export async function flipChipToFront(
       firstRects.set(chip, chip.getBoundingClientRect());
     }
 
+    // CRITICAL — defeat two browser implicit behaviours that would
+    // otherwise shift `strip.scrollLeft` between FIRST and LAST
+    // captures and break the inverse-transform math (especially for
+    // the tapped chip itself):
+    //   (a) :focus auto-scroll: when insertBefore moves a focused
+    //       button to a different DOM position inside a scrollable
+    //       container, Blink/WebKit scroll the container to keep the
+    //       focused element visible. We blur the chip first; later we
+    //       re-focus it with preventScroll: true once the cascade is
+    //       settled (preserves keyboard accessibility).
+    //   (b) scroll-snap re-evaluation: the strip uses
+    //       `scroll-snap-type: x proximity` and chips have
+    //       `scroll-snap-align: start`. DOM mutation re-evaluates
+    //       snap points and may re-snap scrollLeft. We temporarily
+    //       disable scroll-snap for the duration of the FLIP and
+    //       restore it after settle.
+    // Plus a synchronous scrollLeft snapshot/restore around
+    // insertBefore as belt-and-braces in case the browser still
+    // moves scrollLeft despite (a) and (b).
+    const prevSnap = strip.style.scrollSnapType;
+    strip.style.scrollSnapType = 'none';
+    const savedScrollLeft = strip.scrollLeft;
+    if (hadFocus) tappedChip.blur();
+
     strip.insertBefore(tappedChip, strip.firstChild);
+
+    if (strip.scrollLeft !== savedScrollLeft) {
+      strip.scrollLeft = savedScrollLeft;
+    }
 
     // INVERT: for each chip whose position changed by more than half
     // a pixel, set transform so it appears to still be in its old
@@ -191,7 +222,14 @@ export async function flipChipToFront(
       tappedChip.classList.remove(POP_CLASS);
 
       // PLAY: next animation frame, transition transforms back to
-      // zero so the cascade plays out.
+      // zero so the cascade plays out. Simultaneously animate
+      // strip.scrollLeft from its current value down to 0 in lockstep
+      // with the cascade — without this the tapped chip slides into
+      // viewport pixel `slot0_offset - scrollLeft` (off-screen-left
+      // when scrollLeft > 0) and the user perceives it as
+      // disappearing. Manual rAF easing matches the cascade's
+      // cubic-bezier(0.2, 0.8, 0.2, 1) timing so chip motion and
+      // scroll motion settle together.
       await new Promise<void>((resolve) => {
         requestAnimationFrame(() => resolve());
       });
@@ -199,6 +237,7 @@ export async function flipChipToFront(
         chip.style.transition = `transform ${durationMs}ms cubic-bezier(0.2, 0.8, 0.2, 1)`;
         chip.style.transform = '';
       }
+      animateScrollTo(strip, 0, durationMs);
 
       // Wait for the longest-moving chip's transitionend (which is
       // the tapped chip — it traverses the most distance) with a
@@ -247,7 +286,68 @@ export async function flipChipToFront(
         }
       }
     }
+
+    // Restore scroll-snap (AFTER the cascade — re-enabling it
+    // mid-transition would re-snap during the slide).
+    strip.style.scrollSnapType = prevSnap;
   } finally {
+    // Keyboard-accessibility safety: restore focus in finally so
+    // even an unexpected throw mid-cascade doesn't leave the user
+    // without a focused chip. preventScroll: true blocks the focus
+    // call's own implicit scroll.
+    if (hadFocus) tappedChip.focus({ preventScroll: true });
     strip.removeAttribute(ANIM_LOCK_ATTR);
   }
+}
+
+/** Fire-and-forget rAF easing for `scrollLeft`. We can't use the
+ *  native `scrollTo({behavior: 'smooth'})` because its duration is
+ *  browser-defined (~200-500ms typically) and would fall out of step
+ *  with our 800ms cascade — chip motion and scroll motion would
+ *  desynchronise visibly. Manual easing keeps both curves locked
+ *  together and matches the cascade's cubic-bezier(0.2, 0.8, 0.2, 1)
+ *  via an inline easeOutQuint approximation. */
+function animateScrollTo(
+  strip: HTMLElement,
+  target: number,
+  durationMs: number,
+): void {
+  const start = strip.scrollLeft;
+  if (Math.abs(target - start) < 0.5) return;
+  // User-scroll cancellation: if the user manually scrolls (wheel,
+  // touch, pointer) during our rAF easing, abort immediately so we
+  // don't fight their input. One-shot passive listeners keep the
+  // overhead trivial.
+  let cancelled = false;
+  const cancel = (): void => {
+    cancelled = true;
+  };
+  const opts: AddEventListenerOptions = { once: true, passive: true };
+  strip.addEventListener('wheel', cancel, opts);
+  strip.addEventListener('touchstart', cancel, opts);
+  strip.addEventListener('pointerdown', cancel, opts);
+  const cleanup = (): void => {
+    strip.removeEventListener('wheel', cancel);
+    strip.removeEventListener('touchstart', cancel);
+    strip.removeEventListener('pointerdown', cancel);
+  };
+  const t0 = performance.now();
+  const tick = (now: number): void => {
+    if (cancelled) {
+      cleanup();
+      return;
+    }
+    const elapsed = now - t0;
+    const t = Math.min(1, elapsed / durationMs);
+    // easeOutQuint — close enough to cubic-bezier(0.2, 0.8, 0.2, 1)
+    // for the eye, no curve-library dependency.
+    const eased = 1 - Math.pow(1 - t, 5);
+    strip.scrollLeft = start + (target - start) * eased;
+    if (t < 1) {
+      requestAnimationFrame(tick);
+    } else {
+      cleanup();
+    }
+  };
+  requestAnimationFrame(tick);
 }
