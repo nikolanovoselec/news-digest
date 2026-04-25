@@ -143,7 +143,7 @@ Returns up to 29 articles from the global pool filtered by the session user's ac
 
 ### GET /api/digest/:id
 
-**Response:** Same article shape as `/today` for a single article by ID. Scoped to articles whose digest belongs to the session user — returns 404 if not found or not owned.
+**Response:** Same article shape as `/today` for a single article by ID from the global article pool. Returns 404 if not found.
 
 **Implements:** [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view)
 
@@ -299,7 +299,7 @@ The pipeline runs asynchronously via Queues. Poll `GET /api/scrape-status` to wa
 
 ### POST /api/admin/force-refresh (also GET)
 
-Operator-only endpoint that kicks the hourly global-feed coordinator on demand — identical to what the `0 * * * *` cron fires automatically. Creates a fresh `scrape_runs` row with `status='running'` and sends a `SCRAPE_COORDINATOR` queue message.
+Operator-only endpoint that kicks the global-feed coordinator on demand — identical to what the `0 */4 * * *` cron fires automatically (every 4 hours at 00/04/08/12/16/20 UTC). Creates a fresh `scrape_runs` row with `status='running'` and sends a `SCRAPE_COORDINATOR` queue message.
 
 **Access control:** Intended to be gated by Cloudflare Access at the zone level. `POST` additionally enforces the standard Origin check ([REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)) as defence-in-depth against CSRF from a logged-in browser session. `GET` is exempt from the Origin check so operators can trigger from a bookmark or `curl`.
 
@@ -331,7 +331,7 @@ Static file served from `public/robots.txt`. Allows crawlers access to the landi
 
 ### GET /llms.txt
 
-Static machine-readable agents policy (served from `public/llms.txt`). Describes the product, what is public, that every surface beyond the landing page requires a GitHub OAuth session, and an explicit request not to train on content behind the login. Links to the sitemap and `robots.txt`.
+Static machine-readable agents policy (served from `public/llms.txt`). Describes the product, what is public, that every surface beyond the landing page requires a federated OAuth session (GitHub or Google), and an explicit request not to train on content behind the login. Links to the sitemap and `robots.txt`.
 
 **Implements:** [REQ-OPS-004](../sdd/observability.md#req-ops-004-crawler-policy-and-public-surface-discoverability) AC 3
 
@@ -345,16 +345,15 @@ Extended machine-readable agents policy (`public/llms-full.txt`). Superset of `l
 
 ## History and Stats
 
-### GET /api/history?offset=0
+### GET /api/history
 
 **Query parameters:**
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `offset` | integer | No (default 0) | Pagination offset — skip this many rows before returning results |
-| `date` | string (`YYYY-MM-DD`) | No | When present, filters to the single day matching this local date and returns a single-day-focused rendering mode with a "Back to all days" control on `/history`. Deep-linked from the "see today" tile on the digest grid. |
+| `date` | string (`YYYY-MM-DD`) | No | When present, filters to the single matching local day. Used for the "see today" deep-link from the digest grid. |
 
-**Response:** `{ digests: [...], has_more: bool }` — up to 30 per page ordered by `generated_at DESC`. When `date` is supplied, only digests whose `generated_at` falls on that calendar day are returned and `has_more` is always `false`. Each digest row includes `article_count` (correlated subquery), `model_name` (human-readable, resolved from the model catalog — falls back to the raw `model_id` for removed models), `execution_ms`, `tokens_in`, `tokens_out`, `estimated_cost_usd`, `status`, `error_code`, and `trigger`.
+**Response:** `{ days: [...] }` — up to 7 day-groups keyed by the user's local timezone (users.tz), sorted `local_date DESC`. Empty days (no articles, no scrape ticks) are omitted. Each day group includes `local_date`, `article_count`, `articles[]` (articles from the global pool matching the user's active tags on that day), `ticks[]` (scrape_runs rows whose `started_at` falls in that day), and per-day aggregates: `day_tokens_in`, `day_tokens_out`, `day_cost_usd`, `day_articles_ingested`. Each tick entry includes `id`, `started_at`, `finished_at`, `articles_ingested`, `articles_deduped`, `tokens_in`, `tokens_out`, `estimated_cost_usd`, and `status`.
 
 The `/history` page also reads `?q=` (search query, ≥3 chars) and `?tags=` (comma-separated tag list) from the URL client-side to restore the exact filter state when the user returns via the browser back button from an opened article. These parameters are written to the URL via `replaceState` — they are not sent to `/api/history` on the server; the page filters the already-rendered cards in the browser.
 
@@ -364,9 +363,7 @@ The `/history` page also reads `?q=` (search query, ≥3 chars) and `?tags=` (co
 
 **Response:** `{ digests_generated: int, articles_read: int, articles_total: int, tokens_consumed: int, cost_usd: number }`
 
-All fields are user-scoped via the session. Article queries JOIN through `digests` on `user_id` (IDOR protection by construction). Queries run in parallel via `Promise.all` — no sequential round-trips. `digests_generated` counts only `status='ready'` rows. Defaults to `0` for each field if no data exists.
-
-`articles_total` counts articles in the pool whose tags intersect the session user's currently-active tag list. `articles_read` is scoped to that same active-tag pool — reads on articles whose only tag the user has since deselected drop out of both numerator and denominator, so the ratio always describes "of the articles you can see right now, how many have you read" (see [REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget) AC 3).
+After the global-feed rework `digests_generated`, `tokens_consumed`, and `cost_usd` are global (sourced from `scrape_runs`) — one tick represents one generation event shared across every user. `articles_total` and `articles_read` are per-user: they count articles in the global pool whose tags intersect the session user's currently-active tag list, and reads in `article_reads` scoped to that same pool. Reads on articles whose only tag the user has since deselected drop out of both numerator and denominator, so the ratio always describes "of the articles you can see right now, how many have you read" (see [REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget) AC 3). Queries run in parallel via `Promise.all`. Defaults to `0` for each field if no data exists.
 
 **Implements:** [REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget)
 
@@ -404,6 +401,7 @@ Implements [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-log
 | `discovery.completed` | Per-tag LLM discovery run finished |
 | `discovery.queued` | A new per-tag discovery job was inserted into `pending_discoveries` |
 | `settings.update.failed` | D1 update in `PUT /api/settings` threw |
+| `article.star.failed` | D1 insert or delete in `POST/DELETE /api/articles/:id/star` threw |
 
 Raw exception messages appear only in the `detail` field of error-level records; they are never stored in D1 and never returned to clients (see [REQ-OPS-002](../sdd/observability.md#req-ops-002-sanitized-error-surfaces)).
 

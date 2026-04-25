@@ -12,20 +12,20 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 | ID | Decision | Category | Date |
 |----|----------|----------|------|
-| AD1 | Custom GitHub OAuth + HMAC-SHA256 JWT, no third-party auth library | Security | 2026-04-22 |
+| AD1 | Custom federated OAuth/OIDC (GitHub, Google) + HMAC-SHA256 JWT, no third-party auth library | Security | 2026-04-22 |
 | AD2 | Cloudflare Queues for digest generation under thundering herd | Architecture | 2026-04-22 |
 | AD3 | No server-side article-body fetching; summaries from headlines only | Security | 2026-04-22 |
 | AD4 | Plaintext-only LLM output; no markdown parser or HTML sanitizer | Security | 2026-04-22 |
 | AD5 | KV for caches, D1 for consistent state | Storage | 2026-04-22 |
-| AD6 | 5-second client polling instead of SSE or WebSockets for live generation | UI | 2026-04-22 |
+| AD6 | Polling instead of SSE or WebSockets for scrape-run progress | UI | 2026-04-22 |
 
 ---
 
-### AD1: Custom GitHub OAuth + HMAC-SHA256 JWT
+### AD1: Custom federated OAuth/OIDC (GitHub, Google) + HMAC-SHA256 JWT
 
 **Decision:** Implement sign-in from scratch (~250 lines of TypeScript) instead of adopting Better Auth, Auth.js, or Lucia.
 
-**Context:** Sessions need to be stateless, revocable, and tied to an OAuth/OIDC authorization-code flow. The project has no password, no 2FA, no passkeys. The implementation supports multiple providers (GitHub, Google) via a shared provider registry.
+**Context:** Sessions need to be stateless, revocable, and tied to an OAuth/OIDC authorization-code flow. The project has no password, no 2FA, no passkeys. The implementation supports multiple providers (GitHub, Google) via a shared provider registry — each provider adds one registry entry and a `fetchProfile` adapter, with no per-provider branching in the auth routes.
 
 **Alternatives considered:**
 - Better Auth + D1 adapter — pulls in an ORM-ish abstraction; version churn risk.
@@ -51,7 +51,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** Queues give natural per-message isolation (each job in its own isolate, no shared memory), default 10-wide concurrency with built-in backpressure, and 3-retry semantics. Cron stays a tiny dispatcher. This is the primitive Cloudflare built exactly for this shape of problem.
 
-**Related requirements:** [REQ-GEN-001](../../sdd/generation.md#req-gen-001-scheduled-generation-via-cron-dispatcher), [REQ-GEN-002](../../sdd/generation.md#req-gen-002-manual-refresh-with-rate-limiting)
+**Related requirements:** [REQ-GEN-001](../../sdd/generation.md#req-gen-001-scheduled-generation-via-cron-dispatcher), [REQ-GEN-002](../../sdd/generation.md#req-gen-002-manual-refresh-with-rate-limiting) *(Deprecated 2026-04-23 — superseded by REQ-PIPE-001)*
 
 ---
 
@@ -85,6 +85,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Related requirements:** [REQ-GEN-005](../../sdd/generation.md#req-gen-005-single-call-llm-summarization), [REQ-READ-002](../../sdd/reading.md#req-read-002-article-detail-view)
 
+> Note: REQ-GEN-005 (Single-call LLM summarization) describes the shape of the LLM prompt contract, which is still accurate. The per-user generation machinery described by REQ-GEN-002/006 was retired in the 2026-04-23 global-feed rework but the plaintext-only output constraint captured in this ADR remains in effect via REQ-PIPE-002.
+
 ---
 
 ### AD5: KV for caches, D1 for consistent state
@@ -103,18 +105,18 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 ---
 
-### AD6: 5-second polling, not SSE or WebSockets
+### AD6: Polling for scrape-run progress, not SSE or WebSockets
 
-**Decision:** During live generation, the client polls `GET /api/digest/:id` every 5 seconds until `status` is `ready` or `failed`.
+**Decision:** While a scrape run is in progress, the client polls `GET /api/scrape-status` every 5 seconds to drive the "Update in progress" indicator and the Force Refresh progress display on `/settings`.
 
-**Context:** Generation takes ~60 s. Users mostly see the finished digest via the email link, not live — polling only matters when they manually refresh and stay on the page.
+**Context:** Scrape runs take ~60 s end-to-end. Users mostly see finished articles on their next visit; real-time progress is a quality-of-life indicator for operators watching `/settings` after triggering a force-refresh. The per-user live-generation polling pattern (REQ-READ-004, deprecated 2026-04-23) is no longer applicable — the dashboard always renders from the populated pool.
 
 **Alternatives considered:**
 - Server-Sent Events streaming phase updates — no clean transport between the Queue consumer and the SSE HTTP handler without adding Durable Objects.
 - WebSockets via per-user DO — works for codeflare (terminals), overkill here.
 
-**Rationale:** 12 polling requests over a 60-second generation at 500 bytes each is negligible overhead. No DO complexity, no WebSocket protocol, no phase-update machinery. The UX difference is imperceptible for a one-shot status flip.
+**Rationale:** Polling `GET /api/scrape-status` (one D1 SELECT + one KV get) is negligible overhead at the operator-only volume this endpoint serves. No DO complexity, no WebSocket protocol, no phase-update machinery. The UX difference is imperceptible for a one-shot status flip.
 
-**Related requirements:** [REQ-READ-004](../../sdd/reading.md#req-read-004-live-generation-state)
+**Related requirements:** [REQ-PIPE-006](../../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress)
 
 ---

@@ -10,7 +10,7 @@ Local development setup and production deployment steps.
 
 - Node.js 24+ (local dev only; production runs on Cloudflare Workers)
 - Cloudflare account with Workers Paid plan enabled
-- GitHub OAuth App created (Settings → Developer Settings → OAuth Apps)
+- At least one OAuth provider configured: GitHub (Settings → Developer Settings → OAuth Apps) and/or Google (console.cloud.google.com → APIs & Services → Credentials → OAuth 2.0 Client IDs)
 - Resend account with a verified sending domain
 - `wrangler` CLI installed (`npm i -g wrangler` or use `npx wrangler`)
 

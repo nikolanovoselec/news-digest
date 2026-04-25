@@ -8,7 +8,7 @@ System overview, component map, and data flow.
 
 ## Overview
 
-news-digest is a single Cloudflare Worker serving an Astro-rendered app. Every hour, a Cron Trigger fires the global-feed coordinator: it fans out 50+ curated RSS/Atom/JSON sources, canonical-URL-deduplicates candidates, and enqueues chunked LLM summarization jobs to a Cloudflare Queue. Chunk consumers write articles to a shared D1 pool. Per-user dashboards read from that pool filtered by the user's active hashtags — no per-user LLM calls. A daily cron at 03:00 UTC purges articles older than 7 days (starred articles are exempt). See [`sdd/README.md`](../sdd/README.md) for product intent.
+news-digest is a single Cloudflare Worker serving an Astro-rendered app. Every 4 hours (00/04/08/12/16/20 UTC), a Cron Trigger fires the global-feed coordinator: it fans out 50+ curated RSS/Atom/JSON sources, canonical-URL-deduplicates candidates, and enqueues chunked LLM summarization jobs to a Cloudflare Queue. Chunk consumers write articles to a shared D1 pool. Per-user dashboards read from that pool filtered by the user's active hashtags — no per-user LLM calls. A daily cron at 03:00 UTC purges articles older than 7 days (starred articles are exempt). See [`sdd/README.md`](../sdd/README.md) for product intent.
 
 Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence).
 
@@ -18,7 +18,7 @@ Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-su
 |---|---|
 | Astro Worker (request handler) | Serves all HTML pages and JSON APIs; runs in the Cloudflare Workers runtime |
 | Cron Trigger | 5-minute trigger — sweeper + discovery + scheduled-digest dispatcher |
-| Queue Consumer | Processes `digest-jobs` messages; runs `generateDigest` in isolate-per-message |
+| Queue Consumer | Processes `SCRAPE_COORDINATOR` and `SCRAPE_CHUNKS` messages; each message runs in its own isolate |
 | D1 | Strongly-consistent storage for users, digests, articles, pending_discoveries |
 | KV | Edge-distributed cache for discovered sources, headlines, source health |
 | Workers AI | LLM inference for digest summarization and source discovery |
@@ -48,11 +48,11 @@ Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-su
 | `src/lib/headline-cache.ts` | KV-backed 10-minute shared cache for per-source/per-tag headline fetches; key `headlines:{source}:{tag}`, TTL 600 s | [REQ-GEN-003](../sdd/generation.md#req-gen-003-source-fan-out-with-caching) |
 | `src/lib/log.ts` | `log(level, event, fields)` — emits `JSON.stringify({ ts, level, event, ...fields })` to `console.log`; `LogEvent` is a closed enum preventing log injection | [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-logging) |
 | `src/lib/default-hashtags.ts` | `DEFAULT_HASHTAGS` seed list (12 technology tags used for brand-new accounts) + `RESTORE_DEFAULTS_LABEL` constant shared by the UI button and tests | [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation) |
-| `src/lib/models.ts` | Hardcoded `MODELS` catalog + `DEFAULT_MODEL_ID` (`@cf/openai/gpt-oss-20b`) + `FALLBACK_MODEL_ID` (`@cf/openai/gpt-oss-120b`) + `estimateCost()` + `modelById()`. `DEFAULT_MODEL_ID` was swapped from Gemma 4 after Gemma's chain-of-thought reasoning consumed the entire `max_tokens` budget before emitting any JSON — every chunk landed with `finish_reason=length` and `content=null`. `gpt-oss-20b` has a hard JSON-mode guarantee. `DEFAULT_MODEL_ID` is also used as a fallback when a digest is generated for a user whose stored `model_id` no longer appears in `MODELS` (e.g., after a model retirement) | [REQ-SET-004](../sdd/settings.md#req-set-004-model-selection) *(Deprecated 2026-04-24)*, [REQ-GEN-008](../sdd/generation.md#req-gen-008-cost-time-and-token-transparency) |
+| `src/lib/models.ts` | Hardcoded `MODELS` catalog + `DEFAULT_MODEL_ID` (`@cf/openai/gpt-oss-20b`) + `FALLBACK_MODEL_ID` (`@cf/openai/gpt-oss-120b`) + `estimateCost()` + `modelById()`. `DEFAULT_MODEL_ID` was swapped from Gemma 4 after Gemma's chain-of-thought reasoning consumed the entire `max_tokens` budget before emitting any JSON — every chunk landed with `finish_reason=length` and `content=null`. `gpt-oss-20b` has a hard JSON-mode guarantee. `DEFAULT_MODEL_ID` is also used as a fallback when a digest is generated for a user whose stored `model_id` no longer appears in `MODELS` (e.g., after a model retirement) | [REQ-SET-004](../sdd/settings.md#req-set-004-model-selection) *(Deprecated 2026-04-24)*, [REQ-GEN-008](../sdd/generation.md#req-gen-008-cost-time-and-token-transparency) *(Deprecated 2026-04-23)* |
 | `src/lib/oauth-errors.ts` | `OAUTH_ERROR_CODES` allowlist + `mapOAuthError()` sanitizer + `isKnownOAuthErrorCode()` — collapses unknown GitHub error strings to `oauth_error` | [REQ-AUTH-004](../sdd/authentication.md#req-auth-004-oauth-error-surfacing) |
 | `src/lib/prompts.ts` | `PROCESS_CHUNK_SYSTEM`, `DISCOVERY_SYSTEM`, prompt builders, `LLM_PARAMS`. The `details` field contract: 2 or 3 plaintext paragraphs separated by the JSON-escaped token `\n` (backslash-n), each 3–5 sentences, totalling 150–200 words. Paragraph roles are fixed: 1. WHAT happened (concrete facts, who/what/when), 2. HOW it works (architecture, mechanism, numbers), 3. IMPACT for the reader (cost, migration, security posture — optional third paragraph). A `details` value under ~120 words is treated as a failed response. `temperature` is 0.6. Each article entry in the `PROCESS_CHUNK_SYSTEM` prompt must echo its input candidate's `index` value so the consumer can align LLM output back to the input by index rather than by position; a title-overlap sanity check (at least one substantive non-stopword token shared with the source headline) provides a second alignment guard. Implements [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) AC 3, AC 7, AC 8. | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-GEN-005](../sdd/generation.md#req-gen-005-single-call-llm-summarization), [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery) |
 | `src/lib/session-jwt.ts` | HMAC-SHA256 sign/verify for session cookies; `shouldRefreshJWT()` for near-expiry detection | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-session-cookie-and-instant-revocation) |
-| `src/lib/slug.ts` | `slugify(title)` + `deduplicateSlug(slug, existing)` — deterministic ASCII slug generation with collision suffix | [REQ-GEN-006](../sdd/generation.md#req-gen-006-atomic-final-write) |
+| `src/lib/slug.ts` | `slugify(title)` + `deduplicateSlug(slug, existing)` — deterministic ASCII slug generation with collision suffix | [REQ-GEN-006](../sdd/generation.md#req-gen-006-atomic-final-write) *(Deprecated 2026-04-23)* |
 | `src/lib/sources.ts` | Source adapters (RSS/Atom, JSON) and the fan-out coordinator — fetches every `{tag × curated-source}` pair through a semaphore-capped concurrency of 10; per-source failures are logged via `source.fetch.failed` and never propagate so a single flaky source cannot abort the entire run. Each item's publication timestamp is extracted via `parseFeedDate()` (RSS `pubDate` / Dublin Core `dc:date`, Atom `published`/`updated`, JSON Feed `date_published`), clamped to the range 2000-01-01–now+1d, and threaded through as `published_at` (unix seconds); articles without a parseable date fall back to ingestion time set by the chunk consumer. Feed snippets are extracted from `<content:encoded>` (preferred, full HTML body), then `<description>` / Atom `<summary>` for RSS/Atom feeds; HN items use `story_text` (self-posts); Reddit items use `selftext`. Snippets are stripped to plaintext and capped at 1200 characters before landing in the chunk prompt. | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery) |
 | `src/lib/curated-sources.ts` | Registry of 50+ curated sources; each entry declares slug, name, feed URL, feed kind, and at least one system tag | [REQ-PIPE-004](../sdd/generation.md#req-pipe-004-curated-source-registry-with-50-feeds-spanning-the-20-system-tags) |
 | `src/lib/dedupe.ts` | Canonical-URL + LLM-cluster deduplication — merges `dedup_groups` hints from the LLM payload with URL equality; first-source-wins within each cluster | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-canonical-url--llm-cluster-dedupe-with-first-source-wins) |
@@ -78,9 +78,9 @@ Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-su
 | `src/pages/api/auth/account.ts` | `DELETE /api/auth/account` — requires `{ confirm: "DELETE" }`, deletes user row (FK cascade), paginates and deletes KV entries keyed by `user:{id}:*`, clears cookie | [REQ-AUTH-005](../sdd/authentication.md#req-auth-005-account-deletion) |
 | `src/pages/api/settings.ts` | `GET /api/settings`, `PUT /api/settings` — user settings snapshot and update; queues new tags for discovery via `pending_discoveries` | [REQ-SET-001](../sdd/settings.md#req-set-001-unified-first-run-and-edit-flow), [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation), [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone), [REQ-SET-004](../sdd/settings.md#req-set-004-model-selection) *(Deprecated 2026-04-24)*, [REQ-SET-005](../sdd/settings.md#req-set-005-email-notification-preference), [REQ-SET-006](../sdd/settings.md#req-set-006-settings-incomplete-gate) |
 | `src/pages/api/digest/today.ts` | `GET /api/digest/today` — 29 most-recently-ingested articles filtered by user tags (`ORDER BY ingested_at DESC, published_at DESC`) + last scrape run metadata + `next_scrape_at` | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) AC 5 |
-| `src/pages/api/digest/[id].ts` | `GET /api/digest/:id` — user-scoped digest by id; IDOR-safe | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-READ-004](../sdd/reading.md#req-read-004-live-generation-state) |
-| `src/pages/api/digest/refresh.ts` | `POST /api/digest/refresh` — manual refresh; atomic rate-limit + conditional INSERT; enqueues to `digest-jobs` | [REQ-GEN-002](../sdd/generation.md#req-gen-002-manual-refresh-with-rate-limiting) |
-| `src/pages/api/history.ts` | `GET /api/history?offset=N` — paginated digest history, 30/page with `has_more`; enriches rows with `model_name` | [REQ-HIST-001](../sdd/history.md#req-hist-001-day-grouped-article-history) |
+| `src/pages/api/digest/[id].ts` | `GET /api/digest/:id` — single article from the global pool by id; returns 404 if not found | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view) |
+| `src/pages/api/digest/refresh.ts` | `POST /api/digest/refresh` — manual refresh; atomic rate-limit + conditional INSERT; enqueues to `digest-jobs` | [REQ-GEN-002](../sdd/generation.md#req-gen-002-manual-refresh-with-rate-limiting) *(Deprecated 2026-04-23)* |
+| `src/pages/api/history.ts` | `GET /api/history` — day-grouped article history for the last 7 days, keyed by the user's timezone; aggregates scrape_runs stats per day; articles filtered to the user's active tags | [REQ-HIST-001](../sdd/history.md#req-hist-001-day-grouped-article-history) |
 | `src/pages/api/stats.ts` | `GET /api/stats` — four user-scoped aggregates (digests, articles read/total, tokens, cost) via parallel D1 queries | [REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget) |
 | `src/pages/api/discovery/status.ts` | `GET /api/discovery/status` — pending discovery tags for the session user | [REQ-DISC-002](../sdd/discovery.md#req-disc-002-discovery-progress-visibility) *(Deprecated 2026-04-24)* |
 | `src/pages/api/admin/discovery/retry.ts` | `POST /api/admin/discovery/retry` — accepts JSON body `{"tag":"<tag>"}` (returns `200 {ok:true}`) or form-encoded `tag=<tag>` (returns `303 → /settings?rediscover=ok&tag=<tag>`); clears `sources:{tag}` and `discovery_failures:{tag}` KV, re-queues in `pending_discoveries`; gated by Cloudflare Access (`/api/admin/*` wildcard) | [REQ-DISC-004](../sdd/discovery.md#req-disc-004-manual-re-discover) |
@@ -141,7 +141,10 @@ Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-su
 | `public/llms-full.txt` | Extended agents policy with technology stack and GDPR basis detail | [REQ-OPS-004](../sdd/observability.md#req-ops-004-crawler-policy-and-public-surface-discoverability) |
 | `public/swiss-post.svg` | Swiss Post sponsor logo; displayed on the landing page | — |
 | `public/scramble.js` | Text scramble animation script used on the landing page hero | — |
-| `migrations/0001_initial.sql` | D1 schema (users, digests, articles, pending_discoveries) | (foundational) |
+| `migrations/0001_initial.sql` | Initial D1 schema (users, digests, articles, pending_discoveries) | (foundational) |
+| `migrations/0002_article_tags.sql` | Adds article tag columns | (schema evolution) |
+| `migrations/0003_global_feed.sql` | Global-feed rework — drops per-user digests + articles tables; creates global articles, article_sources, article_tags, article_stars, article_reads, scrape_runs | (foundational) |
+| `migrations/0004_system_user.sql` | System-user sentinel for `__system__`-owned pending discovery rows | (schema evolution) |
 
 ### Worker Entry and Queue
 
@@ -158,12 +161,12 @@ Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-su
 
 ## Request Lifecycle
 
-### Hourly global-feed pipeline
+### Global-feed pipeline (every 4 hours)
 
 Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract).
 
 ```
-Cron fires (every hour, on the hour)
+Cron fires (every 4 hours: 00/04/08/12/16/20 UTC)
   → SCRAPE_COORDINATOR queue message sent
 Coordinator consumer
   → fans out all {tag × curated-source} pairs (concurrency cap: 10)
