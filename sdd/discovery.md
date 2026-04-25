@@ -72,7 +72,7 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 **Applies To:** Admin
 
 **Acceptance Criteria:**
-1. The settings page renders a single "Discover missing sources" button whenever at least one of the user's tags has an explicitly-empty cached feed list. A brand-new tag whose cache has not yet been written is not "stuck" and does not trigger the button. The Stuck tags section is absent entirely when no tag is stuck.
+1. The settings page renders a single "Discover missing sources" button whenever at least one of the user's tags is "stuck" — defined as: not covered by any curated source AND either has no successful discovery cache yet, has an unparseable cache entry, or has an explicitly-empty cached feed list. Tags covered by a curated source are never flagged as stuck (curated feeds always deliver). Transient cache-read errors fall back to "not stuck" so a flaky read does not light up every tag at once. The Stuck tags section is absent entirely when no tag is stuck.
 2. The re-discover endpoint(s) validate that every tag they are asked to re-queue is in the authenticated user's saved tag list; any unknown tag is refused. This prevents anyone with a session from triggering arbitrary LLM calls for strings they do not control.
 3. A valid re-discover request clears each affected tag's cached feeds and per-tag discovery-failure counter, then enqueues a fresh discovery pass for each so the next discovery cron repopulates them.
 4. Two transports are supported: a single-tag JSON API for scripted callers (returns an API-shaped response) and a bulk-by-default native HTML form submission from the settings page (returns the operator to the settings page with a visible confirmation noting how many tags were re-queued).
