@@ -249,7 +249,11 @@ export async function flipChipToPosition(
     // INVERT loop to avoid a second getBoundingClientRect call.
     let tappedFirstLeft = 0;
     let tappedLastLeft = 0;
-    let tappedLastRight = 0;
+    // tappedLastRight is captured for the now-commented-out
+    // tappedEndsOffScreen check (see TODO above). Underscore prefix
+    // tells oxlint this is an intentionally-unused capture, ready
+    // to be re-activated when the easing logic is restored.
+    let _tappedLastRight = 0;
     for (const chip of chips) {
       const first = firstRects.get(chip);
       if (first === undefined) continue;
@@ -263,7 +267,7 @@ export async function flipChipToPosition(
       if (chip === tappedChip) {
         tappedFirstLeft = first.left;
         tappedLastLeft = last.left;
-        tappedLastRight = last.right;
+        _tappedLastRight = last.right;
       }
     }
 

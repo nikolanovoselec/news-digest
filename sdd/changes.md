@@ -6,7 +6,7 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-25
 
-- REQ-READ-007 polish (no AC change): cascade easing temporarily forced to 'linear' (the per-chip ease-IN/ease-OUT logic is preserved as commented-out code) pending UX evaluation. Restore by uncommenting two lines in src/lib/tag-railing-flip.ts.
+- REQ-READ-007 polish (no AC change): cascade animation temporarily uses constant velocity ('linear' easing) instead of the slow-start-fast-end ease-IN curve, pending user evaluation of which feels better.
 
 - REQ-READ-007 polish (no AC change): pop and cascade durations tuned shorter so the tap-to-settled wall clock is roughly halved — pop 700ms→500ms, cascade target/min/max 700/800/3500ms→400/400/1500ms. Same pop/hold/cascade choreography, same easing, just snappier.
 
