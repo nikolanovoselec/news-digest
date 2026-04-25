@@ -142,6 +142,7 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 2. When the two differ, the browser silently posts the new timezone to the timezone-update endpoint and the server persists it to the user row. No confirmation banner or dialog is shown — the correction is invisible to the user.
 3. The correction runs on every route (not just the settings page), so users who sign up and go straight to the reading surface never miss the update.
 4. A failed correction request is non-fatal: the page continues to render and the next page load retries.
+5. The settings page exposes a manual timezone picker that lets the user select any valid IANA zone explicitly. The picker is pre-populated with the browser-detected zone (or the stored zone when the browser's value is unavailable), so the most likely correct value is one click away even when the silent auto-sync has failed. Saving the form persists the picked zone via the same timezone-update endpoint.
 
 **Constraints:** None
 **Priority:** P2

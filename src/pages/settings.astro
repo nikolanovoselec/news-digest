@@ -63,6 +63,20 @@ const digestHour = user.digest_hour ?? 8;
 const digestMinute = user.digest_minute;
 const timeValue = `${String(digestHour).padStart(2, '0')}:${String(digestMinute).padStart(2, '0')}`;
 const tzValue = user.tz === '' ? DEFAULT_TZ : user.tz;
+
+// REQ-SET-007 AC 5 — manual tz picker. Render the full IANA inventory
+// server-side so the picker is complete before client JS runs. The
+// runtime exposes the list via Intl.supportedValuesOf('timeZone'); on
+// the unlikely path where that returns nothing we fall back to the
+// stored value alone so the form still saves to the same value.
+type IntlWithSupported = typeof Intl & {
+  supportedValuesOf?: (key: string) => string[];
+};
+const intlWithSupported = Intl as IntlWithSupported;
+const tzOptions: string[] =
+  typeof intlWithSupported.supportedValuesOf === 'function'
+    ? intlWithSupported.supportedValuesOf('timeZone')
+    : [tzValue];
 const currentModelId = user.model_id ?? DEFAULT_MODEL_ID;
 const emailEnabled = user.email_enabled === 1;
 
@@ -207,11 +221,21 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
             class="settings__time-input"
           />
         </label>
-        <div class="settings__tz" data-tz-block>
+        <label class="settings__tz" data-tz-block>
+          {/* Implements REQ-SET-007 AC 5 — manual tz picker. The
+              <select> renders the full IANA inventory server-side and
+              defaults to the stored tz so first-paint is correct. The
+              wireTzPicker() init swaps the selection to the
+              browser-detected zone when it differs, so the most likely
+              answer is one click away. */}
           <span class="settings__field-label">Timezone</span>
-          <output class="settings__tz-current" data-tz-display>{tzValue}</output>
-          <span class="settings__tz-hint">auto-detected from your browser</span>
-        </div>
+          <select class="settings__tz-current" name="tz" data-tz-select>
+            {tzOptions.map((zone) => (
+              <option value={zone} selected={zone === tzValue}>{zone}</option>
+            ))}
+          </select>
+          <span class="settings__tz-hint">pre-selected from your browser; change if it's wrong</span>
+        </label>
       </fieldset>
 
       <fieldset class="settings__section">
@@ -492,7 +516,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     submitButton: HTMLButtonElement,
   ): Promise<void> {
     const timeInput = form.querySelector('[data-time-input]') as HTMLInputElement | null;
-    const tzDisplay = form.querySelector('[data-tz-display]') as HTMLElement | null;
+    const tzSelect = form.querySelector('[data-tz-select]') as HTMLSelectElement | null;
     const emailToggle = form.querySelector('[data-email-toggle]') as HTMLInputElement | null;
     const modelSelect = form.querySelector('select[name="model_id"]') as HTMLSelectElement | null;
 
@@ -500,13 +524,11 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     const [hourStr, minuteStr] = timeValue.split(':');
     const digestHour = Number.parseInt(hourStr ?? '', 10);
     const digestMinute = Number.parseInt(minuteStr ?? '', 10);
-    // TZ is auto-detected (see detectAndPersistTz on page load). Fall
-    // back to the displayed value if detection hasn't updated it yet.
-    const tz =
-      typeof Intl !== 'undefined' &&
-      typeof Intl.DateTimeFormat === 'function'
-        ? Intl.DateTimeFormat().resolvedOptions().timeZone
-        : (tzDisplay?.textContent?.trim() ?? '');
+    // TZ comes from the manual <select> (REQ-SET-007 AC 5). The picker
+    // is server-rendered with the stored value, then upgraded to the
+    // browser-detected zone by wireTzPicker on load — so .value is
+    // always the right answer, no Intl fallback needed here.
+    const tz = tzSelect?.value ?? '';
     const modelId = modelSelect?.value ?? '';
     const emailEnabled = emailToggle?.checked === true;
 
@@ -678,24 +700,22 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
 
     const status = form.querySelector<HTMLElement>('[data-settings-status]');
     const submit = form.querySelector<HTMLButtonElement>('[data-settings-submit]');
-    const tzDisplay = form.querySelector('[data-tz-display]') as HTMLElement | null;
+    const tzSelect = form.querySelector('[data-tz-select]') as HTMLSelectElement | null;
 
-    // Auto-detect the browser's timezone and sync it to the server when
-    // it differs from the stored value. Updates the display without a
-    // page reload. Best-effort — any network or validation failure is
-    // swallowed so it doesn't block the form.
-    if (tzDisplay !== null) {
+    // REQ-SET-007 AC 5 — browser-detected pre-select. Server rendered
+    // the dropdown with the stored tz selected; on load, swap the
+    // selection to whatever the browser thinks the user is in. The
+    // user can still change it before saving. Saving the form persists
+    // the chosen value via the existing /api/settings PUT path.
+    if (tzSelect !== null) {
       try {
         const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        const storedTz = tzDisplay.textContent?.trim() ?? '';
-        if (browserTz !== '' && browserTz !== storedTz) {
-          tzDisplay.textContent = browserTz;
-          fetch('/api/auth/set-tz', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tz: browserTz }),
-            credentials: 'same-origin',
-          }).catch(() => {});
+        if (
+          browserTz !== '' &&
+          browserTz !== tzSelect.value &&
+          tzSelect.querySelector(`option[value="${CSS.escape(browserTz)}"]`) !== null
+        ) {
+          tzSelect.value = browserTz;
         }
       } catch {
         /* Intl unavailable — leave the stored tz in place. */
@@ -915,8 +935,15 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
   }
 
   .settings__tz-current {
-    font-weight: 600;
+    min-height: 44px;
+    padding: 0.5rem 0.75rem;
+    background-color: var(--bg);
     color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    font: inherit;
+    font-weight: 600;
+    max-width: 100%;
   }
 
   .settings__tz-hint {

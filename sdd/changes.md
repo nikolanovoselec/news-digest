@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-25
 
+- REQ-SET-007 amended: the settings page now offers a manual timezone picker pre-populated with the browser-detected zone, so users whose silent auto-sync failed (network error, server error, etc.) can fix their timezone in one click instead of being stuck at UTC.
+
 - REQ-PIPE-007 added: the daily cleanup cron now also deletes orphan tag caches — discovered-feed entries whose tag no user has selected anymore — so a tag a user removed (or an account deleted) stops costing fetch + LLM cycles forever. Tags any user still has are left alone; the deletion count is logged for observability.
 
 - REQ-AUTH-001 reshaped to "sign in with a federated identity provider" — GitHub or Google. The landing page renders one button per provider that has credentials configured, listed alphabetically; no-provider deployments surface a clear configuration message instead of dead buttons. Each provider's account is independent (no cross-provider email merging) and existing GitHub user ids stay in their bare-numeric format so legacy accounts are unchanged.
