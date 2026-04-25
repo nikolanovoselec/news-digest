@@ -42,13 +42,25 @@ describe('settings.astro manual tz picker — REQ-SET-007 AC 5', () => {
     );
   });
 
-  it("REQ-SET-007 AC 6: dropdown swap is gated on stored tz === 'UTC'", () => {
-    // Mirror of the Base.astro silent-path gate. Once the user has
-    // explicitly set a non-default tz, the picker must NOT overwrite
-    // the visible selection on every page load — otherwise a privacy-
-    // masked browser whose Intl returns Africa/Abidjan would silently
-    // re-stamp the user's deliberate choice on the next save.
-    expect(settingsPage).toMatch(/tzSelect\.value\s*===\s*['"]UTC['"]/);
+  it("REQ-SET-007 AC 6: dropdown swap is gated on the stored tz read from body.dataset.userTz", () => {
+    // The gate now reads the stored tz from document.body.dataset.userTz
+    // (the SSR-trusted source of truth) rather than from tzSelect.value
+    // directly — V8's Intl.supportedValuesOf('timeZone') omits 'UTC'
+    // (it's an alias for Etc/UTC), so a fresh user with stored tz='UTC'
+    // produces a dropdown where no <option> matches `selected`, and
+    // tzSelect.value defaults to the alphabetically-first option
+    // (Africa/Abidjan). Reading from dataset.userTz bypasses that.
+    expect(settingsPage).toMatch(/dataset\['userTz'\][\s\S]{0,80}storedTz/);
+    expect(settingsPage).toMatch(/storedTz\s*===\s*['"]UTC['"]/);
+  });
+
+  it("REQ-SET-007: tzOptions guarantees the stored tz is in the option list", () => {
+    // V8's Intl.supportedValuesOf('timeZone') returns canonical zones
+    // only and omits 'UTC' / 'Etc/UTC'. The picker prepends tzValue
+    // when it's missing so the SSR `selected={zone === tzValue}` always
+    // finds a match — otherwise the browser falls back to the first
+    // option and the next form save POSTs the wrong tz.
+    expect(settingsPage).toMatch(/canonical[A-Za-z]*\.includes\(tzValue\)/);
   });
 
   it('REQ-SET-007: form submit reads the picked value from the <select> (not from textContent)', () => {

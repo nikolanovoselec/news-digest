@@ -148,6 +148,11 @@ if (sessionUser.hashtags_json !== null && sessionUser.hashtags_json !== '') {
   }
 }
 
+// Set of user-active tags for filtering displayed article tags so
+// stale taxonomy (e.g. recently-dropped defaults still cached in the
+// LLM allowlist) never surfaces on cards.
+const userTagSet = new Set<string>(userTags);
+
 // Count tag occurrences across every article in the 7-day window so
 // each chip can render its count (distinct from dashboard's today-
 // scoped count — here we want the full search pool).
@@ -248,7 +253,7 @@ function formatCostUsd(value: number | null | undefined): string {
           sourceName={a.primary_source_name}
           sourceUrl={a.primary_source_url}
           oneLiner={a.details[0] ?? ''}
-          tags={a.tags}
+          tags={a.tags.filter((t) => userTagSet.has(t))}
         />
       ))}
     </div>
@@ -304,7 +309,7 @@ function formatCostUsd(value: number | null | undefined): string {
                           oneLiner={a.details[0] ?? ''}
                           sourceName={a.primary_source_name}
                           sourceUrl={a.primary_source_url}
-                          tags={a.tags}
+                          tags={a.tags.filter((t) => userTagSet.has(t))}
                           index={i}
                           suppressTransition={isFilteringByTag}
                         />

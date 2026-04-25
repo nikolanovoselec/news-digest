@@ -67,17 +67,28 @@ const tzValue = user.tz === '' ? DEFAULT_TZ : user.tz;
 
 // REQ-SET-007 AC 5 — manual tz picker. Render the full IANA inventory
 // server-side so the picker is complete before client JS runs. The
-// runtime exposes the list via Intl.supportedValuesOf('timeZone'); on
-// the unlikely path where that returns nothing we fall back to the
-// stored value alone so the form still saves to the same value.
+// runtime exposes the list via Intl.supportedValuesOf('timeZone').
+//
+// CRITICAL — `Intl.supportedValuesOf('timeZone')` returns ONLY the
+// canonical IANA zones; it does NOT include `'UTC'` or any of the
+// `'Etc/*'` aliases (V8/Workers behavior). Our DEFAULT_TZ is `'UTC'`,
+// so a fresh user with `users.tz = 'UTC'` finds NO `<option>` matching
+// `selected={zone === 'UTC'}` — the browser silently falls back to the
+// alphabetically-first option (`'Africa/Abidjan'`), and any subsequent
+// form submit POSTs that wrong value back to /api/settings, poisoning
+// the user record. Guard by prepending `tzValue` whenever it isn't in
+// the canonical list, so the dropdown always has a real selected entry.
 type IntlWithSupported = typeof Intl & {
   supportedValuesOf?: (key: string) => string[];
 };
 const intlWithSupported = Intl as IntlWithSupported;
-const tzOptions: string[] =
+const canonicalTzList: string[] =
   typeof intlWithSupported.supportedValuesOf === 'function'
     ? intlWithSupported.supportedValuesOf('timeZone')
-    : [tzValue];
+    : [];
+const tzOptions: string[] = canonicalTzList.includes(tzValue)
+  ? canonicalTzList
+  : [tzValue, ...canonicalTzList];
 const currentModelId = user.model_id ?? DEFAULT_MODEL_ID;
 const emailEnabled = user.email_enabled === 1;
 
@@ -223,7 +234,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           the sole editor for the user's hashtags. Settings controls
           schedule, model, and delivery only. */}
       <fieldset class="settings__section">
-        <legend class="settings__legend">Schedule</legend>
+        <legend class="settings__legend">Schedule &amp; Notifications</legend>
         <label class="settings__field">
           <span class="settings__field-label">Daily digest time</span>
           <input
@@ -250,10 +261,6 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           </select>
           <span class="settings__tz-hint">pre-selected from your browser; change if it's wrong</span>
         </label>
-      </fieldset>
-
-      <fieldset class="settings__section">
-        <legend class="settings__legend">Notifications</legend>
         {showModelSelect ? (
           <label class="settings__field">
             {/* Implements REQ-SET-004 — hidden while the global pipeline
@@ -736,13 +743,16 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     // rendered the dropdown with the stored tz selected. We only swap
     // to the browser-resolved zone while the stored value is still the
     // seeded UTC default (same gate as Base.astro's syncBrowserTz).
-    // Once the user (or an earlier silent correction) has set anything
-    // else, the manual picker preserves the stored value — otherwise a
-    // privacy-masked browser whose Intl returns a UTC alias like
-    // Africa/Abidjan would re-stamp a deliberate manual choice every
-    // time the user opened /settings, and the next form save would
-    // POST that wrong value back to /api/settings.
-    if (tzSelect !== null && tzSelect.value === 'UTC') {
+    //
+    // CRITICAL — read the stored tz from `document.body.dataset.userTz`,
+    // NOT from `tzSelect.value`. The select's value can be wrong on first
+    // paint when the SSR-rendered `selected` attribute didn't match any
+    // option (`'UTC'` is not in `Intl.supportedValuesOf('timeZone')`),
+    // in which case `tzSelect.value` defaults to the alphabetically-first
+    // option (`'Africa/Abidjan'`). Trusting `tzSelect.value` here would
+    // bypass the gate and let the picker re-stamp a real saved tz.
+    const storedTz = document.body.dataset['userTz'] ?? '';
+    if (tzSelect !== null && storedTz === 'UTC') {
       try {
         const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
         if (

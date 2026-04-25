@@ -70,6 +70,14 @@ const articles = today.articles;
 // it's ever reintroduced, import localHourMinuteInTz from ~/lib/tz
 // and derive the HH:MM string from today.last_scrape_run.started_at.
 
+// Set of user-active tags for filtering displayed article tags.
+// Articles in the global pool can carry tags the current user does
+// not have selected (the LLM tags broadly; cards inherit the full
+// tag list from the article pool). Surfacing those would expose
+// stale taxonomy (e.g. a recently-dropped default tag still cached
+// from the LLM allowlist) on cards the user opens. Filter at render.
+const userTagSet = new Set<string>(userTags);
+
 // Per-tag article count for the tag-strip — drives the `[count]`
 // affordance and the count-desc sort order. Tags with zero articles
 // today render a blank count slot (tag strip CSS collapses the slot).
@@ -196,7 +204,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
               oneLiner={a.details[0] ?? ''}
               sourceName={a.primary_source_name}
               sourceUrl={a.primary_source_url}
-              tags={a.tags}
+              tags={a.tags.filter((t) => userTagSet.has(t))}
               starred={a.starred}
               index={i}
               filterHide={isCardHidden(a.tags)}

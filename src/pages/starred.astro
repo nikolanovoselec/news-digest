@@ -55,6 +55,20 @@ try {
 }
 
 const articles = payload.articles;
+
+// Filter rendered article tags to the user's currently-active hashtag
+// list so stale taxonomy (recently-dropped defaults still cached in
+// the LLM allowlist) never surfaces on starred cards.
+let userTagsForFilter: string[] = [];
+if (user.hashtags_json !== null && user.hashtags_json !== '') {
+  try {
+    const parsed = JSON.parse(user.hashtags_json) as unknown;
+    if (Array.isArray(parsed)) {
+      userTagsForFilter = parsed.filter((v): v is string => typeof v === 'string');
+    }
+  } catch { /* fall back to empty filter set */ }
+}
+const userTagSet = new Set<string>(userTagsForFilter);
 ---
 
 <Base title="Starred articles">
@@ -77,7 +91,7 @@ const articles = payload.articles;
               oneLiner={a.details[0] ?? ''}
               sourceName={a.primary_source_name}
               sourceUrl={a.primary_source_url}
-              tags={a.tags}
+              tags={a.tags.filter((t) => userTagSet.has(t))}
               starred={true}
               index={i}
             />
