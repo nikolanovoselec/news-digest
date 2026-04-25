@@ -2,7 +2,7 @@
 //
 // Chunk consumer for the `scrape-chunks` Cloudflare Queue. Each message
 // is one chunk of up to 100 canonical-deduped candidates produced by
-// the hourly coordinator (REQ-PIPE-001). The consumer:
+// the every-4-hours coordinator (REQ-PIPE-001). The consumer:
 //
 //   1. Builds the chunk prompt: PROCESS_CHUNK_SYSTEM + processChunkUserPrompt.
 //   2. Calls Workers AI once (env.AI.run) with the default model.

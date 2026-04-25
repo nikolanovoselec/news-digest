@@ -76,11 +76,17 @@ describe('tag-railing FLIP reorder — REQ-READ-007', () => {
     expect(flipHelper).toContain('visibleFraction');
     expect(flipHelper).toContain('MIN_CASCADE_MS');
     expect(flipHelper).toContain('MAX_CASCADE_MS');
-    // Tapped chip uses ease-in when destination is off-screen-left so
-    // the visible (slow) portion of the curve matches the visible
-    // (slow) viewport-crossing portion of the journey.
-    expect(flipHelper).toContain('EASE_IN');
-    expect(flipHelper).toContain('tappedEndsOffScreen');
+  });
+
+  it("REQ-READ-007: cascade easing is 'linear' on every chip (post UX-eval)", () => {
+    // Earlier per-chip ease-IN/ease-OUT was removed after UX evaluation
+    // — uniform 'linear' easing feels more consistent across chips that
+    // travel different distances. Regression guard against the old
+    // distinction sneaking back in.
+    expect(flipHelper).toMatch(/transition\s*=\s*`transform\s*\$\{[^}]+\}ms\s+linear`/);
+    expect(flipHelper).not.toContain('EASE_IN');
+    expect(flipHelper).not.toContain('EASE_OUT');
+    expect(flipHelper).not.toContain('tappedEndsOffScreen');
   });
 
   it('REQ-READ-007: arms a one-shot scroll-down reveal after the cascade (AC 6)', () => {
@@ -143,14 +149,16 @@ describe('tag-railing FLIP reorder — REQ-READ-007', () => {
     expect(historyPage).toContain('localeCompare');
   });
 
-  it('REQ-READ-007: helper checks BOTH viewport edges for off-screen-exit easing (AC 3)', () => {
-    // Unselect cascade can land the chip off-screen-RIGHT (its
-    // natural position past the visible area) just as select can
-    // land it off-screen-left. The ease-IN guard must check both
-    // edges so the visible-portion-as-slow-phase property holds in
-    // either direction.
-    expect(flipHelper).toMatch(/tappedLastLeft\s*<\s*stripRect\.left/);
-    expect(flipHelper).toMatch(/tappedLastRight\s*>\s*stripRect\.right/);
+  it('REQ-READ-007: helper measures the tapped chip\'s travel against the strip viewport (AC 3)', () => {
+    // The visible-fraction math intersects [tappedFirstLeft,
+    // tappedLastLeft] with [stripRect.left, stripRect.right] to figure
+    // out how much of the chip's journey is on-screen. Guard against
+    // accidentally dropping the strip-rect intersection (which would
+    // make every cascade duration land at MIN regardless of travel).
+    expect(flipHelper).toContain('tappedFirstLeft');
+    expect(flipHelper).toContain('tappedLastLeft');
+    expect(flipHelper).toContain('stripRect.left');
+    expect(flipHelper).toContain('stripRect.right');
   });
 
   it('REQ-READ-007: scroll-down reveal arms only when the chip lands at slot 0 (AC 6)', () => {

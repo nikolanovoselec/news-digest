@@ -450,7 +450,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
             <legend class="settings__legend">Force refresh</legend>
             <p class="settings__hint">
               Fire the global scrape pipeline immediately instead of
-              waiting for the next hourly tick. Useful after a deploy
+              waiting for the next 4-hour tick. Useful after a deploy
               to verify the coordinator + chunk consumer end-to-end.
               This endpoint is gated by Cloudflare Access — only
               operators with an Access session can reach it.
@@ -755,19 +755,18 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     const tzSelect = form.querySelector('[data-tz-select]') as HTMLSelectElement | null;
 
     // REQ-SET-007 AC 5 + AC 6 — browser-detected pre-select. Server
-    // rendered the dropdown with the stored tz selected. We only swap
-    // to the browser-resolved zone while the stored value is still the
-    // seeded UTC default (same gate as Base.astro's syncBrowserTz).
+    // rendered the dropdown with the stored tz selected (or 'UTC' as
+    // the UI fallback when stored is the empty seed sentinel). We only
+    // swap to the browser-resolved zone while the stored value is the
+    // seeded sentinel (empty), matching Base.astro's syncBrowserTz gate.
+    // Any non-empty stored value is authoritative — including 'UTC',
+    // which a user can pick deliberately.
     //
-    // CRITICAL — read the stored tz from `document.body.dataset.userTz`,
-    // NOT from `tzSelect.value`. The select's value can be wrong on first
-    // paint when the SSR-rendered `selected` attribute didn't match any
-    // option (`'UTC'` is not in `Intl.supportedValuesOf('timeZone')`),
-    // in which case `tzSelect.value` defaults to the alphabetically-first
-    // option (`'Africa/Abidjan'`). Trusting `tzSelect.value` here would
-    // bypass the gate and let the picker re-stamp a real saved tz.
+    // Read the stored tz from `document.body.dataset.userTz`, NOT from
+    // `tzSelect.value`. The select's value defaults to the alphabetically
+    // -first option when no `<option selected>` matched the stored value.
     const storedTz = document.body.dataset['userTz'] ?? '';
-    if (tzSelect !== null && storedTz === 'UTC') {
+    if (tzSelect !== null && storedTz === '') {
       try {
         const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
         if (

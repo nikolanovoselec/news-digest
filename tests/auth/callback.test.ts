@@ -349,7 +349,7 @@ describe('GET /api/auth/github/callback', () => {
     expect(res.status).toBe(303);
     const insert = runCalls.find((c) => c.sql.startsWith('INSERT INTO users'));
     expect(insert).toBeDefined();
-    // The INSERT binds (userId, email, ghLogin, DEFAULT_TZ, nowSec, hashtags_json)
+    // The INSERT binds (userId, email, ghLogin, '' /* tz seed sentinel */, nowSec, hashtags_json)
     // so the seeded hashtags JSON lives at params[5].
     const hashtagsJson = insert!.params[5];
     expect(typeof hashtagsJson).toBe('string');

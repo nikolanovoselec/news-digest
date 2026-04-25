@@ -64,7 +64,7 @@ export async function scheduled(
   ctx: ExecutionContext,
 ): Promise<void> {
   if (controller.cron === '0 */4 * * *') {
-    await handleHourlyScrape(env, ctx);
+    await handleScrapeTick(env, ctx);
     return;
   }
   if (controller.cron === '0 3 * * *') {
@@ -109,12 +109,12 @@ export async function scheduled(
 }
 
 /**
- * Hourly global-feed coordinator enqueue. Creates a new scrape_runs
+ * Every-4-hours global-feed coordinator enqueue. Creates a new scrape_runs
  * row with status='running' and sends exactly one CoordinatorMessage
  * to the SCRAPE_COORDINATOR queue; the coordinator consumer fans out
  * across sources and enqueues per-chunk work.
  */
-async function handleHourlyScrape(
+async function handleScrapeTick(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<void> {

@@ -274,7 +274,7 @@ Replaces the user's hashtag list with the curated default seed from `DEFAULT_HAS
 
 ### POST /api/dev/trigger-scrape
 
-Dev-only pipeline trigger. Kicks a real global-feed scrape (coordinator → chunks → LLM → D1) without waiting for the hourly cron or needing Cloudflare Access.
+Dev-only pipeline trigger. Kicks a real global-feed scrape (coordinator → chunks → LLM → D1) without waiting for the every-4-hours cron or needing Cloudflare Access.
 
 **Access control:** Endpoint 404s when `DEV_BYPASS_TOKEN` is not configured. When the secret is set, the request must carry `Authorization: Bearer <DEV_BYPASS_TOKEN>` (timing-safe comparison). Any mismatch or missing header also returns `404` — the endpoint does not distinguish "wrong token" from "not found" to avoid enumeration.
 

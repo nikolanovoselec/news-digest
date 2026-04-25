@@ -73,7 +73,7 @@ The `scripts/e2e-test.sh` script still exists for manual invocation (`bash scrip
 |---|---|---|---|
 | `DB` | D1 database | `ai-news-digest` | Primary store |
 | `KV` | KV namespace | `news-digest-kv` | Caches (headlines, sources, health) |
-| `SCRAPE_COORDINATOR` | Queue | `scrape-coordinator` | Hourly coordinator dispatch |
+| `SCRAPE_COORDINATOR` | Queue | `scrape-coordinator` | Every-4-hours coordinator dispatch (00/04/08/12/16/20 UTC) |
 | `SCRAPE_CHUNKS` | Queue | `scrape-chunks` | LLM chunk jobs |
 | `AI` | Workers AI | (account-level) | LLM inference |
 
@@ -96,7 +96,7 @@ Every admin endpoint sits under `/api/admin/*` so a **single wildcard rule** cov
 
 | Path | What it does |
 |---|---|
-| `/api/admin/force-refresh` | Manually kicks the hourly global-feed coordinator. |
+| `/api/admin/force-refresh` | Manually kicks the global-feed coordinator (every-4-hours cron). |
 | `/api/admin/discovery/retry` | Re-queues a single tag for LLM-assisted source discovery. |
 | `/api/admin/discovery/retry-bulk` | Re-queues every "stuck" (empty-feeds) tag for the session user in one shot — backs the **Discover missing sources** button on `/settings`. |
 

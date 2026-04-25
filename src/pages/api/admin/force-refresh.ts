@@ -1,7 +1,7 @@
 // Implements REQ-PIPE-001
 // Implements REQ-OPS-004
 //
-// Operator-only manual kick of the hourly global-feed coordinator.
+// Operator-only manual kick of the global-feed coordinator (every-4-hours cron).
 // Path: POST /api/admin/force-refresh + GET /api/admin/force-refresh.
 //
 // Accepts POST (from the Settings page button) + GET (for a direct

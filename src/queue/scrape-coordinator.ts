@@ -1,8 +1,8 @@
 // Implements REQ-PIPE-001
 // Implements REQ-DISC-003
 //
-// Coordinator for the hourly global-feed scrape. Receives one message
-// per :00 cron tick containing `{scrape_run_id}`; fans out across
+// Coordinator for the global-feed scrape (every-4-hours cron `0 */4 * * *`).
+// Receives one message per cron tick containing `{scrape_run_id}`; fans out across
 // CURATED_SOURCES + discovered-tag feeds; canonical-dedupes the pool;
 // filters out articles already present in `articles.canonical_url`;
 // chunks survivors into slices of ≤100; and enqueues one
@@ -88,7 +88,7 @@ function isSafeWebUrl(url: string): boolean {
   }
 }
 
-/** Every `scrape-coordinator` queue message. Enqueued by the hourly
+/** Every `scrape-coordinator` queue message. Enqueued by the every-4-hours
  * cron branch in `src/worker.ts`. */
 export interface CoordinatorMessage {
   scrape_run_id: string;
@@ -352,7 +352,7 @@ export async function runCoordinator(
   }
   // Hard cap: a discovered-tag explosion can't expand the per-tick LLM
   // fan-out past MAX_CHUNKS_PER_TICK. Any excess is simply deferred to
-  // the next hourly tick (the existing-URL filter keeps tick-N+1 from
+  // the next 4-hour tick (the existing-URL filter keeps tick-N+1 from
   // re-processing the chunks we emit this tick).
   const droppedChunks = Math.max(0, chunks.length - MAX_CHUNKS_PER_TICK);
   if (droppedChunks > 0) {

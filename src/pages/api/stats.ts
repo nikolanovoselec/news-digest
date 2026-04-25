@@ -8,7 +8,7 @@
 //   - digests_generated = COUNT(*) FROM scrape_runs WHERE status='ready'
 //     (GLOBAL — one tick = one generation event, shown to every user)
 //   - tokens_consumed   = SUM(tokens_in + tokens_out) FROM scrape_runs
-//     (GLOBAL — the hourly pipeline runs once for everyone)
+//     (GLOBAL — the every-4-hours pipeline runs once for everyone)
 //   - cost_usd          = SUM(estimated_cost_usd) FROM scrape_runs
 //     (GLOBAL — same rationale)
 //   - articles_total    = distinct articles in the global pool whose

@@ -1,6 +1,8 @@
 name: Scorecard
 
 on:
+  # OSSF Scorecard rejects non-default-branch invocations with
+  # "Only the default branch main is supported" — keep main-only.
   push:
     branches: [main]
   schedule:
