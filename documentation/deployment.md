@@ -73,7 +73,7 @@ The `scripts/e2e-test.sh` script still exists for manual invocation (`bash scrip
 |---|---|---|---|
 | `DB` | D1 database | `ai-news-digest` | Primary store |
 | `KV` | KV namespace | `news-digest-kv` | Caches (headlines, sources, health) |
-| `SCRAPE_COORDINATOR` | Queue | `scrape-coordinator` | Hourly coordinator dispatch |
+| `SCRAPE_COORDINATOR` | Queue | `scrape-coordinator` | Every-4-hours coordinator dispatch (00/04/08/12/16/20 UTC) |
 | `SCRAPE_CHUNKS` | Queue | `scrape-chunks` | LLM chunk jobs |
 | `AI` | Workers AI | (account-level) | LLM inference |
 
