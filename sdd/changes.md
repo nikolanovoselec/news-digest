@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-25
 
+- REQ-READ-007 polish (no AC change): pop and cascade durations tuned shorter so the tap-to-settled wall clock is roughly halved — pop 700ms→500ms, cascade target/min/max 700/800/3500ms→400/400/1500ms. Same pop/hold/cascade choreography, same easing, just snappier.
+
 - REQ-READ-007 amended (AC 3 + AC 6 unselect symmetry): the cascade now also fires when the user UN-selects a previously selected chip, sliding the chip rightward back to its natural sort position (by article count descending, alpha tiebreak) with the chips it passes sliding leftward to fill the gap on the same pop/hold/duration/easing model. The convenience scroll-down reveal is gated on the chip landing at slot 0 — so unselect cascades, which land mid-railing, do not pull the railing's scroll position.
 
 - REQ-READ-007 amended (AC 3 reshape): cascade duration now scales with the *visible-fraction* of the tapped chip's journey instead of the total travel distance. Earlier scaling held physical velocity uniform but most of a far chip's journey is off-screen — the user's eye still saw the visible portion flash past in 200ms while a near chip's full visible journey took 800ms. New scaling targets a constant on-screen crossing time, so chip 3 and chip 20 both feel the same to track regardless of how far each has to travel.

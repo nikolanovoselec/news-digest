@@ -35,7 +35,7 @@
 //
 //   1. POP: the tapped chip scales up with a bounce so the user gets
 //      unmistakable feedback that the tap was received. The pop
-//      keyframe in TagStrip.astro runs for ~700ms and is the only
+//      keyframe in TagStrip.astro runs for ~500ms and is the only
 //      motion on screen for the first beat.
 //   2. HOLD: a one-second pause where nothing else moves. The popped
 //      chip stays slightly elevated (z-index lift via the pop class)
@@ -47,11 +47,13 @@
 //      travels 200px or 1500px. The eye can track the chip across
 //      the railing without it racing past as a blur.
 //
-// Total wall-clock from tap to settled state:
-//   ~700ms pop (overlapping the hold) + remaining hold to 1000ms
-//     + 800ms cascade  ≈ 1800 ms.
-// This is intentionally long. Earlier 220ms / 450ms tunings looked
-// like teleportation on real hardware.
+// Total wall-clock from tap to settled state for a near chip:
+//   ~500ms pop (overlapping the hold) + remaining hold to 1000ms
+//     + 400ms cascade  ≈ 1400 ms.
+// Far chips (low visibleFraction) extend the cascade up to 1500ms,
+// pushing wall clock to ~2500ms. Earlier 220ms / 450ms tunings
+// looked like teleportation on real hardware; the current numbers
+// are tuned for snappy-but-trackable.
 // Two classes carry distinct concerns so JS can manage them
 // independently. `POP_CLASS` owns the scale-bounce keyframe and is
 // removed BEFORE the cascade starts so its CSS animation no longer
@@ -74,9 +76,9 @@ const HOLD_BEFORE_CASCADE_MS = 1000;
 // distance. Linear-velocity scaling (the prior approach) optimised
 // for *physical* velocity uniformity, but the eye only ever sees
 // the visible slice — so far chips still flashed past as a blur.
-const MIN_CASCADE_MS = 800;
-const MAX_CASCADE_MS = 3500;
-const TARGET_VISIBLE_CROSSING_MS = 700;
+const MIN_CASCADE_MS = 400;
+const MAX_CASCADE_MS = 1500;
+const TARGET_VISIBLE_CROSSING_MS = 400;
 // Floor on visibleFraction prevents a 0-divide when the chip is
 // entirely off-screen at FIRST capture (which would imply the user
 // somehow tapped a chip they couldn't see — defensive).
