@@ -49,7 +49,7 @@ async function insertArticle(
       opts.canonicalUrl,
       'An example title',
       JSON.stringify(['detail a']),
-      JSON.stringify(['generative-ai']),
+      JSON.stringify(['ai']),
       opts.publishedAt,
       opts.publishedAt,
       'run-cleanup',
@@ -179,7 +179,7 @@ describe('cleanup cron — REQ-PIPE-005', () => {
       .run();
 
     // Three article_tags rows.
-    for (const tag of ['generative-ai', 'ml', 'news']) {
+    for (const tag of ['ai', 'ml', 'news']) {
       await env.DB
         .prepare('INSERT INTO article_tags (article_id, tag) VALUES (?, ?)')
         .bind(articleId, tag)
@@ -289,8 +289,8 @@ describe('cleanup cron — REQ-PIPE-007 orphan-tag sweep', () => {
   });
 
   it('REQ-PIPE-007: deletes the cache for a tag no user owns', async () => {
-    await setUserHashtags(env.DB, USER_ID, ['generative-ai', 'cloudflare']);
-    await seedSources('generative-ai');
+    await setUserHashtags(env.DB, USER_ID, ['ai', 'cloudflare']);
+    await seedSources('ai');
     await seedSources('cloudflare');
     await seedSources('ikea'); // orphan — no user has it
 
@@ -303,7 +303,7 @@ describe('cleanup cron — REQ-PIPE-007 orphan-tag sweep', () => {
   });
 
   it('REQ-PIPE-007: also deletes the discovery_failures sibling key', async () => {
-    await setUserHashtags(env.DB, USER_ID, ['generative-ai']);
+    await setUserHashtags(env.DB, USER_ID, ['ai']);
     await seedSources('ikea');
     await env.KV.put('discovery_failures:ikea', '2');
 
@@ -332,7 +332,7 @@ describe('cleanup cron — REQ-PIPE-007 orphan-tag sweep', () => {
     // A legacy row stored as ["#AI", "Cloudflare"] still protects the
     // bare-lowercase `sources:ai` and `sources:cloudflare` entries.
     await setUserHashtags(env.DB, USER_ID, ['#AI', 'Cloudflare']);
-    await seedSources('generative-ai');
+    await seedSources('ai');
     await seedSources('cloudflare');
     await seedSources('orphan-tag');
 
@@ -345,7 +345,7 @@ describe('cleanup cron — REQ-PIPE-007 orphan-tag sweep', () => {
   });
 
   it('REQ-PIPE-007: idempotent — second immediate run deletes 0', async () => {
-    await setUserHashtags(env.DB, USER_ID, ['generative-ai']);
+    await setUserHashtags(env.DB, USER_ID, ['ai']);
     await seedSources('ikea');
 
     const first = await runCleanup(env);
@@ -380,7 +380,7 @@ describe('cleanup cron — REQ-PIPE-007 orphan-tag sweep', () => {
     // Real failure injection (AC 5): wrap env.DB so the article-retention
     // DELETE throws. The orphan sweep must still execute, delete the
     // orphan KV entry, and report it in the result.
-    await setUserHashtags(env.DB, USER_ID, ['generative-ai']);
+    await setUserHashtags(env.DB, USER_ID, ['ai']);
     await seedSources('ikea');
 
     const wrappedEnv = wrapDbToThrowOn(env, (sql) =>
@@ -399,7 +399,7 @@ describe('cleanup cron — REQ-PIPE-007 orphan-tag sweep', () => {
     // article and an orphan KV entry. Throw on the orphan-sweep SELECT
     // and verify the stale article was still deleted while the orphan
     // KV entry was preserved (sweep aborted before deletion).
-    await setUserHashtags(env.DB, USER_ID, ['generative-ai']);
+    await setUserHashtags(env.DB, USER_ID, ['ai']);
 
     const staleId = '01JCLEAN000000000000000099';
     await insertArticle(env.DB, {

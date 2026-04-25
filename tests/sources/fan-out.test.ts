@@ -113,7 +113,7 @@ describe('fetchFromSource', () => {
         { title: 't', url: 'https://e/1', source_name: 's-miss' },
       ],
     };
-    const result = await fetchFromSource(source, 'generative-ai', kv);
+    const result = await fetchFromSource(source, 'ai', kv);
     expect(result).toHaveLength(1);
     expect(result[0]?.title).toBe('t');
     expect(fetchStub.calls).toEqual(['https://e/search']);
@@ -166,7 +166,7 @@ describe('fanOutForTags', () => {
     const { kv, preload } = makeKv();
     // Pre-populate cache for all 3 generic sources × 2 tags so fan-out
     // should do zero network calls.
-    const tags = ['cloudflare', 'generative-ai'];
+    const tags = ['cloudflare', 'ai'];
     for (const tag of tags) {
       for (const source of ['hackernews', 'googlenews', 'reddit']) {
         preload(
@@ -243,7 +243,7 @@ describe('fanOutForTags', () => {
     );
     preload('headlines:reddit:ai', JSON.stringify([]));
 
-    const out = await fanOutForTags(['generative-ai'], kv, new Map());
+    const out = await fanOutForTags(['ai'], kv, new Map());
     const canonicalTitles = out.map((h) => h.title).sort();
     expect(canonicalTitles).toEqual(['HN unique', 'Shared story']);
   });
@@ -349,7 +349,7 @@ describe('fanOutForTags', () => {
       return new Response(JSON.stringify({ hits: [] }), { status: 200 });
     });
 
-    const out = await fanOutForTags(['generative-ai'], kv, new Map());
+    const out = await fanOutForTags(['ai'], kv, new Map());
     // HN cached item must survive despite Google News 500.
     expect(out.map((h) => h.title)).toContain('hn ok');
   });

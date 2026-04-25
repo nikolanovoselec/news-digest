@@ -115,7 +115,7 @@ async function postRequest(cookie: string | null): Promise<Request> {
 
 describe('POST /api/tags/delete-initial — REQ-SET-002 AC 8', () => {
   it('REQ-SET-002: rejects a request with missing or mismatched Origin header (REQ-AUTH-003)', async () => {
-    const db = makeDb(userWith(JSON.stringify(['generative-ai', 'cloudflare'])));
+    const db = makeDb(userWith(JSON.stringify(['ai', 'cloudflare'])));
     const req = new Request(`${APP_URL}/api/tags/delete-initial`, {
       method: 'POST',
       headers: {
