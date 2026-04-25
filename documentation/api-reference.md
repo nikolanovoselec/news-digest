@@ -115,7 +115,7 @@ Native form-encoded fallback for the same settings update. Used when the JS fetc
 
 **Request:** `application/x-www-form-urlencoded` — same fields as PUT.
 
-**Response:** `303` redirect to `/settings` on success. On validation failure, redirects to `/settings?error=<code>` where `<code>` is one of `invalid_hashtags`, `invalid_time`, `invalid_email_enabled`; the settings page renders an inline error banner from the query param.
+**Response:** `303` redirect to `/settings` on success. On validation failure, redirects to `/settings?error=<code>` where `<code>` is one of `invalid_hashtags`, `invalid_time`, `invalid_email_enabled`; the settings page renders an inline error message next to the Save button from the query param; the param is stripped from the URL after display so a refresh does not re-show stale text.
 
 **Implements:** [REQ-SET-001](../sdd/settings.md#req-set-001-unified-first-run-and-edit-flow), [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation), [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone), [REQ-SET-005](../sdd/settings.md#req-set-005-email-notification-preference)
 

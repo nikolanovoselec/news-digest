@@ -200,23 +200,6 @@ const rediscoverConfirmedCount =
 const rediscoverConfirmed =
   rediscoverConfirmedCount !== null && Number.isFinite(rediscoverConfirmedCount);
 
-// Banner state from the native form-POST round-trip. The POST handler
-// 303-redirects to /settings?saved=ok on success and /settings?error=<code>
-// on validation failure. The JS submit path stays on the page and shows
-// status text inline, so these banners only ever fire when the native
-// fallback ran (typical: JS hadn't bound yet).
-const saveConfirmed = url.searchParams.get('saved') === 'ok';
-const saveErrorCode = url.searchParams.get('error');
-const saveErrorMessage =
-  saveErrorCode === 'invalid_time' ? 'Pick a valid digest time.' :
-  saveErrorCode === 'invalid_tz' ? 'Pick a valid IANA timezone.' :
-  saveErrorCode === 'invalid_model_id' ? 'Pick a valid model.' :
-  saveErrorCode === 'forbidden_origin' ? 'Origin check failed — please reload the page and try again.' :
-  saveErrorCode === 'bad_request' ? 'Could not parse the form. Please reload the page and try again.' :
-  saveErrorCode === 'internal_error' ? 'Save failed on the server. Please try again.' :
-  saveErrorCode !== null && saveErrorCode !== '' ? 'Could not save your settings. Please try again.' :
-  null;
-
 const heroTitle = isFirstRun
   ? 'Welcome — pick a time, we handle the rest'
   : 'Settings';
@@ -250,17 +233,6 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
 
     {!isFirstRun && <StatsWidget />}
 
-    {saveConfirmed && (
-      <p class="settings__banner settings__banner--ok" role="status" aria-live="polite">
-        Saved
-      </p>
-    )}
-    {saveErrorMessage !== null && (
-      <p class="settings__banner settings__banner--error" role="alert">
-        {saveErrorMessage}
-      </p>
-    )}
-
     {/* Native form-POST fallback (REQ-AUTH-003 compatible). When the
         JS submit handler binds via init(), it `e.preventDefault()`s and
         sends the JSON PUT below. When the JS hasn't loaded yet (CSP
@@ -280,7 +252,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           the sole editor for the user's hashtags. Settings controls
           schedule, model, and delivery only. */}
       <fieldset class="settings__section">
-        <legend class="settings__legend">Schedule &amp; Notifications</legend>
+        <legend class="settings__legend">Notifications</legend>
         <label class="settings__field">
           <span class="settings__field-label">Daily digest time</span>
           <input
@@ -305,7 +277,6 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               <option value={zone} selected={zone === tzValue}>{zone}</option>
             ))}
           </select>
-          <span class="settings__tz-hint">pre-selected from your browser; change if it's wrong</span>
         </label>
         {showModelSelect ? (
           <label class="settings__field">
@@ -797,6 +768,43 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     const submit = form.querySelector<HTMLButtonElement>('[data-settings-submit]');
     const tzSelect = form.querySelector('[data-tz-select]') as HTMLSelectElement | null;
 
+    // Surface the native-POST round-trip outcome inline next to the
+    // Save button (instead of a top-of-page banner). The /api/settings
+    // POST handler 303-redirects to /settings?saved=ok or
+    // /settings?error=<code>; copy the message into the same
+    // [data-settings-status] node the JS PUT path writes to, then
+    // strip the query so a refresh doesn't re-show stale text.
+    if (status !== null) {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const saved = params.get('saved');
+        const errorCode = params.get('error');
+        if (saved === 'ok') {
+          status.textContent = 'Saved';
+        } else if (errorCode !== null && errorCode !== '') {
+          const map: Record<string, string> = {
+            invalid_time: 'Pick a valid digest time.',
+            invalid_tz: 'Pick a valid IANA timezone.',
+            invalid_model_id: 'Pick a valid model.',
+            forbidden_origin: 'Origin check failed; reload and try again.',
+            bad_request: 'Could not parse the form; reload and try again.',
+            internal_error: 'Save failed on the server; please try again.',
+            app_not_configured: 'Server is misconfigured; contact the admin.',
+          };
+          status.textContent = map[errorCode] ?? 'Could not save your settings.';
+        }
+        if (saved !== null || errorCode !== null) {
+          params.delete('saved');
+          params.delete('error');
+          const next = params.toString();
+          const newUrl = window.location.pathname + (next === '' ? '' : '?' + next);
+          window.history.replaceState({}, '', newUrl);
+        }
+      } catch {
+        /* leave status text blank if URL parsing fails */
+      }
+    }
+
     // REQ-SET-007 AC 5 + AC 6 — browser-detected pre-select. Server
     // rendered the dropdown with the stored tz selected (or 'UTC' as
     // the UI fallback when stored is the empty seed sentinel). We only
@@ -964,25 +972,6 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     font-size: var(--text-sm);
   }
 
-  .settings__banner {
-    margin: 0 0 1rem;
-    padding: 0.625rem 0.875rem;
-    border-radius: 0.5rem;
-    font-size: var(--text-sm);
-    font-weight: 500;
-  }
-  .settings__banner--ok {
-    background: var(--surface-raised);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--text);
-    color: var(--text);
-  }
-  .settings__banner--error {
-    background: var(--surface-raised);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--danger, #d33);
-    color: var(--text);
-  }
 
   .settings__chips {
     display: flex;
@@ -1066,11 +1055,6 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     font: inherit;
     font-weight: 600;
     max-width: 100%;
-  }
-
-  .settings__tz-hint {
-    color: var(--text-muted);
-    font-size: var(--text-sm);
   }
 
   .settings__advanced-body {

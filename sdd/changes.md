@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-25
 
+- REQ-SET-001 AC 5 reworded: the native-form save outcome (success "Saved" or named error) now surfaces inline next to the Save button instead of as a top-of-form banner, and the carrying query parameters are stripped after display so a refresh does not re-show stale text. The 303-redirect contract is unchanged.
+
 - REQ-SET-001 AC 5 extended: native form-POST failures now redirect back to the settings page with an inline error banner naming what went wrong, instead of returning a raw JSON error body the browser would render as plain text on a blank page. Unauthenticated native POSTs redirect to the site root since the settings page would itself bounce them away.
 
 - REQ-SET-001 AC 5 added: the settings save endpoint now accepts a native HTML form submission alongside the JSON API path, so clicking Save persists the user's settings even on browsers where the in-page submit handler has not finished binding (mobile in-app webviews, client-router swap races). Both paths share the same validation and the same Origin check from REQ-AUTH-003.
