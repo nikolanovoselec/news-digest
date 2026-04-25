@@ -359,26 +359,39 @@ export async function PUT(context: APIContext): Promise<Response> {
  */
 export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env;
+  // Native form submissions can't render JSON error bodies — the browser
+  // would navigate to the JSON and show raw text. Every error path here
+  // 303-redirects back to /settings?error=<code> so the page can render
+  // the error inline and the user keeps editing without re-typing.
+  const fail = (code: string): Response =>
+    new Response(null, {
+      status: 303,
+      headers: { Location: `/settings?error=${encodeURIComponent(code)}` },
+    });
+
   if (typeof env.APP_URL !== 'string' || env.APP_URL === '') {
-    return errorResponse('app_not_configured');
+    return fail('app_not_configured');
   }
   const appOrigin = originOf(env.APP_URL);
 
   const originResult = checkOrigin(context.request, appOrigin);
   if (!originResult.ok) {
-    return originResult.response!;
+    return fail('forbidden_origin');
   }
 
   const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
   if (session === null) {
-    return errorResponse('unauthorized');
+    // Unauthenticated users can't see /settings, so the redirect target
+    // would itself bounce to /. That's the right answer: send them
+    // somewhere they can re-authenticate, not to a JSON blob.
+    return new Response(null, { status: 303, headers: { Location: '/' } });
   }
 
   let form: FormData;
   try {
     form = await context.request.formData();
   } catch {
-    return errorResponse('bad_request');
+    return fail('bad_request');
   }
 
   // The form's `time` field is a single HH:MM string; split it into
@@ -394,13 +407,13 @@ export async function POST(context: APIContext): Promise<Response> {
   const digestMinute = Number.parseInt(minuteStr ?? '', 10);
 
   if (!isIntegerInRange(digestHour, 0, 23) || !isIntegerInRange(digestMinute, 0, 59)) {
-    return errorResponse('invalid_time');
+    return fail('invalid_time');
   }
   if (typeof tzRaw !== 'string' || tzRaw === '' || !isValidTz(tzRaw)) {
-    return errorResponse('invalid_tz');
+    return fail('invalid_tz');
   }
   if (typeof modelIdRaw !== 'string' || !MODELS.some((m) => m.id === modelIdRaw)) {
-    return errorResponse('invalid_model_id');
+    return fail('invalid_model_id');
   }
 
   const tz = tzRaw;
@@ -420,7 +433,7 @@ export async function POST(context: APIContext): Promise<Response> {
       error_code: 'internal_error',
       detail: String(err).slice(0, 500),
     });
-    return errorResponse('internal_error');
+    return fail('internal_error');
   }
 
   const headers = new Headers({ Location: '/settings?saved=ok' });
