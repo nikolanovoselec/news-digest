@@ -35,7 +35,7 @@ describe('tag-railing FLIP reorder — REQ-READ-007', () => {
     // collapses to the broken jump-cut behaviour the bug report
     // described.
     expect(flipHelper).toContain('getBoundingClientRect');
-    expect(flipHelper).toMatch(/insertBefore\([^)]*firstChild/);
+    expect(flipHelper).toMatch(/insertBefore\([^)]*beforeNode/);
     expect(flipHelper).toMatch(/transform\s*=/);
   });
 
@@ -117,5 +117,47 @@ describe('tag-railing FLIP reorder — REQ-READ-007', () => {
 
   it('REQ-READ-007: helper annotates itself with the REQ id', () => {
     expect(flipHelper).toContain('REQ-READ-007');
+  });
+
+  it('REQ-READ-007: helper exports flipChipToPosition for arbitrary destinations (AC 3 unselect)', () => {
+    // The unselect cascade slides the chip to its natural sort
+    // position rather than slot 0, so the helper must accept a
+    // destination beforeNode parameter (null = append-to-end).
+    // flipChipToFront stays as a thin wrapper over flipChipToPosition.
+    expect(flipHelper).toMatch(/export\s+(async\s+)?function\s+flipChipToPosition/);
+    expect(flipHelper).toMatch(/beforeNode/);
+  });
+
+  it('REQ-READ-007: digest.astro un-select branch calls flipChipToPosition with a computed beforeNode (AC 3)', () => {
+    // The unselect path must compute the chip's natural position by
+    // walking other non-selected chips and finding the first one
+    // with strictly lower priority (lower count, or same count +
+    // alpha-later tag). Pattern guards: a localeCompare reference
+    // and a flipChipToPosition call inside the unselect branch.
+    expect(digestPage).toContain('flipChipToPosition');
+    expect(digestPage).toContain('localeCompare');
+  });
+
+  it('REQ-READ-007: history.astro un-select branch calls flipChipToPosition with a computed beforeNode (AC 3)', () => {
+    expect(historyPage).toContain('flipChipToPosition');
+    expect(historyPage).toContain('localeCompare');
+  });
+
+  it('REQ-READ-007: helper checks BOTH viewport edges for off-screen-exit easing (AC 3)', () => {
+    // Unselect cascade can land the chip off-screen-RIGHT (its
+    // natural position past the visible area) just as select can
+    // land it off-screen-left. The ease-IN guard must check both
+    // edges so the visible-portion-as-slow-phase property holds in
+    // either direction.
+    expect(flipHelper).toMatch(/tappedLastLeft\s*<\s*stripRect\.left/);
+    expect(flipHelper).toMatch(/tappedLastRight\s*>\s*stripRect\.right/);
+  });
+
+  it('REQ-READ-007: scroll-down reveal arms only when the chip lands at slot 0 (AC 6)', () => {
+    // Unselect cascade lands the chip mid-railing — pulling
+    // scrollLeft to 0 on the next page scroll would hide the chip
+    // the user just operated on. The arm condition must include a
+    // strip.firstChild === tappedChip check.
+    expect(flipHelper).toMatch(/strip\.firstChild\s*===\s*tappedChip/);
   });
 });

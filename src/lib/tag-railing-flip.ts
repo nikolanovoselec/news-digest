@@ -118,11 +118,33 @@ export function isFlipLocked(strip: HTMLElement): boolean {
 }
 
 /** Reorder `tappedChip` to the start of `strip` with a FLIP cascade.
- *  Resolves once every chip has settled into its final position and
- *  the lock attribute has been cleared. */
-export async function flipChipToFront(
+ *  Thin wrapper over `flipChipToPosition` for the select-on-tap case
+ *  where the chip always lands at slot 0. */
+export function flipChipToFront(
   strip: HTMLElement,
   tappedChip: HTMLElement,
+  options: FlipChipOptions = {},
+): Promise<void> {
+  return flipChipToPosition(strip, tappedChip, strip.firstChild, options);
+}
+
+/** Reorder `tappedChip` to immediately before `beforeNode` (or to
+ *  the end if `beforeNode` is null) with the same pop-hold-cascade
+ *  choreography as `flipChipToFront`. Used by the unselect path,
+ *  where the chip slides back to its natural sort position among
+ *  the non-selected chips. The cascade direction (leftward or
+ *  rightward) is determined naturally by the FLIP rect math; the
+ *  ease-IN curve kicks in whenever the chip ends off-screen on
+ *  either edge so the visible portion of the journey covers the
+ *  slow phase of the curve. The scroll-down reveal is only armed
+ *  when the chip ends up at slot 0 (i.e., `strip.firstChild ===
+ *  tappedChip` after the move) — unselect cascades that land
+ *  mid-railing don't pull the strip's scrollLeft to 0 on the next
+ *  page scroll. */
+export async function flipChipToPosition(
+  strip: HTMLElement,
+  tappedChip: HTMLElement,
+  beforeNode: Node | null,
   options: FlipChipOptions = {},
 ): Promise<void> {
   if (isFlipLocked(strip)) return;
@@ -140,7 +162,7 @@ export async function flipChipToFront(
     typeof window.matchMedia === 'function' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reducedMotion) {
-    strip.insertBefore(tappedChip, strip.firstChild);
+    strip.insertBefore(tappedChip, beforeNode);
     return;
   }
 
@@ -204,7 +226,7 @@ export async function flipChipToFront(
     const savedScrollLeft = strip.scrollLeft;
     if (hadFocus) tappedChip.blur();
 
-    strip.insertBefore(tappedChip, strip.firstChild);
+    strip.insertBefore(tappedChip, beforeNode);
 
     if (strip.scrollLeft !== savedScrollLeft) {
       strip.scrollLeft = savedScrollLeft;
@@ -222,6 +244,7 @@ export async function flipChipToFront(
     // INVERT loop to avoid a second getBoundingClientRect call.
     let tappedFirstLeft = 0;
     let tappedLastLeft = 0;
+    let tappedLastRight = 0;
     for (const chip of chips) {
       const first = firstRects.get(chip);
       if (first === undefined) continue;
@@ -235,6 +258,7 @@ export async function flipChipToFront(
       if (chip === tappedChip) {
         tappedFirstLeft = first.left;
         tappedLastLeft = last.left;
+        tappedLastRight = last.right;
       }
     }
 
@@ -269,11 +293,16 @@ export async function flipChipToFront(
     // tapped chip continues sliding (mostly off-screen) until
     // tappedCascadeMs elapses.
     const displacedCascadeMs = options.durationMs ?? MIN_CASCADE_MS;
-    // Tapped chip uses ease-IN when its destination is off-screen-
-    // left so the slow phase covers the visible portion. When
-    // scrollLeft = 0 (chip ends visible at slot 0), use ease-OUT so
-    // it decelerates into final position.
-    const tappedEndsOffScreen = tappedLastLeft < stripRect.left;
+    // Tapped chip uses ease-IN when its destination is off-screen
+    // (either edge), so the slow phase of the curve covers the
+    // visible portion of the journey and the fast phase covers the
+    // off-screen tail. When the chip ends inside the visible
+    // viewport, use ease-OUT so it decelerates into final position.
+    // Both edges are checked because the unselect cascade can land a
+    // chip off-screen-RIGHT (its natural sort position past the
+    // visible area), not just off-screen-left like the select case.
+    const tappedEndsOffScreen =
+      tappedLastLeft < stripRect.left || tappedLastRight > stripRect.right;
     const tappedEasing = tappedEndsOffScreen ? EASE_IN : EASE_OUT;
 
     // Fast-exit when nothing actually moved (e.g., the user tapped
@@ -370,9 +399,18 @@ export async function flipChipToFront(
     // Arm a one-shot scroll-down reveal: the next downward window
     // scroll will smooth-animate the strip's scrollLeft → 0 so the
     // user sees the just-selected chip docked at slot 0 as they
-    // begin to read the dashboard. Only fires when the strip is
-    // overflow-scrollable AND not already at scrollLeft=0.
-    if (strip.scrollWidth > strip.clientWidth && strip.scrollLeft > 0) {
+    // begin to read the dashboard. Conditions:
+    //   1. strip is overflow-scrollable (scrollWidth > clientWidth)
+    //   2. strip is currently scrolled right (scrollLeft > 0)
+    //   3. the tapped chip ended up at slot 0 (strip.firstChild ===
+    //      tappedChip) — the SELECT case. Unselect cascades land
+    //      mid-railing; pulling scrollLeft to 0 then would hide the
+    //      chip the user just operated on.
+    if (
+      strip.scrollWidth > strip.clientWidth &&
+      strip.scrollLeft > 0 &&
+      strip.firstChild === tappedChip
+    ) {
       armScrollDownReveal(strip);
     }
   } finally {
