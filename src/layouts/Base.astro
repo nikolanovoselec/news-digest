@@ -39,7 +39,7 @@ interface Props {
 
 const {
   title = 'News Digest',
-  description = 'A daily, AI-curated news digest. Pick your interests, we fetch and summarise the day — fresh every hour, delivered at your time.',
+  description = 'A daily news digest curated by an LLM. Pick your hashtags, get plain-English summaries of 50+ tech sources, refreshed throughout the day.',
   firstRun = false,
   noindex = false,
   canonical,
@@ -108,7 +108,7 @@ const initialTheme = cookieTheme ?? 'light';
     <meta property="og:image:type" content={ogImageType} />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="News Digest — your daily tech digest, distilled by AI." />
+    <meta property="og:image:alt" content="News Digest, a daily tech digest curated by an LLM." />
     <meta property="og:locale" content="en_US" />
 
     {/* Twitter / X card — summary_large_image whenever we ship an og:image. */}
@@ -116,7 +116,7 @@ const initialTheme = cookieTheme ?? 'light';
     <meta name="twitter:title" content={fullTitle} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImageUrl} />
-    <meta name="twitter:image:alt" content="News Digest — your daily tech digest, distilled by AI." />
+    <meta name="twitter:image:alt" content="News Digest, a daily tech digest curated by an LLM." />
 
     {/* Performance hints — the site itself has no third-party deps on
         the critical path, but the dns-prefetch cost is ~0 and keeps the

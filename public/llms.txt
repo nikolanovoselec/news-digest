@@ -1,22 +1,22 @@
 # News Digest
 
-> A daily, AI-curated news digest. Users pick interest tags; the system scrapes 50+ curated RSS/Atom/JSON feeds every hour, deduplicates by canonical URL, and summarises each article with a chunked LLM pipeline. The per-user dashboard is a tag-filtered query over the global article pool.
+> A daily news digest curated by an LLM. Users pick interest tags; the system scrapes 50+ curated RSS/Atom/JSON feeds every four hours, deduplicates by canonical URL, and summarises each article with a chunked LLM pipeline. The per-user dashboard is a tag-filtered query over the global article pool.
 
-News Digest is a personal-use tool — every surface beyond the landing page requires a GitHub OAuth session. There are no public article URLs to index.
+News Digest is a personal-use tool. Every surface beyond the landing page requires a federated OAuth session (GitHub or Google). There are no public article URLs to index.
 
 ## What this product does
 
-- Scrapes ~50 curated sources hourly (AI labs, cloud vendors, security, DevOps, databases, languages, community aggregators).
-- Runs a single chunked LLM pass per hour that rewrites titles in NYT-style prose, produces 1–3 paragraph summaries, tags each article against a 20-slug allowlist, and collapses duplicate coverage across sources.
-- Writes everything to a shared global pool (D1). Per-user dashboards are `SELECT ... WHERE tag IN (<user's tags>) ORDER BY published_at DESC LIMIT 50`.
-- Sends at most one daily email per user at their configured local time — a bare notification with a link, no content in the mail.
+- Scrapes ~50 curated sources every four hours (AI labs, cloud vendors, security, DevOps, databases, languages, community aggregators).
+- Runs a single chunked LLM pass per tick that rewrites titles in NYT-style prose, produces 1–3 paragraph summaries, tags each article against a 20-slug allowlist, and collapses duplicate coverage across sources.
+- Writes everything to a shared global pool (D1). Per-user dashboards return up to 29 most-recently-ingested articles whose tags intersect the session user's hashtag list.
+- Sends at most one daily email per user at their configured local time. A bare notification with a link, no content in the mail.
 
 ## Technology
 
-- Platform: Cloudflare Workers runtime (web-standard APIs only — no Node built-ins).
+- Platform: Cloudflare Workers runtime (web-standard APIs only, no Node built-ins).
 - Storage: Cloudflare D1 (SQLite), Cloudflare KV, Cloudflare Queues.
 - LLM: Workers AI @cf/openai/gpt-oss-120b with strict JSON output.
-- Auth: GitHub OAuth, HMAC-SHA256 session JWT in a `__Host-` cookie.
+- Auth: federated OAuth (GitHub OAuth 2.0, Google OIDC). HMAC-SHA256 session JWT in a `__Host-` cookie.
 - Framework: Astro 5 SSR with @astrojs/cloudflare adapter, output='server'.
 
 ## Sources
@@ -28,6 +28,6 @@ News Digest is a personal-use tool — every surface beyond the landing page req
 
 ## Crawling policy
 
-Please do not crawl, scrape, or ingest content behind the login. The robots.txt `Disallow` covers `/api/`, `/digest`, `/starred`, `/history`, `/settings`. All per-user content falls under GDPR Art. 6(1)(b) (performance of contract) — re-indexing it elsewhere has no legal basis.
+Please do not crawl, scrape, or ingest content behind the login. The robots.txt `Disallow` covers `/api/`, `/digest`, `/starred`, `/history`, `/settings`. All per-user content falls under GDPR Art. 6(1)(b) (performance of contract); re-indexing it elsewhere has no legal basis.
 
 Training crawlers (GPTBot, anthropic-ai, ClaudeBot, Google-Extended, CCBot, PerplexityBot) are blocked in robots.txt. The summaries themselves are transformed work from third-party sources; training on them constitutes a second-order rights question we're not in a position to grant.
