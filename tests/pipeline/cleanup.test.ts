@@ -271,6 +271,19 @@ async function seedSources(tag: string): Promise<void> {
 
 describe('cleanup cron — REQ-PIPE-007 orphan-tag sweep', () => {
   beforeEach(async () => {
+    // Full reset between cases: child rows first to satisfy FK ordering,
+    // then parents, then a single seeded user with no hashtags. Without
+    // this, a user inserted by an earlier case (e.g. multi-user) would
+    // own its tag for every subsequent case and break idempotency / null
+    // / empty-registry assertions.
+    await env.DB.exec('DELETE FROM article_reads');
+    await env.DB.exec('DELETE FROM article_stars');
+    await env.DB.exec('DELETE FROM article_tags');
+    await env.DB.exec('DELETE FROM article_sources');
+    await env.DB.exec('DELETE FROM articles');
+    await env.DB.exec('DELETE FROM scrape_runs');
+    await env.DB.exec('DELETE FROM users');
+    await insertUser(env.DB, USER_ID);
     await clearKvPrefix('sources:');
     await clearKvPrefix('discovery_failures:');
   });
@@ -367,8 +380,6 @@ describe('cleanup cron — REQ-PIPE-007 orphan-tag sweep', () => {
     // Real failure injection (AC 5): wrap env.DB so the article-retention
     // DELETE throws. The orphan sweep must still execute, delete the
     // orphan KV entry, and report it in the result.
-    await env.DB.exec('DELETE FROM users');
-    await insertUser(env.DB, USER_ID);
     await setUserHashtags(env.DB, USER_ID, ['ai']);
     await seedSources('ikea');
 
@@ -388,13 +399,6 @@ describe('cleanup cron — REQ-PIPE-007 orphan-tag sweep', () => {
     // article and an orphan KV entry. Throw on the orphan-sweep SELECT
     // and verify the stale article was still deleted while the orphan
     // KV entry was preserved (sweep aborted before deletion).
-    await env.DB.exec('DELETE FROM article_reads');
-    await env.DB.exec('DELETE FROM article_stars');
-    await env.DB.exec('DELETE FROM article_tags');
-    await env.DB.exec('DELETE FROM article_sources');
-    await env.DB.exec('DELETE FROM articles');
-    await env.DB.exec('DELETE FROM users');
-    await insertUser(env.DB, USER_ID);
     await setUserHashtags(env.DB, USER_ID, ['ai']);
 
     const staleId = '01JCLEAN000000000000000099';
