@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-25
 
+- REQ-SET-007 amended (AC 1 tightened + AC 6 added): the silent timezone auto-correct now stops touching the user's stored timezone once it is anything other than the seeded UTC default. Previously, every authenticated page load compared browser-resolved tz to stored tz and overwrote the stored value on every mismatch — so a manually-saved zone would be re-overwritten by the next page load if the browser's Intl returned a different value (e.g., privacy-mode browsers that fall back to Africa/Abidjan as a UTC alias). The manual settings picker is now the only path that can change a non-default zone.
+
 - REQ-READ-007 polish (no AC change): desktop / tablet cascade no longer hits the 750ms cap on every tap. The wrap layout has no horizontal scroll so every chip is always visible — the visible-fraction math now detects this case and uses the snappy 200ms floor instead of the slow 750ms cap. Mobile (single-row scrollable strip) is unchanged.
 
 - REQ-READ-007 polish (no AC change): cascade animation duration halved across the board (target/floor/cap all 50% lower) so the slide feels snappier without changing the pop or the hold beat. Total tap-to-settled wall clock drops from ~1400ms to ~1200ms for near chips, and from ~2500ms to ~1750ms for far chips.

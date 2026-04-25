@@ -247,6 +247,14 @@ const initialTheme = cookieTheme ?? 'light';
         const body = document.body;
         const stored = body.dataset['userTz'] ?? '';
         if (stored === '') return;
+        // REQ-SET-007 AC 6 — silent path only fires while stored tz is
+        // the seeded UTC default. Once the user (or an earlier silent
+        // correction) has set anything else, treat that value as
+        // authoritative and never overwrite it. Otherwise a privacy-
+        // masked browser whose Intl falls back to a UTC alias like
+        // 'Africa/Abidjan' would re-stamp the user's manual choice on
+        // every page load.
+        if (stored !== 'UTC') return;
         let browser = '';
         try {
           browser = Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
