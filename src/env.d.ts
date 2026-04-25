@@ -25,8 +25,8 @@ interface Env {
   // renders one button per configured provider, alphabetically. At least
   // one provider must be configured for the app to function (the deploy
   // workflow enforces this).
-  GITHUB_OAUTH_CLIENT_ID: string;
-  GITHUB_OAUTH_CLIENT_SECRET: string;
+  GH_OAUTH_CLIENT_ID: string;
+  GH_OAUTH_CLIENT_SECRET: string;
   GOOGLE_OAUTH_CLIENT_ID: string;
   GOOGLE_OAUTH_CLIENT_SECRET: string;
 

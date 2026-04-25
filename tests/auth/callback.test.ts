@@ -26,8 +26,8 @@ const APP_ORIGIN = 'https://news-digest.example.com';
 
 function fullEnv(db: D1Database): Partial<Env> {
   return {
-    GITHUB_OAUTH_CLIENT_ID: 'client123',
-    GITHUB_OAUTH_CLIENT_SECRET: 'secret456',
+    GH_OAUTH_CLIENT_ID: 'client123',
+    GH_OAUTH_CLIENT_SECRET: 'secret456',
     OAUTH_JWT_SECRET: JWT_SECRET,
     APP_URL,
     DB: db,

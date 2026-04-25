@@ -105,12 +105,12 @@ export function providerCredentials(
 /** Map provider name → env var name for the client id. Exposed so the
  *  deploy workflow / docs can reference a single source of truth. */
 export function envKeyClientId(provider: ProviderName): keyof Env {
-  return provider === 'github' ? 'GITHUB_OAUTH_CLIENT_ID' : 'GOOGLE_OAUTH_CLIENT_ID';
+  return provider === 'github' ? 'GH_OAUTH_CLIENT_ID' : 'GOOGLE_OAUTH_CLIENT_ID';
 }
 
 export function envKeyClientSecret(provider: ProviderName): keyof Env {
   return provider === 'github'
-    ? 'GITHUB_OAUTH_CLIENT_SECRET'
+    ? 'GH_OAUTH_CLIENT_SECRET'
     : 'GOOGLE_OAUTH_CLIENT_SECRET';
 }
 

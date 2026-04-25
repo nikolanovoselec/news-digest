@@ -12,8 +12,8 @@ Stored via `wrangler secret put <name>`. Never committed to git.
 
 | Secret | Description |
 |---|---|
-| `GITHUB_OAUTH_CLIENT_ID` | GitHub OAuth App client ID. Optional per-provider — at least one provider pair (GitHub or Google) must be configured. |
-| `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth App client secret. Required when `GITHUB_OAUTH_CLIENT_ID` is set. |
+| `GH_OAUTH_CLIENT_ID` | GitHub OAuth App client ID. Optional per-provider — at least one provider pair (GitHub or Google) must be configured. The `GH_` prefix is required because GitHub Actions reserves the `GITHUB_*` secret namespace for its built-in tokens. |
+| `GH_OAUTH_CLIENT_SECRET` | GitHub OAuth App client secret. Required when `GH_OAUTH_CLIENT_ID` is set. |
 | `GOOGLE_OAUTH_CLIENT_ID` | Google OAuth 2.0 client ID (web application type). Optional per-provider. |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth 2.0 client secret. Required when `GOOGLE_OAUTH_CLIENT_ID` is set. |
 | `OAUTH_JWT_SECRET` | 32+ character random string used to HMAC-sign session JWTs (provider-agnostic — required regardless of which providers are enabled) |

@@ -34,8 +34,8 @@ function makeContext(provider: string, env: Partial<Env>): unknown {
 
 function githubEnv(): Partial<Env> {
   return {
-    GITHUB_OAUTH_CLIENT_ID: 'gh-client-123',
-    GITHUB_OAUTH_CLIENT_SECRET: 'gh-secret-456',
+    GH_OAUTH_CLIENT_ID: 'gh-client-123',
+    GH_OAUTH_CLIENT_SECRET: 'gh-secret-456',
     OAUTH_JWT_SECRET: 'jwt-secret-minimum-length-for-hmac',
     APP_URL: 'https://news-digest.example.com',
   };

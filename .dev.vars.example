@@ -8,8 +8,8 @@ APP_URL=http://localhost:4321
 # one button per provider that has both id+secret configured, listed
 # alphabetically. A pair with only one field set is rejected by the
 # deploy workflow.
-GITHUB_OAUTH_CLIENT_ID=your-github-oauth-app-client-id
-GITHUB_OAUTH_CLIENT_SECRET=your-github-oauth-app-client-secret
+GH_OAUTH_CLIENT_ID=your-github-oauth-app-client-id
+GH_OAUTH_CLIENT_SECRET=your-github-oauth-app-client-secret
 # GOOGLE_OAUTH_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
 # GOOGLE_OAUTH_CLIENT_SECRET=your-google-oauth-client-secret
 

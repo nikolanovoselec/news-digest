@@ -66,9 +66,9 @@ describe('userIdFor — REQ-AUTH-001', () => {
 });
 
 describe('envKeyClientId / envKeyClientSecret — REQ-AUTH-001', () => {
-  it('REQ-AUTH-001: GitHub maps to GITHUB_OAUTH_CLIENT_ID / GITHUB_OAUTH_CLIENT_SECRET', () => {
-    expect(envKeyClientId('github')).toBe('GITHUB_OAUTH_CLIENT_ID');
-    expect(envKeyClientSecret('github')).toBe('GITHUB_OAUTH_CLIENT_SECRET');
+  it('REQ-AUTH-001: GitHub maps to GH_OAUTH_CLIENT_ID / GH_OAUTH_CLIENT_SECRET', () => {
+    expect(envKeyClientId('github')).toBe('GH_OAUTH_CLIENT_ID');
+    expect(envKeyClientSecret('github')).toBe('GH_OAUTH_CLIENT_SECRET');
   });
 
   it('REQ-AUTH-001: Google maps to GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET', () => {
@@ -80,20 +80,20 @@ describe('envKeyClientId / envKeyClientSecret — REQ-AUTH-001', () => {
 describe('providerCredentials — REQ-AUTH-001', () => {
   it('REQ-AUTH-001: returns null when only the id is set', () => {
     expect(
-      providerCredentials(envWith({ GITHUB_OAUTH_CLIENT_ID: 'x' }), 'github'),
+      providerCredentials(envWith({ GH_OAUTH_CLIENT_ID: 'x' }), 'github'),
     ).toBeNull();
   });
 
   it('REQ-AUTH-001: returns null when only the secret is set', () => {
     expect(
-      providerCredentials(envWith({ GITHUB_OAUTH_CLIENT_SECRET: 's' }), 'github'),
+      providerCredentials(envWith({ GH_OAUTH_CLIENT_SECRET: 's' }), 'github'),
     ).toBeNull();
   });
 
   it('REQ-AUTH-001: returns null when both are empty strings', () => {
     expect(
       providerCredentials(
-        envWith({ GITHUB_OAUTH_CLIENT_ID: '', GITHUB_OAUTH_CLIENT_SECRET: '' }),
+        envWith({ GH_OAUTH_CLIENT_ID: '', GH_OAUTH_CLIENT_SECRET: '' }),
         'github',
       ),
     ).toBeNull();
@@ -102,8 +102,8 @@ describe('providerCredentials — REQ-AUTH-001', () => {
   it('REQ-AUTH-001: returns the pair when both are set', () => {
     const creds = providerCredentials(
       envWith({
-        GITHUB_OAUTH_CLIENT_ID: 'gh-id',
-        GITHUB_OAUTH_CLIENT_SECRET: 'gh-secret',
+        GH_OAUTH_CLIENT_ID: 'gh-id',
+        GH_OAUTH_CLIENT_SECRET: 'gh-secret',
       }),
       'github',
     );
@@ -119,8 +119,8 @@ describe('configuredProviders — REQ-AUTH-001', () => {
   it('REQ-AUTH-001: returns only the providers whose credentials are set', () => {
     const out = configuredProviders(
       envWith({
-        GITHUB_OAUTH_CLIENT_ID: 'gh-id',
-        GITHUB_OAUTH_CLIENT_SECRET: 'gh-secret',
+        GH_OAUTH_CLIENT_ID: 'gh-id',
+        GH_OAUTH_CLIENT_SECRET: 'gh-secret',
       }),
     );
     expect(out.map((p) => p.name)).toEqual(['github']);
@@ -129,8 +129,8 @@ describe('configuredProviders — REQ-AUTH-001', () => {
   it('REQ-AUTH-001: sorts results alphabetically by displayName (GitHub before Google)', () => {
     const out = configuredProviders(
       envWith({
-        GITHUB_OAUTH_CLIENT_ID: 'gh-id',
-        GITHUB_OAUTH_CLIENT_SECRET: 'gh-secret',
+        GH_OAUTH_CLIENT_ID: 'gh-id',
+        GH_OAUTH_CLIENT_SECRET: 'gh-secret',
         GOOGLE_OAUTH_CLIENT_ID: 'g-id',
         GOOGLE_OAUTH_CLIENT_SECRET: 'g-secret',
       }),
@@ -145,8 +145,8 @@ describe('configuredProviders — REQ-AUTH-001', () => {
     // but the contract is "sorted by displayName" not "registry order".
     const out = configuredProviders(
       envWith({
-        GITHUB_OAUTH_CLIENT_ID: 'gh-id',
-        GITHUB_OAUTH_CLIENT_SECRET: 'gh-secret',
+        GH_OAUTH_CLIENT_ID: 'gh-id',
+        GH_OAUTH_CLIENT_SECRET: 'gh-secret',
         GOOGLE_OAUTH_CLIENT_ID: 'g-id',
         GOOGLE_OAUTH_CLIENT_SECRET: 'g-secret',
       }),
