@@ -1,35 +1,38 @@
-// Tests for src/lib/default-hashtags.ts — REQ-AUTH-001 (20-entry seed for new
-// accounts in the global-feed rework) and REQ-SET-002 (default hashtag seed).
+// Tests for src/lib/default-hashtags.ts — REQ-AUTH-001 (default seed for
+// new accounts in the global-feed rework) and REQ-SET-002 (default hashtag seed).
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
 
-const ORIGINAL_TWELVE = [
+// Reshaped on 2026-04-25:
+//   - Dropped: workers (HR keyword collision), python, rust, terraform,
+//     postgres, observability, ai (umbrella), cloud (umbrella),
+//     microsegmentation (subset of zero-trust)
+//   - Renamed: agenticai → ai-agents, genai → generative-ai (matches the
+//     way news headlines actually phrase the concepts)
+//   - Added: appsec, coding-agents, docker, iam, siem, pqc, openziti,
+//     supply-chain-security, gcp (security + identity + LLM-ops + cloud
+//     vendor coverage matching the project owner's actual reading list)
+const SEED_TAGS = [
   'cloudflare',
-  'ai',
   'mcp',
-  'agenticai',
-  'genai',
+  'ai-agents',
+  'generative-ai',
   'aws',
-  'cloud',
   'serverless',
-  // 'workers' was renamed to 'cloudflareworkers' on 2026-04-25 because
-  // the bare 'workers' tag surfaced articles about people working
-  // (HR / labour stories) instead of Cloudflare Workers technology.
-  'cloudflareworkers',
   'azure',
   'zero-trust',
-  'microsegmentation',
-] as const;
-
-const NEW_EIGHT = [
   'kubernetes',
-  'terraform',
   'devsecops',
-  'observability',
-  'rust',
-  'python',
-  'postgres',
   'threat-intel',
+  'appsec',
+  'coding-agents',
+  'docker',
+  'iam',
+  'siem',
+  'pqc',
+  'openziti',
+  'supply-chain-security',
+  'gcp',
 ] as const;
 
 describe('default-hashtags — REQ-AUTH-001', () => {
@@ -37,16 +40,8 @@ describe('default-hashtags — REQ-AUTH-001', () => {
     expect(DEFAULT_HASHTAGS).toHaveLength(20);
   });
 
-  it('REQ-AUTH-001: includes all 12 original entries', () => {
-    for (const tag of ORIGINAL_TWELVE) {
-      expect(DEFAULT_HASHTAGS).toContain(tag);
-    }
-  });
-
-  it('REQ-AUTH-001: includes the 8 new entries', () => {
-    for (const tag of NEW_EIGHT) {
-      expect(DEFAULT_HASHTAGS).toContain(tag);
-    }
+  it('REQ-AUTH-001: DEFAULT_HASHTAGS matches the canonical seed list', () => {
+    expect([...DEFAULT_HASHTAGS]).toEqual([...SEED_TAGS]);
   });
 
   it('REQ-AUTH-001: every entry is a valid tag slug (lowercase, alphanumeric + hyphen)', () => {

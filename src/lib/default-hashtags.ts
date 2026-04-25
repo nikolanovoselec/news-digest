@@ -9,25 +9,25 @@
 
 export const DEFAULT_HASHTAGS: readonly string[] = [
   'cloudflare',
-  'ai',
   'mcp',
-  'agenticai',
-  'genai',
+  'ai-agents',
+  'generative-ai',
   'aws',
-  'cloud',
   'serverless',
-  'cloudflareworkers',
   'azure',
   'zero-trust',
-  'microsegmentation',
   'kubernetes',
-  'terraform',
   'devsecops',
-  'observability',
-  'rust',
-  'python',
-  'postgres',
-  'threat-intel'
+  'threat-intel',
+  'appsec',
+  'coding-agents',
+  'docker',
+  'iam',
+  'siem',
+  'pqc',
+  'openziti',
+  'supply-chain-security',
+  'gcp'
 ] as const;
 
 /** Label used by the settings-page restore button. Single-source-of-
