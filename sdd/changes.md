@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-25
 
+- REQ-PIPE-007 added: the daily cleanup cron now also deletes orphan tag caches — discovered-feed entries whose tag no user has selected anymore — so a tag a user removed (or an account deleted) stops costing fetch + LLM cycles forever. Tags any user still has are left alone; the deletion count is logged for observability.
+
 - REQ-AUTH-001 reshaped to "sign in with a federated identity provider" — GitHub or Google. The landing page renders one button per provider that has credentials configured, listed alphabetically; no-provider deployments surface a clear configuration message instead of dead buttons. Each provider's account is independent (no cross-provider email merging) and existing GitHub user ids stay in their bare-numeric format so legacy accounts are unchanged.
 
 - Fork-friendly deploy contract: Resend (email) and the dev-bypass token are now genuinely optional — the deploy workflow refuses partial Resend config, skips the secret push when unset, and the runtime email step short-circuits cleanly. A fresh fork only needs four required secrets (Cloudflare, OAuth, APP_URL) to deploy a fully-functional in-app digest; email is opt-in.

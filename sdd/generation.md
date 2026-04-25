@@ -135,6 +135,27 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 ---
 
+### REQ-PIPE-007: Orphan-tag source cleanup
+
+**Intent:** When the last user who selected a tag removes it (or deletes their account), the discovered-feed cache for that tag becomes orphan: no user sees its articles, but the scrape coordinator keeps fetching its feeds and the LLM keeps summarising them on every tick — wasted work and quiet article-pool bloat. The daily cleanup pass deletes those orphan caches so cost scales only with tags that at least one user still cares about.
+
+**Applies To:** System
+
+**Acceptance Criteria:**
+1. The same daily cron that prunes old articles also enumerates the discovered-feed cache, identifies entries whose tag does not appear in any user's saved tag list, and deletes them.
+2. Tags configured by at least one user are preserved regardless of how stale their feed list is — the self-healing eviction loop is the only path that mutates an actively-owned tag's cache.
+3. The cleanup pass is idempotent: a second immediate run is a no-op because the first run already removed every orphan.
+4. The pass logs the number of orphan caches deleted so operators can watch for unexpected churn (a sudden mass deletion would indicate a bad tag-list write rather than legitimate user de-selection).
+5. A failure in the orphan sweep never blocks the article-retention sweep that runs in the same cron, and vice versa — the two halves succeed or fail independently.
+
+**Constraints:** CON-DATA-001
+**Priority:** P2
+**Dependencies:** REQ-PIPE-005, REQ-DISC-001
+**Verification:** Integration test
+**Status:** Implemented
+
+---
+
 ## Out of Scope
 
 The following REQs described the previous per-user digest generation pipeline. They are superseded by REQ-PIPE-001..006 in the 2026-04-23 global-feed rework and are preserved here verbatim for decision history.

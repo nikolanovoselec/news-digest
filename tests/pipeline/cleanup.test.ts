@@ -220,7 +220,158 @@ describe('cleanup cron — REQ-PIPE-005', () => {
 
     const result = await runCleanup(env);
 
-    expect(result).toEqual({ deleted: 5 });
+    expect(result.articlesDeleted).toBe(5);
     expect(await countRows(env.DB, 'articles', '1 = 1')).toBe(0);
+  });
+});
+
+// REQ-PIPE-007 — orphan-tag KV cache cleanup. Same daily cron, second
+// pass: enumerate every `sources:{tag}` KV entry, delete the ones whose
+// tag is no longer in any user's hashtags_json.
+
+async function setUserHashtags(
+  db: D1Database,
+  userId: string,
+  hashtags: string[] | null,
+): Promise<void> {
+  await db
+    .prepare('UPDATE users SET hashtags_json = ?1 WHERE id = ?2')
+    .bind(hashtags === null ? null : JSON.stringify(hashtags), userId)
+    .run();
+}
+
+async function listKvKeys(prefix: string): Promise<string[]> {
+  const out: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page: KVNamespaceListResult<unknown> = await env.KV.list({
+      prefix,
+      ...(cursor !== undefined ? { cursor } : {}),
+    });
+    for (const k of page.keys) out.push(k.name);
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor !== undefined);
+  return out;
+}
+
+async function clearKvPrefix(prefix: string): Promise<void> {
+  const keys = await listKvKeys(prefix);
+  await Promise.all(keys.map((k) => env.KV.delete(k)));
+}
+
+async function seedSources(tag: string): Promise<void> {
+  await env.KV.put(
+    `sources:${tag}`,
+    JSON.stringify({
+      feeds: [{ name: `Feed-${tag}`, url: `https://example.com/${tag}/rss`, kind: 'rss' }],
+      discovered_at: Date.now(),
+    }),
+  );
+}
+
+describe('cleanup cron — REQ-PIPE-007 orphan-tag sweep', () => {
+  beforeEach(async () => {
+    await clearKvPrefix('sources:');
+    await clearKvPrefix('discovery_failures:');
+  });
+
+  it('REQ-PIPE-007: deletes the cache for a tag no user owns', async () => {
+    await setUserHashtags(env.DB, USER_ID, ['ai', 'cloudflare']);
+    await seedSources('ai');
+    await seedSources('cloudflare');
+    await seedSources('ikea'); // orphan — no user has it
+
+    const result = await runCleanup(env);
+
+    expect(result.orphanTagsDeleted).toBe(1);
+    expect(await env.KV.get('sources:ikea')).toBeNull();
+    expect(await env.KV.get('sources:ai')).not.toBeNull();
+    expect(await env.KV.get('sources:cloudflare')).not.toBeNull();
+  });
+
+  it('REQ-PIPE-007: also deletes the discovery_failures sibling key', async () => {
+    await setUserHashtags(env.DB, USER_ID, ['ai']);
+    await seedSources('ikea');
+    await env.KV.put('discovery_failures:ikea', '2');
+
+    await runCleanup(env);
+
+    expect(await env.KV.get('sources:ikea')).toBeNull();
+    expect(await env.KV.get('discovery_failures:ikea')).toBeNull();
+  });
+
+  it('REQ-PIPE-007: tag owned by ANY user is preserved (multi-user case)', async () => {
+    const SECOND_USER = 'cleanup-test-user-2';
+    await insertUser(env.DB, SECOND_USER);
+    await setUserHashtags(env.DB, USER_ID, ['cloudflare']);
+    await setUserHashtags(env.DB, SECOND_USER, ['ikea']);
+    await seedSources('cloudflare');
+    await seedSources('ikea');
+
+    const result = await runCleanup(env);
+
+    expect(result.orphanTagsDeleted).toBe(0);
+    expect(await env.KV.get('sources:cloudflare')).not.toBeNull();
+    expect(await env.KV.get('sources:ikea')).not.toBeNull();
+  });
+
+  it('REQ-PIPE-007: normalises hashtag entries (leading #, mixed case)', async () => {
+    // A legacy row stored as ["#AI", "Cloudflare"] still protects the
+    // bare-lowercase `sources:ai` and `sources:cloudflare` entries.
+    await setUserHashtags(env.DB, USER_ID, ['#AI', 'Cloudflare']);
+    await seedSources('ai');
+    await seedSources('cloudflare');
+    await seedSources('orphan-tag');
+
+    const result = await runCleanup(env);
+
+    expect(result.orphanTagsDeleted).toBe(1);
+    expect(await env.KV.get('sources:ai')).not.toBeNull();
+    expect(await env.KV.get('sources:cloudflare')).not.toBeNull();
+    expect(await env.KV.get('sources:orphan-tag')).toBeNull();
+  });
+
+  it('REQ-PIPE-007: idempotent — second immediate run deletes 0', async () => {
+    await setUserHashtags(env.DB, USER_ID, ['ai']);
+    await seedSources('ikea');
+
+    const first = await runCleanup(env);
+    const second = await runCleanup(env);
+
+    expect(first.orphanTagsDeleted).toBe(1);
+    expect(second.orphanTagsDeleted).toBe(0);
+  });
+
+  it('REQ-PIPE-007: a user with null hashtags_json contributes nothing (does not save tags)', async () => {
+    // The __system__ sentinel row has hashtags_json = null. Tags
+    // written by the system shouldn't get free protection.
+    await setUserHashtags(env.DB, USER_ID, null);
+    await seedSources('orphan');
+
+    const result = await runCleanup(env);
+
+    expect(result.orphanTagsDeleted).toBe(1);
+    expect(await env.KV.get('sources:orphan')).toBeNull();
+  });
+
+  it('REQ-PIPE-007: empty registry is a no-op (no users, no caches)', async () => {
+    await setUserHashtags(env.DB, USER_ID, null);
+    // No seedSources calls.
+
+    const result = await runCleanup(env);
+
+    expect(result.orphanTagsDeleted).toBe(0);
+  });
+
+  it('REQ-PIPE-007: failure in the article-retention pass does not block orphan sweep (independent halves)', async () => {
+    // Seed an orphan; article retention has nothing to do (no stale
+    // articles). The orphan sweep should still fire and report 1.
+    await setUserHashtags(env.DB, USER_ID, ['ai']);
+    await seedSources('ikea');
+
+    const result = await runCleanup(env);
+
+    expect(result.articlesDeleted).toBe(0);
+    expect(result.orphanTagsDeleted).toBe(1);
   });
 });
