@@ -86,9 +86,13 @@ const canonicalTzList: string[] =
   typeof intlWithSupported.supportedValuesOf === 'function'
     ? intlWithSupported.supportedValuesOf('timeZone')
     : [];
+// Merge tzValue into the canonical list (when missing) and re-sort so the
+// stored value lands in its alphabetical slot rather than pinned to the
+// top. Without the sort, 'UTC' would sit above 'Africa/*' on every page
+// load until the user picks a real zone.
 const tzOptions: string[] = canonicalTzList.includes(tzValue)
   ? canonicalTzList
-  : [tzValue, ...canonicalTzList];
+  : [tzValue, ...canonicalTzList].sort((a, b) => a.localeCompare(b));
 const currentModelId = user.model_id ?? DEFAULT_MODEL_ID;
 const emailEnabled = user.email_enabled === 1;
 
@@ -555,7 +559,15 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     const timeInput = form.querySelector('[data-time-input]') as HTMLInputElement | null;
     const tzSelect = form.querySelector('[data-tz-select]') as HTMLSelectElement | null;
     const emailToggle = form.querySelector('[data-email-toggle]') as HTMLInputElement | null;
-    const modelSelect = form.querySelector('select[name="model_id"]') as HTMLSelectElement | null;
+    // CRITICAL — model_id field is rendered as <select> when showModelSelect=true
+    // and as a hidden <input> when false. Selecting `select[name="model_id"]`
+    // returned null in production (showModelSelect=false), so modelId became ''
+    // and PUT /api/settings 400'd with invalid_model_id BEFORE persisting tz.
+    // Every save silently failed; users saw "tz reset to UTC" because the DB
+    // value never changed. Use attribute-only selector to match either element.
+    const modelSelect = form.querySelector(
+      '[name="model_id"]',
+    ) as HTMLSelectElement | HTMLInputElement | null;
 
     const timeValue = timeInput?.value ?? '';
     const [hourStr, minuteStr] = timeValue.split(':');
@@ -633,6 +645,9 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       return;
     }
 
+    // Refresh the body dataset so syncBrowserTz on subsequent View Transition
+    // page loads sees the new stored tz and never re-stamps from a stale value.
+    document.body.dataset['userTz'] = tz;
     status.textContent = 'Saved';
     submitButton.disabled = false;
   }
