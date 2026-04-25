@@ -200,24 +200,28 @@ export async function flipChipToFront(
     // fire, blocking the strip for ~durationMs+100ms with no visual
     // payoff.
     if (playing.length > 0) {
-      // CRITICAL — force the browser to commit the inverse-transform
-      // styles BEFORE we set up the transition. Without this synchronous
-      // layout read, the browser collapses the "set inverse + transition
-      // none" and "clear inverse + transition 800ms" into a single
-      // style computation, so the play phase never animates and the
-      // tapped chip jump-cuts straight to its final position. Reading
-      // offsetWidth (or any layout property) flushes pending styles.
+      // CRITICAL ORDERING — POP_CLASS removal must come BEFORE the
+      // offsetWidth flush. Per CSS Animations Level 1 §2.2, while
+      // an animation declaration is on the element, the
+      // animation-controlled value (the keyframe's final transform:
+      // scale(1)) overrides any inline transform. If we flush styles
+      // with the class still attached, the flushed before-change
+      // value for the tapped chip is scale(1), not the inline
+      // translate(dx, 0). The subsequent transition then runs
+      // scale(1) → none — visually nothing — and the chip appears
+      // to teleport. Removing the class first hands transform
+      // ownership cleanly to inline style BEFORE the flush captures
+      // the before-change state.
+      tappedChip.classList.remove(POP_CLASS);
+
+      // Now flush — the before-change `translate(dx, 0)` is the
+      // committed value the transition will start from. Without this
+      // read, the browser collapses the inverse-set and the play-
+      // phase clear into a single style computation and the cascade
+      // never animates.
       for (const chip of playing) {
         void chip.offsetWidth;
       }
-
-      // Hand `transform` ownership cleanly to the FLIP's inline
-      // styles. POP_CLASS still declares an animation on `transform`,
-      // and even though the keyframe finished mid-hold the browser
-      // may still treat the property as animation-controlled while
-      // the class is present. Removing it now, before we kick off
-      // the play phase, eliminates that conflict.
-      tappedChip.classList.remove(POP_CLASS);
 
       // PLAY: next animation frame, transition transforms back to
       // zero so the cascade plays out. The strip's scrollLeft is
@@ -234,7 +238,13 @@ export async function flipChipToFront(
       });
       for (const chip of playing) {
         chip.style.transition = `transform ${durationMs}ms cubic-bezier(0.2, 0.8, 0.2, 1)`;
-        chip.style.transform = '';
+        // Explicit identity transform rather than '' (inline removal).
+        // CSS Transitions L1 §3 interpolates between two computed
+        // <transform-list> values cleanly when both endpoints are
+        // explicit; relying on '' → cascade-fallback-to-`none` is
+        // valid per spec but has caused engine-specific edge cases
+        // historically. Belt-and-braces: state the destination.
+        chip.style.transform = 'translate(0px, 0px)';
       }
 
       // Wait for the longest-moving chip's transitionend (which is
@@ -257,11 +267,14 @@ export async function flipChipToFront(
         setTimeout(settle, durationMs + 100);
       });
 
-      // Cleanup inline transition styles so subsequent re-orders
-      // don't inherit a stale transition value. transform was
-      // already cleared when we kicked off the play phase.
+      // Cleanup inline transition + transform styles so subsequent
+      // re-orders don't inherit stale values. transform was set to
+      // 'translate(0px, 0px)' (identity) at play-phase start; clear
+      // it here so the chip's resolved transform falls back to the
+      // natural cascaded value (none) for any future cycle.
       for (const chip of playing) {
         chip.style.transition = '';
+        chip.style.transform = '';
       }
     }
 
