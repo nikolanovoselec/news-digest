@@ -152,7 +152,7 @@ Superseded by REQ-PIPE-001 in the 2026-04-23 global-feed rework. The per-user di
 **Priority:** P2
 **Dependencies:** REQ-READ-001, REQ-HIST-001
 **Verification:** Integration test
-**Status:** Planned
+**Status:** Implemented
 
 ---
 
