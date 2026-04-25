@@ -123,7 +123,10 @@ export async function flipChipToFront(
   // Lock the strip immediately so any re-entrant tap during the
   // pop / hold / cascade is suppressed. The try/finally below
   // guarantees the lock is cleared even if any DOM op throws.
+  // hadFocus is hoisted above the try so the finally block can
+  // restore focus regardless of where in the cascade we throw.
   strip.setAttribute(ANIM_LOCK_ATTR, '1');
+  const hadFocus = document.activeElement === tappedChip;
   try {
     // PHASE 2 — HOLD: deliberate pause so the user's eye lands on
     // the popped chip before anything else moves. The chip is still
@@ -166,7 +169,6 @@ export async function flipChipToFront(
     const prevSnap = strip.style.scrollSnapType;
     strip.style.scrollSnapType = 'none';
     const savedScrollLeft = strip.scrollLeft;
-    const hadFocus = document.activeElement === tappedChip;
     if (hadFocus) tappedChip.blur();
 
     strip.insertBefore(tappedChip, strip.firstChild);
@@ -286,12 +288,14 @@ export async function flipChipToFront(
     }
 
     // Restore scroll-snap (AFTER the cascade — re-enabling it
-    // mid-transition would re-snap during the slide). Re-focus
-    // the tapped chip with `preventScroll: true` so the keyboard
-    // user doesn't lose their place AND no implicit scroll fires.
+    // mid-transition would re-snap during the slide).
     strip.style.scrollSnapType = prevSnap;
-    if (hadFocus) tappedChip.focus({ preventScroll: true });
   } finally {
+    // Keyboard-accessibility safety: restore focus in finally so
+    // even an unexpected throw mid-cascade doesn't leave the user
+    // without a focused chip. preventScroll: true blocks the focus
+    // call's own implicit scroll.
+    if (hadFocus) tappedChip.focus({ preventScroll: true });
     strip.removeAttribute(ANIM_LOCK_ATTR);
   }
 }
@@ -310,15 +314,40 @@ function animateScrollTo(
 ): void {
   const start = strip.scrollLeft;
   if (Math.abs(target - start) < 0.5) return;
+  // User-scroll cancellation: if the user manually scrolls (wheel,
+  // touch, pointer) during our rAF easing, abort immediately so we
+  // don't fight their input. One-shot passive listeners keep the
+  // overhead trivial.
+  let cancelled = false;
+  const cancel = (): void => {
+    cancelled = true;
+  };
+  const opts: AddEventListenerOptions = { once: true, passive: true };
+  strip.addEventListener('wheel', cancel, opts);
+  strip.addEventListener('touchstart', cancel, opts);
+  strip.addEventListener('pointerdown', cancel, opts);
+  const cleanup = (): void => {
+    strip.removeEventListener('wheel', cancel);
+    strip.removeEventListener('touchstart', cancel);
+    strip.removeEventListener('pointerdown', cancel);
+  };
   const t0 = performance.now();
   const tick = (now: number): void => {
+    if (cancelled) {
+      cleanup();
+      return;
+    }
     const elapsed = now - t0;
     const t = Math.min(1, elapsed / durationMs);
     // easeOutQuint — close enough to cubic-bezier(0.2, 0.8, 0.2, 1)
     // for the eye, no curve-library dependency.
     const eased = 1 - Math.pow(1 - t, 5);
     strip.scrollLeft = start + (target - start) * eased;
-    if (t < 1) requestAnimationFrame(tick);
+    if (t < 1) {
+      requestAnimationFrame(tick);
+    } else {
+      cleanup();
+    }
   };
   requestAnimationFrame(tick);
 }
