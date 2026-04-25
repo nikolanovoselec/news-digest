@@ -55,13 +55,17 @@ describe('tag-railing FLIP reorder — REQ-READ-007', () => {
     expect(flipHelper).toContain('isFlipLocked');
   });
 
-  it('REQ-READ-007: helper scroll-follows only when the chip was off-screen (AC 6)', () => {
-    // The off-screen guard uses the chip's first rect (captured
-    // before the DOM reorder) compared against the strip's visible
-    // rect. Auto-scrolling otherwise would fight users who tapped a
-    // chip already in view.
-    expect(flipHelper).toMatch(/scrollWidth\s*>\s*clientWidth/);
-    expect(flipHelper).toContain('scrollTo');
+  it('REQ-READ-007: helper does not auto-scroll the strip on tap (AC 6)', () => {
+    // The cascade plays in place. The chip may slide off-screen-left
+    // when the strip is horizontally scrolled — that's intentional.
+    // Regression guard against accidentally re-introducing
+    // strip.scrollTo() or any other auto-scroll path.
+    expect(flipHelper).not.toContain('scrollTo');
+    expect(flipHelper).not.toContain('animateScrollTo');
+    // The scrollLeft snapshot/restore around insertBefore is allowed
+    // and necessary — it defeats the browser's IMPLICIT auto-scroll
+    // on focus / scroll-snap mutation. Verify it's still there.
+    expect(flipHelper).toContain('savedScrollLeft');
   });
 
   it('REQ-READ-007: helper bails to instant reorder when prefers-reduced-motion is set (AC 8)', () => {
