@@ -280,15 +280,34 @@ export async function flipChipToPosition(
     // hidden tail of long-travel cascades extends total wall-clock
     // but is invisible to the user — only the visible window
     // matters perceptually.
+    //
+    // EDGE CASE — desktop wrap layout (`display: contents` on the
+    // strip per TagStrip.astro's @media (min-width: 768px) block):
+    // an element with display:contents has no layout box of its
+    // own, so getBoundingClientRect() returns an empty all-zero
+    // rect. Without the guard below, visibleSpan computes to 0,
+    // visibleFraction clamps to MIN_VISIBLE_FRACTION (0.15), and
+    // every cascade falls into the MAX_CASCADE_MS bucket — desktop
+    // tap-to-settled feels twice as slow as mobile. The wrap
+    // layout has no horizontal scroll and every chip is always
+    // visible, so the visible-fraction concept simply doesn't
+    // apply: treat the journey as fully visible (fraction = 1.0)
+    // and the cascade collapses to MIN_CASCADE_MS.
     const stripRect = strip.getBoundingClientRect();
+    const stripHasLayoutBox = stripRect.width > 0;
     const travelMin = Math.min(tappedFirstLeft, tappedLastLeft);
     const travelMax = Math.max(tappedFirstLeft, tappedLastLeft);
-    const visibleSpan = Math.max(
-      0,
-      Math.min(travelMax, stripRect.right) - Math.max(travelMin, stripRect.left),
-    );
+    const visibleSpan = stripHasLayoutBox
+      ? Math.max(
+          0,
+          Math.min(travelMax, stripRect.right) -
+            Math.max(travelMin, stripRect.left),
+        )
+      : Math.max(1, travelMax - travelMin);
     const totalSpan = Math.max(1, travelMax - travelMin);
-    const visibleFraction = Math.max(MIN_VISIBLE_FRACTION, visibleSpan / totalSpan);
+    const visibleFraction = stripHasLayoutBox
+      ? Math.max(MIN_VISIBLE_FRACTION, visibleSpan / totalSpan)
+      : 1;
     const tappedCascadeMs =
       options.durationMs ??
       Math.max(
