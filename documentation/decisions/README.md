@@ -25,7 +25,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Decision:** Implement sign-in from scratch (~250 lines of TypeScript) instead of adopting Better Auth, Auth.js, or Lucia.
 
-**Context:** Sessions need to be stateless, revocable, and tied to a single-provider (GitHub) OAuth flow. The project has no password, no 2FA, no passkeys, no multi-provider roadmap in MVP.
+**Context:** Sessions need to be stateless, revocable, and tied to an OAuth/OIDC authorization-code flow. The project has no password, no 2FA, no passkeys. The implementation supports multiple providers (GitHub, Google) via a shared provider registry.
 
 **Alternatives considered:**
 - Better Auth + D1 adapter — pulls in an ORM-ish abstraction; version churn risk.
@@ -34,7 +34,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** The codeflare repo has a proven pattern at this exact shape. Writing ~250 lines avoids a dependency with ~50 transitive ones, eliminates ORM coupling, and simplifies deployment. Migration to Better Auth later is a bounded one-day project if scope expands.
 
-**Related requirements:** [REQ-AUTH-001](../../sdd/authentication.md#req-auth-001-sign-in-with-github), [REQ-AUTH-002](../../sdd/authentication.md#req-auth-002-session-cookie-and-instant-revocation)
+**Related requirements:** [REQ-AUTH-001](../../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-002](../../sdd/authentication.md#req-auth-002-session-cookie-and-instant-revocation)
 
 ---
 

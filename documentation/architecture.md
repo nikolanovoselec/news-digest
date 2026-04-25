@@ -23,7 +23,7 @@ Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-hourly-global-scrape
 | KV | Edge-distributed cache for discovered sources, headlines, source health |
 | Workers AI | LLM inference for digest summarization and source discovery |
 | Resend | Transactional email for "digest ready" notifications |
-| GitHub OAuth | Only sign-in mechanism |
+| Federated OAuth (GitHub, Google) | Sign-in via configured providers; at least one provider pair must be set |
 
 ## Source Modules
 

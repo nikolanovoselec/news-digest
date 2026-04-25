@@ -14,10 +14,10 @@ Every mutating endpoint requires a valid session cookie and an `Origin` header m
 
 Returns the landing page.
 
-- **Anonymous:** `200` — renders the landing page with a "Sign in with GitHub" button.
+- **Anonymous:** `200` — renders the landing page with sign-in buttons for each configured provider.
 - **Authenticated:** `303` → `/digest` — redirects authenticated users directly to their digest.
 
-**Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-github)
+**Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)
 
 ### GET /404
 
