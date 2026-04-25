@@ -342,7 +342,7 @@ function formatCostUsd(value: number | null | undefined): string {
   // the previous listener doesn't leak across navigations.
   import { initCardInteractions } from '~/scripts/card-interactions';
   // REQ-READ-007 — shared FLIP cascade for tag-railing reorder.
-  import { flipChipToFront, isFlipLocked } from '~/lib/tag-railing-flip';
+  import { flipChipToFront, flipChipToPosition, isFlipLocked } from '~/lib/tag-railing-flip';
 
   const MIN_QUERY_LEN = 3;
 
@@ -510,13 +510,31 @@ function formatCostUsd(value: number | null | undefined): string {
       const wasSelected = chip.classList.contains('is-selected');
       chip.classList.toggle('is-selected', !wasSelected);
       chip.setAttribute('aria-pressed', wasSelected ? 'false' : 'true');
-      if (!wasSelected) {
-        const thisStrip = chip.closest<HTMLElement>('[data-tag-strip]');
-        if (thisStrip !== null) {
-          // REQ-READ-007 — cascade the chip into slot 0 with the
-          // shared FLIP helper rather than a bare insertBefore so
-          // the user sees the move instead of a jump-cut.
+      const thisStrip = chip.closest<HTMLElement>('[data-tag-strip]');
+      if (thisStrip !== null) {
+        if (!wasSelected) {
+          // REQ-READ-007 — select cascade (chip → slot 0).
           void flipChipToFront(thisStrip, chip);
+        } else {
+          // REQ-READ-007 AC 3 — unselect cascade (chip → natural
+          // sort position among non-selected chips, count-desc with
+          // alpha tiebreak). Mirrors the digest.astro logic.
+          const chipCount = Number.parseInt(chip.dataset['count'] ?? '0', 10);
+          const chipTag = chip.dataset['tag'] ?? '';
+          let beforeNode: HTMLElement | null = null;
+          const allChips = thisStrip.querySelectorAll<HTMLElement>('[data-tag-chip]');
+          for (const other of allChips) {
+            if (other === chip) continue;
+            if (other.classList.contains('is-selected')) continue;
+            const otherCount = Number.parseInt(other.dataset['count'] ?? '0', 10);
+            const otherTag = other.dataset['tag'] ?? '';
+            if (chipCount > otherCount) { beforeNode = other; break; }
+            if (chipCount === otherCount && chipTag.localeCompare(otherTag) < 0) {
+              beforeNode = other;
+              break;
+            }
+          }
+          void flipChipToPosition(thisStrip, chip, beforeNode);
         }
       }
       apply();

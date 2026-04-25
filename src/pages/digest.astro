@@ -242,7 +242,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
   //      (REQ-READ-007) so the motion confirms the tap and the chip
   //      never "disappears" mid-flight.
 
-  import { flipChipToFront, isFlipLocked } from '~/lib/tag-railing-flip';
+  import { flipChipToFront, flipChipToPosition, isFlipLocked } from '~/lib/tag-railing-flip';
 
   let countdownHandle: number | null = null;
 
@@ -717,6 +717,30 @@ function isCardHidden(articleTags: readonly string[]): boolean {
         // applyFilter runs immediately so the grid updates without
         // waiting on the animation; the visual cascade is chrome.
         void flipChipToFront(strip, chip);
+      } else {
+        // REQ-READ-007 AC 3 — unselect cascade. Slide the chip back
+        // to its natural sort position (count-desc, alpha tiebreak)
+        // among the non-selected chips. Walk other chips and find
+        // the first one that should sort AFTER this chip; insertBefore
+        // semantics: passing that node lands the chip immediately
+        // before it. null beforeNode means append to end (lowest-
+        // priority chip).
+        const chipCount = Number.parseInt(chip.dataset['count'] ?? '0', 10);
+        const chipTag = chip.dataset['tag'] ?? '';
+        let beforeNode: HTMLElement | null = null;
+        const allChips = strip.querySelectorAll<HTMLElement>('[data-tag-chip]');
+        for (const other of allChips) {
+          if (other === chip) continue;
+          if (other.classList.contains('is-selected')) continue;
+          const otherCount = Number.parseInt(other.dataset['count'] ?? '0', 10);
+          const otherTag = other.dataset['tag'] ?? '';
+          if (chipCount > otherCount) { beforeNode = other; break; }
+          if (chipCount === otherCount && chipTag.localeCompare(otherTag) < 0) {
+            beforeNode = other;
+            break;
+          }
+        }
+        void flipChipToPosition(strip, chip, beforeNode);
       }
       applyFilter();
     });
