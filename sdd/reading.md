@@ -1,6 +1,6 @@
 # Reading Experience
 
-The heart of the product. Overview grid of today's digest, detail view per article with three critical-point bullets and a prominent source link, live-generation state with skeleton loaders and 5-second polling, pending-today banner so users who arrive before their scheduled time know when the next digest is coming, and read-tracking on the article detail page.
+The heart of the product. Overview grid of the freshest articles read from the shared pool filtered by the user's active tags, detail view per article with long-form reading prose and a prominent source link, the shared tag railing with reorder cascade, the dedicated starred-articles surface, calm error/empty/offline pages, and read-tracking on the article detail page.
 
 ---
 

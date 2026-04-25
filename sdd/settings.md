@@ -14,7 +14,7 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 1. Users landing without `hashtags_json` or `digest_hour` set are redirected to `/settings?first_run=1`.
 2. First-run mode shows a "Welcome" hero and the primary button reads "Generate my first digest".
 3. Edit mode (after configuration is complete) shows the same form with the primary button reading "Save" and additional controls for logout, account deletion, and the install-app prompt.
-4. Successful first-run save triggers the digest pipeline out-of-band and redirects the user to `/digest` with the live generation state visible.
+4. Successful first-run save redirects the user to `/digest`, where the shared article pool is already populated so real cards render immediately. The save also kicks the global scrape pipeline as a best-effort nudge so any tags newly added during onboarding can begin discovery on the next cron tick.
 
 **Constraints:** None
 **Priority:** P0

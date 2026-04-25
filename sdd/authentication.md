@@ -1,6 +1,6 @@
 # Authentication
 
-Federated sign-in via GitHub or Google — no passwords, no email verification flow, no local credential store. Each provider is independently configurable so a deployment can enable either or both; at least one must be configured for the app to function. Stateless HMAC-SHA256 JWT sessions with revocation. CSRF defense via Origin check. Platform-level rate limiting on auth endpoints. Account deletion with cascade.
+Federated sign-in via GitHub or Google — no passwords, no email verification flow, no local credential store. Each provider is independently configurable so a deployment can enable either or both; at least one must be configured for the app to function. Stateless HMAC-SHA256 JWT sessions with revocation. CSRF defense via Origin check. Account deletion with cascade.
 
 ---
 
@@ -69,15 +69,15 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 
 ### REQ-AUTH-004: OAuth error surfacing
 
-**Intent:** Common OAuth failures lead to clear user-visible messages without leaking internal details to the browser.
+**Intent:** Common OAuth failures from any configured provider lead to clear user-visible messages without leaking internal details to the browser.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. `access_denied` from GitHub returns the user to the landing page with `?error=access_denied` and a human-readable message.
-2. Missing primary+verified email returns `?error=no_verified_email` with instructions to add one in GitHub and retry.
+1. `access_denied` from the identity provider returns the user to the landing page with `?error=access_denied` and a human-readable message.
+2. Missing or unverified email from the identity provider returns `?error=no_verified_email` with instructions to add a verified primary email at the provider and retry.
 3. CSRF state mismatch returns HTTP 403 with `?error=invalid_state`.
-4. Any other GitHub error returns `?error=oauth_error`; full detail is logged server-side but never surfaced to the browser.
+4. Any other provider error returns `?error=oauth_error`; full detail is logged server-side but never surfaced to the browser.
 
 **Constraints:** CON-SEC-001
 **Priority:** P0
@@ -95,7 +95,7 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 
 **Acceptance Criteria:**
 1. `/settings` has a "Delete account" control with a confirmation dialog requiring the user to type an explicit confirmation string.
-2. Submitting the confirmed deletion deletes the user and every row owned by the user (digests, articles, stars, read-tracking, pending discoveries) via foreign-key cascade. The account-deletion endpoint accepts both a JSON API path (used by scripted clients and smoke tests) and a native HTML form submission (used by the settings page) so deletion succeeds on every browser the app supports, including mobile in-app webviews that do not reliably dispatch fetch-based `DELETE` requests.
+2. Submitting the confirmed deletion deletes the user and every row owned by the user (stars, read-tracking, pending discoveries) via foreign-key cascade. The shared article pool is unaffected — articles are global, not per-user. The account-deletion endpoint accepts both a JSON API path (used by scripted clients and smoke tests) and a native HTML form submission (used by the settings page) so deletion succeeds on every browser the app supports, including mobile in-app webviews that do not reliably dispatch fetch-based `DELETE` requests.
 3. The session cookie is cleared and the user is redirected to the landing page with a one-time confirmation banner.
 4. KV entries keyed by the user's id (if any) are deleted in the same handler.
 

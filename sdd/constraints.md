@@ -9,10 +9,10 @@ Cross-cutting architectural and technology decisions that apply to every domain.
 | Framework | Astro on Cloudflare Workers | Server-rendered Astro with the `astrojs/cloudflare` adapter; islands for interactive UI only where needed. |
 | Database | Cloudflare D1 | Strong consistency for users, digests, articles, pending discoveries. |
 | Cache / KV | Cloudflare KV | Eventually-consistent edge-distributed cache for discovered sources, headlines, source health. |
-| Job queue | Cloudflare Queues | Single `digest-jobs` queue absorbs thundering herds; consumer runs with isolate-per-message concurrency. |
-| LLM | Cloudflare Workers AI | Model user-selectable from a hardcoded `MODELS` list; prompts centralized in `src/lib/prompts.ts`. |
+| Job queue | Cloudflare Queues | A scrape-coordinator queue + a scrape-chunks queue carry the global pipeline; one coordinator message per cron tick fans out one chunk message per ~100 candidates. |
+| LLM | Cloudflare Workers AI | Single global default model in production; prompts are centralised in one module so all LLM-facing strings flow through one allowlist. |
 | Email | Resend | Transactional "your digest is ready" notifications with verified sending domain. |
-| Auth | Custom GitHub OAuth + HMAC-SHA256 JWT | Pattern adopted from the codeflare repo; no third-party auth library. |
+| Auth | Custom federated OAuth/OIDC (GitHub, Google) + HMAC-SHA256 JWT | Pattern adopted from the codeflare repo; no third-party auth library. New providers add a single registry entry plus a `fetchProfile` adapter. |
 | PWA | `@vite-pwa/astro` | Manifest, service worker, install prompt. |
 | Styling | Tailwind CSS 4 | Utility classes + CSS custom properties for theme tokens. |
 | Base theme | AstroPaper (MIT) | Minimal reading surface; auth/settings UI built on top. |
@@ -25,9 +25,9 @@ The app runs entirely on the Cloudflare Workers runtime. No Node-only APIs are u
 
 **Applies To:** All source code
 
-### CON-AUTH-001: Custom GitHub OAuth + HMAC-SHA256 JWT
+### CON-AUTH-001: Custom federated OAuth/OIDC + HMAC-SHA256 JWT
 
-Authentication is implemented without a third-party auth library. Sessions are stateless HMAC-SHA256 JWTs stored in an `__Host-` prefixed HttpOnly+Secure+SameSite=Lax cookie. The pattern is adopted from the codeflare repo (~250 lines). Revocation is handled via a `session_version` integer on the users row.
+Authentication is implemented without a third-party auth library. Each supported identity provider (GitHub, Google) is described in a small registry entry that pins its OAuth/OIDC endpoints, scope string, credential env-var pair, and a `fetchProfile` adapter. The login + callback routes are parameterised on the provider name and need no per-provider branching. Sessions are stateless HMAC-SHA256 JWTs stored in an `__Host-` prefixed HttpOnly+Secure+SameSite=Lax cookie. Revocation is handled via a `session_version` integer on the users row.
 
 **Applies To:** Authentication domain
 
@@ -75,7 +75,7 @@ D1 stores users, digests, articles, and pending_discoveries — anything where a
 
 ### CON-LLM-001: Centralized deterministic prompts
 
-All LLM prompts (digest generation, source discovery) live in `src/lib/prompts.ts` with shared inference parameters: `temperature: 0.2`, `max_tokens: 4096`, `response_format: { type: 'json_object' }`. Prompts fence user-controlled content with triple backticks to limit prompt injection.
+All LLM prompts (chunk summarisation, source discovery) live in a single shared module with low-temperature, JSON-object-constrained inference. Prompts fence user-controlled content with triple backticks to limit prompt injection.
 
 **Applies To:** Digest generation, source discovery
 
@@ -88,4 +88,4 @@ Things the system intentionally does NOT do:
 - **Support multiple digests per day per user** — one scheduled + rate-limited manual refreshes
 - **Persist cache state in D1** — caches live in KV; D1 is reserved for consistent state
 - **Render user-generated or LLM-generated markdown / HTML** — plaintext only, rendered via `textContent`
-- **Rely on Durable Objects or WebSockets** — polling every 5 seconds is the progress transport
+- **Rely on Durable Objects or WebSockets** — the dashboard reads a populated article pool on every request; in-flight scrape progress is exposed via a lightweight status endpoint polled by the indicator (REQ-PIPE-006 AC 5), not via long-lived sockets
