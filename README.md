@@ -34,11 +34,11 @@ Newsletters arrive on someone else's clock. RSS readers turn into 3,000-item gui
 
 News Digest hires the LLM. It remembers so you don't. This isn't enlightenment. This is delegation.
 
-## Codeflare SDD test run
+## Built with Codeflare's spec-driven development framework
 
-Test drive of [Codeflare](https://codeflare.ch) ([repo](https://github.com/nikolanovoselec/codeflare))'s spec-driven workflow. Every feature: spec first (`sdd/{domain}.md`) → failing test → minimal code annotated `// Implements REQ-X-NNN` → review agents on push → auto-deploy on green.
+This project was built end-to-end as a real-world test of [Codeflare](https://codeflare.ch) ([repo](https://github.com/nikolanovoselec/codeflare))'s **spec-driven development** (SDD) framework. Every feature follows the same loop: write the contract first in `sdd/{domain}.md`, write a failing test that names the requirement (`REQ-X-NNN`), write the minimal code to make it pass with an `// Implements REQ-X-NNN` annotation, then push — three review agents (code, spec, docs) run automatically and the deploy fires on green.
 
-40+ REQs across 10 domains. The review agents are thorough — they caught me trying to write this paragraph without a REQ. [Spec](sdd/README.md) · [Architecture](documentation/architecture.md) · [Changelog](sdd/changes.md)
+The result: 40+ written requirements across 10 product domains (auth, generation, reading, history, email, etc.), each with a test that proves it works and a source file that points back to it. [Spec](sdd/README.md) · [Architecture](documentation/architecture.md) · [Changelog](sdd/changes.md)
 
 ## Stack
 
