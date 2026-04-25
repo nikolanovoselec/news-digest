@@ -22,7 +22,7 @@ BASE=${BASE:-https://news.graymatter.ch}
 : "${DEV_BYPASS_TOKEN:?DEV_BYPASS_TOKEN must be set}"
 
 # Guard against running this script against the owner's production
-# Worker. The test POSTs tags like "llm" and triggers /api/discovery/retry,
+# Worker. The test POSTs tags like "llm" and triggers /api/admin/discovery/retry,
 # which cache feed lists in KV that then leak into the LLM's tag
 # allowlist and contaminate real article data. Running against a
 # preview or local wrangler dev environment is the intended use.
@@ -263,11 +263,11 @@ else
   printf 'SKIP stars lifecycle — no article id returned by /api/digest/today\n'
 fi
 
-# POST /api/discovery/retry — requeue a specific tag. Needs a valid tag
+# POST /api/admin/discovery/retry — requeue a specific tag. Needs a valid tag
 # from the user's hashtags_json. "llm" was just set via /api/tags above.
-check POST /api/discovery/retry 200 -H 'Content-Type: application/json' --data '{"tag":"llm"}'
+check POST /api/admin/discovery/retry 200 -H 'Content-Type: application/json' --data '{"tag":"llm"}'
 # Unknown tag → 400 unknown_tag.
-check POST /api/discovery/retry 400 -H 'Content-Type: application/json' --data '{"tag":"not-a-user-tag-xyz"}'
+check POST /api/admin/discovery/retry 400 -H 'Content-Type: application/json' --data '{"tag":"not-a-user-tag-xyz"}'
 
 # ------------------------------------------------------------- restore
 # Put the owner's tags + stars + settings back exactly as we found

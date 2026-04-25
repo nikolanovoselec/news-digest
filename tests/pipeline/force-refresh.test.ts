@@ -1,4 +1,4 @@
-// Tests for /force-refresh — operator-only manual coordinator kick.
+// Tests for /api/admin/force-refresh — operator-only manual coordinator kick.
 //
 // Coverage:
 //   - POST rejects missing/foreign Origin (CSRF defence-in-depth)
@@ -10,7 +10,7 @@
 //     and preview-bot refetches from multiplying LLM cost).
 
 import { describe, it, expect, vi } from 'vitest';
-import { POST, GET } from '~/pages/force-refresh';
+import { POST, GET } from '~/pages/api/admin/force-refresh';
 
 const APP_URL = 'https://news-digest.example.com';
 const APP_ORIGIN = 'https://news-digest.example.com';
@@ -97,10 +97,10 @@ function refreshRequest(
   if (options.origin != null) {
     headers.set('Origin', options.origin);
   }
-  return new Request(`${APP_URL}/force-refresh`, { method: verb, headers });
+  return new Request(`${APP_URL}/api/admin/force-refresh`, { method: verb, headers });
 }
 
-describe('POST /force-refresh', () => {
+describe('POST /api/admin/force-refresh', () => {
   it('rejects POST with missing Origin (REQ-AUTH-003 CSRF defence)', async () => {
     const calls: DbFixture['calls'] = [];
     const db = makeDb({ calls });
@@ -176,7 +176,7 @@ describe('POST /force-refresh', () => {
   });
 });
 
-describe('GET /force-refresh', () => {
+describe('GET /api/admin/force-refresh', () => {
   it('GET 200 JSON happy path: inserts scrape_runs, enqueues, returns { ok, scrape_run_id, reused: false }', async () => {
     const fixture: DbFixture = { calls: [] };
     const db = makeDb(fixture);

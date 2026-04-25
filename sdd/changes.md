@@ -4,6 +4,12 @@ Semantic changes to the specification. Git history captures diffs; this file cap
 
 Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verification pass" entries. No spec cleanup or format fixes (those live in git history).
 
+## 2026-04-25
+
+- All admin endpoints consolidated under `/api/admin/*` so a single Cloudflare Access wildcard rule gates the entire surface (force-refresh, single-tag re-discover, bulk re-discover, plus any future operator action). The user-facing pages and routes are unchanged; only the operator-only POST URLs moved.
+- REQ-DISC-004 AC 1/4 reshaped: the "Stuck tags" UI now surfaces a single "Discover missing sources" button that re-queues every empty-feed tag in one click, instead of N per-tag buttons. The single-tag JSON endpoint stays for scripted callers; the form submission path is bulk-by-default.
+- REQ-HIST-002 AC 3 tightened: the Articles-read counter (XX of YY in the stats widget) is now scoped to the user's currently-active tag pool, matching the Articles-total denominator. Reads on articles whose only tag has since been deselected fall out of both numerator and denominator so the ratio always describes the visible pool.
+
 ## 2026-04-24
 
 - REQ-PIPE-002 AC 3 tightens the summary length contract from 150–250 to 150–200 words. The earlier 50-word ceiling headroom pushed the model toward padded 230-word summaries that repeated facts; capping at 200 keeps the story tight without touching the 120-word floor that drops malformed output.

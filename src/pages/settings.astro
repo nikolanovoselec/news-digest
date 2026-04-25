@@ -148,12 +148,14 @@ if (userHashtags.length > 0) {
 }
 
 // Optional confirmation banner shown after a form-POST returns 303
-// back to /settings?rediscover=ok&tag=X. Purely cosmetic; the heavy
+// back to /settings?rediscover=ok&count=N. Purely cosmetic; the heavy
 // lift happened in the POST handler.
-const rediscoverConfirmedTag =
+const rediscoverConfirmedCount =
   url.searchParams.get('rediscover') === 'ok'
-    ? url.searchParams.get('tag')
+    ? Number.parseInt(url.searchParams.get('count') ?? '', 10)
     : null;
+const rediscoverConfirmed =
+  rediscoverConfirmedCount !== null && Number.isFinite(rediscoverConfirmedCount);
 
 const heroTitle = isFirstRun
   ? 'Welcome — pick a time, we handle the rest'
@@ -330,43 +332,43 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
 
     {
       !isFirstRun && emptyFeedTags.length > 0 && (
-        /* Implements REQ-DISC-004 — Re-discover button surfaces for any
-           user tag whose `sources:{tag}` entry has an empty feeds list.
-           Native <form method="post"> → 303 redirect back to /settings,
-           chosen over a JS handler because form POSTs work reliably on
-           Samsung Browser + in-app webviews. The endpoint itself is
-           additionally gated by Cloudflare Access at the zone level so
-           only the admin email can execute it in production. */
+        /* Implements REQ-DISC-004 — single bulk "Discover missing
+           sources" button posts to /api/admin/discovery/retry-bulk which
+           re-queues every empty-feed tag in one shot. The settings
+           page no longer renders a button per stuck tag; clicking
+           once is enough. Native form POST chosen over JS for the
+           same Samsung-Browser/in-app-webview reliability reason as
+           the rest of the page. The endpoint is additionally gated
+           by Cloudflare Access so only the admin can execute it. */
         <fieldset class="settings__section settings__section--standalone">
           <legend class="settings__legend">Stuck tags</legend>
           <p class="settings__hint">
-            These tags have no working feeds right now. Re-discover asks
-            the LLM for a fresh set of sources.
+            {emptyFeedTags.length === 1 ? '1 tag has' : `${emptyFeedTags.length} tags have`} no working feeds right now. One click re-runs LLM discovery for all of them.
           </p>
-          {rediscoverConfirmedTag !== null && (
+          {rediscoverConfirmed && (
             <p class="settings__status" data-rediscover-status>
-              Queued re-discovery for <strong>#{rediscoverConfirmedTag}</strong>. The
-              next discovery tick (≤5 minutes) will refresh the sources.
+              {rediscoverConfirmedCount === 0
+                ? 'Nothing to re-queue right now.'
+                : rediscoverConfirmedCount === 1
+                  ? 'Queued 1 tag for re-discovery. The next discovery tick (≤5 minutes) will refresh its sources.'
+                  : `Queued ${rediscoverConfirmedCount} tags for re-discovery. The next few discovery ticks will refresh their sources.`}
             </p>
           )}
           <div class="settings__actions-row" data-rediscover-actions>
-            {emptyFeedTags.map((tag) => (
-              <form
-                method="post"
-                action="/api/discovery/retry"
-                class="settings__rediscover-form"
-                data-rediscover-form
+            <form
+              method="post"
+              action="/api/admin/discovery/retry-bulk"
+              class="settings__rediscover-form"
+              data-rediscover-bulk-form
+            >
+              <button
+                type="submit"
+                class="settings__secondary-button"
+                data-rediscover-bulk
               >
-                <input type="hidden" name="tag" value={tag} />
-                <button
-                  type="submit"
-                  class="settings__secondary-button"
-                  data-rediscover-tag={tag}
-                >
-                  Re-discover #{tag}
-                </button>
-              </form>
-            ))}
+                Discover missing sources
+              </button>
+            </form>
           </div>
         </fieldset>
       )
@@ -405,7 +407,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               operators with an Access session can reach it.
             </p>
             <div class="settings__actions-row">
-              <form method="post" action="/force-refresh">
+              <form method="post" action="/api/admin/force-refresh">
                 <button
                   type="submit"
                   class="settings__secondary-button"

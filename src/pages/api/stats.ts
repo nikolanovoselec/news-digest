@@ -11,10 +11,15 @@
 //     (GLOBAL — the hourly pipeline runs once for everyone)
 //   - cost_usd          = SUM(estimated_cost_usd) FROM scrape_runs
 //     (GLOBAL — same rationale)
-//   - articles_total    = distinct articles in the global pool matching
-//     any user tag (per-user via article_tags JOIN)
+//   - articles_total    = distinct articles in the global pool whose
+//     tag list intersects the user's currently-active tags (per-user
+//     via article_tags JOIN)
 //   - articles_read     = COUNT(*) FROM article_reads WHERE user_id
-//     (per-user)
+//     AND article belongs to the same active-tag pool as articles_total
+//     — so XX of YY always describes "of the articles you can see RIGHT
+//     NOW, how many have you read". Reads on articles whose only tag
+//     is one the user since deselected drop out of the numerator (and
+//     of the denominator), keeping the ratio honest.
 //
 // Every query runs in parallel through `Promise.all`. Article queries
 // bind the session user_id so a caller can never read another user's
@@ -61,8 +66,9 @@ export async function GET(context: APIContext): Promise<Response> {
   try {
     // Build the articles_total query dynamically so an empty tag set
     // returns 0 without having to bind an empty IN clause (which SQLite
-    // rejects).
-    const tagPlaceholders = userTags.map((_, i) => `?${i + 1}`).join(', ');
+    // rejects). The same active-tag IN clause is reused below to scope
+    // articles_read to the same pool, so XX of YY is consistent.
+    const tagPlaceholders = userTags.map((_, i) => `?${i + 2}`).join(', ');
     const articlesTotalPromise =
       userTags.length === 0
         ? Promise.resolve<CountRow | null>({ n: 0 })
@@ -70,10 +76,31 @@ export async function GET(context: APIContext): Promise<Response> {
             .prepare(
               `SELECT COUNT(DISTINCT a.id) AS n FROM articles a
                 WHERE a.id IN (
-                  SELECT DISTINCT article_id FROM article_tags WHERE tag IN (${tagPlaceholders})
+                  SELECT DISTINCT article_id FROM article_tags WHERE tag IN (${userTags
+                    .map((_, i) => `?${i + 1}`)
+                    .join(', ')})
                 )`,
             )
             .bind(...userTags)
+            .first<CountRow>();
+
+    // articles_read is scoped to the SAME active-tag pool as
+    // articles_total. Empty tag set → 0 (matches articles_total behaviour
+    // and avoids an empty IN clause). The first bound parameter is
+    // `user_id`, then the user's tag list — `?2..?N+1` — which is why
+    // the placeholder offset above starts at 2.
+    const articlesReadPromise =
+      userTags.length === 0
+        ? Promise.resolve<CountRow | null>({ n: 0 })
+        : env.DB
+            .prepare(
+              `SELECT COUNT(*) AS n FROM article_reads
+                WHERE user_id = ?1
+                  AND article_id IN (
+                    SELECT DISTINCT article_id FROM article_tags WHERE tag IN (${tagPlaceholders})
+                  )`,
+            )
+            .bind(userId, ...userTags)
             .first<CountRow>();
 
     const [digestsRow, articlesReadRow, articlesTotalRow, tokensRow, costRow] =
@@ -81,10 +108,7 @@ export async function GET(context: APIContext): Promise<Response> {
         env.DB
           .prepare(`SELECT COUNT(*) AS n FROM scrape_runs WHERE status = 'ready'`)
           .first<CountRow>(),
-        env.DB
-          .prepare(`SELECT COUNT(*) AS n FROM article_reads WHERE user_id = ?1`)
-          .bind(userId)
-          .first<CountRow>(),
+        articlesReadPromise,
         articlesTotalPromise,
         env.DB
           .prepare(

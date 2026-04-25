@@ -188,7 +188,7 @@ Reads one `scrape_runs` row (most recent by `started_at DESC`) plus one KV key (
 
 **Implements:** [REQ-DISC-002](../sdd/discovery.md#req-disc-002-discovery-progress-visibility) *(Deprecated 2026-04-24)*
 
-### POST /api/discovery/retry
+### POST /api/admin/discovery/retry
 
 Verifies the submitted tag is in the session user's `hashtags_json`, clears `sources:{tag}` and `discovery_failures:{tag}` KV entries, then inserts a fresh `pending_discoveries` row so the next 5-minute discovery cron repopulates the tag.
 
@@ -205,6 +205,18 @@ The endpoint is additionally gated by Cloudflare Access at the zone level — se
 **Request:** form field `tag=<tag>` (native HTML form POST from the Stuck tags fieldset on `/settings`)
 
 **Response:** `303` redirect to `/settings?rediscover=ok&tag=<tag>` — returns the operator to the settings page with a visible confirmation banner. Error responses are identical in status code to the JSON path; the redirect is only issued on success.
+
+**Implements:** [REQ-DISC-004](../sdd/discovery.md#req-disc-004-manual-re-discover)
+
+### POST /api/admin/discovery/retry-bulk
+
+Re-queues every "stuck" tag for the session user in one shot. A tag is stuck when its `sources:{tag}` KV entry has an explicitly empty `feeds` array (REQ-DISC-001 exhaustion path or REQ-DISC-003 self-healing eviction). Brand-new tags (no entry yet) are not queued — they are still discovering, not stuck. Backs the **Discover missing sources** button on `/settings`.
+
+The endpoint is additionally gated by Cloudflare Access at the zone level — see [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Only the configured admin email can reach it in production regardless of session state.
+
+**Content-type: application/x-www-form-urlencoded** (no body fields required)
+
+**Response:** `303` redirect to `/settings?rediscover=ok&count=<N>` where `<N>` is the number of tags re-queued (`0` is a valid no-op success). Error responses: `401 unauthorized` | `403 forbidden_origin` | `500 internal_error`.
 
 **Implements:** [REQ-DISC-004](../sdd/discovery.md#req-disc-004-manual-re-discover)
 
@@ -285,7 +297,7 @@ The pipeline runs asynchronously via Queues. Poll `GET /api/scrape-status` to wa
 
 ## Operator Tools
 
-### POST /force-refresh (also GET)
+### POST /api/admin/force-refresh (also GET)
 
 Operator-only endpoint that kicks the hourly global-feed coordinator on demand — identical to what the `0 * * * *` cron fires automatically. Creates a fresh `scrape_runs` row with `status='running'` and sends a `SCRAPE_COORDINATOR` queue message.
 

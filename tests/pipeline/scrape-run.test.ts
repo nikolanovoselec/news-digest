@@ -63,7 +63,7 @@ describe('scrape-run helpers — REQ-PIPE-006', () => {
     // The schema declares `chunk_count INTEGER NOT NULL DEFAULT 0`.
     // Binding NULL explicitly bypasses the DEFAULT and trips the
     // constraint in production (observed live at 2026-04-23 via
-    // /force-refresh tail logs). Guard against that regression.
+    // /api/admin/force-refresh tail logs). Guard against that regression.
     const calls: Call[] = [];
     const db = makeDb(calls);
     await startRun(db, {
