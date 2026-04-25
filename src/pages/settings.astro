@@ -233,7 +233,21 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
 
     {!isFirstRun && <StatsWidget />}
 
-    <form class="settings__form" data-settings-form>
+    {/* Native form-POST fallback (REQ-AUTH-003 compatible). When the
+        JS submit handler binds via init(), it `e.preventDefault()`s and
+        sends the JSON PUT below. When the JS hasn't loaded yet (CSP
+        block, mobile webview quirks, race against ClientRouter swap),
+        the browser's native submit hits this same endpoint as a
+        form-encoded POST and the server returns a 303 back here.
+        Without this, no `method` attribute defaults to GET and the
+        form silently navigates with values as query params — losing
+        every save. */}
+    <form
+      class="settings__form"
+      data-settings-form
+      method="post"
+      action="/api/settings"
+    >
       {/* Interests moved to the top of /digest — the tag strip there is
           the sole editor for the user's hashtags. Settings controls
           schedule, model, and delivery only. */}
@@ -288,6 +302,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
         <label class="settings__toggle">
           <input
             type="checkbox"
+            name="email_enabled"
             class="settings__email-checkbox"
             data-email-toggle
             checked={emailEnabled}

@@ -341,3 +341,91 @@ export async function PUT(context: APIContext): Promise<Response> {
     { status: 200, headers },
   );
 }
+
+/**
+ * Native form-POST fallback for /api/settings.
+ *
+ * The settings page primarily POSTs JSON via fetch from a JS submit
+ * handler, but if that handler ever fails to bind (CSP block, mobile
+ * webview quirks, ClientRouter race), the browser would default to a
+ * GET on the form's current URL with values as query params — silently
+ * losing every save. The form now declares `method="post"
+ * action="/api/settings"`, so the unhandled native submit hits this
+ * POST path with a `application/x-www-form-urlencoded` body.
+ *
+ * This handler reads the form fields, coerces them to the same shape
+ * PUT validates, runs the same persistence logic, and returns a 303
+ * redirect back to /settings so the page reloads with the new values.
+ */
+export async function POST(context: APIContext): Promise<Response> {
+  const env = context.locals.runtime.env;
+  if (typeof env.APP_URL !== 'string' || env.APP_URL === '') {
+    return errorResponse('app_not_configured');
+  }
+  const appOrigin = originOf(env.APP_URL);
+
+  const originResult = checkOrigin(context.request, appOrigin);
+  if (!originResult.ok) {
+    return originResult.response!;
+  }
+
+  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
+  if (session === null) {
+    return errorResponse('unauthorized');
+  }
+
+  let form: FormData;
+  try {
+    form = await context.request.formData();
+  } catch {
+    return errorResponse('bad_request');
+  }
+
+  // The form's `time` field is a single HH:MM string; split it into
+  // the hour/minute integers the validation block below expects.
+  const timeRaw = form.get('time');
+  const tzRaw = form.get('tz');
+  const modelIdRaw = form.get('model_id');
+  // Native HTML form checkboxes only appear in the FormData when checked.
+  const emailEnabled = form.get('email_enabled') !== null;
+  const [hourStr, minuteStr] =
+    typeof timeRaw === 'string' ? timeRaw.split(':') : ['', ''];
+  const digestHour = Number.parseInt(hourStr ?? '', 10);
+  const digestMinute = Number.parseInt(minuteStr ?? '', 10);
+
+  if (!isIntegerInRange(digestHour, 0, 23) || !isIntegerInRange(digestMinute, 0, 59)) {
+    return errorResponse('invalid_time');
+  }
+  if (typeof tzRaw !== 'string' || tzRaw === '' || !isValidTz(tzRaw)) {
+    return errorResponse('invalid_tz');
+  }
+  if (typeof modelIdRaw !== 'string' || !MODELS.some((m) => m.id === modelIdRaw)) {
+    return errorResponse('invalid_model_id');
+  }
+
+  const tz = tzRaw;
+  const modelId = modelIdRaw;
+  const emailEnabledInt = emailEnabled ? 1 : 0;
+
+  try {
+    await env.DB.prepare(
+      'UPDATE users SET digest_hour = ?1, digest_minute = ?2, tz = ?3, model_id = ?4, email_enabled = ?5 WHERE id = ?6',
+    )
+      .bind(digestHour, digestMinute, tz, modelId, emailEnabledInt, session.user.id)
+      .run();
+  } catch (err) {
+    log('error', 'settings.update.failed', {
+      user_id: session.user.id,
+      op: 'write',
+      error_code: 'internal_error',
+      detail: String(err).slice(0, 500),
+    });
+    return errorResponse('internal_error');
+  }
+
+  const headers = new Headers({ Location: '/settings?saved=ok' });
+  if (session.refreshCookie !== null) {
+    headers.append('Set-Cookie', session.refreshCookie);
+  }
+  return new Response(null, { status: 303, headers });
+}
