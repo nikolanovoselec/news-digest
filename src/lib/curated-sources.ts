@@ -167,6 +167,67 @@ export const CURATED_SOURCES: readonly CuratedSource[] = [
     tags: ['ai'],
   },
   {
+    // Google's official AI blog at blog.google. Distinct from
+    // deepmind-blog above, which is the research-org subsite.
+    slug: 'google-ai-blog',
+    name: 'Google AI Blog',
+    feed_url: 'https://blog.google/technology/ai/rss/',
+    kind: 'rss',
+    tags: ['ai', 'genai'],
+  },
+  {
+    slug: 'microsoft-ai-blog',
+    name: 'Microsoft AI Blog',
+    feed_url: 'https://blogs.microsoft.com/ai/feed/',
+    kind: 'rss',
+    tags: ['ai', 'genai'],
+  },
+  {
+    // Corporate Nvidia blog. Distinct from nvidia-dev-blog above,
+    // which is the developer.nvidia.com subdomain (CUDA/Jetson/etc.).
+    slug: 'nvidia-blog',
+    name: 'Nvidia Blog',
+    feed_url: 'https://blogs.nvidia.com/feed/',
+    kind: 'rss',
+    tags: ['ai', 'genai'],
+  },
+  {
+    slug: 'berkeley-ai-research',
+    name: 'Berkeley AI Research',
+    feed_url: 'https://bair.berkeley.edu/blog/feed.xml',
+    kind: 'rss',
+    tags: ['ai'],
+  },
+  {
+    slug: 'mit-news-ai',
+    name: 'MIT News — AI',
+    feed_url: 'https://news.mit.edu/topic/mitartificial-intelligence2-rss.xml',
+    kind: 'rss',
+    tags: ['ai'],
+  },
+  {
+    // Independent editorial AI publication; longer-form than the
+    // vendor blogs and tends to land critical perspectives.
+    slug: 'the-gradient',
+    name: 'The Gradient',
+    feed_url: 'https://thegradient.pub/rss/',
+    kind: 'rss',
+    tags: ['ai'],
+  },
+  {
+    // Anthropic exposes no public RSS at any standard path (probed
+    // /rss, /feed, /news/rss, /research/rss, /index.xml, etc. — all
+    // 404). Fall back to a Google News query for Claude/Anthropic
+    // coverage from third-party publishers. The same Google News
+    // query-RSS pattern that REQ-DISC-001 already uses for
+    // discovery-fallback on consumer/brand tags.
+    slug: 'google-news-anthropic',
+    name: 'Google News — Anthropic',
+    feed_url: 'https://news.google.com/rss/search?q=anthropic+OR+claude+ai&hl=en-US&gl=US&ceid=US:en',
+    kind: 'rss',
+    tags: ['ai', 'genai'],
+  },
+  {
     slug: 'stripe-blog',
     name: 'Stripe Blog',
     feed_url: 'https://stripe.com/blog/feed.rss',
