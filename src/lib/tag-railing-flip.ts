@@ -25,9 +25,15 @@
 //      the helper performs the reorder instantly and skips all
 //      transform animation (AC 7).
 
-const DEFAULT_DURATION_MS = 220;
+// 450ms reads as deliberate motion at the gesture scale users perceive
+// — under 300ms the cascade flashes by so quickly the eye registers
+// only the start and end states and the chip appears to teleport.
+// The pulse hold is sized to outlast the cascade by ~40ms so the
+// just-tapped highlight is visible for the entire move plus a small
+// trailing beat.
+const DEFAULT_DURATION_MS = 450;
 const PULSE_CLASS = 'tag-chip--just-tapped';
-const PULSE_HOLD_MS = 320;
+const PULSE_HOLD_MS = 500;
 const ANIM_LOCK_ATTR = 'data-tag-flip-locked';
 
 export interface FlipChipOptions {
