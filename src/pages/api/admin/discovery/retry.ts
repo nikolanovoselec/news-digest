@@ -1,6 +1,6 @@
 // Implements REQ-DISC-004
 //
-// POST /api/discovery/retry — force a fresh LLM-assisted discovery for
+// POST /api/admin/discovery/retry — force a fresh LLM-assisted discovery for
 // a tag whose existing `sources:{tag}` entry is empty (or to retry a
 // stubborn tag).
 //
@@ -28,8 +28,9 @@
 //
 // The endpoint does not perform the discovery itself — the cron is the
 // only path that calls Workers AI. Authorisation beyond the session
-// check is gated externally: Cloudflare Access protects the route at
-// the zone level so only the admin email can reach it in production.
+// check is gated externally: Cloudflare Access protects every route
+// under `/api/admin/*` at the zone level so only the admin email can
+// reach this endpoint in production.
 
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';

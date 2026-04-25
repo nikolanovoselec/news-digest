@@ -686,8 +686,8 @@ async function applyEvictions(
     try {
       const raw = await env.KV.get(`sources:${tag}`, 'text');
       if (raw === null) {
-        // Entry already cleared (likely via /api/discovery/retry between
-        // ticks); still clear the per-URL counter and move on.
+        // Entry already cleared (likely via /api/admin/discovery/retry
+        // between ticks); still clear the per-URL counter and move on.
         for (const url of evictedUrls) await clearHealth(env, url);
         continue;
       }

@@ -4,7 +4,7 @@
 // Purpose: give scripts/e2e-test.sh a way to drive a REAL scrape
 // end-to-end and verify that articles land in D1 with the expected
 // shape, without waiting for the 4-hour cron tick or needing
-// Cloudflare Access for /force-refresh.
+// Cloudflare Access for /api/admin/force-refresh.
 //
 // Flow:
 //   1. Auth: Bearer DEV_BYPASS_TOKEN (timing-safe).

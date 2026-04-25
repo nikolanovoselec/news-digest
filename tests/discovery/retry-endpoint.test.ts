@@ -1,7 +1,7 @@
-// Tests for src/pages/api/discovery/retry.ts — REQ-DISC-004 + REQ-AUTH-003.
+// Tests for src/pages/api/admin/discovery/retry.ts — REQ-DISC-004 + REQ-AUTH-003.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { POST } from '~/pages/api/discovery/retry';
+import { POST } from '~/pages/api/admin/discovery/retry';
 import { SESSION_COOKIE_NAME } from '~/middleware/auth';
 import { signSession } from '~/lib/session-jwt';
 
@@ -96,7 +96,7 @@ async function retryRequest(options: {
   if (options.body !== undefined) {
     init.body = JSON.stringify(options.body);
   }
-  return new Request(`${APP_URL}/api/discovery/retry`, init);
+  return new Request(`${APP_URL}/api/admin/discovery/retry`, init);
 }
 
 function makeContext(request: Request, e: Partial<Env>): unknown {
@@ -115,7 +115,7 @@ async function validSessionCookie(): Promise<string> {
   return `${SESSION_COOKIE_NAME}=${token}`;
 }
 
-describe('POST /api/discovery/retry', () => {
+describe('POST /api/admin/discovery/retry', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -189,7 +189,7 @@ describe('POST /api/discovery/retry', () => {
     const cookie = await validSessionCookie();
     const { db } = makeDb(baseRow('["ai"]'));
     const { kv } = makeKv();
-    const req = new Request(`${APP_URL}/api/discovery/retry`, {
+    const req = new Request(`${APP_URL}/api/admin/discovery/retry`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -276,7 +276,7 @@ describe('POST /api/discovery/retry', () => {
     if (options.tag !== null && options.tag !== undefined) {
       params.set('tag', options.tag);
     }
-    return new Request(`${APP_URL}/api/discovery/retry`, {
+    return new Request(`${APP_URL}/api/admin/discovery/retry`, {
       method: 'POST',
       headers,
       body: params.toString(),

@@ -8,7 +8,10 @@
 //   - articles_total is user-scoped via an `article_tags` JOIN so each
 //     user sees the count of articles whose tags intersect their tag
 //     set.
-//   - articles_read is strictly user-scoped via `article_reads.user_id`.
+//   - articles_read is scoped to the SAME active-tag pool as
+//     articles_total — reads on articles whose only tag has since been
+//     deselected drop out of both numerator and denominator (the XX of
+//     YY ratio always describes the visible pool).
 //
 // The widget-side format helpers are unchanged (still a verbatim copy
 // of the helpers inside StatsWidget.astro) — a drift there surfaces as
@@ -305,24 +308,47 @@ describe('GET /api/stats — SQL contract (REQ-HIST-002 AC 2)', () => {
     expect(body.articles_total).toBe(140);
   });
 
-  it('REQ-HIST-002: articles_read = COUNT(*) FROM article_reads WHERE user_id = session user', async () => {
+  it('REQ-HIST-002: articles_read counts reads scoped to the active-tag pool, with the user_id bound first and the user tags bound after', async () => {
     const { db, bindings, prepared } = makeDb(baseUser(), { articlesReadN: 38 });
     const req = await authedRequest();
     const res = await GET(makeContext(req, makeEnv(db)) as never);
 
+    // The reads SQL must filter by user_id AND restrict article_id to the
+    // active-tag pool — same denominator as articles_total. Without the
+    // article_tags join the XX-of-YY ratio drifts as the user changes
+    // their tag selection.
     const readsSql = prepared.find(
-      (s) => s.includes('FROM article_reads') && s.includes('user_id'),
+      (s) =>
+        s.includes('FROM article_reads') &&
+        s.includes('user_id') &&
+        s.includes('article_tags'),
     );
     expect(readsSql).toBeDefined();
     expect(readsSql!).toContain('COUNT(*)');
 
     const readsBind = bindings.find((b) => b.sql.includes('FROM article_reads'));
     expect(readsBind).toBeDefined();
-    // First bound parameter is the session user id.
+    // Bind order: ?1 = session user_id, ?2..?N+1 = the user's tag list.
     expect(readsBind!.params[0]).toBe('user-1');
+    expect(readsBind!.params.slice(1)).toEqual(['ai', 'cloudflare']);
 
     const body = (await res.json()) as { articles_read: number };
     expect(body.articles_read).toBe(38);
+  });
+
+  it('REQ-HIST-002: articles_read short-circuits to 0 when the user has no hashtags (no empty-IN-clause query)', async () => {
+    // Mirrors the articles_total empty-tag-list short-circuit: SQLite
+    // rejects an empty IN clause, so the handler must return 0 without
+    // even preparing the read query in that case.
+    const { db, bindings } = makeDb(baseUser([]), { articlesReadN: 38 });
+    const req = await authedRequest();
+    const res = await GET(makeContext(req, makeEnv(db)) as never);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { articles_read: number };
+    expect(body.articles_read).toBe(0);
+    // No bind() against article_reads should have happened.
+    const readsBind = bindings.find((b) => b.sql.includes('FROM article_reads'));
+    expect(readsBind).toBeUndefined();
   });
 
   it('REQ-HIST-002: handler returns 401 when no session cookie is present', async () => {

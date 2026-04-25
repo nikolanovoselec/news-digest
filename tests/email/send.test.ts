@@ -171,4 +171,69 @@ describe('sendEmail — REQ-MAIL-001', () => {
     expect(init).toBeDefined();
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
+
+  // Fork-friendliness: when Resend isn't configured (a fork that wants
+  // the in-app digest only), sendEmail must short-circuit cleanly with
+  // `resend_not_configured`, log once for operator visibility, and
+  // never issue an HTTP request that would 401 against an empty
+  // Bearer token.
+  describe('REQ-MAIL-001: resend_not_configured short-circuit', () => {
+    function envWith(overrides: Partial<Env>): Env {
+      return {
+        APP_URL: 'https://news-digest.example.com',
+        ...overrides,
+      } as unknown as Env;
+    }
+
+    const cases: Array<{
+      name: string;
+      env: Env;
+    }> = [
+      {
+        name: 'both keys missing',
+        env: envWith({}),
+      },
+      {
+        name: 'RESEND_API_KEY missing, RESEND_FROM set',
+        env: envWith({
+          RESEND_FROM: 'News Digest <digest@example.com>',
+        } as unknown as Partial<Env>),
+      },
+      {
+        name: 'RESEND_API_KEY set, RESEND_FROM missing',
+        env: envWith({
+          RESEND_API_KEY: 're_test_key_123',
+        } as unknown as Partial<Env>),
+      },
+      {
+        name: 'both keys empty strings',
+        env: envWith({
+          RESEND_API_KEY: '',
+          RESEND_FROM: '',
+        } as unknown as Partial<Env>),
+      },
+    ];
+
+    for (const tc of cases) {
+      it(`REQ-MAIL-001: ${tc.name} → no fetch + clean result + log breadcrumb`, async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+
+        const result = await sendEmail(tc.env, makeParams());
+
+        expect(result).toEqual({
+          sent: false,
+          error_code: 'resend_not_configured',
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+
+        // Operator-visible breadcrumb: a fork operator who forgot to
+        // set the secrets sees this in `wrangler tail` instead of
+        // silent no-ops.
+        const logged = findLogRecord(consoleSpy, 'email.send.failed');
+        expect(logged).not.toBeNull();
+        expect(logged?.error).toBe('resend_not_configured');
+      });
+    }
+  });
 });

@@ -72,11 +72,11 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 **Applies To:** Admin
 
 **Acceptance Criteria:**
-1. The settings page renders a "Re-discover #{tag}" button for every user tag whose cached feed list is empty. A brand-new tag whose cache has not yet been written never surfaces the button — only the explicit "discovery gave up" state does. The Stuck tags section is absent entirely when no tag is stuck.
-2. The re-discover endpoint validates that the submitted tag is in the authenticated user's saved tag list; otherwise it refuses the request as an unknown tag. This prevents anyone with a session from triggering arbitrary LLM calls for strings they do not control.
-3. A valid re-discover request clears the tag's cached feeds and any per-tag discovery-failure counter, then enqueues a fresh discovery pass so the next discovery cron repopulates the tag.
-4. The endpoint accepts both a JSON body and a native HTML form submission; the form path returns the operator to the settings page with a visible confirmation, while the JSON path returns an API-shaped response for scripted callers.
-5. The route is additionally gated by Cloudflare Access at the zone level so only the admin account can reach it in production; other authenticated users never see a reachable endpoint even if the settings button were to be forged into their page.
+1. The settings page renders a single "Discover missing sources" button whenever at least one of the user's tags has an explicitly-empty cached feed list. A brand-new tag whose cache has not yet been written is not "stuck" and does not trigger the button. The Stuck tags section is absent entirely when no tag is stuck.
+2. The re-discover endpoint(s) validate that every tag they are asked to re-queue is in the authenticated user's saved tag list; any unknown tag is refused. This prevents anyone with a session from triggering arbitrary LLM calls for strings they do not control.
+3. A valid re-discover request clears each affected tag's cached feeds and per-tag discovery-failure counter, then enqueues a fresh discovery pass for each so the next discovery cron repopulates them.
+4. Two transports are supported: a single-tag JSON API for scripted callers (returns an API-shaped response) and a bulk-by-default native HTML form submission from the settings page (returns the operator to the settings page with a visible confirmation noting how many tags were re-queued).
+5. The routes are additionally gated by Cloudflare Access at the zone level so only the admin account can reach them in production; other authenticated users never see a reachable endpoint even if the settings button were to be forged into their page.
 
 **Constraints:** None
 **Priority:** P2

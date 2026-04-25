@@ -123,8 +123,20 @@ function stripAndDecode(raw: string): string {
  * Firefox is honest-ish (we ARE a fetch client) and doesn't
  * trigger those filters.
  */
-export async function fetchArticleBody(url: string): Promise<string | null> {
+export async function fetchArticleBody(
+  url: string,
+  contactUrl?: string,
+): Promise<string | null> {
   if (!isUrlSafe(url)) return null;
+  // Per RFC 9309 / HTTP politeness convention: include a contact URL
+  // in the User-Agent so an upstream operator can find us if we cause
+  // load. Defaults to the worker's APP_URL via the caller; falls back
+  // to a generic identifier when unset (e.g. local dev with no
+  // configured deployment hostname).
+  const ua =
+    contactUrl !== undefined && contactUrl !== ''
+      ? `Mozilla/5.0 (compatible; news-digest/1.0; +${contactUrl})`
+      : 'Mozilla/5.0 (compatible; news-digest/1.0)';
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -132,8 +144,7 @@ export async function fetchArticleBody(url: string): Promise<string | null> {
       signal: controller.signal,
       redirect: 'follow',
       headers: {
-        'User-Agent':
-          'Mozilla/5.0 (compatible; news-digest/1.0; +https://news.graymatter.ch)',
+        'User-Agent': ua,
         Accept: 'text/html,application/xhtml+xml,text/plain,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
       },
@@ -193,6 +204,7 @@ export async function fetchArticleBody(url: string): Promise<string | null> {
 export async function fetchArticleBodies(
   urls: readonly string[],
   concurrency = 20,
+  contactUrl?: string,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const queue = [...urls];
@@ -200,7 +212,7 @@ export async function fetchArticleBodies(
     while (queue.length > 0) {
       const url = queue.shift();
       if (url === undefined) break;
-      const body = await fetchArticleBody(url);
+      const body = await fetchArticleBody(url, contactUrl);
       if (body !== null && body !== '') out.set(url, body);
     }
   }

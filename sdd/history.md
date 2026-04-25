@@ -36,7 +36,7 @@ Past digests paginated on `/history`, 30 per page. A four-tile stats widget on `
 **Acceptance Criteria:**
 1. `/settings` displays a compact widget with four tiles: Digests generated, Articles read / total, Tokens consumed, Cost to date.
 2. Tokens-consumed and Cost-to-date tiles read from the scrape-run aggregation, reflecting the global pipeline's totals rather than any per-user generation cost.
-3. Articles-total counts the articles in the pool whose tags intersect the session user's tag list; Articles-read counts the article-read rows owned by the session user.
+3. Articles-total counts the articles in the pool whose tags intersect the session user's currently-active tag list. Articles-read counts the user's reads scoped to that same active-tag pool, so the ratio always describes "of the articles you can see right now, how many have you read" — reads on articles whose only tag the user has since deselected drop out of both numerator and denominator.
 4. "Articles read / total" shows both numbers as `{read} of {total}`.
 5. Cost is displayed in USD with 2-4 significant figures, e.g., `$0.14` or `$2.37`.
 6. The widget refreshes on every page load; no cache layer is involved.

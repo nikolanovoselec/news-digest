@@ -168,7 +168,12 @@ export async function processOneChunk(
   let fetchedBodies = new Map<string, string>();
   if (urlsToFetch.length > 0) {
     const fetchStart = Date.now();
-    fetchedBodies = await fetchArticleBodies(urlsToFetch, 20);
+    // Pass APP_URL as the contact URL so the User-Agent on outbound
+    // article fetches points at THIS deployment, not the upstream
+    // repo's host. Forks deploying their own copy get correct
+    // attribution; the helper falls back to a generic identifier when
+    // env.APP_URL is unset (local dev with no deployment hostname).
+    fetchedBodies = await fetchArticleBodies(urlsToFetch, 20, env.APP_URL);
     log('info', 'digest.generation', {
       status: 'chunk_article_bodies_fetched',
       scrape_run_id: body.scrape_run_id,

@@ -1,12 +1,17 @@
+// Implements REQ-PIPE-001
+// Implements REQ-OPS-004
+//
 // Operator-only manual kick of the hourly global-feed coordinator.
+// Path: POST /api/admin/force-refresh + GET /api/admin/force-refresh.
 //
 // Accepts POST (from the Settings page button) + GET (for a direct
 // URL visit). Starts a fresh scrape_runs row with status='running'
 // and sends a single SCRAPE_COORDINATOR queue message — the exact
 // same work the `0 * * * *` cron does.
 //
-// Access control: this endpoint is intended to be gated by Cloudflare
-// Access at the zone level. Worker-side defence-in-depth still
+// Access control: this endpoint sits under `/api/admin/*` which is
+// gated at the zone level by Cloudflare Access (single wildcard rule
+// covers every admin endpoint). Worker-side defence-in-depth still
 // enforces an Origin check on POST (REQ-AUTH-003 pattern) to block
 // cross-site CSRF even from a logged-in browser.
 

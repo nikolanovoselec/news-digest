@@ -1,7 +1,12 @@
 # Copy to .dev.vars for local development. NEVER commit .dev.vars.
+#
+# Required (without these, login + state-changing POSTs break):
 OAUTH_CLIENT_ID=your-github-oauth-app-client-id
 OAUTH_CLIENT_SECRET=your-github-oauth-app-client-secret
 OAUTH_JWT_SECRET=local-dev-secret-32-chars-minimum-abcdef
+APP_URL=http://localhost:4321
+
+# Optional — when both are unset the email step is silently skipped
+# (digests still generate). Set both together or leave both blank.
 RESEND_API_KEY=re_xxxxxxxx
 RESEND_FROM=News Digest <digest@localhost>
-APP_URL=http://localhost:4321
