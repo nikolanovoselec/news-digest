@@ -305,6 +305,7 @@ export async function GET(context: APIContext): Promise<Response> {
         typeof tokenData.id_token === 'string' && tokenData.id_token !== ''
           ? tokenData.id_token
           : null,
+      clientId: creds.clientId,
     });
   } catch (err) {
     log('error', 'auth.callback.failed', {

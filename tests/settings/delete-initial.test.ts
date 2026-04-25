@@ -127,12 +127,16 @@ describe('POST /api/tags/delete-initial — REQ-SET-002 AC 8', () => {
     expect([403, 400]).toContain(res.status);
   });
 
-  it('REQ-SET-002: unauthenticated POST 303-redirects to the login flow', async () => {
+  it('REQ-SET-002: unauthenticated POST 303-redirects to the landing page', async () => {
+    // Was a fixed redirect to /api/auth/github/login; now bounces to /
+    // because GitHub may not be the only provider. The landing page
+    // renders one button per configured provider so the user picks
+    // their own sign-in path (REQ-AUTH-001 AC 1).
     const db = makeDb(userWith(JSON.stringify(DEFAULT_HASHTAGS)));
     const req = await postRequest(null);
     const res = await POST(makeContext(req, env(db)) as never);
     expect(res.status).toBe(303);
-    expect(res.headers.get('Location')).toContain('/api/auth/github/login');
+    expect(res.headers.get('Location')).toBe('/');
   });
 
   it('REQ-SET-002: clears the entire list when the user has defaults + customs', async () => {

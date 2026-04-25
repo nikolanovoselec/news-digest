@@ -135,7 +135,10 @@ check GET  /sitemap.xml                     200
 
 # ------------------------------------------------------------ API surface
 printf '\n=== API endpoints ===\n'
-# /api/auth/github/login — both methods work and 303 to GitHub.
+# /api/auth/{provider}/login — both methods work and 303 to the
+# provider's authorize endpoint. The deployment under test must have
+# GitHub credentials configured for these GitHub-specific checks; a
+# Google-only deployment would 500 oauth_not_configured here.
 check GET  /api/auth/github/login           303
 check POST /api/auth/github/login           303
 
@@ -438,10 +441,12 @@ print(f'{n} {mean} {p50} {lo} {hi}')
     ;;
 esac
 
-# /api/auth/github/logout — signing out should 303 back to `/`.
-check POST /api/auth/github/logout 303 -H 'Content-Type: application/json'
+# /api/auth/logout — provider-agnostic; signing out 303s back to `/`.
+check POST /api/auth/logout 303 -H 'Content-Type: application/json'
 
-# After logout, authenticated routes should now 303 to login.
+# After logout, authenticated routes should now 303 to the landing
+# page (which renders the configured providers; not to a fixed
+# /api/auth/<provider>/login any more).
 printf '\n=== post-logout ===\n'
 check GET  /digest   303
 

@@ -131,8 +131,11 @@ describe('detail page source contract — REQ-READ-003 read tracking', () => {
 });
 
 describe('detail page source contract — auth gating', () => {
-  it('REQ-AUTH-002: redirects to GitHub login when no session', () => {
-    expect(detailSource).toContain('/api/auth/github/login');
+  it('REQ-AUTH-002: redirects to the landing page when no session', () => {
+    // Was a fixed redirect to /api/auth/github/login; now bounces to
+    // / so the landing page can render the configured providers
+    // (REQ-AUTH-001 — GitHub may not be the only provider).
+    expect(detailSource).toMatch(/Astro\.redirect\('\/',\s*303\)/);
   });
 
   it('REQ-SET-006: applies the settings-complete gate before rendering', () => {

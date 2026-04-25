@@ -39,7 +39,7 @@ export async function POST(context: APIContext): Promise<Response> {
   if (session === null) {
     return new Response(null, {
       status: 303,
-      headers: { Location: '/api/auth/github/login' },
+      headers: { Location: '/' },
     });
   }
 

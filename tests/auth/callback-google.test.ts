@@ -85,6 +85,22 @@ function makeIdToken(claims: Record<string, unknown>): string {
   return `${header}.${payload}.signature-placeholder`;
 }
 
+/** Build the Google id_token claim shape the callback expects.
+ *  Includes iss/aud/exp so the OIDC validation gate passes. */
+function googleClaims(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const oneHourFromNow = Math.floor(Date.now() / 1000) + 3600;
+  return {
+    iss: 'https://accounts.google.com',
+    aud: 'google-client-789.apps.googleusercontent.com',
+    exp: oneHourFromNow,
+    sub: '987654321',
+    email: 'alice@example.com',
+    email_verified: true,
+    name: 'Alice Example',
+    ...overrides,
+  };
+}
+
 /** Stub global fetch to return a Google token-exchange response.
  *  When `body` includes an id_token, the callback decodes it and
  *  skips the userinfo fallback. */
@@ -101,12 +117,7 @@ function mockGoogleFetch(options: {
         JSON.stringify(
           options.tokenResponse?.body ?? {
             access_token: 'g-access-token',
-            id_token: makeIdToken({
-              sub: '987654321',
-              email: 'alice@example.com',
-              email_verified: true,
-              name: 'Alice Example',
-            }),
+            id_token: makeIdToken(googleClaims()),
           },
         ),
         { status: tokenOk ? 200 : 500 },
@@ -210,11 +221,12 @@ describe('GET /api/auth/google/callback — REQ-AUTH-001', () => {
       tokenResponse: {
         body: {
           access_token: 'g-access-token',
-          id_token: makeIdToken({
-            sub: '987654321',
-            email: 'unverified@example.com',
-            email_verified: false,
-          }),
+          id_token: makeIdToken(
+            googleClaims({
+              email: 'unverified@example.com',
+              email_verified: false,
+            }),
+          ),
         },
       },
     });
@@ -222,6 +234,61 @@ describe('GET /api/auth/google/callback — REQ-AUTH-001', () => {
     const res = await GET(makeContext(req, googleEnv(db)) as never);
     expect(res.headers.get('Location')).toBe(
       `${APP_ORIGIN}/?error=no_verified_email&provider=google`,
+    );
+  });
+
+  it('REQ-AUTH-001: id_token with mismatched aud is rejected as oauth_error (defense-in-depth)', async () => {
+    const { db } = makeDb(null);
+    mockGoogleFetch({
+      tokenResponse: {
+        body: {
+          access_token: 'g-access-token',
+          id_token: makeIdToken(
+            googleClaims({ aud: 'someone-elses-client-id.apps.googleusercontent.com' }),
+          ),
+        },
+      },
+    });
+    const req = callbackRequest({ state: 'match', code: 'gcode' }, 'match');
+    const res = await GET(makeContext(req, googleEnv(db)) as never);
+    expect(res.headers.get('Location')).toBe(
+      `${APP_ORIGIN}/?error=oauth_error&provider=google`,
+    );
+  });
+
+  it('REQ-AUTH-001: id_token with mismatched iss is rejected as oauth_error', async () => {
+    const { db } = makeDb(null);
+    mockGoogleFetch({
+      tokenResponse: {
+        body: {
+          access_token: 'g-access-token',
+          id_token: makeIdToken(googleClaims({ iss: 'https://evil.example.com' })),
+        },
+      },
+    });
+    const req = callbackRequest({ state: 'match', code: 'gcode' }, 'match');
+    const res = await GET(makeContext(req, googleEnv(db)) as never);
+    expect(res.headers.get('Location')).toBe(
+      `${APP_ORIGIN}/?error=oauth_error&provider=google`,
+    );
+  });
+
+  it('REQ-AUTH-001: expired id_token is rejected as oauth_error', async () => {
+    const { db } = makeDb(null);
+    mockGoogleFetch({
+      tokenResponse: {
+        body: {
+          access_token: 'g-access-token',
+          id_token: makeIdToken(
+            googleClaims({ exp: Math.floor(Date.now() / 1000) - 60 }),
+          ),
+        },
+      },
+    });
+    const req = callbackRequest({ state: 'match', code: 'gcode' }, 'match');
+    const res = await GET(makeContext(req, googleEnv(db)) as never);
+    expect(res.headers.get('Location')).toBe(
+      `${APP_ORIGIN}/?error=oauth_error&provider=google`,
     );
   });
 

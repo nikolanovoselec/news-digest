@@ -31,10 +31,14 @@ export interface ProviderProfile {
 
 /** Fetch the user's profile for the given access token + ID token (when
  *  the provider issued one). Implementations live in this file so the
- *  registry below can hold function references directly. */
+ *  registry below can hold function references directly. `clientId` is
+ *  threaded through so OIDC providers can validate the id_token's
+ *  `aud` claim against the configured client without the registry
+ *  needing to re-resolve env vars. */
 export type ProfileFetcher = (args: {
   accessToken: string;
   idToken: string | null;
+  clientId: string;
 }) => Promise<ProviderProfile>;
 
 export interface ProviderConfig {
@@ -147,10 +151,12 @@ interface GitHubEmail {
 /** GitHub OIDC-ish flow: access_token → /user (profile) + /user/emails
  *  (only the primary+verified one is accepted). The `Accept:
  *  application/vnd.github+json` header pins the response to the
- *  documented stable schema. */
+ *  documented stable schema. `clientId` is unused here — GitHub
+ *  doesn't issue an id_token to validate. */
 async function fetchGitHubProfile(args: {
   accessToken: string;
   idToken: string | null;
+  clientId: string;
 }): Promise<ProviderProfile> {
   const headers = {
     Authorization: `Bearer ${args.accessToken}`,
@@ -182,28 +188,45 @@ async function fetchGitHubProfile(args: {
 
 interface GoogleIdTokenClaims {
   sub: string;
+  iss?: string;
+  aud?: string | string[];
+  exp?: number;
   email?: string;
   email_verified?: boolean;
   name?: string;
   given_name?: string;
 }
 
+/** Acceptable `iss` values for a Google-issued id_token. Google's spec
+ *  permits both forms; clients must accept either. */
+const GOOGLE_ISS_VALUES = new Set([
+  'https://accounts.google.com',
+  'accounts.google.com',
+]);
+
 /** Google OIDC flow: token exchange returns an `id_token` (JWT) whose
  *  payload carries `sub`, `email`, `email_verified`. Decoding without
  *  signature verification is safe here because the token came directly
  *  from Google's HTTPS token endpoint over a TLS-authenticated channel
- *  — the standard OIDC client guidance.
+ *  — the standard OIDC client guidance (Core 3.1.3.7 step 6). The
+ *  iss/aud/exp claims are still validated per spec to defend against
+ *  a misconfigured deployment that points `tokenUrl` at the wrong
+ *  endpoint.
  *
  *  Falls back to the userinfo endpoint with the access token only when
  *  the id_token is missing (defensive — Google always issues one when
- *  the `openid` scope is requested). */
+ *  the `openid` scope is requested). The userinfo path doesn't carry
+ *  iss/aud/exp so it skips those checks. */
 async function fetchGoogleProfile(args: {
   accessToken: string;
   idToken: string | null;
+  clientId: string;
 }): Promise<ProviderProfile> {
   let claims: GoogleIdTokenClaims | null = null;
+  let fromIdToken = false;
   if (args.idToken !== null && args.idToken !== '') {
     claims = decodeJwtClaims<GoogleIdTokenClaims>(args.idToken);
+    fromIdToken = claims !== null;
   }
   if (claims === null) {
     // Fallback to userinfo endpoint.
@@ -230,6 +253,29 @@ async function fetchGoogleProfile(args: {
     throw new Error('google_missing_sub');
   }
 
+  // OIDC Core 3.1.3.7 — iss/aud/exp validation. Only enforced when
+  // claims came from an id_token; the userinfo fallback path has
+  // already proven the token was Google's by binding to its TLS
+  // endpoint and bearer-token-authenticated session.
+  if (fromIdToken) {
+    if (
+      typeof claims.iss !== 'string' ||
+      !GOOGLE_ISS_VALUES.has(claims.iss)
+    ) {
+      throw new Error('google_bad_iss');
+    }
+    const audMatches =
+      typeof claims.aud === 'string'
+        ? claims.aud === args.clientId
+        : Array.isArray(claims.aud) && claims.aud.includes(args.clientId);
+    if (!audMatches) {
+      throw new Error('google_bad_aud');
+    }
+    if (typeof claims.exp !== 'number' || claims.exp <= Math.floor(Date.now() / 1000)) {
+      throw new Error('google_expired_id_token');
+    }
+  }
+
   // Only accept verified emails. An unverified email at Google means the
   // account was created with that address but the user never clicked the
   // confirmation link — treating it as identity would let an attacker
@@ -240,6 +286,10 @@ async function fetchGoogleProfile(args: {
     ? rawEmail.toLowerCase().trim()
     : null;
 
+  // Display-name fallback ladder: Google profile name → given name →
+  // verified email → generic 'Google user'. Falling back to the raw
+  // `sub` (a long opaque numeric string) leaks bad UX into log lines,
+  // the JWT `ghl` claim, the UserMenu aria-label, and email greetings.
   const displayName =
     typeof claims.name === 'string' && claims.name !== ''
       ? claims.name
@@ -247,7 +297,7 @@ async function fetchGoogleProfile(args: {
         ? claims.given_name
         : email !== null
           ? email
-          : claims.sub;
+          : 'Google user';
 
   return {
     providerUserId: claims.sub,

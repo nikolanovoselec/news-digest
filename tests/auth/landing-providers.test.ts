@@ -41,12 +41,14 @@ describe('landing.astro provider buttons — REQ-AUTH-001', () => {
     expect(landing).not.toContain('.sort(');
   });
 
-  it('REQ-AUTH-001: error-message helper names the provider when ?provider= is set in the bounce-back URL', () => {
+  it('REQ-AUTH-001: error-message helper resolves provider label via the registry (single source of truth)', () => {
     // The callback appends provider=<name> on error redirects so the
     // landing page can produce a clearer message ("Google did not
-    // return a verified email" instead of "GitHub did not...").
+    // return a verified email" instead of guessing). The label
+    // resolution goes through providerByName() so adding a new
+    // provider is a one-place change rather than a two-place change.
     expect(landing).toContain('errorProvider');
-    expect(landing).toContain("'github'");
-    expect(landing).toContain("'google'");
+    expect(landing).toContain('providerByName');
+    expect(landing).toContain('displayName');
   });
 });

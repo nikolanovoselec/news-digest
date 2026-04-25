@@ -58,7 +58,7 @@ const session = await loadSession(
   env.OAUTH_JWT_SECRET,
 );
 if (session === null) {
-  return Astro.redirect('/api/auth/github/login', 303);
+  return Astro.redirect('/', 303);
 }
 Astro.locals.user = session.user;
 

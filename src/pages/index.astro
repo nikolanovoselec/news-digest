@@ -9,7 +9,7 @@
 
 import Base from '~/layouts/Base.astro';
 import { loadSession } from '~/middleware/auth';
-import { configuredProviders } from '~/lib/oauth-providers';
+import { configuredProviders, providerByName } from '~/lib/oauth-providers';
 
 const env = Astro.locals.runtime.env;
 if (typeof env.OAUTH_JWT_SECRET === 'string' && env.OAUTH_JWT_SECRET !== '') {
@@ -27,12 +27,13 @@ const providers = configuredProviders(env);
 // the provider precisely instead of guessing "GitHub" for every error.
 const errorCode = Astro.url.searchParams.get('error');
 const errorProvider = Astro.url.searchParams.get('provider');
+// Resolve the human-readable label via the registry so adding a new
+// provider is a one-place change (PROVIDERS in src/lib/oauth-providers.ts)
+// rather than two (registry + this template).
 const providerLabel =
-  errorProvider === 'github'
-    ? 'GitHub'
-    : errorProvider === 'google'
-      ? 'Google'
-      : 'the sign-in provider';
+  errorProvider !== null
+    ? (providerByName(errorProvider)?.displayName ?? 'the sign-in provider')
+    : 'the sign-in provider';
 const errorMessage =
   errorCode === 'no_verified_email'
     ? `${providerLabel} did not return a verified primary email. Please verify an email address on ${providerLabel} and try again.`
