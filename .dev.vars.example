@@ -1,10 +1,17 @@
 # Copy to .dev.vars for local development. NEVER commit .dev.vars.
 #
-# Required (without these, login + state-changing POSTs break):
-OAUTH_CLIENT_ID=your-github-oauth-app-client-id
-OAUTH_CLIENT_SECRET=your-github-oauth-app-client-secret
+# Required regardless of which sign-in provider you enable:
 OAUTH_JWT_SECRET=local-dev-secret-32-chars-minimum-abcdef
 APP_URL=http://localhost:4321
+
+# Sign-in providers — set at least one pair. The landing page renders
+# one button per provider that has both id+secret configured, listed
+# alphabetically. A pair with only one field set is rejected by the
+# deploy workflow.
+GITHUB_OAUTH_CLIENT_ID=your-github-oauth-app-client-id
+GITHUB_OAUTH_CLIENT_SECRET=your-github-oauth-app-client-secret
+# GOOGLE_OAUTH_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
+# GOOGLE_OAUTH_CLIENT_SECRET=your-google-oauth-client-secret
 
 # Optional — when both are unset the email step is silently skipped
 # (digests still generate). Set both together or leave both blank.

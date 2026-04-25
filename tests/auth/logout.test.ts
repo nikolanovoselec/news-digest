@@ -1,9 +1,10 @@
-// Tests for src/pages/api/auth/github/logout.ts — REQ-AUTH-002
-// (logout bumps session_version, clears cookie), REQ-AUTH-003
-// (POST requires matching Origin).
+// Tests for src/pages/api/auth/logout.ts — REQ-AUTH-002 (logout bumps
+// session_version, clears cookie), REQ-AUTH-003 (POST requires
+// matching Origin). Provider-agnostic — same handler logs every user
+// out regardless of which provider issued the session.
 
 import { describe, it, expect, vi } from 'vitest';
-import { POST } from '~/pages/api/auth/github/logout';
+import { POST } from '~/pages/api/auth/logout';
 import { SESSION_COOKIE_NAME } from '~/middleware/auth';
 import { signSession } from '~/lib/session-jwt';
 
@@ -62,13 +63,13 @@ async function logoutRequest(
   if (options.cookie !== null && options.cookie !== undefined) {
     headers.set('Cookie', options.cookie);
   }
-  return new Request(`${APP_URL}/api/auth/github/logout`, {
+  return new Request(`${APP_URL}/api/auth/logout`, {
     method: 'POST',
     headers,
   });
 }
 
-describe('POST /api/auth/github/logout', () => {
+describe('POST /api/auth/logout', () => {
   it('REQ-AUTH-003: rejects POST with missing Origin header', async () => {
     const { db } = makeDb();
     const req = await logoutRequest({ origin: null });

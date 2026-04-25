@@ -1,12 +1,15 @@
-// Tests for src/pages/api/auth/github/callback.ts — REQ-AUTH-001,
-// REQ-AUTH-002, REQ-AUTH-004.
+// Tests for src/pages/api/auth/[provider]/callback.ts — REQ-AUTH-001,
+// REQ-AUTH-002, REQ-AUTH-004. The GitHub provider is the default
+// fixture here; per-provider variants live in callback-google.test.ts.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { GET } from '~/pages/api/auth/github/callback';
-import { OAUTH_STATE_COOKIE_NAME } from '~/pages/api/auth/github/login';
+import { GET } from '~/pages/api/auth/[provider]/callback';
+import { oauthStateCookieName } from '~/pages/api/auth/[provider]/login';
 import { SESSION_COOKIE_NAME } from '~/middleware/auth';
 import { verifySession } from '~/lib/session-jwt';
 import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
+
+const GITHUB_STATE_COOKIE = oauthStateCookieName('github');
 
 /** Collect every Set-Cookie value from a Response. Prefers the
  * `getSetCookie()` extension when the runtime exposes it. */
@@ -23,8 +26,8 @@ const APP_ORIGIN = 'https://news-digest.example.com';
 
 function fullEnv(db: D1Database): Partial<Env> {
   return {
-    OAUTH_CLIENT_ID: 'client123',
-    OAUTH_CLIENT_SECRET: 'secret456',
+    GITHUB_OAUTH_CLIENT_ID: 'client123',
+    GITHUB_OAUTH_CLIENT_SECRET: 'secret456',
     OAUTH_JWT_SECRET: JWT_SECRET,
     APP_URL,
     DB: db,
@@ -67,16 +70,21 @@ function callbackRequest(
   }
   const headers = new Headers();
   if (cookieState !== null) {
-    headers.set('Cookie', `${OAUTH_STATE_COOKIE_NAME}=${cookieState}`);
+    headers.set('Cookie', `${GITHUB_STATE_COOKIE}=${cookieState}`);
   }
   return new Request(url.toString(), { method: 'GET', headers });
 }
 
-function makeContext(request: Request, env: Partial<Env>): unknown {
+function makeContext(
+  request: Request,
+  env: Partial<Env>,
+  provider = 'github',
+): unknown {
   return {
     request,
     locals: { runtime: { env: env as Env } },
     url: new URL(request.url),
+    params: { provider },
   };
 }
 
@@ -133,7 +141,7 @@ describe('GET /api/auth/github/callback', () => {
     const req = callbackRequest({ error: 'access_denied' }, 'any-state');
     const res = await GET(makeContext(req, fullEnv(db)) as never);
     expect(res.status).toBe(303);
-    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/?error=access_denied`);
+    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/?error=access_denied&provider=github`);
   });
 
   it('REQ-AUTH-004: maps unknown GitHub errors to /?error=oauth_error (no reflection)', async () => {
@@ -143,7 +151,7 @@ describe('GET /api/auth/github/callback', () => {
       'any-state',
     );
     const res = await GET(makeContext(req, fullEnv(db)) as never);
-    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/?error=oauth_error`);
+    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/?error=oauth_error&provider=github`);
     expect(res.headers.get('Location')).not.toContain('<script>');
     expect(res.headers.get('Location')).not.toContain('redirect_uri_mismatch');
   });
@@ -169,7 +177,7 @@ describe('GET /api/auth/github/callback', () => {
     const req = callbackRequest({ error: 'access_denied' }, 'abc');
     const res = await GET(makeContext(req, fullEnv(db)) as never);
     const cookies = setCookiesOf(res);
-    expect(cookies.some((c) => c.startsWith(`${OAUTH_STATE_COOKIE_NAME}=`) && c.includes('Max-Age=0'))).toBe(true);
+    expect(cookies.some((c) => c.startsWith(`${GITHUB_STATE_COOKIE}=`) && c.includes('Max-Age=0'))).toBe(true);
   });
 
   it('REQ-AUTH-001: redirects to /?error=no_verified_email when no primary+verified email', async () => {
@@ -181,7 +189,7 @@ describe('GET /api/auth/github/callback', () => {
     });
     const req = callbackRequest({ state: 'match', code: 'ghcode' }, 'match');
     const res = await GET(makeContext(req, fullEnv(db)) as never);
-    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/?error=no_verified_email`);
+    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/?error=no_verified_email&provider=github`);
   });
 
   it('REQ-AUTH-001: upserts new user with GitHub numeric id as TEXT and issues session cookie', async () => {
@@ -291,7 +299,7 @@ describe('GET /api/auth/github/callback', () => {
     mockGitHubFetch({ tokenResponse: { ok: false, body: {} } });
     const req = callbackRequest({ state: 'match', code: 'ghcode' }, 'match');
     const res = await GET(makeContext(req, fullEnv(db)) as never);
-    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/?error=oauth_error`);
+    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/?error=oauth_error&provider=github`);
   });
 
   it('REQ-AUTH-004: collapses token-exchange error body to oauth_error without reflection', async () => {
@@ -303,7 +311,7 @@ describe('GET /api/auth/github/callback', () => {
     });
     const req = callbackRequest({ state: 'match', code: 'ghcode' }, 'match');
     const res = await GET(makeContext(req, fullEnv(db)) as never);
-    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/?error=oauth_error`);
+    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/?error=oauth_error&provider=github`);
     expect(res.headers.get('Location')).not.toContain('<b>');
     expect(res.headers.get('Location')).not.toContain('bad_verification_code');
   });
@@ -320,7 +328,7 @@ describe('GET /api/auth/github/callback', () => {
     mockGitHubFetch({ userResponse: { ok: false, body: {} } });
     const req = callbackRequest({ state: 'match', code: 'ghcode' }, 'match');
     const res = await GET(makeContext(req, fullEnv(db)) as never);
-    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/?error=oauth_error`);
+    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/?error=oauth_error&provider=github`);
   });
 
   it('REQ-AUTH-001: returns 500 when OAuth env vars are missing', async () => {

@@ -66,13 +66,17 @@ Settings → Secrets and variables → Actions → New repository secret. Add th
 |---|---|---|
 | `CLOUDFLARE_API_TOKEN` | yes | Token with the scopes listed below. |
 | `CLOUDFLARE_ACCOUNT_ID` | yes | Find it on any zone overview in the Cloudflare dashboard. |
-| `OAUTH_CLIENT_ID` | yes | GitHub OAuth App client id. Create at github.com → Settings → Developer settings → OAuth Apps → New. Authorization callback URL is `<APP_URL>/api/auth/github/callback`. |
-| `OAUTH_CLIENT_SECRET` | yes | Generated alongside the client id. Server-side only. |
 | `OAUTH_JWT_SECRET` | yes | HMAC key for session cookies. Generate: `openssl rand -base64 32`. Rotating it expires every active session. |
-| `APP_URL` | yes | Canonical origin used by the Origin gate and OAuth callback. Use `https://ai-news-digest.<your-user>.workers.dev` if you don't have a custom domain (it works exactly the same — you just give that URL to GitHub when registering the OAuth App). |
+| `APP_URL` | yes | Canonical origin used by the Origin gate and OAuth callbacks. Use `https://ai-news-digest.<your-user>.workers.dev` if you don't have a custom domain (it works exactly the same — you just give that URL to each provider when registering the OAuth App). |
+| `GITHUB_OAUTH_CLIENT_ID` | one provider pair required | GitHub OAuth App client id. Create at github.com → Settings → Developer settings → OAuth Apps → New. Authorization callback URL is `<APP_URL>/api/auth/github/callback`. |
+| `GITHUB_OAUTH_CLIENT_SECRET` | with the id | Generated alongside the GitHub client id. Server-side only. |
+| `GOOGLE_OAUTH_CLIENT_ID` | one provider pair required | Google OAuth 2.0 client id. Create at console.cloud.google.com → APIs & Services → Credentials → OAuth client ID → Web application. Authorized redirect URI is `<APP_URL>/api/auth/google/callback`. |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | with the id | Generated alongside the Google client id. Server-side only. |
 | `RESEND_API_KEY` | optional | [Resend](https://resend.com) key for the daily "your digest is ready" email. When unset, digests still generate and appear in the app — only the email step is skipped. |
 | `RESEND_FROM` | optional | Sender address (e.g. `News Digest <hello@yourdomain.com>`). Required when `RESEND_API_KEY` is set; ignored when not. |
 | `DEV_BYPASS_TOKEN` | optional | Enables `/api/dev/login` for `scripts/e2e-test.sh`. When unset, the endpoint returns 404. |
+
+**At least one sign-in provider** (the GitHub pair, the Google pair, or both) must be configured — the landing page renders one button per configured provider, listed alphabetically. A pair with only one field set is rejected by the deploy workflow so a half-configured provider never reaches runtime.
 
 #### Cloudflare API token scopes
 

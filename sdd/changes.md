@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-25
 
+- REQ-AUTH-001 reshaped to "sign in with a federated identity provider" — GitHub or Google. The landing page renders one button per provider that has credentials configured, listed alphabetically; no-provider deployments surface a clear configuration message instead of dead buttons. Each provider's account is independent (no cross-provider email merging) and existing GitHub user ids stay in their bare-numeric format so legacy accounts are unchanged.
+
 - Fork-friendly deploy contract: Resend (email) and the dev-bypass token are now genuinely optional — the deploy workflow refuses partial Resend config, skips the secret push when unset, and the runtime email step short-circuits cleanly. A fresh fork only needs four required secrets (Cloudflare, OAuth, APP_URL) to deploy a fully-functional in-app digest; email is opt-in.
 - All admin endpoints consolidated under `/api/admin/*` so a single Cloudflare Access wildcard rule gates the entire surface (force-refresh, single-tag re-discover, bulk re-discover, plus any future operator action). The user-facing pages and routes are unchanged; only the operator-only POST URLs moved.
 - REQ-DISC-004 AC 1/4 reshaped: the "Stuck tags" UI now surfaces a single "Discover missing sources" button that re-queues every empty-feed tag in one click, instead of N per-tag buttons. The single-tag JSON endpoint stays for scripted callers; the form submission path is bulk-by-default.

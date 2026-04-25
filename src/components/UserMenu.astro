@@ -19,7 +19,7 @@ interface Props {
   logoutHref?: string;
 }
 
-const { email, login, logoutHref = '/api/auth/github/logout' } = Astro.props;
+const { email, login, logoutHref = '/api/auth/logout' } = Astro.props;
 
 /**
  * Hash the normalized email with SHA-256 and return a lowercase hex

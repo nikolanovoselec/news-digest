@@ -13,8 +13,10 @@ declare namespace Cloudflare {
     SCRAPE_CHUNKS: Queue<import('../src/queue/scrape-chunk-consumer').ChunkJobMessage>;
     AI: Ai;
     ASSETS: Fetcher;
-    OAUTH_CLIENT_ID: string;
-    OAUTH_CLIENT_SECRET: string;
+    GITHUB_OAUTH_CLIENT_ID: string;
+    GITHUB_OAUTH_CLIENT_SECRET: string;
+    GOOGLE_OAUTH_CLIENT_ID: string;
+    GOOGLE_OAUTH_CLIENT_SECRET: string;
     OAUTH_JWT_SECRET: string;
     RESEND_API_KEY: string;
     RESEND_FROM: string;

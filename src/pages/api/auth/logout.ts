@@ -1,8 +1,11 @@
 // Implements REQ-AUTH-002, REQ-AUTH-003
 //
-// POST /api/auth/github/logout — bump `users.session_version` for the
+// POST /api/auth/logout — bump `users.session_version` for the
 // currently authenticated user, then clear the session cookie and
-// redirect to `/?logged_out=1`.
+// redirect to `/?logged_out=1`. Provider-agnostic: a session minted
+// by any sign-in provider is revoked the same way (the session JWT
+// holds the canonical user id; logout doesn't care which provider
+// issued it).
 //
 // Bumping session_version is what delivers instant revocation of every
 // outstanding JWT previously issued to this user (REQ-AUTH-002 AC 3):

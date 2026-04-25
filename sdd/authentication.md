@@ -1,22 +1,23 @@
 # Authentication
 
-GitHub OAuth as the only sign-in method. Stateless HMAC-SHA256 JWT sessions with revocation. CSRF defense via Origin check. Platform-level rate limiting on auth endpoints. Account deletion with cascade.
+Federated sign-in via GitHub or Google — no passwords, no email verification flow, no local credential store. Each provider is independently configurable so a deployment can enable either or both; at least one must be configured for the app to function. Stateless HMAC-SHA256 JWT sessions with revocation. CSRF defense via Origin check. Platform-level rate limiting on auth endpoints. Account deletion with cascade.
 
 ---
 
-### REQ-AUTH-001: Sign in with GitHub
+### REQ-AUTH-001: Sign in with a federated identity provider
 
-**Intent:** Users authenticate with their existing GitHub account so there is no password, no email verification flow, and no local credential store to secure. Brand-new accounts are seeded with a curated default hashtag list so the first digest has meaningful input before the user touches the tag strip.
+**Intent:** Users authenticate with an existing identity at one of the supported providers (GitHub, Google) so there is no password, no email verification flow, and no local credential store to secure. Each provider can be enabled or disabled per-deployment so a fork can ship with only the providers it has configured. Brand-new accounts are seeded with a curated default hashtag list so the first digest has meaningful input before the user touches the tag strip.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. The landing page shows a single "Sign in with GitHub" button when the user is not authenticated.
-2. The button redirects to `github.com/login/oauth/authorize` with `scope=user:email` and a cryptographically random `state` cookie for CSRF defense.
-3. GitHub returns the user to the app's OAuth callback; successful consent creates or looks up the user by GitHub numeric id.
-4. If the GitHub account has no primary+verified email, sign-in fails with error code `no_verified_email` and the user is redirected to the landing page with a clear message.
+1. The landing page shows one button per provider that the deployment has configured — labelled "Sign in with GitHub", "Sign in with Google" — listed in alphabetical order. Providers without configured credentials are omitted entirely (no greyed-out buttons). When no provider is configured the page surfaces a clear "Sign-in is not configured for this deployment" message instead of dead buttons.
+2. Each button starts a standard OAuth 2.0 / OIDC authorization-code flow with a cryptographically random `state` cookie for CSRF defense. The chosen provider is preserved across the round-trip (in the state cookie or path) so the callback can complete the right exchange.
+3. The callback exchanges the authorization code for an identity assertion and extracts a stable provider-specific user identifier plus a verified email address. Successful consent creates or looks up a user keyed by `<provider>:<provider-user-id>` (with backward-compatibility — the GitHub provider keeps its existing bare-numeric user-id format so legacy accounts are unchanged).
+4. If the chosen provider returns no verified email or otherwise refuses to release one, sign-in fails with error code `no_verified_email` and the user is redirected to the landing page with a clear message naming the affected provider.
 5. New-account creation seeds the user's hashtag list with the 20-entry system default: cloudflare, ai, mcp, agenticai, genai, aws, cloud, serverless, workers, azure, zero-trust, microsegmentation, kubernetes, terraform, devsecops, observability, rust, python, postgres, threat-intel.
 6. New accounts are also seeded with a default scheduled-digest time of 08:00, a default UTC timezone that the reading surface overwrites with the browser's actual IANA zone on first load, and the email-notification preference enabled. As a result, successful sign-in for a brand-new account lands the user directly on the reading surface with real articles visible — there is no forced onboarding detour through the settings form.
+7. Each provider's account is independent — signing in with Google after a previous GitHub sign-in creates a fresh account rather than merging by email. This is a deliberate trade-off: it eliminates the cross-provider email-conflict ambiguity at the cost of forcing users to remember which provider they used.
 
 **Constraints:** CON-AUTH-001
 **Priority:** P0

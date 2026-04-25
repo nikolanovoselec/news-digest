@@ -35,29 +35,29 @@ Generic server-error fallback. Shown when an uncaught exception bubbles up to As
 
 ## Authentication
 
-### POST /api/auth/github/login (also GET)
+### POST /api/auth/{provider}/login (also GET)
 
-Initiates GitHub OAuth. Generates random `state`, sets `oauth_state` cookie (HttpOnly, 10-min TTL), redirects to GitHub.
+Initiates the OAuth/OIDC authorization-code flow for a configured provider. The dynamic `{provider}` segment matches entries in the provider registry (`github`, `google`); unknown names return 404. Generates random `state`, sets a per-provider `news_digest_oauth_state_{provider}` cookie (HttpOnly, 10-min TTL), redirects to the provider's authorize URL.
 
-`POST` is the canonical entry point — the landing page submits a same-origin form to avoid mobile-browser prefetch races that regenerate the state cookie before GitHub's callback returns. `GET` is retained for direct URL access (bookmarks, test tooling). Both methods are exempt from the Origin check per [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints) AC 4: the only effect is setting the state cookie and returning a 303 redirect; no authenticated session state is mutated.
+`POST` is the canonical entry point — the landing page submits a same-origin form to avoid mobile-browser prefetch races that regenerate the state cookie before the provider's callback returns. `GET` is retained for direct URL access (bookmarks, test tooling). Both methods are exempt from the Origin check per [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints) AC 4.
 
-**Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-github), [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
+**Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
 
-### GET /api/auth/github/callback
+### GET /api/auth/{provider}/callback
 
-Handles GitHub's OAuth redirect. Validates `state`, exchanges code for access token, extracts primary verified email, creates or looks up user, sets session cookie, redirects to `/digest` for all users (new and returning).
+Handles the provider's OAuth redirect. Validates the per-provider `state` cookie, exchanges the code for an access token (and id_token when the provider issues one), extracts a stable provider-specific user identifier plus a verified primary email, creates or looks up the user keyed by `userIdFor(provider, sub)` (GitHub: bare numeric for legacy compatibility; Google: `google:<sub>`). Sets the session cookie and redirects to `/digest` for all users.
 
 New accounts are inserted with complete onboarding defaults at the moment of first login — 20 seeded hashtags (`DEFAULT_HASHTAGS`), `digest_hour=8`, `digest_minute=0`, and `email_enabled=1`. The browser auto-corrects timezone on first `/digest` load via a client-side POST to `/api/auth/set-tz`. No `/settings` detour is required for new users.
 
-**Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-github), [REQ-AUTH-004](../sdd/authentication.md#req-auth-004-oauth-error-surfacing)
+**Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-004](../sdd/authentication.md#req-auth-004-oauth-error-surfacing)
 
 **Error responses:**
-- `access_denied`, `no_verified_email`, `oauth_error` — 3xx redirect to `/?error={code}`.
+- `access_denied`, `no_verified_email`, `oauth_error` — 3xx redirect to `/?error={code}&provider={name}`. The provider name lets the landing page surface a precise message ("Google did not return a verified email" instead of guessing).
 - `invalid_state` (CSRF state mismatch) — HTTP 403 with an HTML body that meta-refreshes to `/?error=invalid_state`. Browsers do not auto-follow `Location` on 4xx responses, so the redirect is delivered via `<meta http-equiv="refresh">` in the body. The origin value interpolated into the body is HTML-escaped.
 
-### POST /api/auth/github/logout
+### POST /api/auth/logout
 
-Bumps `session_version`, clears cookie, redirects to `/?logged_out=1`.
+Provider-agnostic. Bumps `session_version`, clears cookie, redirects to `/?logged_out=1`. The session JWT carries the canonical user id; logout doesn't care which provider issued it.
 
 **Implements:** [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-session-cookie-and-instant-revocation)
 
