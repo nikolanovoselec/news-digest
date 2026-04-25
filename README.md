@@ -2,7 +2,7 @@
 
 Keeping up with tech news was a part-time job I didn't sign up for, didn't get paid for, and couldn't quit. So I fired myself and hired an LLM — 99% pay cut, zero complaints. Pick your hashtags: it does the reading, you take the credit. You're welcome.
 
-**Live:** <https://news.graymatter.ch> · GitHub sign-in · pick your hashtags · done.
+**Live:** <https://news.graymatter.ch> · GitHub or Google sign-in · pick your hashtags · done.
 
 <p align="center">
   <img alt="Mobile dashboard"  src="docs/screenshots/dashboard-mobile.jpg"  height="260">
@@ -13,6 +13,7 @@ Keeping up with tech news was a part-time job I didn't sign up for, didn't get p
 ## What's in it
 
 - **20 tags preloaded** (`#ai`, `#cloudflare`, `#postgres`, `#agenticai`…). My opinions, helpfully pre-formed for you. Tap × to drop, `+ add` to add.
+- **60+ curated sources, AI-heavy** — vendor blogs (OpenAI, DeepMind, Anthropic via Google News, Microsoft AI, NVIDIA, Google AI), research outlets (BAIR, MIT News AI, The Gradient), and the usual suspects (HN, Lobsters). Adding a tag the registry doesn't cover triggers an LLM-driven feed-discovery pass.
 - **Composable filters on Search & History** — tag + search + date AND together, all in the URL.
 - **Multi-source dedupe** — HN, vendor blog, and three aggregators "discovered" the same story? One card, `(+3)` chip.
 - **Summaries that earn their word count** — 150–200 words: *what happened → how it works → why you care*.
@@ -48,7 +49,7 @@ Test drive of [Codeflare](https://codeflare.ch) ([repo](https://github.com/nikol
 | DB / Cache / Queues | [D1](https://developers.cloudflare.com/d1/) · [KV](https://developers.cloudflare.com/kv/) · [Queues](https://developers.cloudflare.com/queues/) |
 | LLM | [Workers AI](https://developers.cloudflare.com/workers-ai/): `gpt-oss-120b` primary, `gpt-oss-20b` fallback |
 | Email | [Resend](https://resend.com) |
-| Auth | GitHub OAuth + HMAC-SHA256 JWT |
+| Auth | GitHub OAuth + Google OIDC + HMAC-SHA256 JWT |
 
 ## Deploy your own
 
@@ -119,7 +120,7 @@ npx wrangler d1 migrations apply DB --local
 npm run dev
 ```
 
-Copy `.dev.vars.example` to `.dev.vars`, add GitHub OAuth client ID + secret and a random `OAUTH_JWT_SECRET` (≥32 bytes).
+Copy `.dev.vars.example` to `.dev.vars`, add at least one OAuth client ID + secret pair (GitHub, Google, or both) and a random `OAUTH_JWT_SECRET` (≥32 bytes).
 
 ## License
 
