@@ -530,6 +530,10 @@ const displaySourceName = resolveDisplaySource();
     border-radius: 0;
     font-size: var(--text-sm);
     line-height: 1.4;
+    /* Hyphenated slugs (`#ai-agents`, `#supply-chain-security`) must
+       not wrap mid-slug — the popover would visually split one tag
+       into two lines and look like two separate tags. */
+    white-space: nowrap;
   }
 
   /* Hide a card when the tag-strip filter is active and the card's
