@@ -38,7 +38,7 @@ interface UserRow {
   session_version: number;
 }
 
-function baseUser(hashtags: string[] = ['generative-ai', 'cloudflare']): UserRow {
+function baseUser(hashtags: string[] = ['ai', 'cloudflare']): UserRow {
   return {
     id: 'user-1',
     email: 'a@b.c',
@@ -284,7 +284,7 @@ describe('GET /api/stats — SQL contract (REQ-HIST-002 AC 2)', () => {
 
   it('REQ-HIST-002: articles_total filtered by user tags via article_tags JOIN', async () => {
     const { db, bindings, prepared } = makeDb(
-      baseUser(['generative-ai', 'cloudflare']),
+      baseUser(['ai', 'cloudflare']),
       { articlesTotalN: 140 },
     );
     const req = await authedRequest();
@@ -302,7 +302,7 @@ describe('GET /api/stats — SQL contract (REQ-HIST-002 AC 2)', () => {
       (b) => b.sql.includes('FROM articles a') && b.sql.includes('article_tags'),
     );
     expect(articlesBind).toBeDefined();
-    expect(articlesBind!.params).toEqual(['generative-ai', 'cloudflare']);
+    expect(articlesBind!.params).toEqual(['ai', 'cloudflare']);
 
     const body = (await res.json()) as { articles_total: number };
     expect(body.articles_total).toBe(140);
@@ -330,7 +330,7 @@ describe('GET /api/stats — SQL contract (REQ-HIST-002 AC 2)', () => {
     expect(readsBind).toBeDefined();
     // Bind order: ?1 = session user_id, ?2..?N+1 = the user's tag list.
     expect(readsBind!.params[0]).toBe('user-1');
-    expect(readsBind!.params.slice(1)).toEqual(['generative-ai', 'cloudflare']);
+    expect(readsBind!.params.slice(1)).toEqual(['ai', 'cloudflare']);
 
     const body = (await res.json()) as { articles_read: number };
     expect(body.articles_read).toBe(38);

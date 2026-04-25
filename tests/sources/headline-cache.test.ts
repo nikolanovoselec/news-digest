@@ -53,7 +53,7 @@ describe('headline-cache', () => {
     it('REQ-GEN-003: returns null on corrupt JSON', async () => {
       const { kv, get } = makeKv();
       get.mockResolvedValue('{{not valid json');
-      const result = await readCachedHeadlines(kv, 'googlenews', 'generative-ai');
+      const result = await readCachedHeadlines(kv, 'googlenews', 'ai');
       expect(result).toBeNull();
     });
 
@@ -104,7 +104,7 @@ describe('headline-cache', () => {
       const { kv, put } = makeKv();
       put.mockRejectedValue(new Error('kv unavailable'));
       await expect(
-        writeCachedHeadlines(kv, 'googlenews', 'generative-ai', []),
+        writeCachedHeadlines(kv, 'googlenews', 'ai', []),
       ).resolves.toBeUndefined();
     });
   });

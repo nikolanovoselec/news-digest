@@ -120,7 +120,7 @@ describe('processPendingDiscoveries', () => {
 
   it('REQ-DISC-001: writes sources:{tag} and DELETEs pending rows on success', async () => {
     mockFetchOk();
-    const { db, runCalls } = makeDb(['generative-ai']);
+    const { db, runCalls } = makeDb(['ai']);
     const { kv, puts, deletes } = makeKv();
     const env = makeEnv(
       db,
@@ -132,7 +132,7 @@ describe('processPendingDiscoveries', () => {
 
     const result = await processPendingDiscoveries(env);
 
-    expect(result.processed).toEqual(['generative-ai']);
+    expect(result.processed).toEqual(['ai']);
     expect(result.failed).toEqual([]);
 
     // sources:ai was written
@@ -147,7 +147,7 @@ describe('processPendingDiscoveries', () => {
 
     // pending row was deleted
     const del = runCalls.find(
-      (c) => c.sql.startsWith('DELETE FROM pending_discoveries') && c.params[0] === 'generative-ai',
+      (c) => c.sql.startsWith('DELETE FROM pending_discoveries') && c.params[0] === 'ai',
     );
     expect(del).toBeDefined();
   });
@@ -187,7 +187,7 @@ describe('processPendingDiscoveries', () => {
 
   it('REQ-DISC-003: evicts and DELETEs pending when counter reaches threshold', async () => {
     mockFetchFail();
-    const { db, runCalls } = makeDb(['devsecops']);
+    const { db, runCalls } = makeDb(['rust']);
     // Seed the counter at 1 — the next failure puts it at the threshold (2).
     const { kv, puts, deletes } = makeKv({ 'discovery_failures:rust': '1' });
     const env = makeEnv(
@@ -200,7 +200,7 @@ describe('processPendingDiscoveries', () => {
 
     const result = await processPendingDiscoveries(env);
 
-    expect(result.failed).toContain('devsecops');
+    expect(result.failed).toContain('rust');
 
     // Empty sources:rust entry written so the settings page can
     // surface the Re-discover button (REQ-DISC-004 AC 1).
@@ -215,14 +215,14 @@ describe('processPendingDiscoveries', () => {
     // Pending row deleted on final failure (REQ-DISC-001 AC 5 —
     // "regardless of success").
     const del = runCalls.find(
-      (c) => c.sql.startsWith('DELETE FROM pending_discoveries') && c.params[0] === 'devsecops',
+      (c) => c.sql.startsWith('DELETE FROM pending_discoveries') && c.params[0] === 'rust',
     );
     expect(del).toBeDefined();
   });
 
   it('REQ-DISC-001: picks up to `limit` distinct tags', async () => {
     mockFetchOk();
-    const { db } = makeDb(['generative-ai', 'go', 'devsecops']);
+    const { db } = makeDb(['ai', 'go', 'rust']);
     const { kv } = makeKv();
     const env = makeEnv(
       db,
@@ -235,7 +235,7 @@ describe('processPendingDiscoveries', () => {
     const result = await processPendingDiscoveries(env, 3);
 
     expect(result.processed).toHaveLength(3);
-    expect(new Set(result.processed)).toEqual(new Set(['generative-ai', 'go', 'devsecops']));
+    expect(new Set(result.processed)).toEqual(new Set(['ai', 'go', 'rust']));
   });
 
   it('REQ-DISC-001: passes limit into the SELECT query', async () => {

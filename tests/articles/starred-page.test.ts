@@ -63,7 +63,7 @@ describe('/starred — REQ-STAR-002', () => {
         primary_source_name: 'Example',
         primary_source_url: 'https://example.com/b',
         published_at: now - 100,
-        tags_json: JSON.stringify(['generative-ai']),
+        tags_json: JSON.stringify(['ai']),
         alt_source_count: 2,
         starred_at: now - 60,
         read: 1,

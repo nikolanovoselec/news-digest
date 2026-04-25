@@ -14,7 +14,7 @@ function user(overrides: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
     tz: 'Europe/Zurich',
     digest_hour: 8,
     digest_minute: 0,
-    hashtags_json: JSON.stringify(['generative-ai']),
+    hashtags_json: JSON.stringify(['ai']),
     model_id: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
     email_enabled: 1,
     session_version: 1,
