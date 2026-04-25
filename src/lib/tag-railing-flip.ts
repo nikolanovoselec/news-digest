@@ -47,14 +47,22 @@
 //     + 800ms cascade  ≈ 1800 ms.
 // This is intentionally long. Earlier 220ms / 450ms tunings looked
 // like teleportation on real hardware.
+// Two classes carry distinct concerns so JS can manage them
+// independently. `POP_CLASS` owns the scale-bounce keyframe and is
+// removed BEFORE the cascade starts so its CSS animation no longer
+// fights the inline `transform: translate(...)` we set for the FLIP
+// invert phase. `LIFT_CLASS` owns the z-index + box-shadow and
+// stays on for the full pop+hold+cascade so the chip remains visibly
+// elevated above its neighbours throughout the motion — without it,
+// neighbouring chips would clip the tapped chip's edges as they
+// slide past during the cascade.
 const POP_CLASS = 'tag-chip--just-tapped';
-// The pop keyframe (700ms) lives in TagStrip.astro CSS — JS only
-// needs to know how long to keep the class on so the keyframe runs
-// to completion AND the chip stays elevated for the rest of the
-// hold + cascade.
+const LIFT_CLASS = 'tag-chip--in-flight';
 const HOLD_BEFORE_CASCADE_MS = 1000;
 const SLOW_CASCADE_MS = 800;
-const POP_CLASS_HOLD_MS = HOLD_BEFORE_CASCADE_MS + SLOW_CASCADE_MS + 100;
+// LIFT_CLASS lives slightly longer than the cascade so the elevated
+// look settles back to flat AFTER the slide ends.
+const LIFT_HOLD_MS = HOLD_BEFORE_CASCADE_MS + SLOW_CASCADE_MS + 100;
 const DEFAULT_DURATION_MS = SLOW_CASCADE_MS;
 const ANIM_LOCK_ATTR = 'data-tag-flip-locked';
 
@@ -103,12 +111,14 @@ export async function flipChipToFront(
     return;
   }
 
-  // PHASE 1 — POP: instant scale-up with a bounce on the tapped
-  // chip. Class is removed late enough to outlast both the pop and
-  // the cascade so the chip's z-index lift survives until the
-  // motion settles.
-  tappedChip.classList.add(POP_CLASS);
-  setTimeout(() => tappedChip.classList.remove(POP_CLASS), POP_CLASS_HOLD_MS);
+  // PHASE 1 — POP + LIFT: scale-bounce keyframe (POP_CLASS) plus
+  // z-index/shadow elevation (LIFT_CLASS) added simultaneously. The
+  // pop class is removed at cascade start (see PHASE 3) so its
+  // animation doesn't fight the FLIP's inline transform. The lift
+  // class outlasts the cascade so the chip stays visually above
+  // neighbours while it slides.
+  tappedChip.classList.add(POP_CLASS, LIFT_CLASS);
+  setTimeout(() => tappedChip.classList.remove(LIFT_CLASS), LIFT_HOLD_MS);
 
   // Lock the strip immediately so any re-entrant tap during the
   // pop / hold / cascade is suppressed. The try/finally below
@@ -139,7 +149,9 @@ export async function flipChipToFront(
     // INVERT: for each chip whose position changed by more than half
     // a pixel, set transform so it appears to still be in its old
     // slot. `transition: none` ensures the inverse jump is
-    // instantaneous.
+    // instantaneous. We also guard against the tapped chip's pop
+    // class still emitting a `transform: scale(...)` from its
+    // keyframe — the inline transform overrides it.
     const playing: HTMLElement[] = [];
     for (const chip of chips) {
       const first = firstRects.get(chip);
@@ -148,8 +160,8 @@ export async function flipChipToFront(
       const dx = first.left - last.left;
       const dy = first.top - last.top;
       if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
-      chip.style.transform = `translate(${dx}px, ${dy}px)`;
       chip.style.transition = 'none';
+      chip.style.transform = `translate(${dx}px, ${dy}px)`;
       playing.push(chip);
     }
 
@@ -159,6 +171,25 @@ export async function flipChipToFront(
     // fire, blocking the strip for ~durationMs+100ms with no visual
     // payoff. AC 6 scroll-follow still runs below the try block.
     if (playing.length > 0) {
+      // CRITICAL — force the browser to commit the inverse-transform
+      // styles BEFORE we set up the transition. Without this synchronous
+      // layout read, the browser collapses the "set inverse + transition
+      // none" and "clear inverse + transition 800ms" into a single
+      // style computation, so the play phase never animates and the
+      // tapped chip jump-cuts straight to its final position. Reading
+      // offsetWidth (or any layout property) flushes pending styles.
+      for (const chip of playing) {
+        void chip.offsetWidth;
+      }
+
+      // Hand `transform` ownership cleanly to the FLIP's inline
+      // styles. POP_CLASS still declares an animation on `transform`,
+      // and even though the keyframe finished mid-hold the browser
+      // may still treat the property as animation-controlled while
+      // the class is present. Removing it now, before we kick off
+      // the play phase, eliminates that conflict.
+      tappedChip.classList.remove(POP_CLASS);
+
       // PLAY: next animation frame, transition transforms back to
       // zero so the cascade plays out.
       await new Promise<void>((resolve) => {
