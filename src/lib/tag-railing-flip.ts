@@ -125,7 +125,7 @@ export function flipChipToFront(
   tappedChip: HTMLElement,
   options: FlipChipOptions = {},
 ): Promise<void> {
-  return flipChipToPosition(strip, tappedChip, strip.firstChild as ChildNode | null, options);
+  return flipChipToPosition(strip, tappedChip, strip.firstChild, options);
 }
 
 /** Reorder `tappedChip` to immediately before `beforeNode` (or to
@@ -144,7 +144,7 @@ export function flipChipToFront(
 export async function flipChipToPosition(
   strip: HTMLElement,
   tappedChip: HTMLElement,
-  beforeNode: ChildNode | null,
+  beforeNode: Node | null,
   options: FlipChipOptions = {},
 ): Promise<void> {
   if (isFlipLocked(strip)) return;
