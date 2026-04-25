@@ -88,8 +88,11 @@ const MIN_VISIBLE_FRACTION = 0.15;
 // the fast phase covers the off-screen tail. Displaced chips and
 // tapped-but-arriving-visible use ease-OUT so they decelerate into
 // their final visible position.
-const EASE_IN = 'cubic-bezier(0.4, 0, 1, 1)';
-const EASE_OUT = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+// TODO(REQ-READ-007): easing constants commented out while the play
+// phase forces 'linear' pending UX evaluation. Restore by uncommenting
+// these and the per-chip easing line in the play loop below.
+// const EASE_IN = 'cubic-bezier(0.4, 0, 1, 1)';
+// const EASE_OUT = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
 // LIFT_CLASS lives slightly longer than the longest possible cascade
 // so the elevated look settles back to flat AFTER the slide ends,
 // regardless of how far the tapped chip had to travel.
@@ -246,7 +249,11 @@ export async function flipChipToPosition(
     // INVERT loop to avoid a second getBoundingClientRect call.
     let tappedFirstLeft = 0;
     let tappedLastLeft = 0;
-    let tappedLastRight = 0;
+    // tappedLastRight is captured for the now-commented-out
+    // tappedEndsOffScreen check (see TODO above). Underscore prefix
+    // tells oxlint this is an intentionally-unused capture, ready
+    // to be re-activated when the easing logic is restored.
+    let _tappedLastRight = 0;
     for (const chip of chips) {
       const first = firstRects.get(chip);
       if (first === undefined) continue;
@@ -260,7 +267,7 @@ export async function flipChipToPosition(
       if (chip === tappedChip) {
         tappedFirstLeft = first.left;
         tappedLastLeft = last.left;
-        tappedLastRight = last.right;
+        _tappedLastRight = last.right;
       }
     }
 
@@ -295,17 +302,14 @@ export async function flipChipToPosition(
     // tapped chip continues sliding (mostly off-screen) until
     // tappedCascadeMs elapses.
     const displacedCascadeMs = options.durationMs ?? MIN_CASCADE_MS;
-    // Tapped chip uses ease-IN when its destination is off-screen
-    // (either edge), so the slow phase of the curve covers the
-    // visible portion of the journey and the fast phase covers the
-    // off-screen tail. When the chip ends inside the visible
-    // viewport, use ease-OUT so it decelerates into final position.
-    // Both edges are checked because the unselect cascade can land a
-    // chip off-screen-RIGHT (its natural sort position past the
-    // visible area), not just off-screen-left like the select case.
-    const tappedEndsOffScreen =
-      tappedLastLeft < stripRect.left || tappedLastRight > stripRect.right;
-    const tappedEasing = tappedEndsOffScreen ? EASE_IN : EASE_OUT;
+    // TODO(REQ-READ-007): per-chip easing temporarily disabled while
+    // the play phase forces 'linear'. Restore by uncommenting these
+    // lines and the corresponding `easing` assignment in the play
+    // loop below. The off-screen-edge logic is intact for both the
+    // select (off-screen-left) and unselect (off-screen-right) paths.
+    // const tappedEndsOffScreen =
+    //   tappedLastLeft < stripRect.left || tappedLastRight > stripRect.right;
+    // const tappedEasing = tappedEndsOffScreen ? EASE_IN : EASE_OUT;
 
     // Fast-exit when nothing actually moved (e.g., the user tapped
     // the chip already in slot 0). Otherwise we'd burn the full
@@ -352,7 +356,12 @@ export async function flipChipToPosition(
       for (const chip of playing) {
         const isTapped = chip === tappedChip;
         const duration = isTapped ? tappedCascadeMs : displacedCascadeMs;
-        const easing = isTapped ? tappedEasing : EASE_OUT;
+        // TODO(REQ-READ-007): easing temporarily forced to 'linear'
+        // pending UX evaluation. The original per-chip easing logic is
+        // preserved (tappedEasing / EASE_IN / EASE_OUT consts above)
+        // so restoring is a one-line revert of this assignment.
+        // const easing = isTapped ? tappedEasing : EASE_OUT;
+        const easing = 'linear';
         chip.style.transition = `transform ${duration}ms ${easing}`;
         // Explicit identity transform rather than '' (inline removal).
         // CSS Transitions L1 §3 interpolates between two computed
