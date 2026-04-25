@@ -2,7 +2,7 @@
 // REQ-READ-007. The behaviour lives in three files:
 //
 //   src/lib/tag-railing-flip.ts — the FLIP helper (capture rects,
-//     reorder, invert, play, conditional scroll-follow, lockout).
+//     reorder, invert, play, scroll-position preservation, lockout).
 //   src/components/TagStrip.astro — the pulse keyframe used by the
 //     "just-tapped" highlight.
 //   src/pages/digest.astro and src/pages/history.astro — the host

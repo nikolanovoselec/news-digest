@@ -6,7 +6,7 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-25
 
-- REQ-READ-007 amended (AC 6 reshape): the tag railing no longer auto-scrolls on tap. The cascade still slides the tapped chip to data-position 0, but the strip's scroll position stays where the user left it — the chip may visually exit off-screen-left on a horizontally-scrolled mobile viewport, and the user manually swipes the railing to see the new arrangement. The browser's own implicit scroll triggers on focus and scroll-snap mutation are still defeated so scroll never jumps.
+- REQ-READ-007 amended (AC 6 reshape): the tag railing no longer auto-scrolls when the user taps a chip — the chip cascades to data-position 0 in place, so on a horizontally-scrolled mobile viewport the chip may visually exit off the left edge until the user swipes the railing back. The railing's scroll position is preserved across the tap regardless of how it got there.
 
 - REQ-READ-007 amended (AC 1/2 reshape): the tag-railing tap now plays a three-phase choreography — instant scale-bounce pop on the tapped chip, ~1-second hold with the chip visually elevated, then the slow cascade — instead of the prior single fast pulse. The earlier fast pulse looked like teleportation; the deliberate pop + hold + slow slide gives the user time to understand which chip is moving and where it's going.
 

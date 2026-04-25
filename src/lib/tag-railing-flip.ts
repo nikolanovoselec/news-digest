@@ -17,11 +17,14 @@
 //
 // The strip is locked via `data-tag-flip-locked` for the full
 // pop+hold+cascade so re-entrant taps anywhere in the sequence are
-// dropped (AC 5). After the motion settles, the railing
-// conditionally scrolls to the start — but ONLY when the strip is
-// overflow-scrollable AND the tapped chip's first rect was outside
-// the strip's visible box (AC 6). A chip already in view triggers
-// no scroll.
+// dropped (AC 5). The railing's scroll position is preserved
+// across the cascade — the helper does not auto-scroll. On a
+// horizontally-scrolled mobile viewport the tapped chip may slide
+// off the left edge as it travels to data-position 0; the user
+// navigates the railing manually to see the new arrangement
+// (AC 6). The scroll-snap and focus defenses around `insertBefore`
+// only suppress the browser's *implicit* scroll — they don't
+// initiate any scroll of their own.
 //
 // When the runtime advertises `prefers-reduced-motion: reduce`,
 // the helper performs the reorder instantly and skips the pop,
@@ -195,7 +198,7 @@ export async function flipChipToFront(
     // the chip already in slot 0). Otherwise we'd burn the full
     // backstop window waiting for a transitionend that will never
     // fire, blocking the strip for ~durationMs+100ms with no visual
-    // payoff. AC 6 scroll-follow still runs below the try block.
+    // payoff.
     if (playing.length > 0) {
       // CRITICAL — force the browser to commit the inverse-transform
       // styles BEFORE we set up the transition. Without this synchronous

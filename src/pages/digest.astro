@@ -713,9 +713,9 @@ function isCardHidden(articleTags: readonly string[]): boolean {
       if (nowSelected) {
         // REQ-READ-007 — cascade the chip to slot 0 with the FLIP
         // helper. The helper handles tap-pulse, in-flight lockout,
-        // and conditional mobile scroll-follow. applyFilter runs
-        // immediately so the grid updates without waiting on the
-        // animation; the visual cascade is just the chrome.
+        // and scroll-position preservation (no auto-scroll on tap).
+        // applyFilter runs immediately so the grid updates without
+        // waiting on the animation; the visual cascade is chrome.
         void flipChipToFront(strip, chip);
       }
       applyFilter();
