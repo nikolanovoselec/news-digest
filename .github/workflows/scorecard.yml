@@ -1,8 +1,10 @@
 name: Scorecard
 
 on:
+  # OSSF Scorecard rejects non-default-branch invocations with
+  # "Only the default branch main is supported" — keep main-only.
   push:
-    branches: [main, develop]
+    branches: [main]
   schedule:
     - cron: '0 6 * * 1'
   workflow_dispatch:
