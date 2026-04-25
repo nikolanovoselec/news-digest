@@ -220,7 +220,14 @@ export async function flipChipToFront(
       tappedChip.classList.remove(POP_CLASS);
 
       // PLAY: next animation frame, transition transforms back to
-      // zero so the cascade plays out.
+      // zero so the cascade plays out. Simultaneously animate
+      // strip.scrollLeft from its current value down to 0 in lockstep
+      // with the cascade — without this the tapped chip slides into
+      // viewport pixel `slot0_offset - scrollLeft` (off-screen-left
+      // when scrollLeft > 0) and the user perceives it as
+      // disappearing. Manual rAF easing matches the cascade's
+      // cubic-bezier(0.2, 0.8, 0.2, 1) timing so chip motion and
+      // scroll motion settle together.
       await new Promise<void>((resolve) => {
         requestAnimationFrame(() => resolve());
       });
@@ -228,6 +235,7 @@ export async function flipChipToFront(
         chip.style.transition = `transform ${durationMs}ms cubic-bezier(0.2, 0.8, 0.2, 1)`;
         chip.style.transform = '';
       }
+      animateScrollTo(strip, 0, durationMs);
 
       // Wait for the longest-moving chip's transitionend (which is
       // the tapped chip — it traverses the most distance) with a
@@ -286,4 +294,31 @@ export async function flipChipToFront(
   } finally {
     strip.removeAttribute(ANIM_LOCK_ATTR);
   }
+}
+
+/** Fire-and-forget rAF easing for `scrollLeft`. We can't use the
+ *  native `scrollTo({behavior: 'smooth'})` because its duration is
+ *  browser-defined (~200-500ms typically) and would fall out of step
+ *  with our 800ms cascade — chip motion and scroll motion would
+ *  desynchronise visibly. Manual easing keeps both curves locked
+ *  together and matches the cascade's cubic-bezier(0.2, 0.8, 0.2, 1)
+ *  via an inline easeOutQuint approximation. */
+function animateScrollTo(
+  strip: HTMLElement,
+  target: number,
+  durationMs: number,
+): void {
+  const start = strip.scrollLeft;
+  if (Math.abs(target - start) < 0.5) return;
+  const t0 = performance.now();
+  const tick = (now: number): void => {
+    const elapsed = now - t0;
+    const t = Math.min(1, elapsed / durationMs);
+    // easeOutQuint — close enough to cubic-bezier(0.2, 0.8, 0.2, 1)
+    // for the eye, no curve-library dependency.
+    const eased = 1 - Math.pow(1 - t, 5);
+    strip.scrollLeft = start + (target - start) * eased;
+    if (t < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
