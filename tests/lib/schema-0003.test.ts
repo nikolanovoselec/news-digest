@@ -49,7 +49,7 @@ async function insertArticle(
       opts.canonicalUrl,
       'An example title',
       JSON.stringify(['detail a', 'detail b']),
-      JSON.stringify(['ai']),
+      JSON.stringify(['generative-ai']),
       ts,
       ts,
       opts.runId ?? 'run-x',
@@ -141,7 +141,7 @@ describe('schema 0003 — REQ-PIPE-004', () => {
 
     await env.DB
       .prepare('INSERT INTO article_tags (article_id, tag) VALUES (?, ?)')
-      .bind(articleId, 'ai')
+      .bind(articleId, 'generative-ai')
       .run();
     await env.DB
       .prepare('INSERT INTO article_tags (article_id, tag) VALUES (?, ?)')
@@ -169,7 +169,7 @@ describe('schema 0003 — REQ-PIPE-004', () => {
       .run();
     await env.DB
       .prepare('INSERT INTO article_tags (article_id, tag) VALUES (?, ?)')
-      .bind(articleId, 'ai')
+      .bind(articleId, 'generative-ai')
       .run();
     await env.DB
       .prepare(

@@ -64,7 +64,7 @@ describe('discoveryUserPrompt', () => {
   });
 
   it('REQ-DISC-005: discoveryUserPrompt contains at least one triple-backtick fence', () => {
-    const prompt = discoveryUserPrompt('ai');
+    const prompt = discoveryUserPrompt('generative-ai');
     const fenceCount = prompt.match(/```/g)?.length ?? 0;
     expect(fenceCount).toBeGreaterThanOrEqual(2);
   });
@@ -144,7 +144,7 @@ describe('PROCESS_CHUNK_SYSTEM + processChunkUserPrompt — REQ-PIPE-002', () =>
   });
 
   it('REQ-PIPE-002: processChunkUserPrompt injects the full tag allowlist', () => {
-    const allowlist = ['cloudflare', 'ai', 'aws', 'kubernetes'];
+    const allowlist = ['cloudflare', 'generative-ai', 'aws', 'kubernetes'];
     const prompt = processChunkUserPrompt(sampleCandidates, allowlist);
     for (const tag of allowlist) {
       expect(prompt).toContain(tag);

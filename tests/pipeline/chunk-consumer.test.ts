@@ -173,7 +173,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
       response: JSON.stringify({
         articles: [
           { title: 'NYT-A', details: 'para.', tags: ['cloudflare'] },
-          { title: 'NYT-B', details: 'para.', tags: ['ai'] },
+          { title: 'NYT-B', details: 'para.', tags: ['generative-ai'] },
         ],
         dedup_groups: [],
       }),
@@ -205,7 +205,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
             content: JSON.stringify({
               articles: [
                 { title: 'Title-A', details: 'body A', tags: ['cloudflare'] },
-                { title: 'Title-B', details: 'body B', tags: ['ai'] },
+                { title: 'Title-B', details: 'body B', tags: ['generative-ai'] },
               ],
               dedup_groups: [],
             }),
@@ -350,8 +350,8 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const aiResponse = {
       response: JSON.stringify({
         articles: [
-          { title: 'A', details: 'a.', tags: ['cloudflare', 'ai'] },
-          { title: 'B', details: 'b.', tags: ['ai'] },
+          { title: 'A', details: 'a.', tags: ['cloudflare', 'generative-ai'] },
+          { title: 'B', details: 'b.', tags: ['generative-ai'] },
         ],
         dedup_groups: [],
       }),
@@ -400,7 +400,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
 
   it('REQ-PIPE-002: decrements KV chunks_remaining; last chunk calls finishRun(ready)', async () => {
     const aiResponse = {
-      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }, { title: 'B', details: 'b.', tags: ['ai'] }], dedup_groups: [] }),
+      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }, { title: 'B', details: 'b.', tags: ['generative-ai'] }], dedup_groups: [] }),
       usage: { input_tokens: 10, output_tokens: 10 },
     };
     const { db, records } = makeDb();
@@ -420,7 +420,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
 
   it('REQ-PIPE-002: non-last chunk leaves the counter above zero and does NOT call finishRun', async () => {
     const aiResponse = {
-      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }, { title: 'B', details: 'b.', tags: ['ai'] }], dedup_groups: [] }),
+      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }, { title: 'B', details: 'b.', tags: ['generative-ai'] }], dedup_groups: [] }),
       usage: { input_tokens: 10, output_tokens: 10 },
     };
     const { db, records } = makeDb();
@@ -441,7 +441,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
       response: JSON.stringify({
         articles: [
           { title: 'A', details: 'a.', tags: ['cloudflare'] },
-          { title: 'B', details: 'b.', tags: ['ai'] },
+          { title: 'B', details: 'b.', tags: ['generative-ai'] },
         ],
         dedup_groups: [],
       }),
@@ -475,7 +475,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const aiResponse = {
       response: JSON.stringify({
         articles: [
-          { index: 1, title: 'Summary of B', details: 'B-body.', tags: ['ai'] },
+          { index: 1, title: 'Summary of B', details: 'B-body.', tags: ['generative-ai'] },
           { index: 0, title: 'Summary of A', details: 'A-body.', tags: ['cloudflare'] },
         ],
         dedup_groups: [],
@@ -530,8 +530,8 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
       response: JSON.stringify({
         articles: [
           { index: 0, title: 'Cloudflare ships Workers update', details: 'body.', tags: ['cloudflare'] },
-          { index: 1, title: 'Postgres 18 announces pluggable storage', details: 'body.', tags: ['postgres'] },
-          { index: 2, title: 'AI coding assistant benchmarks improve', details: 'body.', tags: ['ai'] },
+          { index: 1, title: 'Postgres 18 announces pluggable storage', details: 'body.', tags: ['mcp'] },
+          { index: 2, title: 'AI coding assistant benchmarks improve', details: 'body.', tags: ['generative-ai'] },
         ],
         dedup_groups: [],
       }),
@@ -592,7 +592,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
       response: JSON.stringify({
         articles: [
           { index: 0, title: 'A', details: 'body.', tags: ['cloudflare'] },
-          { index: 99, title: 'Hallucinated', details: 'body.', tags: ['ai'] },
+          { index: 99, title: 'Hallucinated', details: 'body.', tags: ['generative-ai'] },
         ],
         dedup_groups: [],
       }),

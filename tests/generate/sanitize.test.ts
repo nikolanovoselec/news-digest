@@ -302,15 +302,15 @@ describe('sanitizeArticles — tags validation', () => {
             url: 'https://blog.cloudflare.com/x',
             one_liner: 'one-liner',
             details: ['a', 'b', 'c'],
-            tags: ['cloudflare', 'ai'],
+            tags: ['cloudflare', 'generative-ai'],
           },
         ],
       },
       NO_SOURCES,
       NO_SOURCE_TAGS,
-      ['cloudflare', 'ai', 'mcp'],
+      ['cloudflare', 'generative-ai', 'mcp'],
     );
-    expect(out[0]?.tags).toEqual(['cloudflare', 'ai']);
+    expect(out[0]?.tags).toEqual(['cloudflare', 'generative-ai']);
   });
 
   it('REQ-GEN-005: drops LLM-hallucinated tags not in the user\'s list', () => {
@@ -328,11 +328,11 @@ describe('sanitizeArticles — tags validation', () => {
       },
       NO_SOURCES,
       NO_SOURCE_TAGS,
-      ['cloudflare', 'ai'],
+      ['cloudflare', 'generative-ai'],
     );
     // 'unicorns' is not a user hashtag — dropped. 'AI' normalises to
-    // lowercase 'ai' and matches.
-    expect(out[0]?.tags).toEqual(['cloudflare', 'ai']);
+    // lowercase 'generative-ai' and matches.
+    expect(out[0]?.tags).toEqual(['cloudflare', 'generative-ai']);
   });
 
   it('REQ-GEN-005: strips leading # and dedupes tags', () => {
@@ -357,7 +357,7 @@ describe('sanitizeArticles — tags validation', () => {
 
   it('REQ-GEN-005: falls back to source_tags when LLM returns no valid tags', () => {
     const sourceTags = new Map<string, string[]>([
-      ['https://example.com/y', ['ai', 'mcp']],
+      ['https://example.com/y', ['generative-ai', 'mcp']],
     ]);
     const out = sanitizeArticles(
       {
@@ -373,9 +373,9 @@ describe('sanitizeArticles — tags validation', () => {
       },
       NO_SOURCES,
       sourceTags,
-      ['ai', 'mcp'],
+      ['generative-ai', 'mcp'],
     );
-    expect(out[0]?.tags).toEqual(['ai', 'mcp']);
+    expect(out[0]?.tags).toEqual(['generative-ai', 'mcp']);
   });
 
   it('REQ-GEN-005: tags [] when neither LLM nor source_tags yield a match', () => {

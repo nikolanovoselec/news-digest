@@ -44,7 +44,7 @@ function baseUser(): UserRow {
     tz: 'UTC',
     digest_hour: 8,
     digest_minute: 0,
-    hashtags_json: JSON.stringify(['ai']),
+    hashtags_json: JSON.stringify(['generative-ai']),
     model_id: null,
     email_enabled: 1,
     session_version: 1,

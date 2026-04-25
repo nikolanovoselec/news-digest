@@ -140,7 +140,7 @@ function baseRow(): UserRow {
     tz: 'Europe/Zurich',
     digest_hour: 8,
     digest_minute: 0,
-    hashtags_json: JSON.stringify(['ai', 'llm']),
+    hashtags_json: JSON.stringify(['generative-ai', 'llm']),
     model_id: VALID_MODEL_ID,
     email_enabled: 1,
     session_version: 1,
@@ -224,7 +224,7 @@ describe('GET /api/settings', () => {
       email_enabled: boolean;
       first_run: boolean;
     };
-    expect(body.hashtags).toEqual(['ai', 'llm']);
+    expect(body.hashtags).toEqual(['generative-ai', 'llm']);
     expect(body.digest_hour).toBe(8);
     expect(body.digest_minute).toBe(0);
     expect(body.tz).toBe('Europe/Zurich');
@@ -247,7 +247,7 @@ describe('PUT /api/settings', () => {
   it('REQ-SET-001: returns 403 when Origin is missing', async () => {
     const { db } = makeDb(baseRow());
     const { kv } = makeKv();
-    const req = await authedRequest('PUT', { hashtags: ['ai'] }, { origin: null });
+    const req = await authedRequest('PUT', { hashtags: ['generative-ai'] }, { origin: null });
     const res = await PUT(makeContext(req, env(db, kv)) as never);
     expect(res.status).toBe(403);
   });
@@ -258,7 +258,7 @@ describe('PUT /api/settings', () => {
     const req = await authedRequest(
       'PUT',
       {
-        hashtags: ['ai'],
+        hashtags: ['generative-ai'],
         digest_hour: 8,
         digest_minute: 0,
         tz: 'UTC',
@@ -340,9 +340,9 @@ describe('PUT /api/settings', () => {
 
   it('REQ-SET-002: deduplicates hashtags before storage', async () => {
     const { db, runCalls } = makeDb(baseRow());
-    const { kv } = makeKv(['ai', 'llm']); // no discovery needed
+    const { kv } = makeKv(['generative-ai', 'llm']); // no discovery needed
     const req = await authedRequest('PUT', {
-      hashtags: ['ai', 'ai', 'llm'],
+      hashtags: ['generative-ai', 'generative-ai', 'llm'],
       digest_hour: 8,
       digest_minute: 0,
       tz: 'UTC',
@@ -354,12 +354,12 @@ describe('PUT /api/settings', () => {
     const update = runCalls.find((c) => c.sql.startsWith('UPDATE users'));
     expect(update).toBeDefined();
     const stored = JSON.parse(update!.params[0] as string) as string[];
-    expect(stored).toEqual(['ai', 'llm']);
+    expect(stored).toEqual(['generative-ai', 'llm']);
   });
 
   it('REQ-SET-002: strips leading "#" and lowercases before persist', async () => {
     const { db, runCalls } = makeDb(baseRow());
-    const { kv } = makeKv(['ai']);
+    const { kv } = makeKv(['generative-ai']);
     const req = await authedRequest('PUT', {
       hashtags: ['#AI'],
       digest_hour: 8,
@@ -372,14 +372,14 @@ describe('PUT /api/settings', () => {
     expect(res.status).toBe(200);
     const update = runCalls.find((c) => c.sql.startsWith('UPDATE users'));
     const stored = JSON.parse(update!.params[0] as string) as string[];
-    expect(stored).toEqual(['ai']);
+    expect(stored).toEqual(['generative-ai']);
   });
 
   it('REQ-SET-003: rejects digest_hour outside 0..23', async () => {
     const { db } = makeDb(baseRow());
     const { kv } = makeKv();
     const req = await authedRequest('PUT', {
-      hashtags: ['ai'],
+      hashtags: ['generative-ai'],
       digest_hour: 24,
       digest_minute: 0,
       tz: 'UTC',
@@ -395,7 +395,7 @@ describe('PUT /api/settings', () => {
     const { db } = makeDb(baseRow());
     const { kv } = makeKv();
     const req = await authedRequest('PUT', {
-      hashtags: ['ai'],
+      hashtags: ['generative-ai'],
       digest_hour: 8,
       digest_minute: 60,
       tz: 'UTC',
@@ -411,7 +411,7 @@ describe('PUT /api/settings', () => {
     const { db } = makeDb(baseRow());
     const { kv } = makeKv();
     const req = await authedRequest('PUT', {
-      hashtags: ['ai'],
+      hashtags: ['generative-ai'],
       digest_hour: 8.5,
       digest_minute: 0,
       tz: 'UTC',
@@ -427,7 +427,7 @@ describe('PUT /api/settings', () => {
     const { db } = makeDb(baseRow());
     const { kv } = makeKv();
     const req = await authedRequest('PUT', {
-      hashtags: ['ai'],
+      hashtags: ['generative-ai'],
       digest_hour: 8,
       digest_minute: 0,
       tz: 'Mars/Olympus_Mons',
@@ -443,7 +443,7 @@ describe('PUT /api/settings', () => {
     const { db } = makeDb(baseRow());
     const { kv } = makeKv();
     const req = await authedRequest('PUT', {
-      hashtags: ['ai'],
+      hashtags: ['generative-ai'],
       digest_hour: 8,
       digest_minute: 0,
       tz: 'UTC',
@@ -459,7 +459,7 @@ describe('PUT /api/settings', () => {
     const { db } = makeDb(baseRow());
     const { kv } = makeKv();
     const req = await authedRequest('PUT', {
-      hashtags: ['ai'],
+      hashtags: ['generative-ai'],
       digest_hour: 8,
       digest_minute: 0,
       tz: 'UTC',
@@ -473,9 +473,9 @@ describe('PUT /api/settings', () => {
 
   it('REQ-SET-006: inserts pending_discoveries rows for tags missing from KV', async () => {
     const { db, batchCalls } = makeDb(baseRow());
-    const { kv } = makeKv(['ai']); // `llm` and `mcp` are new
+    const { kv } = makeKv(['generative-ai']); // `llm` and `mcp` are new
     const req = await authedRequest('PUT', {
-      hashtags: ['ai', 'llm', 'mcp'],
+      hashtags: ['generative-ai', 'llm', 'mcp'],
       digest_hour: 8,
       digest_minute: 0,
       tz: 'UTC',
@@ -499,9 +499,9 @@ describe('PUT /api/settings', () => {
 
   it('REQ-SET-001: persists all validated fields on a full successful save', async () => {
     const { db, runCalls } = makeDb(baseRow());
-    const { kv } = makeKv(['ai']);
+    const { kv } = makeKv(['generative-ai']);
     const req = await authedRequest('PUT', {
-      hashtags: ['ai'],
+      hashtags: ['generative-ai'],
       digest_hour: 22,
       digest_minute: 30,
       tz: 'America/New_York',
@@ -514,7 +514,7 @@ describe('PUT /api/settings', () => {
     expect(update).toBeDefined();
     // Binding order from the handler:
     //   hashtags_json, digest_hour, digest_minute, tz, model_id, email_enabled, id
-    expect(update!.params[0]).toBe(JSON.stringify(['ai']));
+    expect(update!.params[0]).toBe(JSON.stringify(['generative-ai']));
     expect(update!.params[1]).toBe(22);
     expect(update!.params[2]).toBe(30);
     expect(update!.params[3]).toBe('America/New_York');
@@ -553,10 +553,10 @@ describe('PUT /api/settings', () => {
     // round-trip (receive valid model_id → persist to users.model_id)
     // still works unmodified.
     const { db, runCalls } = makeDb(baseRow());
-    const { kv } = makeKv(['ai']);
+    const { kv } = makeKv(['generative-ai']);
     const STORED_MODEL_ID = '@cf/openai/gpt-oss-20b';
     const req = await authedRequest('PUT', {
-      hashtags: ['ai'],
+      hashtags: ['generative-ai'],
       digest_hour: 8,
       digest_minute: 0,
       tz: 'UTC',
@@ -576,9 +576,9 @@ describe('PUT /api/settings', () => {
 
   it('REQ-SET-006: no discovery inserts when every tag already has sources', async () => {
     const { db, batchCalls } = makeDb(baseRow());
-    const { kv } = makeKv(['ai', 'llm']);
+    const { kv } = makeKv(['generative-ai', 'llm']);
     const req = await authedRequest('PUT', {
-      hashtags: ['ai', 'llm'],
+      hashtags: ['generative-ai', 'llm'],
       digest_hour: 8,
       digest_minute: 0,
       tz: 'UTC',

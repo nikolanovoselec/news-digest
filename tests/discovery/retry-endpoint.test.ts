@@ -126,7 +126,7 @@ describe('POST /api/admin/discovery/retry', () => {
   it('REQ-AUTH-003: rejects request with missing Origin header', async () => {
     const { db } = makeDb(baseRow('["ai"]'));
     const { kv } = makeKv();
-    const req = await retryRequest({ origin: null, body: { tag: 'ai' } });
+    const req = await retryRequest({ origin: null, body: { tag: 'generative-ai' } });
     const res = await POST(makeContext(req, envWith(db, kv)) as never);
     expect(res.status).toBe(403);
   });
@@ -136,7 +136,7 @@ describe('POST /api/admin/discovery/retry', () => {
     const { kv } = makeKv();
     const req = await retryRequest({
       origin: APP_ORIGIN,
-      body: { tag: 'ai' },
+      body: { tag: 'generative-ai' },
     });
     const res = await POST(makeContext(req, envWith(db, kv)) as never);
     expect(res.status).toBe(401);
@@ -149,7 +149,7 @@ describe('POST /api/admin/discovery/retry', () => {
     const req = await retryRequest({
       origin: APP_ORIGIN,
       cookie,
-      body: { tag: 'rust' },
+      body: { tag: 'devsecops' },
     });
     const res = await POST(makeContext(req, envWith(db, kv)) as never);
     expect(res.status).toBe(400);
@@ -164,7 +164,7 @@ describe('POST /api/admin/discovery/retry', () => {
     const req = await retryRequest({
       origin: APP_ORIGIN,
       cookie,
-      body: { tag: 'ai' },
+      body: { tag: 'generative-ai' },
     });
     const res = await POST(makeContext(req, envWith(db, kv)) as never);
     expect(res.status).toBe(400);
@@ -209,7 +209,7 @@ describe('POST /api/admin/discovery/retry', () => {
     const req = await retryRequest({
       origin: APP_ORIGIN,
       cookie,
-      body: { tag: 'ai' },
+      body: { tag: 'generative-ai' },
     });
     const res = await POST(makeContext(req, envWith(db, kv)) as never);
     expect(res.status).toBe(200);
@@ -226,7 +226,7 @@ describe('POST /api/admin/discovery/retry', () => {
     );
     expect(insert).toBeDefined();
     expect(insert!.params[0]).toBe('12345'); // user_id
-    expect(insert!.params[1]).toBe('ai'); // tag
+    expect(insert!.params[1]).toBe('generative-ai'); // tag
     expect(typeof insert!.params[2]).toBe('number'); // added_at
   });
 
@@ -248,7 +248,7 @@ describe('POST /api/admin/discovery/retry', () => {
     const insert = runCalls.find(
       (c) => typeof c.sql === 'string' && c.sql.startsWith('INSERT OR IGNORE INTO pending_discoveries'),
     );
-    expect(insert!.params[1]).toBe('ai');
+    expect(insert!.params[1]).toBe('generative-ai');
   });
 
   // ---- REQ-DISC-004 form-POST branch -------------------------------------
@@ -368,7 +368,7 @@ describe('POST /api/admin/discovery/retry', () => {
     const req = await retryRequest({
       origin: APP_ORIGIN,
       cookie,
-      body: { tag: 'ai' },
+      body: { tag: 'generative-ai' },
     });
     const res = await POST(makeContext(req, envWith(db, kv)) as never);
     expect(res.status).toBe(200);
@@ -380,7 +380,7 @@ describe('POST /api/admin/discovery/retry', () => {
         typeof c.sql === 'string' &&
         c.sql.startsWith('INSERT OR IGNORE INTO pending_discoveries'),
     );
-    expect(insert!.params[1]).toBe('ai');
+    expect(insert!.params[1]).toBe('generative-ai');
   });
 
   it('REQ-DISC-004: JSON POST response shape unchanged (regression guard)', async () => {
@@ -392,7 +392,7 @@ describe('POST /api/admin/discovery/retry', () => {
     const req = await retryRequest({
       origin: APP_ORIGIN,
       cookie,
-      body: { tag: 'ai' },
+      body: { tag: 'generative-ai' },
     });
     const res = await POST(makeContext(req, envWith(db, kv)) as never);
     expect(res.status).toBe(200);

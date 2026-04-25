@@ -92,7 +92,7 @@ describe('discoverTag', () => {
         feeds: [{ name: 'Example Blog', url: 'https://blog.example.com/feed', kind: 'rss' }],
       }),
     );
-    const feeds = await discoverTag('ai', env);
+    const feeds = await discoverTag('generative-ai', env);
     expect(feeds).toHaveLength(1);
     expect(feeds[0]).toMatchObject({
       name: 'Example Blog',
@@ -110,7 +110,7 @@ describe('discoverTag', () => {
         feeds: [{ name: 'Ex Atom', url: 'https://blog.example.com/atom', kind: 'atom' }],
       }),
     );
-    const feeds = await discoverTag('ai', env);
+    const feeds = await discoverTag('generative-ai', env);
     expect(feeds).toHaveLength(1);
     expect(feeds[0]!.kind).toBe('atom');
   });
@@ -124,7 +124,7 @@ describe('discoverTag', () => {
         feeds: [{ name: 'Ex JSON', url: 'https://ex.com/feed.json', kind: 'json' }],
       }),
     );
-    const feeds = await discoverTag('ai', env);
+    const feeds = await discoverTag('generative-ai', env);
     expect(feeds).toHaveLength(1);
     expect(feeds[0]!.kind).toBe('json');
   });
@@ -147,7 +147,7 @@ describe('discoverTag', () => {
         ],
       }),
     );
-    const feeds = await discoverTag('ai', env);
+    const feeds = await discoverTag('generative-ai', env);
     expect(feeds).toHaveLength(0);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -165,7 +165,7 @@ describe('discoverTag', () => {
         feeds: [{ name: 'Wrong', url: 'https://example.com/feed', kind: 'rss' }],
       }),
     );
-    const feeds = await discoverTag('ai', env);
+    const feeds = await discoverTag('generative-ai', env);
     expect(feeds).toHaveLength(0);
   });
 
@@ -202,19 +202,19 @@ describe('discoverTag', () => {
 
   it('REQ-DISC-001: returns [] when LLM response is unparseable JSON', async () => {
     const { env } = makeEnv('not json {{{');
-    const feeds = await discoverTag('ai', env);
+    const feeds = await discoverTag('generative-ai', env);
     expect(feeds).toEqual([]);
   });
 
   it('REQ-DISC-001: returns [] when LLM call throws', async () => {
     const { env } = makeEnv(new Error('LLM backend down'));
-    const feeds = await discoverTag('ai', env);
+    const feeds = await discoverTag('generative-ai', env);
     expect(feeds).toEqual([]);
   });
 
   it('REQ-DISC-001: returns [] when LLM suggests no feeds', async () => {
     const { env } = makeEnv(JSON.stringify({ feeds: [] }));
-    const feeds = await discoverTag('ai', env);
+    const feeds = await discoverTag('generative-ai', env);
     expect(feeds).toEqual([]);
   });
 
@@ -225,7 +225,7 @@ describe('discoverTag', () => {
         feeds: [{ name: 'Bad Kind', url: 'https://ex.com/feed', kind: 'opml' }],
       }),
     );
-    const feeds = await discoverTag('ai', env);
+    const feeds = await discoverTag('generative-ai', env);
     expect(feeds).toEqual([]);
   });
 

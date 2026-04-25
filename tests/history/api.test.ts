@@ -49,7 +49,7 @@ interface ScrapeRunRow {
   status: string;
 }
 
-function baseRow(tz = 'UTC', hashtags: string[] = ['ai', 'cloudflare']): UserRow {
+function baseRow(tz = 'UTC', hashtags: string[] = ['generative-ai', 'cloudflare']): UserRow {
   return {
     id: '12345',
     email: 'alice@example.com',
@@ -185,7 +185,7 @@ describe('GET /api/history — REQ-HIST-001', () => {
     const now = Math.floor(Date.now() / 1000);
     const articles: ArticleRow[] = [];
     for (let i = 0; i < 10; i += 1) {
-      articles.push(fakeArticle(`a${i}`, now - i * 86_400 - 3600, ['ai']));
+      articles.push(fakeArticle(`a${i}`, now - i * 86_400 - 3600, ['generative-ai']));
     }
     const { db } = makeDb(baseRow('UTC'), articles, []);
     const req = await historyRequest(token);
@@ -202,8 +202,8 @@ describe('GET /api/history — REQ-HIST-001', () => {
     // Anchor to a stable UTC day; tz=UTC so the local date == UTC date.
     const dayStartUtc = Math.floor(Date.UTC(2026, 3, 22, 0, 0, 0) / 1000);
     const articles = [
-      fakeArticle('a1', dayStartUtc + 3600, ['ai']),
-      fakeArticle('a2', dayStartUtc + 7200, ['ai', 'cloudflare']),
+      fakeArticle('a1', dayStartUtc + 3600, ['generative-ai']),
+      fakeArticle('a2', dayStartUtc + 7200, ['generative-ai', 'cloudflare']),
     ];
     const runs = [
       { ...fakeRun('r1', dayStartUtc + 0), tokens_in: 100, tokens_out: 200, estimated_cost_usd: 0.05, articles_ingested: 7 },
@@ -257,7 +257,7 @@ describe('GET /api/history — REQ-HIST-001', () => {
 
   it("REQ-HIST-001: articles filtered to the user's active tags", async () => {
     const token = await authedToken();
-    const { db, bindings } = makeDb(baseRow('UTC', ['ai', 'cloudflare']), [], []);
+    const { db, bindings } = makeDb(baseRow('UTC', ['generative-ai', 'cloudflare']), [], []);
     const req = await historyRequest(token);
     await GET(makeContext(req, env(db)) as never);
 
@@ -268,7 +268,7 @@ describe('GET /api/history — REQ-HIST-001', () => {
     expect(articleBind!.sql).toContain('tag IN');
     const params = articleBind!.params;
     expect(params.length).toBe(3); // cutoff + 2 tags
-    expect(params.slice(1)).toEqual(['ai', 'cloudflare']);
+    expect(params.slice(1)).toEqual(['generative-ai', 'cloudflare']);
   });
 
   it('REQ-HIST-001: empty pool returns { days: [] }', async () => {
