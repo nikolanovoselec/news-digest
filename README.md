@@ -50,6 +50,63 @@ Test drive of [Codeflare](https://codeflare.ch) ([repo](https://github.com/nikol
 | Email | [Resend](https://resend.com) |
 | Auth | GitHub OAuth + HMAC-SHA256 JWT |
 
+## Deploy your own
+
+Three steps. The Deploy workflow takes care of D1, KV, queues, migrations, secret push, and (optional) custom-domain bind. No `wrangler deploy` from your laptop.
+
+### 1. Fork
+
+Click Fork. Pick a name. The default Worker service name is `ai-news-digest`; if you keep that, your URL is `https://ai-news-digest.<your-user>.workers.dev`.
+
+### 2. Set repo secrets
+
+Settings → Secrets and variables → Actions → New repository secret. Add the four required ones — everything else is optional:
+
+| Secret | Required | What it's for |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | yes | Token with the scopes listed below. |
+| `CLOUDFLARE_ACCOUNT_ID` | yes | Find it on any zone overview in the Cloudflare dashboard. |
+| `OAUTH_CLIENT_ID` | yes | GitHub OAuth App client id. Create at github.com → Settings → Developer settings → OAuth Apps → New. Authorization callback URL is `<APP_URL>/api/auth/github/callback`. |
+| `OAUTH_CLIENT_SECRET` | yes | Generated alongside the client id. Server-side only. |
+| `OAUTH_JWT_SECRET` | yes | HMAC key for session cookies. Generate: `openssl rand -base64 32`. Rotating it expires every active session. |
+| `APP_URL` | yes | Canonical origin used by the Origin gate and OAuth callback. Use `https://ai-news-digest.<your-user>.workers.dev` if you don't have a custom domain (it works exactly the same — you just give that URL to GitHub when registering the OAuth App). |
+| `RESEND_API_KEY` | optional | [Resend](https://resend.com) key for the daily "your digest is ready" email. When unset, digests still generate and appear in the app — only the email step is skipped. |
+| `RESEND_FROM` | optional | Sender address (e.g. `News Digest <hello@yourdomain.com>`). Required when `RESEND_API_KEY` is set; ignored when not. |
+| `DEV_BYPASS_TOKEN` | optional | Enables `/api/dev/login` for `scripts/e2e-test.sh`. When unset, the endpoint returns 404. |
+
+#### Cloudflare API token scopes
+
+Custom token via [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens):
+
+| Scope | Permission | Access | Why |
+|---|---|---|---|
+| Account | Workers Scripts | Edit | Deploys the Worker. |
+| Account | Workers KV Storage | Edit | Auto-creates the KV namespace if it doesn't exist. |
+| Account | D1 | Edit | Auto-creates the D1 database and applies migrations. |
+| Account | Queues | Edit | Auto-creates `scrape-coordinator` and `scrape-chunks`. |
+| Account | Workers AI | Read | LLM inference for summaries + source discovery. |
+| Zone | Zone | Read | Only when binding a custom domain — discovers the zone. |
+| Zone | Workers Routes | Edit | Only when binding a custom domain — attaches the hostname. |
+
+The Zone scopes are skipped automatically when `APP_URL` is a `*.workers.dev` URL.
+
+### 3. Deploy
+
+Actions → Deploy → Run workflow → Branch: `main` → **Run workflow**. Takes ~2 minutes. The workflow:
+
+1. Resolves (or creates) the D1 database, KV namespace, and queues in your account via [`scripts/bootstrap-resources.sh`](scripts/bootstrap-resources.sh).
+2. Applies D1 migrations.
+3. Pushes Worker secrets (Resend pair skipped when unset).
+4. `wrangler deploy`.
+5. Binds your `APP_URL` hostname to the Worker (skipped when it's a `*.workers.dev` URL).
+6. Smoke-tests `GET /` returns 200.
+
+Future pushes to `main` deploy automatically.
+
+### 4. Make the admin endpoints non-public
+
+Three operator endpoints under `/api/admin/*` (force-refresh + re-discover) need an extra gate so other signed-in users can't trigger them. Cloudflare Access at the zone level — [setup walkthrough](documentation/deployment.md#admin-only-routes-cloudflare-access-gating). Only needed if you bound a custom domain; on `*.workers.dev` your account is already the only signed-in user.
+
 ## Local dev
 
 ```bash

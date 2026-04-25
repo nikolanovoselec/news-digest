@@ -123,14 +123,14 @@ export async function POST(context: APIContext): Promise<Response> {
   const nowSec = Math.floor(Date.now() / 1000);
 
   try {
-    // Clear KV entries (parallel — independent keys).
-    await Promise.all(
-      stuck.flatMap((tag) => [
-        env.KV.delete(`sources:${tag}`),
-        env.KV.delete(`discovery_failures:${tag}`),
-      ]),
-    );
-
+    // Order: D1 batch FIRST, then KV deletes. Partial-failure recovery:
+    // if D1 throws we return 500 without having altered KV, so a click
+    // remains a no-op and the user can simply retry. If we cleared KV
+    // first, a D1 throw would leave the cache empty AND the cron with
+    // no row to process — the next button click would observe missing
+    // entries (not "stuck"), and the user would be locked out until
+    // they re-saved their tags via the regular settings flow.
+    //
     // Single D1 batch — all INSERT OR IGNORE rows commit or roll back
     // together, so the cron either sees every queued tag or none.
     const insertStmt = env.DB.prepare(
@@ -138,6 +138,17 @@ export async function POST(context: APIContext): Promise<Response> {
     );
     const statements = stuck.map((tag) => insertStmt.bind(userId, tag, nowSec));
     await env.DB.batch(statements);
+
+    // Clear KV entries (parallel — independent keys). At worst a KV
+    // failure here leaves stale empty-feeds entries which the discovery
+    // cron will overwrite on its next pass against the freshly-queued
+    // pending_discoveries rows — no user-visible breakage.
+    await Promise.all(
+      stuck.flatMap((tag) => [
+        env.KV.delete(`sources:${tag}`),
+        env.KV.delete(`discovery_failures:${tag}`),
+      ]),
+    );
   } catch (err) {
     log('error', 'discovery.completed', {
       user_id: userId,

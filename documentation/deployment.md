@@ -103,7 +103,7 @@ Every admin endpoint sits under `/api/admin/*` so a **single wildcard rule** cov
 ### Setup (one-time, operator console)
 
 1. Cloudflare dashboard → Zero Trust → **Access** → Applications → Add an application → Self-hosted.
-2. Application domain: `news.graymatter.ch`, path: `/api/admin/*` (single wildcard covers all admin endpoints, current and future). Include both `POST` and `GET` — Access gates the whole route.
+2. Application domain: `<your-app-host>` (e.g. `news.example.com` or `ai-news-digest.<your-user>.workers.dev`), path: `/api/admin/*` (single wildcard covers all admin endpoints, current and future). Include both `POST` and `GET` — Access gates the whole route.
 3. Identity provider: any already-configured IdP that supports email assertion (Google, GitHub, One-Time PIN).
 4. Access policy: **Include** → Emails → `<admin@example>` (replace with the operator's email). Session lifetime: 24h or shorter per operator preference.
 5. Save. The Access edge now issues a `CF_Authorization` JWT cookie on successful auth; requests to the gated paths without it are redirected to the Access login page.

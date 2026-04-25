@@ -30,7 +30,7 @@ describe('settings.astro Discover-missing-sources button — REQ-DISC-004', () =
     // bulk endpoint, no hidden `tag` input (the server enumerates).
     expect(settingsPage).toContain('action="/api/admin/discovery/retry-bulk"');
     expect(settingsPage).toMatch(
-      /method="post"[\s\S]*?action="\/api\/discovery\/retry-bulk"/,
+      /method="post"[\s\S]*?action="\/api\/admin\/discovery\/retry-bulk"/,
     );
   });
 

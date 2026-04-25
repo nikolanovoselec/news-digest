@@ -110,10 +110,13 @@ export interface SendEmailParams {
   html: string;
 }
 
-/** Outcome of a send attempt. Never throws — callers branch on `sent`. */
+/** Outcome of a send attempt. Never throws — callers branch on `sent`.
+ *
+ *  `resend_not_configured` is the fork-friendly "no email creds in this
+ *  deployment" signal: digests still generate but no email goes out. */
 export interface SendEmailResult {
   sent: boolean;
-  error_code?: 'resend_non_2xx' | 'resend_error';
+  error_code?: 'resend_non_2xx' | 'resend_error' | 'resend_not_configured';
 }
 
 /**
@@ -130,6 +133,21 @@ export async function sendEmail(
   env: Env,
   params: SendEmailParams,
 ): Promise<SendEmailResult> {
+  // Short-circuit when Resend isn't configured. A fork that only wants
+  // the in-app digest (no email) sets neither secret; the deploy
+  // workflow skips the wrangler secret put step, so both env vars
+  // arrive here as undefined / empty. We return a clean
+  // not_configured outcome instead of issuing a fetch with an empty
+  // Bearer token (which would 401 and noise up the logs).
+  if (
+    typeof env.RESEND_API_KEY !== 'string' ||
+    env.RESEND_API_KEY === '' ||
+    typeof env.RESEND_FROM !== 'string' ||
+    env.RESEND_FROM === ''
+  ) {
+    return { sent: false, error_code: 'resend_not_configured' };
+  }
+
   const payload = {
     from: env.RESEND_FROM,
     to: [params.to],

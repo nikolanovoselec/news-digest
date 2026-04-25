@@ -75,13 +75,39 @@ jobs:
           DEV_BYPASS_TOKEN: ${{ secrets.DEV_BYPASS_TOKEN }}
         run: |
           set -e
-          # Required secrets — fail the deploy if any are missing.
-          for name in OAUTH_CLIENT_ID OAUTH_CLIENT_SECRET OAUTH_JWT_SECRET RESEND_API_KEY RESEND_FROM APP_URL; do
+          # Required secrets — every fork must set these (without OAuth
+          # the user can't log in; without APP_URL the Origin gate
+          # rejects every state-changing POST).
+          for name in OAUTH_CLIENT_ID OAUTH_CLIENT_SECRET OAUTH_JWT_SECRET APP_URL; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Required secret '$name' is not set in the repo." \
+                   "Add it under Settings → Secrets and variables → Actions."
+              exit 1
+            fi
             TMP=$(mktemp)
             printf '%s' "${!name}" > "$TMP"
             npx --yes wrangler secret put "$name" < "$TMP"
             rm "$TMP"
           done
+
+          # Optional: Resend (digest-ready emails). Both keys must be set
+          # together — partial config is rejected so the runtime never
+          # tries to fire an email with half the credentials. When unset,
+          # the email step is skipped at runtime (digests still generate).
+          if [ -n "${RESEND_API_KEY:-}" ] && [ -n "${RESEND_FROM:-}" ]; then
+            for name in RESEND_API_KEY RESEND_FROM; do
+              TMP=$(mktemp)
+              printf '%s' "${!name}" > "$TMP"
+              npx --yes wrangler secret put "$name" < "$TMP"
+              rm "$TMP"
+            done
+          elif [ -n "${RESEND_API_KEY:-}" ] || [ -n "${RESEND_FROM:-}" ]; then
+            echo "::error::Set BOTH RESEND_API_KEY and RESEND_FROM, or neither."
+            exit 1
+          else
+            echo "Resend not configured — daily digest emails disabled (digest generation continues)."
+          fi
+
           # Optional: DEV_BYPASS_TOKEN enables the /api/dev/login endpoint
           # used by scripts/e2e-test.sh. If the repo secret is unset,
           # skip — the endpoint will return 404 at runtime.

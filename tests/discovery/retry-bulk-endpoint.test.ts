@@ -217,7 +217,7 @@ describe('POST /api/admin/discovery/retry-bulk — REQ-DISC-004', () => {
 
   it('REQ-DISC-004: re-queues every stuck tag in one D1 batch and clears both KV keys per tag', async () => {
     const cookie = await validSessionCookie();
-    const { db, bindings, batches } = makeDb(
+    const { db, batches } = makeDb(
       userWith('["ai", "go", "ikea", "tesla"]'),
     );
     // ai = populated (not stuck); go + ikea + tesla = empty feeds (stuck).
