@@ -38,7 +38,7 @@ Declared in `wrangler.toml`:
 |---|---|---|
 | `DB` | D1 database | Primary strongly-consistent store — users, articles, scrape_runs, pending_discoveries, stars |
 | `KV` | KV namespace | Edge cache for discovered sources, headlines, source health |
-| `SCRAPE_COORDINATOR` | Queue producer | Producer binding — one message per hourly cron tick kicks the coordinator |
+| `SCRAPE_COORDINATOR` | Queue producer | Producer binding — one message per every-4-hours cron tick kicks the coordinator |
 | `SCRAPE_CHUNKS` | Queue producer | Producer binding — one message per ~100-candidate LLM chunk |
 | `AI` | Workers AI | LLM inference for chunk summarization and source discovery |
 | `ASSETS` | Fetcher (static assets) | Cloudflare static-asset binding for serving the Astro-built output; falls back to `new Response('news-digest')` in tests |

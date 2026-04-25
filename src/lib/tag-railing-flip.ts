@@ -41,11 +41,11 @@
 //      chip stays slightly elevated (z-index lift via the pop class)
 //      while the user's eye lands on it, so they know which chip is
 //      about to move before the cascade starts.
-//   3. CASCADE: the FLIP reorder plays at a distance-proportional
-//      duration (see PX_PER_MS / MIN_CASCADE_MS / MAX_CASCADE_MS) so
-//      the chip's perceived velocity stays uniform whether it
-//      travels 200px or 1500px. The eye can track the chip across
-//      the railing without it racing past as a blur.
+//   3. CASCADE: the FLIP reorder plays at a visible-fraction-scaled
+//      duration (see TARGET_VISIBLE_CROSSING_MS / MIN_CASCADE_MS /
+//      MAX_CASCADE_MS) so the on-screen portion of the chip's journey
+//      stays roughly constant regardless of total travel distance.
+//      Easing is currently 'linear' across all chips.
 //
 // Total wall-clock from tap to settled state for a near chip:
 //   ~500ms pop (overlapping the hold) + remaining hold to 1000ms
@@ -83,16 +83,9 @@ const TARGET_VISIBLE_CROSSING_MS = 200;
 // entirely off-screen at FIRST capture (which would imply the user
 // somehow tapped a chip they couldn't see — defensive).
 const MIN_VISIBLE_FRACTION = 0.15;
-// Easing curves: tapped chip uses ease-IN when it ends off-screen
-// so the slow phase (front of curve) covers the visible portion and
-// the fast phase covers the off-screen tail. Displaced chips and
-// tapped-but-arriving-visible use ease-OUT so they decelerate into
-// their final visible position.
-// TODO(REQ-READ-007): easing constants commented out while the play
-// phase forces 'linear' pending UX evaluation. Restore by uncommenting
-// these and the per-chip easing line in the play loop below.
-// const EASE_IN = 'cubic-bezier(0.4, 0, 1, 1)';
-// const EASE_OUT = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+// Easing: 'linear' across all chips. Earlier per-chip ease-IN/ease-OUT
+// curves were removed after UX evaluation — linear feels more uniform
+// when chips travel different distances.
 // LIFT_CLASS lives slightly longer than the longest possible cascade
 // so the elevated look settles back to flat AFTER the slide ends,
 // regardless of how far the tapped chip had to travel.
@@ -108,9 +101,10 @@ const SCROLL_REVEAL_DURATION_MS = 600;
 
 export interface FlipChipOptions {
   /** Override for the cascade animation duration in ms. When unset,
-   *  the helper computes a distance-proportional duration clamped
-   *  between MIN_CASCADE_MS and MAX_CASCADE_MS so velocity feels
-   *  uniform across short and long hops. */
+   *  the helper computes a visible-fraction-scaled duration clamped
+   *  between MIN_CASCADE_MS and MAX_CASCADE_MS, so the on-screen portion
+   *  of the chip's journey stays roughly constant across short and long
+   *  hops (TARGET_VISIBLE_CROSSING_MS). */
   durationMs?: number;
 }
 
@@ -249,11 +243,6 @@ export async function flipChipToPosition(
     // INVERT loop to avoid a second getBoundingClientRect call.
     let tappedFirstLeft = 0;
     let tappedLastLeft = 0;
-    // NOTE(REQ-READ-007): when the per-chip easing logic is restored
-    // (see commented-out tappedEndsOffScreen block below), also
-    // re-add `let tappedLastRight = 0;` here and `tappedLastRight =
-    // last.right;` inside the `if (chip === tappedChip)` block.
-    // Currently dropped to satisfy CodeQL's useless-assignment rule.
     for (const chip of chips) {
       const first = firstRects.get(chip);
       if (first === undefined) continue;
@@ -320,14 +309,6 @@ export async function flipChipToPosition(
     // tapped chip continues sliding (mostly off-screen) until
     // tappedCascadeMs elapses.
     const displacedCascadeMs = options.durationMs ?? MIN_CASCADE_MS;
-    // TODO(REQ-READ-007): per-chip easing temporarily disabled while
-    // the play phase forces 'linear'. Restore by uncommenting these
-    // lines and the corresponding `easing` assignment in the play
-    // loop below. The off-screen-edge logic is intact for both the
-    // select (off-screen-left) and unselect (off-screen-right) paths.
-    // const tappedEndsOffScreen =
-    //   tappedLastLeft < stripRect.left || tappedLastRight > stripRect.right;
-    // const tappedEasing = tappedEndsOffScreen ? EASE_IN : EASE_OUT;
 
     // Fast-exit when nothing actually moved (e.g., the user tapped
     // the chip already in slot 0). Otherwise we'd burn the full
@@ -374,13 +355,7 @@ export async function flipChipToPosition(
       for (const chip of playing) {
         const isTapped = chip === tappedChip;
         const duration = isTapped ? tappedCascadeMs : displacedCascadeMs;
-        // TODO(REQ-READ-007): easing temporarily forced to 'linear'
-        // pending UX evaluation. The original per-chip easing logic is
-        // preserved (tappedEasing / EASE_IN / EASE_OUT consts above)
-        // so restoring is a one-line revert of this assignment.
-        // const easing = isTapped ? tappedEasing : EASE_OUT;
-        const easing = 'linear';
-        chip.style.transition = `transform ${duration}ms ${easing}`;
+        chip.style.transition = `transform ${duration}ms linear`;
         // Explicit identity transform rather than '' (inline removal).
         // CSS Transitions L1 §3 interpolates between two computed
         // <transform-list> values cleanly when both endpoints are

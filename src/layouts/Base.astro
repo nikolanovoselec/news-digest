@@ -246,15 +246,14 @@ const initialTheme = cookieTheme ?? 'light';
       async function syncBrowserTz(): Promise<void> {
         const body = document.body;
         const stored = body.dataset['userTz'] ?? '';
-        if (stored === '') return;
         // REQ-SET-007 AC 6 — silent path only fires while stored tz is
-        // the seeded UTC default. Once the user (or an earlier silent
-        // correction) has set anything else, treat that value as
-        // authoritative and never overwrite it. Otherwise a privacy-
-        // masked browser whose Intl falls back to a UTC alias like
-        // 'Africa/Abidjan' would re-stamp the user's manual choice on
-        // every page load.
-        if (stored !== 'UTC') return;
+        // the seeded sentinel (empty). Any non-empty stored value (set
+        // by an earlier silent correction OR a deliberate manual save,
+        // including UTC) is authoritative and never overwritten.
+        // Without this, a user who genuinely lives in UTC and saves
+        // 'UTC' would have their choice overwritten on the next page
+        // load by the browser-resolved zone (or an Etc/UTC alias).
+        if (stored !== '') return;
         let browser = '';
         try {
           browser = Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';

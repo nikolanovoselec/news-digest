@@ -23,9 +23,9 @@ migrations_dir = "./migrations"
 binding = "KV"
 id = "34a836c647a4453fb167e60d00b06f0d"
 
-# Global-feed queues (REQ-PIPE-001, REQ-PIPE-002). The hourly coordinator
-# receives one message per :00 tick; the chunk consumer handles one
-# ~100-candidate LLM call per message.
+# Global-feed queues (REQ-PIPE-001, REQ-PIPE-002). The coordinator runs
+# every 4 hours (cron `0 */4 * * *`) and emits one message per tick; the
+# chunk consumer handles one ~100-candidate LLM call per message.
 [[queues.producers]]
 binding = "SCRAPE_COORDINATOR"
 queue = "scrape-coordinator"

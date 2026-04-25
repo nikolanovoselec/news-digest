@@ -29,7 +29,6 @@ import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
 import { signSession } from '~/lib/session-jwt';
 import { mapOAuthError, type OAuthErrorCode } from '~/lib/oauth-errors';
-import { DEFAULT_TZ } from '~/lib/tz';
 import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
 import { buildSessionCookie } from '~/middleware/auth';
 import { originOf } from '~/middleware/origin-check';
@@ -358,10 +357,15 @@ export async function GET(context: APIContext): Promise<Response> {
       // pragmatic choice for now and is documented in
       // documentation/architecture.md.
       const defaultHashtagsJson = JSON.stringify(Array.from(DEFAULT_HASHTAGS));
+      // REQ-SET-007 — seed `tz` as empty so the silent auto-correct can
+      // distinguish "never explicitly set" (silent path may overwrite)
+      // from "user picked this" (silent path must respect). DEFAULT_TZ
+      // (`'UTC'`) is the UI fallback used by /settings when reading an
+      // empty stored value, NOT the seed value.
       await env.DB.prepare(
         'INSERT INTO users (id, email, gh_login, tz, digest_hour, digest_minute, email_enabled, session_version, created_at, hashtags_json) VALUES (?1, ?2, ?3, ?4, 8, 0, 1, 1, ?5, ?6)',
       )
-        .bind(userId, profile.email, displayName, DEFAULT_TZ, nowSec, defaultHashtagsJson)
+        .bind(userId, profile.email, displayName, '', nowSec, defaultHashtagsJson)
         .run();
       sessionVersion = 1;
       firstRun = true;

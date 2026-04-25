@@ -42,16 +42,16 @@ describe('settings.astro manual tz picker — REQ-SET-007 AC 5', () => {
     );
   });
 
-  it("REQ-SET-007 AC 6: dropdown swap is gated on the stored tz read from body.dataset.userTz", () => {
-    // The gate now reads the stored tz from document.body.dataset.userTz
-    // (the SSR-trusted source of truth) rather than from tzSelect.value
-    // directly — V8's Intl.supportedValuesOf('timeZone') omits 'UTC'
-    // (it's an alias for Etc/UTC), so a fresh user with stored tz='UTC'
-    // produces a dropdown where no <option> matches `selected`, and
-    // tzSelect.value defaults to the alphabetically-first option
-    // (Africa/Abidjan). Reading from dataset.userTz bypasses that.
+  it("REQ-SET-007 AC 6: dropdown swap is gated on empty stored tz (the seeded sentinel)", () => {
+    // The gate fires only when document.body.dataset.userTz is empty
+    // — the seeded sentinel meaning "user has never explicitly set a
+    // timezone". Any non-empty value (including a deliberate 'UTC'
+    // pick) is authoritative and the picker leaves it alone. Reading
+    // dataset.userTz instead of tzSelect.value avoids the SSR-fallback
+    // poisoning where `selected={zone === tzValue}` doesn't match any
+    // `<option>` and the browser defaults to the first one.
     expect(settingsPage).toMatch(/dataset\['userTz'\][\s\S]{0,80}storedTz/);
-    expect(settingsPage).toMatch(/storedTz\s*===\s*['"]UTC['"]/);
+    expect(settingsPage).toMatch(/storedTz\s*===\s*['"]['"]/);
   });
 
   it("REQ-SET-007: tzOptions guarantees the stored tz is in the option list", () => {

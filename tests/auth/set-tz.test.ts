@@ -247,23 +247,21 @@ describe('REQ-SET-007 silent tz auto-correct — Base.astro', () => {
     expect(src).toMatch(/astro:page-load[\s\S]*?syncBrowserTz/);
   });
 
-  it('REQ-SET-007: early-return when the browser tz equals the stored tz or the stored tz is empty (no network traffic on matching anon page loads)', async () => {
+  it('REQ-SET-007: early-return when the browser tz equals the stored tz (no redundant POST on matching page loads)', async () => {
     const src = await import('../../src/layouts/Base.astro?raw').then((m) => m.default);
-    // An empty stored tz (anonymous visitor) bails before any
-    // Intl lookup so the anon landing page never fires the POST.
-    expect(src).toMatch(/stored\s*===\s*''[\s\S]{0,50}return/);
-    // A matching browser-vs-stored tz also bails before POST.
+    // A matching browser-vs-stored tz bails before POST.
     expect(src).toMatch(/browser\s*===\s*stored[\s\S]{0,80}return/);
   });
 
-  it("REQ-SET-007: AC 6 — silent path bails when stored tz is anything other than the seeded UTC default", async () => {
+  it("REQ-SET-007: AC 6 — silent path fires only when stored tz is the empty seeded sentinel", async () => {
     const src = await import('../../src/layouts/Base.astro?raw').then((m) => m.default);
-    // Once the user has explicitly set a tz (or an earlier silent
-    // correction did), the silent path must stop overwriting it.
-    // Regression guard against the bug where a privacy-masked browser
-    // returning Africa/Abidjan would re-stamp the user's manually saved
-    // zone on every page load.
-    expect(src).toMatch(/stored\s*!==\s*['"]UTC['"][\s\S]{0,80}return/);
+    // Any non-empty stored tz (manual save, including a deliberate
+    // 'UTC' pick, or an earlier silent correction) is authoritative
+    // and must not be overwritten. New users are seeded with tz=''
+    // so the silent path can populate the browser-detected zone once.
+    // Regression guard against the prior `stored === 'UTC'` gate which
+    // overwrote users who genuinely wanted UTC.
+    expect(src).toMatch(/stored\s*!==\s*['"]['"][\s\S]{0,80}return/);
   });
 
   it('REQ-SET-007: on successful POST, updates data-user-tz in place so the next page load skips the POST', async () => {
