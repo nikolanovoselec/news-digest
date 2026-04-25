@@ -369,23 +369,34 @@ const selected = initialSelected ?? new Set<string>();
     }
   }
 
-  /* REQ-READ-007 AC 1 — brief tap-pulse for input confirmation.
-     The class is added by flipChipToFront() the moment a chip is
-     tapped (before the FLIP cascade kicks off) and removed after
-     PULSE_HOLD_MS so subsequent taps re-trigger cleanly. The
-     keyframe uses box-shadow only (paint, no layout) so the strip
-     never reflows during the pulse. */
-  @keyframes tagChipPulse {
-    0%   { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.18); }
-    70%  { box-shadow: 0 0 0 8px rgba(0, 0, 0, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+  /* REQ-READ-007 AC 1 — three-phase pop / hold / cascade choreography.
+     The class is added by flipChipToFront() the instant the chip is
+     tapped and stays on the chip for the full pop+hold+cascade
+     window so the chip remains visually elevated (z-index 5 +
+     drop-shadow) while it travels — without the lift, neighbouring
+     chips would clip its edges as they slide past during the
+     cascade.
+
+     The pop keyframe is a transform-scale bounce: scale up to 1.18,
+     undershoot to 0.96, settle at 1.0. The duration (700ms) finishes
+     well before the cascade starts (1000ms hold) so the pop's
+     transient transform isn't baked into the FLIP's
+     getBoundingClientRect measurement. */
+  @keyframes tagChipPop {
+    0%   { transform: scale(1); }
+    35%  { transform: scale(1.18); }
+    70%  { transform: scale(0.96); }
+    100% { transform: scale(1); }
   }
   .tag-chip.tag-chip--just-tapped {
-    animation: tagChipPulse 500ms ease-out;
+    animation: tagChipPop 700ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 5;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   }
   @media (prefers-reduced-motion: reduce) {
     .tag-chip.tag-chip--just-tapped {
       animation: none;
+      box-shadow: none;
     }
   }
 </style>

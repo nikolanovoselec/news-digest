@@ -25,15 +25,32 @@
 //      the helper performs the reorder instantly and skips all
 //      transform animation (AC 7).
 
-// 450ms reads as deliberate motion at the gesture scale users perceive
-// — under 300ms the cascade flashes by so quickly the eye registers
-// only the start and end states and the chip appears to teleport.
-// The pulse hold is sized to outlast the cascade by ~40ms so the
-// just-tapped highlight is visible for the entire move plus a small
-// trailing beat.
-const DEFAULT_DURATION_MS = 450;
-const PULSE_CLASS = 'tag-chip--just-tapped';
-const PULSE_HOLD_MS = 500;
+// Three-phase choreography (deliberately slow so the user sees each
+// step distinctly):
+//
+//   1. POP: the tapped chip scales up with a bounce so the user gets
+//      unmistakable feedback that the tap was received. The pop
+//      animation runs for POP_DURATION_MS and is the only motion on
+//      screen for the first beat.
+//   2. HOLD: a one-second pause where nothing else moves. The popped
+//      chip stays slightly elevated (z-index lift via the pop class)
+//      while the user's eye lands on it, so they know which chip is
+//      about to move before the cascade starts.
+//   3. CASCADE: the FLIP reorder plays at SLOW_CASCADE_MS — long
+//      enough that the eye can track the chip across the railing
+//      and see the displaced chips slide right to fill the gap.
+//
+// Total wall-clock from tap to settled state is roughly:
+//   POP_DURATION_MS + (HOLD_BEFORE_CASCADE_MS - POP_DURATION_MS)
+//     + SLOW_CASCADE_MS  ≈ 1700 ms.
+// This is intentionally long. Earlier 220ms / 450ms tunings looked
+// like teleportation on real hardware.
+const POP_CLASS = 'tag-chip--just-tapped';
+const POP_DURATION_MS = 700;
+const HOLD_BEFORE_CASCADE_MS = 1000;
+const SLOW_CASCADE_MS = 800;
+const POP_CLASS_HOLD_MS = HOLD_BEFORE_CASCADE_MS + SLOW_CASCADE_MS + 100;
+const DEFAULT_DURATION_MS = SLOW_CASCADE_MS;
 const ANIM_LOCK_ATTR = 'data-tag-flip-locked';
 
 export interface FlipChipOptions {
@@ -65,22 +82,10 @@ export async function flipChipToFront(
   const durationMs = options.durationMs ?? DEFAULT_DURATION_MS;
   const followScroll = options.followScroll ?? true;
 
-  // (AC 1) Brief pulse on the tapped chip — fires immediately even
-  // when the chip is already first (no reorder needed) so the user
-  // always gets feedback that the tap was received.
-  tappedChip.classList.add(PULSE_CLASS);
-  setTimeout(() => tappedChip.classList.remove(PULSE_CLASS), PULSE_HOLD_MS);
-
-  // FIRST: capture every chip's rect before mutating the DOM.
-  const chips = Array.from(
-    strip.querySelectorAll<HTMLElement>('[data-tag-chip]'),
-  );
-  const firstRects = new Map<HTMLElement, DOMRect>();
-  for (const chip of chips) {
-    firstRects.set(chip, chip.getBoundingClientRect());
-  }
-
-  // (AC 7) Bail to instant reorder when motion is suppressed.
+  // (AC 7) Bail to instant reorder when motion is suppressed. The
+  // pop + hold + cascade choreography is purely chrome — when the
+  // user has asked for reduced motion we skip it entirely and just
+  // commit the new order silently.
   const reducedMotion =
     typeof window !== 'undefined' &&
     typeof window.matchMedia === 'function' &&
@@ -90,13 +95,37 @@ export async function flipChipToFront(
     return;
   }
 
-  // LAST: actually reorder. Lock the strip immediately so any
-  // re-entrant tap that fires before we resolve is suppressed. The
-  // try/finally below guarantees the lock is cleared even if any
-  // DOM op throws (e.g., chip detached mid-flight by an external
-  // mutation), so the strip never gets stuck inert.
+  // PHASE 1 — POP: instant scale-up with a bounce on the tapped
+  // chip. Class is removed late enough to outlast both the pop and
+  // the cascade so the chip's z-index lift survives until the
+  // motion settles.
+  tappedChip.classList.add(POP_CLASS);
+  setTimeout(() => tappedChip.classList.remove(POP_CLASS), POP_CLASS_HOLD_MS);
+
+  // Lock the strip immediately so any re-entrant tap during the
+  // pop / hold / cascade is suppressed. The try/finally below
+  // guarantees the lock is cleared even if any DOM op throws.
   strip.setAttribute(ANIM_LOCK_ATTR, '1');
   try {
+    // PHASE 2 — HOLD: deliberate pause so the user's eye lands on
+    // the popped chip before anything else moves. The chip is still
+    // mid-pop while we wait; by the time this resolves the pop
+    // keyframe has finished and the chip is back at scale 1.
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, HOLD_BEFORE_CASCADE_MS),
+    );
+
+    // PHASE 3 — CASCADE: classic FLIP. Capture rects AFTER the
+    // hold so the pop's transient transform isn't baked into the
+    // FIRST measurement.
+    const chips = Array.from(
+      strip.querySelectorAll<HTMLElement>('[data-tag-chip]'),
+    );
+    const firstRects = new Map<HTMLElement, DOMRect>();
+    for (const chip of chips) {
+      firstRects.set(chip, chip.getBoundingClientRect());
+    }
+
     strip.insertBefore(tappedChip, strip.firstChild);
 
     // INVERT: for each chip whose position changed by more than half

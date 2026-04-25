@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-25
 
+- REQ-READ-007 amended (AC 1/2 reshape): the tag-railing tap now plays a three-phase choreography — instant scale-bounce pop on the tapped chip, ~1-second hold with the chip visually elevated, then the slow cascade — instead of the prior single fast pulse. Earlier 220ms / 450ms tunings looked like teleportation; the deliberate pop + hold + slow slide gives the user time to understand which chip is moving and where it's going.
+
 - REQ-READ-007 added: tapping a chip in the shared tag railing now plays a cascading reorder animation — the tapped chip slides to slot 0 and the chips it passes shift right to fill its old slot, with a brief highlight pulse on tap for input confirmation, a tap lockout while the motion is in flight, and conditional scroll-follow on mobile only when the chip was off-screen.
 
 - REQ-SET-007 amended: the settings page now offers a manual timezone picker pre-populated with the browser-detected zone, so users whose silent auto-sync failed (network error, server error, etc.) can fix their timezone in one click instead of being stuck at UTC.

@@ -140,13 +140,14 @@ Superseded by REQ-PIPE-001 in the 2026-04-23 global-feed rework. The per-user di
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. Tapping a chip applies a brief highlight pulse to that chip so the user has immediate visual confirmation of the input even before the railing reorders.
-2. The tapped chip slides leftward to the start of the railing along a smooth path; chips that previously sat to its left in the new order slide rightward to fill the slot it vacated, all on the same duration so the motion reads as one continuous cascade.
-3. No chip is hidden, removed, or repainted mid-flight — every chip remains visible and identifiable throughout the animation.
-4. While the cascade is in flight, additional taps on any chip are ignored until the motion settles, so a rapid double-tap never desynchronises the data order from the visual order.
-5. On a viewport that scrolls the railing horizontally, the railing follows the moving chip until the chip docks at the railing's leftmost visible edge — and only when the chip was outside the visible area to begin with. A chip that was already on-screen when tapped does not trigger any auto-scroll.
-6. On a viewport that wraps the railing into multiple rows, the railing does not scroll at all; the user sees the entire cascade play out across whatever rows the chips occupy.
-7. When the runtime does not support the animation primitives, the reorder still happens (the tapped chip ends up at slot 0 and the data order is correct) — only the in-between motion is skipped.
+1. Tapping a chip plays an immediate scale-bounce pop on that chip so the user has unmistakable visual confirmation of the input before any other motion begins.
+2. After the pop, the railing holds for roughly one second with the tapped chip visually elevated above its neighbours, so the user's eye lands on the chip about to move before the cascade starts.
+3. The tapped chip then slides leftward to the start of the railing along a smooth path long enough to be tracked by eye; chips that previously sat to its left in the new order slide rightward to fill the slot it vacated, all on the same duration so the motion reads as one continuous cascade.
+4. No chip is hidden, removed, or repainted mid-flight — every chip remains visible and identifiable throughout the pop, hold, and cascade.
+5. While the pop, hold, or cascade is in flight, additional taps on any chip are ignored until the motion settles, so a rapid double-tap never desynchronises the data order from the visual order.
+6. On a viewport that scrolls the railing horizontally, the railing follows the moving chip until the chip docks at the railing's leftmost visible edge — and only when the chip was outside the visible area to begin with. A chip that was already on-screen when tapped does not trigger any auto-scroll.
+7. On a viewport that wraps the railing into multiple rows, the railing does not scroll at all; the user sees the entire cascade play out across whatever rows the chips occupy.
+8. When the runtime does not support the animation primitives, the reorder still happens (the tapped chip ends up at slot 0 and the data order is correct) — only the pop, hold, and cascade motion are skipped.
 
 **Constraints:** CON-SEC-001
 **Priority:** P2

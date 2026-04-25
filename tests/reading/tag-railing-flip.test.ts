@@ -69,7 +69,7 @@ describe('tag-railing FLIP reorder — REQ-READ-007', () => {
   });
 
   it('REQ-READ-007: TagStrip.astro ships the pulse keyframe used by the just-tapped class (AC 1)', () => {
-    expect(tagStrip).toMatch(/@keyframes\s+tagChipPulse/);
+    expect(tagStrip).toMatch(/@keyframes\s+tagChipPop/);
     expect(tagStrip).toContain('.tag-chip--just-tapped');
   });
 
