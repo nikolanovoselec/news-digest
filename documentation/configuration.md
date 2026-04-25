@@ -51,9 +51,9 @@ Three triggers are declared in `wrangler.toml`:
 
 | Schedule | Purpose |
 |---|---|
-| `0 * * * *` | Hourly global-feed coordinator — fires the scrape pipeline ([REQ-PIPE-001](../sdd/generation.md#req-pipe-001-hourly-global-scrape-and-summarise-pipeline)) |
+| `0 * * * *` | Hourly global-feed coordinator — fires the scrape pipeline ([REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)) |
 | `0 3 * * *` | Daily retention cleanup — removes articles older than 7 days ([REQ-PIPE-005](../sdd/generation.md#req-pipe-005-seven-day-retention-with-starred-exempt-cleanup)) |
-| `*/5 * * * *` | Every-5-minute tick — email dispatcher and discovery drain ([REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-feed-health-tracking-and-auto-eviction) *(Deprecated 2026-04-24)*) |
+| `*/5 * * * *` | Every-5-minute tick — email dispatcher and discovery drain ([REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking) *(Deprecated 2026-04-24)*) |
 
 ## KV Key Conventions
 
