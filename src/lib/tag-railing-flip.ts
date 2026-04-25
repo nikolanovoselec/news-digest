@@ -64,15 +64,30 @@
 const POP_CLASS = 'tag-chip--just-tapped';
 const LIFT_CLASS = 'tag-chip--in-flight';
 const HOLD_BEFORE_CASCADE_MS = 1000;
-// Cascade duration scales with the tapped chip's travel distance so
-// the perceived velocity stays roughly uniform across short and long
-// hops. Without scaling, a chip that travels 1500px in 800ms races
-// past the eye in ~200ms of visible time, while a 200px chip strolls.
-// MIN keeps short hops from feeling abrupt; MAX keeps long hops from
-// feeling ponderous.
+// Cascade duration scales with the tapped chip's *visible-fraction*
+// of travel — i.e., how much of the chip's journey is inside the
+// strip's viewport. Far chips have most of their journey off-screen
+// (chip enters viewport from one edge, exits the other), so the
+// user only sees a narrow window of motion. By inverting the
+// visible fraction we keep the on-screen portion of every cascade
+// at roughly TARGET_VISIBLE_CROSSING_MS, regardless of total
+// distance. Linear-velocity scaling (the prior approach) optimised
+// for *physical* velocity uniformity, but the eye only ever sees
+// the visible slice — so far chips still flashed past as a blur.
 const MIN_CASCADE_MS = 800;
-const MAX_CASCADE_MS = 1500;
-const PX_PER_MS = 1.2; // ~833 px/s — comfortable eye-tracking velocity
+const MAX_CASCADE_MS = 3500;
+const TARGET_VISIBLE_CROSSING_MS = 700;
+// Floor on visibleFraction prevents a 0-divide when the chip is
+// entirely off-screen at FIRST capture (which would imply the user
+// somehow tapped a chip they couldn't see — defensive).
+const MIN_VISIBLE_FRACTION = 0.15;
+// Easing curves: tapped chip uses ease-IN when it ends off-screen
+// so the slow phase (front of curve) covers the visible portion and
+// the fast phase covers the off-screen tail. Displaced chips and
+// tapped-but-arriving-visible use ease-OUT so they decelerate into
+// their final visible position.
+const EASE_IN = 'cubic-bezier(0.4, 0, 1, 1)';
+const EASE_OUT = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
 // LIFT_CLASS lives slightly longer than the longest possible cascade
 // so the elevated look settles back to flat AFTER the slide ends,
 // regardless of how far the tapped chip had to travel.
@@ -112,8 +127,9 @@ export async function flipChipToFront(
 ): Promise<void> {
   if (isFlipLocked(strip)) return;
   // The play-phase duration is computed adaptively from the tapped
-  // chip's travel distance — see adaptiveDuration in the cascade
-  // block. options.durationMs is honoured there as an override.
+  // chip's visible-fraction of travel — see tappedCascadeMs in the
+  // cascade block. options.durationMs is honoured there as an
+  // override (used by tests for deterministic timing).
 
   // (AC 8) Bail to instant reorder when motion is suppressed. The
   // pop + hold + cascade choreography is purely chrome — when the
@@ -201,7 +217,11 @@ export async function flipChipToFront(
     // class still emitting a `transform: scale(...)` from its
     // keyframe — the inline transform overrides it.
     const playing: HTMLElement[] = [];
-    let tappedDx = 0;
+    // Capture the tapped chip's first/last rects for the visible-
+    // fraction duration math below. We compute these inside the
+    // INVERT loop to avoid a second getBoundingClientRect call.
+    let tappedFirstLeft = 0;
+    let tappedLastLeft = 0;
     for (const chip of chips) {
       const first = firstRects.get(chip);
       if (first === undefined) continue;
@@ -212,15 +232,49 @@ export async function flipChipToFront(
       chip.style.transition = 'none';
       chip.style.transform = `translate(${dx}px, ${dy}px)`;
       playing.push(chip);
-      if (chip === tappedChip) tappedDx = Math.abs(dx);
+      if (chip === tappedChip) {
+        tappedFirstLeft = first.left;
+        tappedLastLeft = last.left;
+      }
     }
 
-    // Distance-proportional cascade duration (see PX_PER_MS comment
-    // above). Caller-provided `durationMs` overrides this — used by
-    // tests that want deterministic timing.
-    const adaptiveDuration =
+    // Visible-fraction-based cascade duration. The tapped chip's
+    // travel range is [min(first,last), max(first,last)]. The
+    // visible portion is the intersection of that range with the
+    // strip's visible viewport. By keeping
+    // (visible_distance / total_distance) * total_duration ≈ TARGET
+    // we hold the on-screen crossing time roughly constant across
+    // chips that travel 200px and chips that travel 2000px. The
+    // hidden tail of long-travel cascades extends total wall-clock
+    // but is invisible to the user — only the visible window
+    // matters perceptually.
+    const stripRect = strip.getBoundingClientRect();
+    const travelMin = Math.min(tappedFirstLeft, tappedLastLeft);
+    const travelMax = Math.max(tappedFirstLeft, tappedLastLeft);
+    const visibleSpan = Math.max(
+      0,
+      Math.min(travelMax, stripRect.right) - Math.max(travelMin, stripRect.left),
+    );
+    const totalSpan = Math.max(1, travelMax - travelMin);
+    const visibleFraction = Math.max(MIN_VISIBLE_FRACTION, visibleSpan / totalSpan);
+    const tappedCascadeMs =
       options.durationMs ??
-      Math.max(MIN_CASCADE_MS, Math.min(MAX_CASCADE_MS, tappedDx * PX_PER_MS));
+      Math.max(
+        MIN_CASCADE_MS,
+        Math.min(MAX_CASCADE_MS, TARGET_VISIBLE_CROSSING_MS / visibleFraction),
+      );
+    // Displaced chips animate over the floor duration so they don't
+    // drift slowly into position while the tapped chip continues its
+    // longer journey. They'll reach their final slot quickly; the
+    // tapped chip continues sliding (mostly off-screen) until
+    // tappedCascadeMs elapses.
+    const displacedCascadeMs = options.durationMs ?? MIN_CASCADE_MS;
+    // Tapped chip uses ease-IN when its destination is off-screen-
+    // left so the slow phase covers the visible portion. When
+    // scrollLeft = 0 (chip ends visible at slot 0), use ease-OUT so
+    // it decelerates into final position.
+    const tappedEndsOffScreen = tappedLastLeft < stripRect.left;
+    const tappedEasing = tappedEndsOffScreen ? EASE_IN : EASE_OUT;
 
     // Fast-exit when nothing actually moved (e.g., the user tapped
     // the chip already in slot 0). Otherwise we'd burn the full
@@ -265,7 +319,10 @@ export async function flipChipToFront(
         requestAnimationFrame(() => resolve());
       });
       for (const chip of playing) {
-        chip.style.transition = `transform ${adaptiveDuration}ms cubic-bezier(0.2, 0.8, 0.2, 1)`;
+        const isTapped = chip === tappedChip;
+        const duration = isTapped ? tappedCascadeMs : displacedCascadeMs;
+        const easing = isTapped ? tappedEasing : EASE_OUT;
+        chip.style.transition = `transform ${duration}ms ${easing}`;
         // Explicit identity transform rather than '' (inline removal).
         // CSS Transitions L1 §3 interpolates between two computed
         // <transform-list> values cleanly when both endpoints are
@@ -292,7 +349,7 @@ export async function flipChipToFront(
           }
         };
         tappedChip.addEventListener('transitionend', onEnd);
-        setTimeout(settle, adaptiveDuration + 100);
+        setTimeout(settle, tappedCascadeMs + 100);
       });
 
       // Cleanup inline transition + transform styles so subsequent

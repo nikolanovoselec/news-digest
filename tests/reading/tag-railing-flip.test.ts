@@ -67,15 +67,20 @@ describe('tag-railing FLIP reorder — REQ-READ-007', () => {
     expect(flipHelper).toContain('savedScrollLeft');
   });
 
-  it('REQ-READ-007: cascade duration scales with chip travel distance (AC 3)', () => {
-    // The play-phase duration is derived from the tapped chip's dx
-    // so far hops don't race past the eye in a blink. The factor +
-    // clamp must both appear so a future refactor that drops the
-    // scaling fails CI loudly.
-    expect(flipHelper).toContain('PX_PER_MS');
+  it('REQ-READ-007: cascade duration scales with the chip\'s visible-fraction of travel (AC 3)', () => {
+    // The play-phase duration is derived so the on-screen portion of
+    // the chip's journey takes ~TARGET_VISIBLE_CROSSING_MS, regardless
+    // of total travel distance. Far chips (most of journey off-screen)
+    // get longer total durations so the visible window stays trackable.
+    expect(flipHelper).toContain('TARGET_VISIBLE_CROSSING_MS');
+    expect(flipHelper).toContain('visibleFraction');
     expect(flipHelper).toContain('MIN_CASCADE_MS');
     expect(flipHelper).toContain('MAX_CASCADE_MS');
-    expect(flipHelper).toMatch(/tappedDx\s*\*\s*PX_PER_MS/);
+    // Tapped chip uses ease-in when destination is off-screen-left so
+    // the visible (slow) portion of the curve matches the visible
+    // (slow) viewport-crossing portion of the journey.
+    expect(flipHelper).toContain('EASE_IN');
+    expect(flipHelper).toContain('tappedEndsOffScreen');
   });
 
   it('REQ-READ-007: arms a one-shot scroll-down reveal after the cascade (AC 6)', () => {
