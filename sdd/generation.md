@@ -156,6 +156,30 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 ---
 
+### REQ-PIPE-008: Cross-chunk semantic dedup pass
+
+**Intent:** When the same news story arrives from two sources that landed in different chunks of the same scrape tick, the per-chunk dedup hint cannot collapse them — they were never in the same LLM context. A single post-merge LLM call over the surviving titles plus source names catches these cross-chunk pairs so the dashboard shows one card with two alternative sources rather than two near-identical cards.
+
+**Applies To:** System
+
+**Acceptance Criteria:**
+1. After every chunk of a scrape tick finishes, exactly one finalize pass runs over the articles persisted under that scrape tick and emits one Workers AI call returning the same dedup-groups output contract used by the per-chunk pass. The pass is skipped when the tick produced one or fewer articles.
+2. Within each returned group, the article with the earliest publication time survives as the winner; the others are merged into it, matching the first-source-wins rule from REQ-PIPE-003.
+3. Merging a loser into a winner re-points all of the loser's child rows: alternative sources, tag list (tag union), and per-user state (stars and reads). User-facing state is preserved across the merge — the merge never makes a user lose a star or a read mark.
+4. Articles become visible to users at the moment the chunk consumer that closed the run flipped status to ready; the finalize pass runs in a separate queue message and may briefly leave duplicates visible. The window is bounded by the finalize queue's processing latency.
+5. The pass is idempotent: a finalize message redelivered by the queue converges to the same final article set without double-counting tokens or losing user state.
+6. The pass caps its LLM input at the 250 most recent articles by ingestion time; ticks that produced more skip dedup on the tail. This ceiling is documented as a known limitation.
+7. Token and cost counters from the finalize call fold into the scrape tick's totals via the same per-chunk stats helper; the deduped-article counter increments by the number of losers deleted.
+8. A finalize that exhausts its queue retry budget logs a structured error and leaves the tick's articles in their un-merged state. The tick's status is not flipped from ready to failed — the articles are real and visible; only the cross-chunk merge is missing.
+
+**Constraints:** CON-LLM-001
+**Priority:** P1
+**Dependencies:** REQ-PIPE-002, REQ-PIPE-003
+**Verification:** Integration test
+**Status:** Implemented
+
+---
+
 ## Out of Scope
 
 The following REQs described the previous per-user digest generation pipeline. They are superseded by REQ-PIPE-001..006 in the 2026-04-23 global-feed rework and are preserved here verbatim for decision history.
