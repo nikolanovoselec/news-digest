@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-26
 
+- REQ-READ-007 AC 9 added: tapping a chip already at its destination slot now plays the pop alone — the hold, cascade, and trailing lift are skipped — so the leftmost chip no longer appears to "pulse twice" when re-selected.
+
 - REQ-OPS-004 default Open Graph image switched from SVG to a 1200×630 PNG so Facebook, iMessage, WhatsApp, LinkedIn, and Slack — which silently drop SVG og:images — now render the brand card alongside Twitter and Discord. The SVG remains the master artwork; the PNG is regenerated from it.
 
 - REQ-PIPE-008 added: every scrape tick now runs one post-merge LLM call over the surviving article titles to collapse same-story pairs that slipped through intra-chunk dedup because they landed in different chunks (e.g., TechCrunch and The Verge covering the same announcement). Losers merge into the earliest-published winner — alternative sources, tags, stars, and read marks all re-point to the winner so user state survives the merge. Ticks producing more than 250 articles skip cross-chunk dedup on the tail (token budget cap, documented limitation).

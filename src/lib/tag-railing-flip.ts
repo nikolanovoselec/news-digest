@@ -165,6 +165,26 @@ export async function flipChipToPosition(
     return;
   }
 
+  // No-op tap: the chip is already at the destination slot, so the
+  // pop+hold+cascade choreography has no movement to bracket. Without
+  // this short-circuit the choreography commits to a 1000ms hold
+  // followed by a LIFT timer that lingers ~1850ms after the tap, and
+  // the trailing class removal can re-trigger the keyframe on some
+  // engines (visible "second pop"). Skip straight to a pop-only path:
+  // play the 500ms scale-bounce, lock the strip for that window so a
+  // re-tap doesn't restart it mid-flight, and clean up.
+  const wouldMove =
+    beforeNode !== tappedChip && beforeNode !== tappedChip.nextSibling;
+  if (!wouldMove) {
+    tappedChip.classList.add(POP_CLASS);
+    strip.setAttribute(ANIM_LOCK_ATTR, '1');
+    setTimeout(() => {
+      tappedChip.classList.remove(POP_CLASS);
+      strip.removeAttribute(ANIM_LOCK_ATTR);
+    }, 500);
+    return;
+  }
+
   // PHASE 1 — POP + LIFT: scale-bounce keyframe (POP_CLASS) plus
   // z-index/shadow elevation (LIFT_CLASS) added simultaneously. The
   // pop class is removed at cascade start (see PHASE 3) so its

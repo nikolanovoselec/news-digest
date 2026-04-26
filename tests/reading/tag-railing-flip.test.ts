@@ -168,4 +168,47 @@ describe('tag-railing FLIP reorder — REQ-READ-007', () => {
     // strip.firstChild === tappedChip check.
     expect(flipHelper).toMatch(/strip\.firstChild\s*===\s*tappedChip/);
   });
+
+  it('REQ-READ-007: no-op tap (chip already at destination) plays pop only — no hold, no LIFT, no cascade (AC 9)', () => {
+    // The bug: tapping the leftmost chip ran the full pop+hold+cascade
+    // choreography even though no chip moved. The 1000ms hold sat with
+    // the chip pulsing in dead air, and the trailing LIFT_HOLD_MS
+    // setTimeout removed the lift class ~1850ms after the tap — long
+    // enough that the keyframe re-triggered on some engines, producing
+    // a visible "second pop" at the end of the choreography.
+    //
+    // Fix invariants the helper must honour:
+    //   1. Detect the no-op tap by comparing beforeNode against the
+    //      tapped chip and its nextSibling — both forms (insertBefore
+    //      with the chip itself, or with its right neighbour) leave the
+    //      DOM order unchanged.
+    //   2. On a no-op tap, add POP_CLASS only — never LIFT_CLASS, since
+    //      lift's purpose is to elevate the chip above neighbours it
+    //      slides past, and there is no slide.
+    //   3. Schedule POP_CLASS removal at exactly 500ms (the keyframe
+    //      duration) so a subsequent re-tap can re-trigger the same
+    //      animation cleanly.
+    //   4. Lock the strip for that 500ms so a re-tap during the pop
+    //      doesn't restart the keyframe mid-flight.
+    //   5. Return without entering the hold or the cascade phase — no
+    //      HOLD_BEFORE_CASCADE_MS await, no FLIP rect capture.
+    expect(flipHelper).toMatch(
+      /beforeNode\s*!==\s*tappedChip\s*&&\s*beforeNode\s*!==\s*tappedChip\.nextSibling/,
+    );
+    // The bail-out block must contain the pop class add and a 500ms
+    // setTimeout that removes both POP_CLASS and the lock attribute.
+    // Plain string match here is sufficient — the helper has only one
+    // 500ms setTimeout, so a literal substring assertion pins it.
+    expect(flipHelper).toMatch(/classList\.add\(POP_CLASS\)/);
+    expect(flipHelper).toMatch(/setAttribute\(ANIM_LOCK_ATTR/);
+    expect(flipHelper).toMatch(/}, 500\)/);
+    // Critically: LIFT_CLASS must NOT be added on the no-op path.
+    // Inspect the source between the wouldMove guard and the early
+    // return. Use a non-greedy match so it stops at the first `return`.
+    const noOpBlock = flipHelper.match(
+      /const wouldMove[\s\S]*?if \(!wouldMove\) \{[\s\S]*?return;\s*\}/,
+    );
+    expect(noOpBlock).not.toBeNull();
+    expect(noOpBlock?.[0]).not.toContain('LIFT_CLASS');
+  });
 });
