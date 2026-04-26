@@ -20,12 +20,14 @@ News Digest hires the LLM. It remembers so you don't. This isn't enlightenment. 
 
 ## What's in it
 
-- **20 tags preloaded** (`#ai`, `#cloudflare`, `#postgres`, `#agenticai`…). My opinions, helpfully pre-formed for you. Tap × to drop, `+ add` to add.
+- **20 tags preloaded** (`#cloudflare`, `#ai-agents`, `#mcp`, `#zero-trust`, `#supply-chain-security`…). My opinions, helpfully pre-formed for you. Tap × to drop, `+ add` to add. Type a tag the registry doesn't know and it goes feed-hunting on the next tick — comes back with sources or an honest "no luck yet" so you're never staring at a tag that never arrives.
 - **Composable filters on Search & History**: tag + search + date AND together, all in the URL.
-- **Multi-source dedupe**: HN, vendor blog, and three aggregators "discovered" the same story? One card, `(+3)` chip.
+- **Two-stage dedupe** — within a chunk AND across chunks. The LLM collapses obvious dupes inside its own context; a second post-merge pass over the surviving titles catches the cross-publisher pairs that landed in different chunks (TechCrunch and The Verge covering the same Anthropic launch). One card, `(+N)` chip, alt sources in the modal.
 - **Summaries that earn their word count**: 150–200 words, *what happened → how it works → why you care*.
 - **Hallucinations dropped on sight**: every LLM output echoes its candidate index AND shares a real token with the source title. A fabricated summary never reaches the database. (Ask me how I learned that.)
+- **Daily digest email** (optional): subject line shows unread count + your top three tags, body lists up to five fresh headlines linking straight to the article, plus a "since midnight" tag tally for the day in your timezone. Skipped if you have nothing unread — every other newsletter ships filler on slow news days; this one shuts up.
 - **Starred articles outlive the cron**: 7-day retention, unless you starred it. Your saved list is forever; your unread list was a lie anyway.
+- **Federated sign-in**: GitHub OR Google. The landing page renders one button per provider you've configured; deploy with neither and it tells you. Each provider's account is independent — no cross-provider email merging.
 - **One Worker, no servers**: Cloudflare D1 + KV + Queues + Workers AI. Ships in 30 seconds. Rollback is `wrangler rollback`, which I've used more times than I'd like to admit.
 
 ## What's *not* in it
@@ -38,7 +40,7 @@ The bar for "doesn't spy on you or sell you anything" is, in fairness, embarrass
 
 ## Built with Codeflare's spec-driven development framework
 
-This project was built end-to-end as a real-world test of [Codeflare](https://codeflare.ch) ([repo](https://github.com/nikolanovoselec/codeflare))'s **spec-driven development** (SDD) framework. Every feature follows the same loop: write the contract first in `sdd/{domain}.md`, write a failing test that names the requirement (`REQ-X-NNN`), write the minimal code to make it pass with an `// Implements REQ-X-NNN` annotation, then push. Three review agents (code, spec, docs) run automatically and the deploy fires on green.
+This project was built end-to-end as a real-world test of [Codeflare](https://codeflare.ch) ([repo](https://github.com/nikolanovoselec/codeflare))'s **spec-driven development** (SDD) framework. Every feature follows the same loop: write the contract first in `sdd/{domain}.md`, write a failing test that names the requirement (`REQ-X-NNN`), write the minimal code to make it pass with an `// Implements REQ-X-NNN` annotation, then push. Three review agents (code, spec, docs) run automatically and the deploy fires on green. The agents disagree with me on a regular basis. They have been right on a regular basis.
 
 The result: 40+ written requirements across 10 product domains (auth, generation, reading, history, email, etc.), each with a test that proves it works and a source file that points back to it. [Spec](sdd/README.md) · [Architecture](documentation/architecture.md) · [Changelog](sdd/changes.md)
 
@@ -135,4 +137,4 @@ Copy `.dev.vars.example` to `.dev.vars`, add at least one OAuth client ID + secr
 
 ## License
 
-MIT.
+MIT. Use it, fork it, ship it. Don't sue me.
