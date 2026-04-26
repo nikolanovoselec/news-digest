@@ -2,7 +2,7 @@
 
 Keeping up with tech news was a part-time job I didn't sign up for, didn't get paid for, and couldn't quit. So I fired myself and hired an LLM. 99% pay cut, zero complaints. Pick your hashtags: it does the reading, you take the credit. You're welcome.
 
-**Live at** [news.graymatter.ch](https://news.graymatter.ch). Sign in with GitHub or Google, edit your hashtags (or dont), done.
+**Live at** [news.graymatter.ch](https://news.graymatter.ch). Sign in with GitHub or Google, edit your hashtags (or don't), done.
 
 <p align="center">
   <img alt="Mobile dashboard"  src="docs/screenshots/dashboard-mobile.jpg"  height="260">
@@ -20,12 +20,14 @@ News Digest hires the LLM. It remembers so you don't. This isn't enlightenment. 
 
 ## What's in it
 
-- **20 tags preloaded** (`#ai`, `#cloudflare`, `#postgres`, `#agenticai`…). My opinions, helpfully pre-formed for you. Tap × to drop, `+ add` to add.
+- **20 tags preloaded** (`#cloudflare`, `#ai-agents`, `#mcp`, `#zero-trust`, `#supply-chain-security`…). My opinions, helpfully pre-formed for you. Add a tag the registry doesn't know and it goes feed-hunting in the background — finds sources or admits it couldn't, so you're never waiting on a ghost.
 - **Composable filters on Search & History**: tag + search + date AND together, all in the URL.
-- **Multi-source dedupe**: HN, vendor blog, and three aggregators "discovered" the same story? One card, `(+3)` chip.
+- **Two-stage dedupe** — within a chunk and across chunks. One Anthropic launch should not become six articles just because six sites found the publish button.
 - **Summaries that earn their word count**: 150–200 words, *what happened → how it works → why you care*.
-- **Hallucinations dropped on sight**: every LLM output echoes its candidate index AND shares a real token with the source title. A fabricated summary never reaches the database. (Ask me how I learned that.)
+- **Hallucinations dropped on sight**: every LLM output has to point back to a real source, or it doesn't touch the database. Ask me how I learned that.
+- **Daily digest email** (optional): fresh headlines when there's something to read, silence when there isn't. A newsletter that understands the value of not sending a newsletter.
 - **Starred articles outlive the cron**: 7-day retention, unless you starred it. Your saved list is forever; your unread list was a lie anyway.
+- **Federated sign-in**: GitHub or Google. Wire up one, both, or neither — the app tells the truth either way. No cross-provider email merging, because auth systems have enough ways to disappoint you.
 - **One Worker, no servers**: Cloudflare D1 + KV + Queues + Workers AI. Ships in 30 seconds. Rollback is `wrangler rollback`, which I've used more times than I'd like to admit.
 
 ## What's *not* in it
@@ -38,7 +40,7 @@ The bar for "doesn't spy on you or sell you anything" is, in fairness, embarrass
 
 ## Built with Codeflare's spec-driven development framework
 
-This project was built end-to-end as a real-world test of [Codeflare](https://codeflare.ch) ([repo](https://github.com/nikolanovoselec/codeflare))'s **spec-driven development** (SDD) framework. Every feature follows the same loop: write the contract first in `sdd/{domain}.md`, write a failing test that names the requirement (`REQ-X-NNN`), write the minimal code to make it pass with an `// Implements REQ-X-NNN` annotation, then push. Three review agents (code, spec, docs) run automatically and the deploy fires on green.
+This project was built end-to-end as a real-world test of [Codeflare](https://codeflare.ch) ([repo](https://github.com/nikolanovoselec/codeflare))'s **spec-driven development** (SDD) framework. Every feature follows the same loop: write the contract first in `sdd/{domain}.md`, write a failing test that names the requirement (`REQ-X-NNN`), write the minimal code to make it pass with an `// Implements REQ-X-NNN` annotation, then push. Three review agents (code, spec, docs) run automatically and the deploy fires on green. The agents disagree with me on a regular basis. They have been right on a regular basis.
 
 The result: 40+ written requirements across 10 product domains (auth, generation, reading, history, email, etc.), each with a test that proves it works and a source file that points back to it. [Spec](sdd/README.md) · [Architecture](documentation/architecture.md) · [Changelog](sdd/changes.md)
 
@@ -62,10 +64,10 @@ Three steps. The Deploy workflow handles D1, KV, queues, migrations, and secret 
 
    - `CLOUDFLARE_API_TOKEN`: see [token scopes](#api-token-scopes) below
    - `CLOUDFLARE_ACCOUNT_ID`: find it on any zone overview in the Cloudflare dashboard
-   - `OAUTH_JWT_SECRET`: HMAC key for session cookies. Generate: `openssl rand -base64 32`
+   - `OAUTH_JWT_SECRET`: HMAC key for session cookies. Generate: `openssl rand -base64 32`. If you use the word "password" here, you get what you deserve.
    - `APP_URL`: canonical origin (your `*.workers.dev` URL or custom domain)
 
-3. **Run the Deploy workflow.** `Actions` > `Deploy` > `Run workflow` > Branch: `main` > **Run workflow**. Takes ~2 minutes. Future pushes to `main` deploy automatically.
+3. **Run the Deploy workflow.** `Actions` > `Deploy` > `Run workflow` > Branch: `main` > **Run workflow**. Takes ~2 minutes. Future pushes to `main` deploy automatically. When you break it, see `wrangler rollback` above.
 
 <details>
 <summary><strong>Full secret reference (OAuth providers, optional integrations)</strong></summary>
@@ -119,7 +121,7 @@ The Zone scopes are skipped automatically when `APP_URL` is a `*.workers.dev` UR
 <details>
 <summary><strong>Custom domain only: gate the admin endpoints</strong></summary>
 
-Three operator endpoints under `/api/admin/*` (force-refresh + re-discover) need an extra gate so other signed-in users can't trigger them. Cloudflare Access at the zone level: [setup walkthrough](documentation/deployment.md#admin-only-routes-cloudflare-access-gating). On `*.workers.dev` your account is already the only signed-in user, so this step is unnecessary.
+Three operator endpoints under `/api/admin/*` (force-refresh + re-discover) need an extra gate so other signed-in users can't trigger them. Cloudflare Access at the zone level: [setup walkthrough](documentation/deployment.md#admin-only-routes-cloudflare-access-gating). On `*.workers.dev` you are the only user anyway — skip this unless you plan on having users.
 
 </details>
 
@@ -135,4 +137,4 @@ Copy `.dev.vars.example` to `.dev.vars`, add at least one OAuth client ID + secr
 
 ## License
 
-MIT.
+MIT. Use it, fork it, ship it. Don't sue me.
