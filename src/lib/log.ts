@@ -33,6 +33,7 @@ export type LogEvent =
   | 'source.fetch.failed'
   | 'refresh.rejected'
   | 'email.send.failed'
+  | 'email.dispatch.degraded'
   | 'discovery.completed'
   | 'discovery.queued'
   | 'settings.update.failed'
