@@ -28,6 +28,7 @@ News Digest hires the LLM. It remembers so you don't. This isn't enlightenment. 
 - **Daily digest email** (optional): fresh headlines when there's news, a brief hello when there isn't. Once per day in your timezone — the cadence is the point.
 - **Starred articles outlive the cron**: 7-day retention, unless you starred it. Your saved list is forever; your unread list was a lie anyway.
 - **Federated sign-in**: GitHub or Google. Wire up one, both, or neither — the app tells the truth either way. No cross-provider email merging, because auth systems have enough ways to disappoint you.
+- **Looks like a real product when shared**: paste the URL into iMessage, WhatsApp, Slack, LinkedIn, or Discord — you get a brand card, not a naked URL. Surprisingly hard. Don't ask.
 - **One Worker, no servers**: Cloudflare D1 + KV + Queues + Workers AI. Ships in 30 seconds. Rollback is `wrangler rollback`, which I've used more times than I'd like to admit.
 
 ## What's *not* in it
@@ -42,7 +43,7 @@ The bar for "doesn't spy on you or sell you anything" is, in fairness, embarrass
 
 This project was built end-to-end as a real-world test of [Codeflare](https://codeflare.ch) ([repo](https://github.com/nikolanovoselec/codeflare))'s **spec-driven development** (SDD) framework. Every feature follows the same loop: write the contract first in `sdd/{domain}.md`, write a failing test that names the requirement (`REQ-X-NNN`), write the minimal code to make it pass with an `// Implements REQ-X-NNN` annotation, then push. Three review agents (code, spec, docs) run automatically and the deploy fires on green. The agents disagree with me on a regular basis. They have been right on a regular basis.
 
-The result: 40+ written requirements across 10 product domains (auth, generation, reading, history, email, etc.), each with a test that proves it works and a source file that points back to it. [Spec](sdd/README.md) · [Architecture](documentation/architecture.md) · [Changelog](sdd/changes.md)
+The result: 55+ written requirements across 10 product domains (authentication, generation, reading, history, email, settings, discovery, design, observability, PWA), each with a test that proves it works and a source file that points back to it. [Spec](sdd/README.md) · [Architecture](documentation/architecture.md) · [Changelog](sdd/changes.md)
 
 ## Stack
 
