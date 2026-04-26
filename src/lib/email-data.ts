@@ -56,8 +56,16 @@ import { slugify } from '~/lib/slug';
 /**
  * Top {@link limit} unread articles in the user's active-tag set,
  * ordered newest-first. Excludes anything in `article_reads` for that
- * user. Returns `[]` on empty `userTags` or D1 error (defensive — the
- * dispatcher renders the static fallback on empty headlines).
+ * user. Returns `[]` for empty `userTags`. Throws on D1 errors so the
+ * dispatcher can log + degrade to the static fallback (silently
+ * swallowing D1 errors here would hide a misnamed column or a D1
+ * outage from operators — every user would silently get the static
+ * fallback for every send with no log evidence).
+ *
+ * Tiebreaker `a.id DESC` after the timestamp ordering keeps the
+ * headline list deterministic when two articles share both
+ * `ingested_at` and `published_at` — without it, two consecutive
+ * renders within the same minute could surface different headlines.
  */
 export async function selectUnreadHeadlinesForUser(
   db: D1Database,
@@ -79,25 +87,21 @@ export async function selectUnreadHeadlinesForUser(
          SELECT 1 FROM article_reads rd
           WHERE rd.article_id = a.id AND rd.user_id = ?1
        )
-     ORDER BY a.ingested_at DESC, a.published_at DESC
+     ORDER BY a.ingested_at DESC, a.published_at DESC, a.id DESC
      LIMIT ${limitPlaceholder}
   `;
-  try {
-    const result = await db
-      .prepare(sql)
-      .bind(userId, ...userTags, limit)
-      .all<HeadlineRow>();
-    const rows = result.results ?? [];
-    return rows.map((row) => ({
-      id: row.id,
-      title: row.title,
-      source_name: row.source_name,
-      slug: slugify(row.title),
-      primary_source_url: row.primary_source_url,
-    }));
-  } catch {
-    return [];
-  }
+  const result = await db
+    .prepare(sql)
+    .bind(userId, ...userTags, limit)
+    .all<HeadlineRow>();
+  const rows = result.results ?? [];
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    source_name: row.source_name,
+    slug: slugify(row.title),
+    primary_source_url: row.primary_source_url,
+  }));
 }
 
 /**
@@ -135,21 +139,20 @@ export async function tagTallySinceMidnight(
        )
   `;
 
-  try {
-    const [tallyRes, totalRes] = await Promise.all([
-      db
-        .prepare(tallySql)
-        .bind(sinceUnix, ...userTags)
-        .all<TallyRow>(),
-      db
-        .prepare(totalSql)
-        .bind(sinceUnix, ...userTags)
-        .first<TotalRow>(),
-    ]);
-    const tally = (tallyRes.results ?? []).map((r) => ({ tag: r.tag, count: r.count }));
-    const totalArticles = totalRes !== null ? totalRes.total : 0;
-    return { totalArticles, tally };
-  } catch {
-    return { totalArticles: 0, tally: [] };
-  }
+  // No defensive try/catch here — D1 failures propagate to the
+  // dispatcher's per-user catch so they can be logged. A silent
+  // empty-tally fallback would hide schema/index drift from operators.
+  const [tallyRes, totalRes] = await Promise.all([
+    db
+      .prepare(tallySql)
+      .bind(sinceUnix, ...userTags)
+      .all<TallyRow>(),
+    db
+      .prepare(totalSql)
+      .bind(sinceUnix, ...userTags)
+      .first<TotalRow>(),
+  ]);
+  const tally = (tallyRes.results ?? []).map((r) => ({ tag: r.tag, count: r.count }));
+  const totalArticles = totalRes !== null ? totalRes.total : 0;
+  return { totalArticles, tally };
 }

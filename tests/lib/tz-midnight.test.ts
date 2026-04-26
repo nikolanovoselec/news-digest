@@ -98,4 +98,37 @@ describe('localMidnightUnixInTz — REQ-MAIL-001', () => {
       expect(midnight).toBeLessThanOrEqual(NOON_UTC_2026_04_22);
     }
   });
+
+  it('REQ-MAIL-001: round-trip invariant holds across the full UTC offset range', () => {
+    // Property test: for every supported tz across the negative-to-
+    // positive offset range, the returned midnight must format back to
+    // (a) the same local date as the input, and (b) 00:00 wall-clock.
+    // This guards specifically against the westward-zone day-delta
+    // logic in the signed-walk algorithm.
+    const wideTzs = [
+      'Pacific/Pago_Pago',     // UTC-11
+      'Pacific/Honolulu',      // UTC-10
+      'America/Anchorage',     // UTC-9 / -8
+      'America/Los_Angeles',   // UTC-8 / -7
+      'America/Denver',        // UTC-7 / -6
+      'America/New_York',      // UTC-5 / -4
+      'America/Sao_Paulo',     // UTC-3
+      'UTC',                   // UTC+0
+      'Europe/London',         // UTC+0 / +1
+      'Europe/Zurich',         // UTC+1 / +2
+      'Asia/Tehran',           // UTC+3:30 / +4:30 (half-hour offset)
+      'Asia/Kolkata',          // UTC+5:30 (half-hour, no DST)
+      'Asia/Tokyo',            // UTC+9
+      'Australia/Sydney',      // UTC+10 / +11
+      'Pacific/Auckland',      // UTC+12 / +13
+      'Pacific/Kiritimati',    // UTC+14
+    ];
+    for (const tz of wideTzs) {
+      const midnight = localMidnightUnixInTz(NOON_UTC_2026_04_22, tz);
+      expect(localDateInTz(midnight, tz), `local date mismatch for ${tz}`)
+        .toBe(localDateInTz(NOON_UTC_2026_04_22, tz));
+      expect(localHourMinuteInTz(midnight, tz), `wall-clock mismatch for ${tz}`)
+        .toEqual({ hour: 0, minute: 0 });
+    }
+  });
 });

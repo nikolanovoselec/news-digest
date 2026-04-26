@@ -351,6 +351,40 @@ describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('REQ-MAIL-001 AC 9: per-user SELECT carries the email_enabled = 1 predicate (opt-out filter)', async () => {
+    // AC 9 — "Users who turn off email_enabled in settings receive
+    // no email." The dispatcher enforces this at the SQL layer; the
+    // test asserts the predicate's literal presence in BOTH the
+    // distinct-tz probe and the per-user scan, since either path
+    // omitting it would silently start emailing opt-out users.
+    const now = Math.floor(Date.now() / 1000);
+    const today = localDateInTz(now, 'UTC');
+    const { hour, minute } = localHourMinuteInTz(now, 'UTC');
+    const users: DispatchUserRow[] = [
+      {
+        id: 'user-ac9',
+        email: 'ac9@example.com',
+        gh_login: 'ac9',
+        tz: 'UTC',
+        digest_hour: hour,
+        digest_minute: minute - (minute % 5),
+        hashtags_json: null,
+        last_emailed_local_date: today === '2099-01-01' ? null : '1970-01-01',
+      },
+    ];
+    const { db } = makeDispatchDb(users);
+    const prepareSpy = vi.spyOn(db, 'prepare');
+    await dispatchDailyEmails(makeEnv({ DB: db }));
+
+    const sqls = prepareSpy.mock.calls.map((c) => c[0] as string);
+    const tzProbe = sqls.find((s) => s.includes('SELECT DISTINCT tz'));
+    const userScan = sqls.find((s) => s.startsWith('SELECT id, email, gh_login'));
+    expect(tzProbe).toBeDefined();
+    expect(tzProbe).toContain('email_enabled = 1');
+    expect(userScan).toBeDefined();
+    expect(userScan).toContain('email_enabled = 1');
+  });
+
   it('REQ-MAIL-001: dispatcher SELECTs hashtags_json and tz from users', async () => {
     // Regression guard for the rich-email design — the dispatcher must
     // pull `hashtags_json` (for headlines + tally) and `tz` (for the

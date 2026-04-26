@@ -123,12 +123,13 @@ export function renderDigestReadyEmail(params: DigestReadyEmailParams): Rendered
 
   // ---------- Subject ----------
   const topTagSlugs = tagTally.slice(0, 3).map((t) => t.tag);
+  const articleNoun = headlines.length === 1 ? 'article' : 'articles';
   const subject =
     headlines.length === 0
       ? 'Your news digest is ready'
       : topTagSlugs.length > 0
-        ? `${headlines.length} new articles · ${topTagSlugs.join(', ')}`
-        : `${headlines.length} new articles`;
+        ? `${headlines.length} new ${articleNoun} · ${topTagSlugs.join(', ')}`
+        : `${headlines.length} new ${articleNoun}`;
 
   // ---------- Preheader (hidden inbox-preview text) ----------
   const preheader = headlines.length === 0
@@ -141,8 +142,12 @@ export function renderDigestReadyEmail(params: DigestReadyEmailParams): Rendered
     ` · next digest tomorrow at ${pad2(nextDigestLocal.hour)}:${pad2(nextDigestLocal.minute)}`;
 
   // ---------- Tag tally line ----------
-  // Omit the line entirely when zero — AC 5.
-  const tallyLine = tagTally.length === 0
+  // Omit when EITHER the per-tag breakdown is empty OR the total
+  // count is zero — AC 5 says "the line is omitted entirely when no
+  // articles have been ingested in that window". Gating on both
+  // guards against the edge case where the two SQL queries that feed
+  // them disagree (partial-result scenarios).
+  const tallyLine = tagTally.length === 0 || totalSinceMidnight === 0
     ? null
     : `Since midnight: ${totalSinceMidnight} ${totalSinceMidnight === 1 ? 'article' : 'articles'}` +
       ` · ${tagTally.map((t) => `#${t.tag} (${t.count})`).join(' ')}`;
@@ -152,7 +157,7 @@ export function renderDigestReadyEmail(params: DigestReadyEmailParams): Rendered
   if (headlines.length === 0) {
     textLines.push('Your news digest is ready.');
   } else {
-    textLines.push(`Your news digest is ready — ${headlines.length} new articles to read.`);
+    textLines.push(`Your news digest is ready — ${headlines.length} new ${articleNoun} to read.`);
   }
   textLines.push('');
   if (headlines.length > 0) {

@@ -117,10 +117,24 @@ describe('selectUnreadHeadlinesForUser — REQ-MAIL-001', () => {
     ]);
   });
 
-  it('REQ-MAIL-001: returns [] on D1 error (defensive)', async () => {
+  it('REQ-MAIL-001: throws on D1 error so the dispatcher can log + degrade visibly', async () => {
+    // Silently swallowing D1 errors here would hide schema drift from
+    // operators — every user would silently get the static fallback
+    // every day with no log evidence. Make failures audible by
+    // throwing through to the dispatcher's catch, which logs
+    // `email.dispatch.degraded` before degrading to the static body.
     const { db } = makeDb({ throwNext: true });
-    const result = await selectUnreadHeadlinesForUser(db, 'u1', ['cloudflare'], 5);
-    expect(result).toEqual([]);
+    await expect(selectUnreadHeadlinesForUser(db, 'u1', ['cloudflare'], 5))
+      .rejects.toThrow();
+  });
+
+  it('REQ-MAIL-001: ORDER BY has a deterministic id-DESC tiebreaker', async () => {
+    const { db, calls } = makeDb({ nextAll: [[]] });
+    await selectUnreadHeadlinesForUser(db, 'u1', ['cloudflare'], 5);
+    // Without the tiebreaker, two articles sharing both ingested_at
+    // and published_at could swap positions across consecutive renders
+    // in the same minute and flicker the email body.
+    expect(calls[0]!.sql).toMatch(/ORDER BY a\.ingested_at DESC, a\.published_at DESC, a\.id DESC/);
   });
 });
 
@@ -191,9 +205,9 @@ describe('tagTallySinceMidnight — REQ-MAIL-001', () => {
     expect(totalCall!.sql).toMatch(/COUNT\(DISTINCT a\.id\)/);
   });
 
-  it('REQ-MAIL-001: returns empty result on D1 error (defensive)', async () => {
+  it('REQ-MAIL-001: throws on D1 error so the dispatcher can log + degrade visibly', async () => {
     const { db } = makeDb({ throwNext: true });
-    const result = await tagTallySinceMidnight(db, ['mcp'], 1700000000);
-    expect(result).toEqual({ totalArticles: 0, tally: [] });
+    await expect(tagTallySinceMidnight(db, ['mcp'], 1700000000))
+      .rejects.toThrow();
   });
 });

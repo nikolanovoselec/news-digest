@@ -145,9 +145,13 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
           tally = tRes.tally;
           totalSinceMidnight = tRes.totalArticles;
         } catch (err) {
-          log('error', 'email.send.failed', {
+          // Distinct event name from `email.send.failed` so an operator
+          // grepping `wrangler tail` for delivery failures doesn't
+          // conflate "Resend rejected our POST" with "D1 read errored
+          // before we even composed the body". The send still happens
+          // below — degraded to the static fallback.
+          log('error', 'email.dispatch.degraded', {
             to: user.email,
-            status: null,
             error: `data_fetch_failed: ${String(err).slice(0, 200)}`,
           });
           // headlines/tally stay empty → renderer emits static fallback.

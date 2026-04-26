@@ -76,6 +76,16 @@ describe('renderDigestReadyEmail subject — REQ-MAIL-001 AC 3', () => {
     expect(subject).toBe('5 new articles');
     expect(subject).not.toContain('·');
   });
+
+  it('REQ-MAIL-001 AC 3: subject pluralisation — "1 new article" (singular) when N=1', () => {
+    const single: Headline = FIVE_HEADLINES[0]!;
+    const { subject } = renderDigestReadyEmail(makeParams({
+      headlines: [single],
+      tagTally: [{ tag: 'mcp', count: 1 }],
+    }));
+    expect(subject).toBe('1 new article · mcp');
+    expect(subject).not.toContain('1 new articles');
+  });
 });
 
 // ---------- Preheader ----------
@@ -166,6 +176,19 @@ describe('renderDigestReadyEmail tag tally — REQ-MAIL-001 AC 5', () => {
 
   it('REQ-MAIL-001 AC 5: tally line is omitted entirely when tally is empty', () => {
     const { html, text } = renderDigestReadyEmail(makeParams({ tagTally: [], totalSinceMidnight: 0 }));
+    expect(html).not.toMatch(/Since midnight/);
+    expect(text).not.toMatch(/Since midnight/);
+  });
+
+  it('REQ-MAIL-001 AC 5: tally line is omitted when totalSinceMidnight is 0 even if tally rows exist', () => {
+    // Defence against the partial-result edge case where the GROUP BY
+    // returned rows but the COUNT(DISTINCT) returned 0; the AC says
+    // the line is omitted "when no articles have been ingested in
+    // that window", which keys on the total, not the tally length.
+    const { html, text } = renderDigestReadyEmail(makeParams({
+      tagTally: [{ tag: 'mcp', count: 1 }],
+      totalSinceMidnight: 0,
+    }));
     expect(html).not.toMatch(/Since midnight/);
     expect(text).not.toMatch(/Since midnight/);
   });
