@@ -29,7 +29,9 @@ describe('robots.txt — REQ-OPS-004 AC 2', () => {
     expect(robots).toMatch(/Allow:\s*\/manifest\.webmanifest/);
     expect(robots).toMatch(/Allow:\s*\/favicon\.svg/);
     expect(robots).toMatch(/Allow:\s*\/sitemap\.xml/);
-    // og:image default points at /og.svg — robots must not block it.
+    // og:image default points at /og.png — robots must not block it.
+    // /og.svg (the master) is also allowed for vector-capable scrapers.
+    expect(robots).toMatch(/Allow:\s*\/og\.png/);
     expect(robots).toMatch(/Allow:\s*\/og\.svg/);
   });
 
@@ -183,8 +185,12 @@ describe('SEO metadata in Base.astro — REQ-OPS-004 AC 1', () => {
     expect(baseSource).toMatch(/application\/ld\+json/);
   });
 
-  it('REQ-OPS-004: og:image defaults to /og.svg with explicit type + dimensions + alt so Twitter/LinkedIn render summary_large_image', () => {
-    expect(baseSource).toMatch(/\/og\.svg/);
+  it('REQ-OPS-004: og:image defaults to /og.png with explicit type + dimensions + alt so every major scraper renders summary_large_image', () => {
+    // PNG (not SVG) is the default because Facebook, iMessage, WhatsApp,
+    // LinkedIn, and Slack silently drop SVG og:images. Twitter and
+    // Discord do render SVG, but raster is the lowest common denominator.
+    expect(baseSource).toMatch(/\/og\.png/);
+    expect(baseSource).not.toMatch(/ogImage\s*\?\?\s*`\$\{Astro\.url\.origin\}\/og\.svg`/);
     expect(baseSource).toMatch(/property="og:image:type"/);
     expect(baseSource).toMatch(/property="og:image:width"\s+content="1200"/);
     expect(baseSource).toMatch(/property="og:image:height"\s+content="630"/);

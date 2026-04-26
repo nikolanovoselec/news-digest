@@ -36,6 +36,7 @@ interface Props {
   /** Optional explicit open-graph image (1200×630). Defaults to /og.png. */
   ogImage?: string;
 }
+// Implements REQ-OPS-004
 
 const {
   title = 'News Digest',
@@ -55,12 +56,11 @@ const fullTitle =
 
 const canonicalUrl =
   canonical ?? `${Astro.url.origin}${Astro.url.pathname}`;
-// Default og:image is a 1200×630 branded SVG in public/og.svg. Twitter,
-// LinkedIn, Slack, and Discord render SVG cards; Facebook's scraper
-// rejects SVG og:images and will fall back to a text-only card, which
-// is still better than the prior "no image at all" default. A caller
-// can override with a raster PNG when one is generated per-page.
-const ogImageUrl = ogImage ?? `${Astro.url.origin}/og.svg`;
+// Default og:image is a 1200×630 branded PNG in public/og.png — raster is
+// the lowest common denominator across scrapers (Facebook, iMessage, and
+// WhatsApp silently drop SVG og:images). public/og.svg is the master;
+// regenerate the PNG with @resvg/resvg-js when the SVG changes.
+const ogImageUrl = ogImage ?? `${Astro.url.origin}/og.png`;
 const ogImageType = ogImageUrl.endsWith('.svg') ? 'image/svg+xml' : 'image/png';
 
 // Server-side theme resolution (REQ-DES-002).
