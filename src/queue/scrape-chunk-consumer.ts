@@ -575,7 +575,18 @@ export async function processOneChunk(
     // REQ-PIPE-008: kick off the cross-chunk semantic dedup pass. Articles
     // are already visible (run is `ready`) — finalize is a background
     // cleanup that may briefly leave duplicates in the feed.
-    await env.SCRAPE_FINALIZE.send({ scrape_run_id: body.scrape_run_id });
+    //
+    // The KV counter clamps to 0 (line 570 above), which means a redelivered
+    // last-chunk message would re-enter this branch and re-enqueue
+    // SCRAPE_FINALIZE — every redelivery would burn another LLM call.
+    // Gate the send on a separate KV "enqueued" flag; the merge SQL is
+    // idempotent on retry but the LLM call is not.
+    const enqueuedKey = `scrape_run:${body.scrape_run_id}:finalize_enqueued`;
+    const alreadyEnqueued = await env.KV.get(enqueuedKey, 'text');
+    if (alreadyEnqueued === null) {
+      await env.KV.put(enqueuedKey, '1', { expirationTtl: 3 * 3600 });
+      await env.SCRAPE_FINALIZE.send({ scrape_run_id: body.scrape_run_id });
+    }
   }
 
   log('info', 'digest.generation', {

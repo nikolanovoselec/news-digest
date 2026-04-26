@@ -106,6 +106,33 @@ export function parseLLMPayload(response: unknown): LLMPayload | null {
   return parsed as LLMPayload;
 }
 
+/** Loose JSON parser shared by callers whose response shape doesn't carry
+ *  an `articles` array — notably the cross-chunk dedup finalize prompt
+ *  (REQ-PIPE-008) which returns `{dedup_groups: number[][]}` only. Same
+ *  fence/preamble/brace-walking tolerance as `parseLLMPayload` above; the
+ *  caller validates whichever fields it actually needs. */
+export function parseLLMJson(response: unknown): Record<string, unknown> | null {
+  if (response !== null && typeof response === 'object') {
+    return response as Record<string, unknown>;
+  }
+  if (typeof response !== 'string' || response === '') return null;
+  const cleaned = stripFencesAndPreamble(response);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    const candidate = extractFirstJsonObject(cleaned);
+    if (candidate === null) return null;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      return null;
+    }
+  }
+  if (parsed === null || typeof parsed !== 'object') return null;
+  return parsed as Record<string, unknown>;
+}
+
 /** Strip ```json or ``` fences and any prose preamble before the first
  * `{`. Leaves everything from the first brace-match opening to the last
  * closing brace. */

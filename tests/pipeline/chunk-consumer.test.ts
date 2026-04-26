@@ -466,6 +466,30 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     expect(sendMock).not.toHaveBeenCalled();
   });
 
+  it('REQ-PIPE-008: redelivered last-chunk message does NOT re-enqueue SCRAPE_FINALIZE (LLM cost gate)', async () => {
+    // The KV chunks_remaining counter clamps to 0, so a redelivered
+    // last-chunk message would re-enter the `next === 0` branch. The
+    // finalize merge SQL is idempotent on retry but the LLM call is
+    // not — the consumer must gate the send on a separate KV flag so
+    // a redelivery doesn't burn another Workers AI call.
+    const aiResponse = {
+      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }], dedup_groups: [] }),
+      usage: { input_tokens: 10, output_tokens: 10 },
+    };
+    const { db } = makeDb();
+    const { kv, state } = makeKv({ chunksRemaining: '1' });
+    const env = makeEnv(db, kv, aiResponse);
+    await processOneChunk(env, makeChunk());
+    // Replay: counter is now '0' (clamped), enqueue gate flag is set.
+    // Re-running must not trigger a second SCRAPE_FINALIZE.send.
+    expect(state.store.get('scrape_run:test-run:chunks_remaining')).toBe('0');
+    expect(state.store.get('scrape_run:test-run:finalize_enqueued')).toBe('1');
+    await processOneChunk(env, makeChunk());
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sendMock = (env.SCRAPE_FINALIZE as any).send as ReturnType<typeof vi.fn>;
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
   it('REQ-PIPE-002: updates scrape_runs stats (tokens, cost, ingested, deduped)', async () => {
     const aiResponse = {
       response: JSON.stringify({

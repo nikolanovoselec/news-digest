@@ -41,7 +41,7 @@ import {
   extractResponsePayload,
   extractTokensIn,
   extractTokensOut,
-  parseLLMPayload,
+  parseLLMJson,
   type AIRunResponse,
 } from '~/lib/generate';
 import { pickWinner, buildMergeStatements, type FinalizeRow } from '~/lib/finalize-merge';
@@ -154,7 +154,7 @@ export async function processOneFinalize(
   let modelUsed = DEFAULT_MODEL_ID;
   let aiResult = await runLLM(modelUsed);
   let rawResponse = extractResponsePayload(aiResult);
-  let parsed = parseLLMPayload(rawResponse);
+  let parsed = parseLLMJson(rawResponse);
 
   let wastedTokensIn = 0;
   let wastedTokensOut = 0;
@@ -263,13 +263,16 @@ function normaliseDedupGroups(value: unknown): number[][] {
   const out: number[][] = [];
   for (const group of value) {
     if (!Array.isArray(group)) continue;
-    const ints: number[] = [];
+    // Dedupe indices within a group: an LLM that emits `[0, 1, 1]` would
+    // otherwise inflate `losers_deleted` and queue redundant merge SQL
+    // for the duplicated index. Set-uniquing collapses each occurrence.
+    const seen = new Set<number>();
     for (const idx of group) {
       if (Number.isInteger(idx) && (idx as number) >= 0) {
-        ints.push(idx as number);
+        seen.add(idx as number);
       }
     }
-    if (ints.length >= 2) out.push(ints);
+    if (seen.size >= 2) out.push(Array.from(seen));
   }
   return out;
 }

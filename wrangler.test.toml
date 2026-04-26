@@ -25,3 +25,7 @@ queue = "scrape-coordinator-test"
 [[queues.producers]]
 binding = "SCRAPE_CHUNKS"
 queue = "scrape-chunks-test"
+
+[[queues.producers]]
+binding = "SCRAPE_FINALIZE"
+queue = "scrape-finalize-test"

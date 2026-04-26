@@ -1,6 +1,6 @@
 // Tests for src/lib/finalize-merge.ts — REQ-PIPE-008.
 //
-// Pure helpers: pickWinner (earliest published_at, id-DESC tiebreaker)
+// Pure helpers: pickWinner (earliest published_at, ascending-id tiebreaker)
 // and buildMergeStatements (the 6-statement loser-into-winner merge).
 // These tests pin the SQL statement order — load-bearing for the
 // idempotency invariant in REQ-PIPE-008 AC 5 — and the winner-

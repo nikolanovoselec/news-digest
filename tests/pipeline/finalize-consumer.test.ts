@@ -345,34 +345,128 @@ describe('scrape-finalize-consumer — REQ-PIPE-008', () => {
   });
 
   it('REQ-PIPE-008: replaying the same message produces the same final state and does not double-count', async () => {
-    // Simulate a queue redelivery: first pass deletes the loser
-    // (records show 6 merge statements + 1 stats update). Second pass
-    // sees only the winner row left (because the loser was deleted)
-    // → trivially-small skip, no LLM call, no stats update, no SQL.
-    const rowsFirstPass = [
+    // Mutable row-set shared across both invocations. The merge batch
+    // for a real D1 connection would DELETE the loser between passes;
+    // we model that by shrinking `liveRows` from inside the batch
+    // handler the same way real cascade SQL would. Then re-invoking
+    // processOneFinalize against the SAME db must hit the trivially-
+    // small-skip path (no LLM call, no stats update) — pinning the AC 5
+    // claim that a queue redelivery converges to the same state and does
+    // not double-count tokens.
+    const liveRows: ArticleRow[] = [
       row({ id: 'w', published_at: 100 }),
       row({ id: 'l', published_at: 200 }),
     ];
-    const { db: db1, records: records1 } = makeDb(rowsFirstPass);
-    const { env: env1 } = makeEnv(db1, [aiOk([[0, 1]])]);
-    await processOneFinalize(env1, MSG);
-    const firstStatsCount = records1.filter(
-      (r) => r.via === 'run' && r.sql.includes('UPDATE scrape_runs'),
-    ).length;
-    expect(firstStatsCount).toBe(1);
 
-    // Replay: the loser row no longer exists; the SELECT returns only
-    // the winner. The consumer must skip the LLM and the stats update.
-    const { db: db2, records: records2 } = makeDb([
-      row({ id: 'w', published_at: 100 }),
-    ]);
-    const { env: env2, aiCalls: aiCalls2 } = makeEnv(db2, [aiOk([[0]])]);
-    await processOneFinalize(env2, MSG);
-    expect(aiCalls2.length).toBe(0);
-    const replayStatsCount = records2.filter(
+    const records: SqlRecord[] = [];
+    const prepare = vi.fn().mockImplementation((sql: string) => ({
+      bind: (...params: unknown[]) => ({
+        __sql: sql,
+        __params: params,
+        run: vi.fn().mockImplementation(async () => {
+          records.push({ sql, params, via: 'run' });
+          return { success: true, meta: { changes: 1 } };
+        }),
+        all: vi.fn().mockImplementation(async () => {
+          records.push({ sql, params, via: 'all' });
+          if (sql.includes('FROM articles') && sql.includes('scrape_run_id')) {
+            const limit = (params[1] as number) ?? liveRows.length;
+            return { success: true, results: liveRows.slice(0, limit) };
+          }
+          return { success: true, results: [] };
+        }),
+        first: vi.fn().mockImplementation(async () => {
+          records.push({ sql, params, via: 'first' });
+          return null;
+        }),
+      }),
+      run: vi.fn().mockImplementation(async () => {
+        records.push({ sql, params: [], via: 'run' });
+        return { success: true, meta: { changes: 1 } };
+      }),
+    }));
+    const db = {
+      prepare,
+      batch: vi.fn().mockImplementation(async (stmts: unknown[]) => {
+        for (const stmt of stmts) {
+          const s = stmt as { __sql?: string; __params?: unknown[] };
+          const sql = s.__sql ?? '';
+          const params = s.__params ?? [];
+          records.push({ sql, params, via: 'batch' });
+          // Model the cascade DELETE: drop the loser row from `liveRows`
+          // so the next SELECT no longer sees it, exactly like the real
+          // D1 batch would.
+          if (sql.startsWith('DELETE FROM articles')) {
+            const loserId = params[0] as string;
+            const idx = liveRows.findIndex((r) => r.id === loserId);
+            if (idx >= 0) liveRows.splice(idx, 1);
+          }
+        }
+        return stmts.map(() => ({ success: true, meta: { changes: 1 } }));
+      }),
+      exec: vi.fn().mockImplementation(async (sql: string) => {
+        records.push({ sql, params: [], via: 'exec' });
+        return { count: 0, duration: 0 };
+      }),
+    } as unknown as D1Database;
+
+    const aiCalls: AiCall[] = [];
+    let nextResponse = 0;
+    const aiResponses = [aiOk([[0, 1]]), aiOk([[0, 1]])];
+    const ai = {
+      run: vi
+        .fn()
+        .mockImplementation(async (model: string, params: Record<string, unknown>) => {
+          aiCalls.push({ model, params });
+          const resp = aiResponses[nextResponse] ?? aiResponses[aiResponses.length - 1];
+          nextResponse += 1;
+          return resp;
+        }),
+    } as unknown as Ai;
+    const env = {
+      DB: db,
+      AI: ai,
+      KV: {} as KVNamespace,
+      SCRAPE_COORDINATOR: { send: vi.fn() } as unknown as Queue<unknown>,
+      SCRAPE_CHUNKS: { send: vi.fn() } as unknown as Queue<unknown>,
+      SCRAPE_FINALIZE: { send: vi.fn() } as unknown as Queue<unknown>,
+      ASSETS: {} as Fetcher,
+      GH_OAUTH_CLIENT_ID: 'x',
+      GH_OAUTH_CLIENT_SECRET: 'x',
+      OAUTH_JWT_SECRET: 'x',
+      RESEND_API_KEY: 'x',
+      RESEND_FROM: 'x',
+      APP_URL: 'https://test.example.com',
+    } as unknown as Env;
+
+    // First pass: 1 LLM call, 6 merge statements, 1 stats update,
+    // loser row removed from `liveRows` by the batch handler.
+    await processOneFinalize(env, MSG);
+    expect(aiCalls.length).toBe(1);
+    const firstMerges = records.filter((r) => r.via === 'batch').length;
+    expect(firstMerges).toBe(6);
+    const firstStats = records.filter(
       (r) => r.via === 'run' && r.sql.includes('UPDATE scrape_runs'),
     ).length;
-    expect(replayStatsCount).toBe(0);
+    expect(firstStats).toBe(1);
+    expect(liveRows.map((r) => r.id)).toEqual(['w']);
+
+    // Second pass on the SAME db: SELECT now returns only the winner
+    // (loser was deleted by the first pass). Trivially-small skip path
+    // fires → no second LLM call, no second stats update, no extra SQL.
+    const recordsBefore = records.length;
+    await processOneFinalize(env, MSG);
+    expect(aiCalls.length).toBe(1);
+    const secondStats = records.filter(
+      (r) => r.via === 'run' && r.sql.includes('UPDATE scrape_runs'),
+    ).length;
+    expect(secondStats).toBe(1);
+    // No additional batch SQL after the replay (the only new record is
+    // the SELECT itself, plus the FK pragma exec).
+    const newBatches = records
+      .slice(recordsBefore)
+      .filter((r) => r.via === 'batch').length;
+    expect(newBatches).toBe(0);
   });
 
   it('REQ-PIPE-008: falls back to the secondary model when the primary returns unparseable JSON', async () => {
@@ -399,6 +493,30 @@ describe('scrape-finalize-consumer — REQ-PIPE-008', () => {
     expect(sys0).toBe(FINALIZE_DEDUP_SYSTEM);
     expect(sys1).toBe(FINALIZE_DEDUP_SYSTEM);
     expect(aiCalls[0]!.model).not.toBe(aiCalls[1]!.model);
+  });
+
+  it('REQ-PIPE-008: deduplicates indices within a group so a malformed [0, 1, 1] does not over-count', async () => {
+    // An LLM that emits a duplicate index inside a group must not cause
+    // the consumer to count one loser twice in articles_deduped or
+    // queue redundant merge SQL for the duplicated index.
+    const rows = [
+      row({ id: 'w', published_at: 100 }),
+      row({ id: 'l', published_at: 200 }),
+    ];
+    const { db, records } = makeDb(rows);
+    const { env } = makeEnv(db, [aiOk([[0, 1, 1]])]);
+    await processOneFinalize(env, MSG);
+
+    const merges = records.filter((r) => r.via === 'batch');
+    expect(merges).toHaveLength(6); // exactly one loser merged, not two
+    const statsUpdate = records.find(
+      (r) =>
+        r.via === 'run' &&
+        r.sql.includes('UPDATE scrape_runs') &&
+        r.sql.includes('articles_deduped'),
+    );
+    expect(statsUpdate).toBeDefined();
+    expect(statsUpdate!.params[5]).toBe(1);
   });
 
   it('REQ-PIPE-008: throws after fallback also fails so the queue retries the message', async () => {
