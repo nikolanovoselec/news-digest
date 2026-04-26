@@ -36,10 +36,7 @@ interface Props {
   /** Optional explicit open-graph image (1200×630). Defaults to /og.png. */
   ogImage?: string;
 }
-// Implements REQ-OPS-004 (default og:image is a 1200×630 PNG so every
-// major scraper — Facebook, iMessage, WhatsApp, LinkedIn, Slack, Twitter,
-// Discord — renders the brand card; SVG og:images are silently rejected
-// by most non-Twitter scrapers).
+// Implements REQ-OPS-004
 
 const {
   title = 'News Digest',
