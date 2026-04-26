@@ -1,9 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <!-- App icon / maskable icon for PWA install + splashscreen.
-       MDI `newspaper` (filled) centred inside a square with safe-zone
-       padding so adaptive-icon maskers (Android 8+) don't clip the
-       artwork. The solid background follows prefers-color-scheme so
-       the icon looks native in both light and dark launchers. -->
+       MDI `newspaper` (the canonical segmented-top-edge glyph —
+       https://pictogrammers.com/library/mdi/icon/newspaper/) centred
+       inside a square with safe-zone padding so adaptive-icon maskers
+       (Android 8+) don't clip the artwork. Same glyph as the favicon
+       and the top-left in-app brand so install/splash matches the
+       running app. The solid background follows prefers-color-scheme
+       so the icon looks native in both light and dark launchers. -->
   <style>
     .bg { fill: #0a0a0a; }
     .fg { fill: #fafafa; }
@@ -19,7 +22,7 @@
   <g transform="translate(128 128) scale(10.6667)">
     <path
       class="fg"
-      d="M20,5H4C2.89,5 2,5.89 2,7V17A2,2 0 0,0 4,19H20A2,2 0 0,0 22,17V7A2,2 0 0,0 20,5M20,17H4V7H20V17M6,9H11V11H6V9M6,13H11V15H6V13M18,13H13V15H18V13M18,9H13V11H18V9Z"
+      d="M20,11H4V8H20M20,15H13V13H20M20,19H13V17H20M11,19H4V13H11M20.33,4.67L18.67,3L17,4.67L15.33,3L13.67,4.67L12,3L10.33,4.67L8.67,3L7,4.67L5.33,3L3.67,4.67L2,3V19A2,2 0 0,0 4,21H20A2,2 0 0,0 22,19V3L20.33,4.67Z"
     />
   </g>
 </svg>

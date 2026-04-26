@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-26
 
+- REQ-PWA-001 PWA install/splash artwork now uses the canonical MDI `newspaper` glyph — the same segmented top-edge icon the favicon and top-left in-app brand already use — so the home-screen icon and splash match the running app instead of showing the older filled `newspaper-variant` glyph. The Android home-screen and iOS splash title also shorten from "Digest" to "newsdigest" to mirror the in-app wordmark.
+
 - REQ-READ-007 AC 9 added: tapping a chip already at its destination slot now plays the pop alone — the hold, cascade, and trailing lift are skipped — so the leftmost chip no longer appears to "pulse twice" when re-selected.
 
 - REQ-OPS-004 default Open Graph image switched from SVG to a 1200×630 PNG so Facebook, iMessage, WhatsApp, LinkedIn, and Slack — which silently drop SVG og:images — now render the brand card alongside Twitter and Discord. The SVG remains the master artwork; the PNG is regenerated from it.

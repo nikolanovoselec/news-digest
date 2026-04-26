@@ -132,7 +132,7 @@ const initialTheme = cookieTheme ?? 'light';
     <meta name="color-scheme" content="light dark" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Digest" />
+    <meta name="apple-mobile-web-app-title" content="newsdigest" />
     {/* SVG apple-touch-icon — Safari 13+ supports it; older versions
         fall back to the favicon. We don't ship a raster PNG because we
         have no image pipeline to keep it in sync with the SVG master. */}
@@ -190,7 +190,7 @@ const initialTheme = cookieTheme ?? 'light';
           aria-hidden="true"
           fill="currentColor"
         >
-          {/* MDI newspaper-variant-outline — https://pictogrammers.com/library/mdi/icon/newspaper-variant-outline/ */}
+          {/* MDI newspaper — https://pictogrammers.com/library/mdi/icon/newspaper/ */}
           <path d="M20,11H4V8H20M20,15H13V13H20M20,19H13V17H20M11,19H4V13H11M20.33,4.67L18.67,3L17,4.67L15.33,3L13.67,4.67L12,3L10.33,4.67L8.67,3L7,4.67L5.33,3L3.67,4.67L2,3V19A2,2 0 0,0 4,21H20A2,2 0 0,0 22,19V3L20.33,4.67Z" />
         </svg>
         <span class="site-header__wordmark">
@@ -472,9 +472,10 @@ const initialTheme = cookieTheme ?? 'light';
         text-decoration: none;
       }
 
-      /* Logomark: the MDI newspaper-variant-outline icon. Same glyph
-         used for favicon so the browser tab and the in-app brand stay
-         consistent. Inherits var(--text) via currentColor. */
+      /* Logomark: the MDI `newspaper` icon. Same glyph used for the
+         favicon and the PWA install/splash artwork so the browser tab,
+         home-screen icon, and in-app brand all stay consistent.
+         Inherits var(--text) via currentColor. */
       .site-header__mark {
         display: inline-block;
         color: var(--text);
