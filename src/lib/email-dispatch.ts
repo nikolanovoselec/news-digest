@@ -28,9 +28,16 @@
 //   same bucket (the `last_emailed_local_date` gate absorbs any
 //   double-fire from cron jitter).
 
-import { localDateInTz, localHourMinuteInTz } from '~/lib/tz';
+import { localDateInTz, localHourMinuteInTz, localMidnightUnixInTz } from '~/lib/tz';
 import { log } from '~/lib/log';
 import { renderDigestReadyEmail, sendEmail } from '~/lib/email';
+import {
+  selectUnreadHeadlinesForUser,
+  tagTallySinceMidnight,
+  type Headline,
+  type TagTally,
+} from '~/lib/email-data';
+import { parseHashtags } from '~/lib/hashtags';
 
 /** User row subset needed for dispatch. All columns are non-null in
  *  practice for email-enabled users, but `last_emailed_local_date`
@@ -39,8 +46,10 @@ interface DispatchUserRow {
   id: string;
   email: string;
   gh_login: string;
+  tz: string;
   digest_hour: number;
   digest_minute: number;
+  hashtags_json: string | null;
   last_emailed_local_date: string | null;
 }
 
@@ -89,7 +98,8 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
     let users: DispatchUserRow[];
     try {
       const res = await env.DB.prepare(
-        `SELECT id, email, gh_login, digest_hour, digest_minute, last_emailed_local_date
+        `SELECT id, email, gh_login, tz, digest_hour, digest_minute,
+                hashtags_json, last_emailed_local_date
            FROM users
           WHERE email_enabled = 1
             AND tz = ?1
@@ -110,11 +120,47 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
       continue;
     }
 
+    // Pre-compute the local-midnight cutoff once per tz — every user in
+    // this loop iteration shares it (their tz column matches the loop's
+    // `tz`).
+    const sinceMidnightUnix = localMidnightUnixInTz(now, tz);
+
     for (const user of users) {
       try {
+        const userTags = parseHashtags(user.hashtags_json);
+
+        // Fetch headlines + tally per user. Failure here falls through
+        // to the static-fallback render path below — we still send the
+        // email AND stamp the date so the per-day gate holds and the
+        // user always gets at least the bare notification.
+        let headlines: Headline[] = [];
+        let tally: TagTally[] = [];
+        let totalSinceMidnight = 0;
+        try {
+          const [hRes, tRes] = await Promise.all([
+            selectUnreadHeadlinesForUser(env.DB, user.id, userTags, 5),
+            tagTallySinceMidnight(env.DB, userTags, sinceMidnightUnix),
+          ]);
+          headlines = hRes;
+          tally = tRes.tally;
+          totalSinceMidnight = tRes.totalArticles;
+        } catch (err) {
+          log('error', 'email.send.failed', {
+            to: user.email,
+            status: null,
+            error: `data_fetch_failed: ${String(err).slice(0, 200)}`,
+          });
+          // headlines/tally stay empty → renderer emits static fallback.
+        }
+
         const { subject, text, html } = renderDigestReadyEmail({
           appUrl: env.APP_URL,
           userDisplayName: user.gh_login !== '' ? user.gh_login : user.email,
+          headlines,
+          tagTally: tally,
+          totalSinceMidnight,
+          sentLocal: { hour: user.digest_hour, minute: user.digest_minute, tz: user.tz },
+          nextDigestLocal: { hour: user.digest_hour, minute: user.digest_minute },
         });
 
         const result = await sendEmail(env, {

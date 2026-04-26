@@ -27,6 +27,7 @@ import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { loadSession } from '~/middleware/auth';
 import { slugify } from '~/lib/slug';
+import { parseHashtags } from '~/lib/hashtags';
 
 /** Raw row shape for the global-pool article query. */
 interface ArticleRow {
@@ -49,19 +50,6 @@ interface ScrapeRunRow {
   started_at: number;
   finished_at: number | null;
   status: string;
-}
-
-/** Parse the stored `hashtags_json` column into a string array. Returns
- * `[]` when the column is null, empty, or malformed. */
-function parseHashtags(hashtagsJson: string | null): string[] {
-  if (hashtagsJson === null || hashtagsJson === '') return [];
-  try {
-    const parsed = JSON.parse(hashtagsJson) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((v): v is string => typeof v === 'string');
-  } catch {
-    return [];
-  }
 }
 
 /** Parse a JSON-encoded string array column (`tags_json`, `details_json`).

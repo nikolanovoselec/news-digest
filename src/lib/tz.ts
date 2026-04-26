@@ -1,4 +1,6 @@
 // Implements REQ-SET-003
+// Implements REQ-MAIL-001 (`localMidnightUnixInTz` is the cutoff source
+// for the email's "Since midnight" tag tally).
 // Timezone helpers for the cron dispatcher's local-time matching and the
 // daily per-user local_date bookkeeping. All conversions use the runtime's
 // built-in IANA tz database via Intl.DateTimeFormat — no tz data is bundled
@@ -67,6 +69,34 @@ export function localHourMinuteInTz(
     }
   }
   return { hour, minute };
+}
+
+/**
+ * Return the unix-seconds timestamp of "00:00 local time" in {@link tz}
+ * on the same local date as {@link unixSeconds}. Used by the email
+ * dispatcher to compute the "Since midnight: N articles" cutoff.
+ *
+ * Implementation detail: `Date.UTC(y, m, d)` gives midnight UTC on the
+ * target date. We then walk back by the candidate's local hour/minute
+ * to land on local-midnight. The walk runs twice because in DST
+ * fall-back zones the first subtraction can land at the duplicated
+ * 01:00 hour rather than 00:00; the second pass settles the residual.
+ */
+export function localMidnightUnixInTz(unixSeconds: number, tz: string): number {
+  const localDate = localDateInTz(unixSeconds, tz);
+  const [yearStr, monthStr, dayStr] = localDate.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  let candidate = Math.floor(Date.UTC(year, month - 1, day, 0, 0, 0) / 1000);
+  for (let pass = 0; pass < 2; pass++) {
+    const hm = localHourMinuteInTz(candidate, tz);
+    if (hm.hour === 0 && hm.minute === 0 && localDateInTz(candidate, tz) === localDate) {
+      return candidate;
+    }
+    candidate -= hm.hour * 3600 + hm.minute * 60;
+  }
+  return candidate;
 }
 
 /**

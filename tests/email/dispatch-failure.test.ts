@@ -24,12 +24,14 @@ interface UserRow {
   id: string;
   email: string;
   gh_login: string;
+  tz: string;
   digest_hour: number;
   digest_minute: number;
+  hashtags_json: string | null;
   last_emailed_local_date: string | null;
 }
 
-interface SqlCall { sql: string; params: unknown[]; verb: 'all' | 'run'; }
+interface SqlCall { sql: string; params: unknown[]; verb: 'all' | 'run' | 'first'; }
 
 function makeDb(opts: {
   distinctTzs: TzRow[];
@@ -61,13 +63,24 @@ function makeDb(opts: {
               );
               return { success: true, results };
             }
+            // Headlines query (SELECT a.id, a.title, ...) and tally
+            // grouping query both fire from email-data.ts and must
+            // resolve cleanly; tests don't probe headline content here.
             return { success: true, results: [] };
           }),
           run: vi.fn().mockImplementation(async () => {
             opts.calls.push({ sql, params: [...bound], verb: 'run' });
             return { success: true, meta: { changes: 1 } };
           }),
-          first: vi.fn().mockResolvedValue(null),
+          first: vi.fn().mockImplementation(async () => {
+            opts.calls.push({ sql, params: [...bound], verb: 'first' });
+            // Total-articles query returns { total: 0 } — empty digest
+            // is the failure-test default.
+            if (sql.includes('COUNT(DISTINCT a.id)')) {
+              return { total: 0 };
+            }
+            return null;
+          }),
         };
       },
       all: vi.fn().mockImplementation(async () => {
@@ -164,9 +177,9 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
       usersByTz: {
         UTC: [
           { id: 'u-fail', email: 'fail@x.com', gh_login: 'fail',
-            digest_hour: 14, digest_minute: 0, last_emailed_local_date: null },
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
           { id: 'u-ok', email: 'ok@x.com', gh_login: 'ok',
-            digest_hour: 14, digest_minute: 0, last_emailed_local_date: null },
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
         ],
       },
       calls,
@@ -208,7 +221,7 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
       usersByTz: {
         UTC: [
           { id: 'u-throw', email: 'throw@x.com', gh_login: 'throw',
-            digest_hour: 14, digest_minute: 0, last_emailed_local_date: null },
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
         ],
       },
       calls: [],
@@ -236,7 +249,7 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
       usersByTz: {
         UTC: [
           { id: 'u-timeout-check', email: 'timeout@x.com', gh_login: 't',
-            digest_hour: 14, digest_minute: 0, last_emailed_local_date: null },
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
         ],
       },
       calls: [],
@@ -247,22 +260,24 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
     expect(calls[0]!.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('REQ-MAIL-002 AC 4: dispatcher NEVER writes to reading-surface tables, regardless of outcome', async () => {
+  it('REQ-MAIL-002 AC 4: dispatcher never INSERTS/UPDATES/DELETES reading-surface tables (read-only joins are allowed)', async () => {
     // AC 4 — "reading surfaces stay fully usable regardless of email
-    // outcome". Architectural invariant: the email path must not
-    // touch `articles`, `article_tags`, `article_sources`,
-    // `article_stars`, `article_reads`, or `scrape_runs`. A
-    // regression that accidentally joins email dispatch into those
-    // tables breaks the REQ-MAIL-002 / REQ-READ-001 isolation.
+    // outcome". Updated invariant for the rich-email design: the
+    // dispatcher legitimately READS from articles + article_tags +
+    // article_reads to compose the digest body, so the test no longer
+    // forbids those tables outright. What it MUST NOT do is mutate
+    // them — any INSERT/UPDATE/DELETE on a reading-surface table
+    // would couple email-cron failures to article/read state and
+    // break the REQ-MAIL-002 / REQ-READ-001 isolation.
     const calls: SqlCall[] = [];
     const db = makeDb({
       distinctTzs: [{ tz: 'UTC' }],
       usersByTz: {
         UTC: [
           { id: 'u-success', email: 'ok@x.com', gh_login: 'ok',
-            digest_hour: 14, digest_minute: 0, last_emailed_local_date: null },
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
           { id: 'u-failure', email: 'fail@x.com', gh_login: 'f',
-            digest_hour: 14, digest_minute: 0, last_emailed_local_date: null },
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
         ],
       },
       calls,
@@ -273,9 +288,6 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
     });
     await dispatchDailyEmails(makeEnv(db, fetch) as Env);
 
-    // No SQL issued by the dispatcher should mention any reading-
-    // surface table — not even a SELECT (which would indicate a join
-    // or a lookup that couples email to reading state).
     const READING_TABLES = [
       'articles',
       'article_tags',
@@ -286,12 +298,12 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
     ];
     for (const call of calls) {
       for (const table of READING_TABLES) {
-        // Word-boundary match so 'articles' doesn't false-positive
-        // on 'articles_' or other strings that just share the stem.
-        const re = new RegExp(`\\b${table}\\b`);
+        // Forbid only mutations on reading-surface tables; SELECT joins
+        // for composing the email body are now legitimate.
+        const re = new RegExp(`(INSERT\\s+(OR\\s+\\w+\\s+)?INTO|UPDATE|DELETE\\s+FROM)\\s+[^;]*\\b${table}\\b`, 'i');
         expect(
           re.test(call.sql),
-          `dispatcher must not touch ${table} (SQL was: ${call.sql.slice(0, 120)})`,
+          `dispatcher must not mutate ${table} (SQL was: ${call.sql.slice(0, 160)})`,
         ).toBe(false);
       }
     }
@@ -317,8 +329,10 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
                     id: 'u-d1-throws',
                     email: 'd1throws@x.com',
                     gh_login: 'd',
+                    tz: 'UTC',
                     digest_hour: 14,
                     digest_minute: 0,
+                    hashtags_json: null,
                     last_emailed_local_date: null,
                   }],
                 };
@@ -331,7 +345,11 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
               }
               return { success: true, meta: { changes: 1 } };
             }),
-            first: vi.fn().mockResolvedValue(null),
+            first: vi.fn().mockImplementation(async () => {
+              // tagTallySinceMidnight totals query — empty result is fine.
+              if (sql.includes('COUNT(DISTINCT a.id)')) return { total: 0 };
+              return null;
+            }),
           };
         },
         all: vi.fn().mockImplementation(async () => {
@@ -362,7 +380,7 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
       usersByTz: {
         UTC: [
           { id: 'u-retry', email: 'retry@x.com', gh_login: 'retry',
-            digest_hour: 14, digest_minute: 0, last_emailed_local_date: null },
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
         ],
       },
       calls: calls1,
@@ -381,7 +399,7 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
       usersByTz: {
         UTC: [
           { id: 'u-retry', email: 'retry@x.com', gh_login: 'retry',
-            digest_hour: 14, digest_minute: 0, last_emailed_local_date: null },
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
         ],
       },
       calls: calls2,

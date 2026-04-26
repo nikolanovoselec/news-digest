@@ -184,8 +184,10 @@ interface DispatchUserRow {
   id: string;
   email: string;
   gh_login: string;
+  tz: string;
   digest_hour: number;
   digest_minute: number;
+  hashtags_json: string | null;
   last_emailed_local_date: string | null;
 }
 
@@ -213,7 +215,7 @@ function makeDispatchDb(users: DispatchUserRow[]): {
       },
       all: vi.fn().mockImplementation(async () => {
         if (sql.includes('SELECT DISTINCT tz')) {
-          const tzs = new Set(users.map(() => 'UTC'));
+          const tzs = new Set(users.map((u) => u.tz));
           return { results: [...tzs].map((tz) => ({ tz })) };
         }
         if (sql.startsWith('SELECT id, email, gh_login')) {
@@ -234,6 +236,9 @@ function makeDispatchDb(users: DispatchUserRow[]): {
           );
           return { results: filtered };
         }
+        // Headlines query (unread headlines for the user) — empty pool
+        // is fine for these gating tests; the renderer will fall back
+        // to the static-subject form, which sendEmail doesn't care about.
         return { results: [] };
       }),
       run: vi.fn().mockImplementation(async () => {
@@ -247,7 +252,11 @@ function makeDispatchDb(users: DispatchUserRow[]): {
         }
         return { success: true, meta: { changes: 1 } };
       }),
-      first: vi.fn().mockResolvedValue(null),
+      first: vi.fn().mockImplementation(async () => {
+        // tagTallySinceMidnight totals query — fine to return zero.
+        if (sql.includes('COUNT(DISTINCT a.id)')) return { total: 0 };
+        return null;
+      }),
     };
     return stmt;
   });
@@ -286,8 +295,10 @@ describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
         id: 'user-1',
         email: 'alice@example.com',
         gh_login: 'alice',
+        tz: 'UTC',
         digest_hour: hour,
         digest_minute: minute - (minute % 5), // inside the current 5-min bucket
+        hashtags_json: null,
         last_emailed_local_date: today,
       },
     ];
@@ -316,8 +327,10 @@ describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
         id: 'user-2',
         email: 'bob@example.com',
         gh_login: 'bob',
+        tz: 'UTC',
         digest_hour: hour,
         digest_minute: minute - (minute % 5),
+        hashtags_json: null,
         last_emailed_local_date: stale,
       },
     ];
@@ -338,6 +351,39 @@ describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('REQ-MAIL-001: dispatcher SELECTs hashtags_json and tz from users', async () => {
+    // Regression guard for the rich-email design — the dispatcher must
+    // pull `hashtags_json` (for headlines + tally) and `tz` (for the
+    // local-time line + the local-midnight cutoff) on the per-user
+    // SELECT. If a refactor drops either column, the renderer falls
+    // through to the static fallback for everyone.
+    const now = Math.floor(Date.now() / 1000);
+    const today = localDateInTz(now, 'UTC');
+    const { hour, minute } = localHourMinuteInTz(now, 'UTC');
+    const users: DispatchUserRow[] = [
+      {
+        id: 'user-cols',
+        email: 'cols@example.com',
+        gh_login: 'cols',
+        tz: 'UTC',
+        digest_hour: hour,
+        digest_minute: minute - (minute % 5),
+        hashtags_json: '["mcp"]',
+        last_emailed_local_date: today === '2099-01-01' ? null : '1970-01-01',
+      },
+    ];
+    const { db } = makeDispatchDb(users);
+    const prepareSpy = vi.spyOn(db, 'prepare');
+    await dispatchDailyEmails(makeEnv({ DB: db }));
+
+    const userSelectSql = prepareSpy.mock.calls
+      .map((c) => c[0] as string)
+      .find((s) => s.startsWith('SELECT id, email, gh_login'));
+    expect(userSelectSql).toBeDefined();
+    expect(userSelectSql).toContain('hashtags_json');
+    expect(userSelectSql).toContain('tz');
+  });
+
   it('REQ-MAIL-001: does not stamp last_emailed_local_date when the send fails', async () => {
     const now = Math.floor(Date.now() / 1000);
     const { hour, minute } = localHourMinuteInTz(now, 'UTC');
@@ -347,8 +393,10 @@ describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
         id: 'user-3',
         email: 'carol@example.com',
         gh_login: 'carol',
+        tz: 'UTC',
         digest_hour: hour,
         digest_minute: minute - (minute % 5),
+        hashtags_json: null,
         last_emailed_local_date: null,
       },
     ];
