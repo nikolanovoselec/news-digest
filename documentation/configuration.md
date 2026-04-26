@@ -40,10 +40,11 @@ Declared in `wrangler.toml`:
 | `KV` | KV namespace | Edge cache for discovered sources, headlines, source health |
 | `SCRAPE_COORDINATOR` | Queue producer | Producer binding — one message per every-4-hours cron tick kicks the coordinator |
 | `SCRAPE_CHUNKS` | Queue producer | Producer binding — one message per ~100-candidate LLM chunk |
-| `AI` | Workers AI | LLM inference for chunk summarization and source discovery |
+| `SCRAPE_FINALIZE` | Queue producer | Producer binding — one message per scrape tick, enqueued by the last chunk consumer after the run is stamped `ready`; triggers the cross-chunk semantic dedup pass ([REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)) |
+| `AI` | Workers AI | LLM inference for chunk summarization, source discovery, and cross-chunk dedup finalize pass |
 | `ASSETS` | Fetcher (static assets) | Cloudflare static-asset binding for serving the Astro-built output; falls back to `new Response('news-digest')` in tests |
 
-Both queue consumers run with `max_batch_size = 1` (one isolate per message) and `max_retries = 3`.
+All three queue consumers run with `max_batch_size = 1` (one isolate per message) and `max_retries = 3`.
 
 ## Cron
 

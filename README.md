@@ -95,7 +95,7 @@ Custom token via [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflar
 | Account | Workers Scripts | Edit | Deploys the Worker |
 | Account | Workers KV Storage | Edit | Auto-creates the KV namespace |
 | Account | D1 | Edit | Auto-creates the D1 database and applies migrations |
-| Account | Queues | Edit | Auto-creates `scrape-coordinator` and `scrape-chunks` |
+| Account | Queues | Edit | Auto-creates `scrape-coordinator`, `scrape-chunks`, and `scrape-finalize` |
 | Account | Workers AI | Read | LLM inference for summaries + source discovery |
 | Zone | Zone | Read | Only when binding a custom domain; discovers the zone |
 | Zone | Workers Routes | Edit | Only when binding a custom domain; attaches the hostname |
@@ -107,7 +107,7 @@ The Zone scopes are skipped automatically when `APP_URL` is a `*.workers.dev` UR
 <details>
 <summary><strong>What the workflow does</strong></summary>
 
-1. Resolves (or creates) the D1 database, KV namespace, and queues via [`scripts/bootstrap-resources.sh`](scripts/bootstrap-resources.sh)
+1. Resolves (or creates) the D1 database, KV namespace, and queues (`scrape-coordinator`, `scrape-chunks`, `scrape-finalize`) via [`scripts/bootstrap-resources.sh`](scripts/bootstrap-resources.sh)
 2. Applies D1 migrations
 3. Pushes Worker secrets (Resend pair skipped when unset)
 4. `wrangler deploy`
