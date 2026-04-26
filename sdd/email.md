@@ -6,16 +6,21 @@ Resend-backed notification sent after every successful digest — whether genera
 
 ### REQ-MAIL-001: Digest-ready email
 
-**Intent:** Users who have opted in receive a single notification per day at their configured local time, nudging them back to the dashboard — the dashboard itself is authoritative for article listings.
+**Intent:** Users who have opted in receive a single high-signal notification per day at their configured local time, surfacing what's new in topics they care about and nudging them back to the dashboard — the dashboard remains authoritative for long-form article content.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
 1. At most one email per user is sent per day, gated so the same user never receives a second notification on the same local date.
 2. The email fires at the user's configured local digest time, independent of the global scrape cadence.
-3. The subject line reads exactly "Your news digest is ready".
-4. The body contains a single direct link to the dashboard and no per-article content; the dashboard is authoritative for article listings.
-5. Users who turn off `email_enabled` in settings receive no email.
+3. The subject reads "{N} new articles · {top tags}" when N>0 (top three tag slugs by descending article count, comma-joined); otherwise reads exactly "Your news digest is ready".
+4. The body lists up to five unread articles (excluding articles the recipient has previously opened), each as title plus source name plus a direct link to the article detail page.
+5. The body shows a tally of articles ingested since the recipient's local midnight, listing each tag with its article count; the line is omitted entirely when no articles have been ingested in that window.
+6. The body shows the current send time and tomorrow's send time, both formatted in the recipient's timezone.
+7. The body footer contains a "Manage notifications" link to the settings page.
+8. The signature "Gray Matter" is a hyperlink to https://graymatter.ch.
+9. Users who turn off `email_enabled` in settings receive no email.
+10. When the recipient has zero unread articles, the body still sends with the static fallback subject plus the tag tally, local-time line, and footer (no headline block) — preserving the once-per-day signal.
 
 **Constraints:** None
 **Priority:** P1

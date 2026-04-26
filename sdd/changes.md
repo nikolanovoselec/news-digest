@@ -4,6 +4,10 @@ Semantic changes to the specification. Git history captures diffs; this file cap
 
 Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verification pass" entries. No spec cleanup or format fixes (those live in git history).
 
+## 2026-04-26
+
+- REQ-MAIL-001 redesigned from a bare static notification into a high-signal daily digest: the subject now carries the unread article count plus the top three tags, the body lists up to five unread headlines linking straight to article detail pages, and a "since midnight" tag tally summarises what arrived in the recipient's local day. The body also shows the current and next send times in the recipient's timezone, includes a "Manage notifications" footer link to settings, and turns the "Gray Matter" signature into a hyperlink to graymatter.ch; recipients with zero unread articles still receive the static-subject fallback so the once-per-day signal is unchanged.
+
 ## 2026-04-25
 
 - Admin force-refresh GET now content-negotiates: browsers (and the Cloudflare Access post-auth callback that lands users back as a GET) are redirected to `/settings` with an outcome banner, while scripts that send `Accept: application/json` still receive the JSON status body. Operators no longer land on a raw JSON page after clicking Force refresh.
