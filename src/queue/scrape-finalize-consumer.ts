@@ -27,10 +27,12 @@
 // `ready` because the articles ARE real (AC 8).
 //
 // Idempotency invariants live in `src/lib/finalize-merge.ts` — every
-// INSERT clauses on `WHERE article_id = ?loserId`, so a retry after
-// a successful prior pass walks an empty source set and is a no-op.
-// `addChunkStats` is the only non-idempotent side effect; we gate it
-// on `losersDeleted > 0` so a clean retry doesn't double-count.
+// INSERT…SELECT in the merge filters on `WHERE article_id = ?loserId`
+// (the article-row DELETE filters on `WHERE id = ?loserId`), so a
+// retry after a successful prior pass walks an empty source set and
+// is a no-op. `addChunkStats` is the only non-idempotent side effect;
+// we gate it on `losersDeleted > 0` so a clean retry doesn't
+// double-count.
 
 import { log } from '~/lib/log';
 import { applyForeignKeysPragma, batch as batchExec } from '~/lib/db';
@@ -176,7 +178,7 @@ export async function processOneFinalize(
     modelUsed = FALLBACK_MODEL_ID;
     aiResult = await runLLM(modelUsed);
     rawResponse = extractResponsePayload(aiResult);
-    parsed = parseLLMPayload(rawResponse);
+    parsed = parseLLMJson(rawResponse);
     if (parsed === null) {
       log('error', 'digest.generation', {
         status: 'finalize_invalid_json',

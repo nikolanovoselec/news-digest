@@ -11,6 +11,7 @@ declare namespace Cloudflare {
     KV: KVNamespace;
     SCRAPE_COORDINATOR: Queue<import('../src/queue/scrape-coordinator').CoordinatorMessage>;
     SCRAPE_CHUNKS: Queue<import('../src/queue/scrape-chunk-consumer').ChunkJobMessage>;
+    SCRAPE_FINALIZE: Queue<import('../src/queue/scrape-finalize-consumer').FinalizeJobMessage>;
     AI: Ai;
     ASSETS: Fetcher;
     GH_OAUTH_CLIENT_ID: string;

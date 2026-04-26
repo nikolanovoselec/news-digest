@@ -584,8 +584,14 @@ export async function processOneChunk(
     const enqueuedKey = `scrape_run:${body.scrape_run_id}:finalize_enqueued`;
     const alreadyEnqueued = await env.KV.get(enqueuedKey, 'text');
     if (alreadyEnqueued === null) {
-      await env.KV.put(enqueuedKey, '1', { expirationTtl: 3 * 3600 });
+      // Send first, then mark the gate. If `send()` throws on a transient
+      // queue API failure, the gate is still null and the message retry
+      // gets to try again. The narrow risk this leaves open is a duplicate
+      // send if `send()` succeeded but the subsequent KV.put failed before
+      // ack — that is far rarer and far cheaper than permanently losing
+      // the finalize on a transient send hiccup.
       await env.SCRAPE_FINALIZE.send({ scrape_run_id: body.scrape_run_id });
+      await env.KV.put(enqueuedKey, '1', { expirationTtl: 3 * 3600 });
     }
   }
 
