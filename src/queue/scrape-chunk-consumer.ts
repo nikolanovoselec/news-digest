@@ -529,22 +529,27 @@ export async function processOneChunk(
     .run();
   const isFirstCompletion = (completionResult.meta?.changes ?? 0) === 1;
 
+  // Tokens from the failed primary call (when the fallback was taken)
+  // count too — they burned real budget even though their output was
+  // unusable — so we add them to the reported totals. Both live and
+  // wasted counters come from runJsonWithFallback (CF-009).
+  const tokensIn = llmRun.tokensIn + wastedTokensIn;
+  const tokensOut = llmRun.tokensOut + wastedTokensOut;
+  // llmRun.costUsd attributes to the model that actually produced the
+  // output (DEFAULT on the happy path, FALLBACK when the retry
+  // succeeded). Add the wasted-primary cost on top (zero on happy path).
+  const costUsd = llmRun.costUsd + wastedCostUsd;
+  // Deduped count = input candidates that ended up collapsed into a
+  // primary plus input candidates that were dropped entirely (e.g. zero
+  // valid tags after validation).
+  const articlesIngested = prepared.length;
+  const articlesDeduped = body.candidates.length - articlesIngested;
+
+  // Only the first delivery for a given (run_id, chunk_index) pair runs
+  // addChunkStats — it issues an additive UPDATE that would otherwise
+  // double-count tokens, cost, and article counters under queue
+  // redelivery.
   if (isFirstCompletion) {
-    // Tokens from the failed primary call (when the fallback was taken)
-    // count too — they burned real budget even though their output was
-    // unusable — so we add them to the reported totals. Both live and
-    // wasted counters come from runJsonWithFallback (CF-009).
-    const tokensIn = llmRun.tokensIn + wastedTokensIn;
-    const tokensOut = llmRun.tokensOut + wastedTokensOut;
-    // llmRun.costUsd attributes to the model that actually produced the
-    // output (DEFAULT on the happy path, FALLBACK when the retry
-    // succeeded). Add the wasted-primary cost on top (zero on happy path).
-    const costUsd = llmRun.costUsd + wastedCostUsd;
-    // Deduped count = input candidates that ended up collapsed into a
-    // primary plus input candidates that were dropped entirely (e.g. zero
-    // valid tags after validation).
-    const articlesIngested = prepared.length;
-    const articlesDeduped = body.candidates.length - articlesIngested;
     await addChunkStats(env.DB, body.scrape_run_id, {
       tokens_in: tokensIn,
       tokens_out: tokensOut,
