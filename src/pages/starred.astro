@@ -22,6 +22,7 @@ import DigestCard from '~/components/DigestCard.astro';
 import { loadSession } from '~/middleware/auth';
 import { requireSettingsComplete } from '~/middleware/settings-gate';
 import { loadStarredPayload } from '~/pages/api/starred';
+import { parseHashtags } from '~/lib/hashtags';
 
 const env = Astro.locals.runtime.env;
 if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
@@ -66,16 +67,7 @@ const articles = payload.articles;
 // Filter rendered article tags to the user's currently-active hashtag
 // list so stale taxonomy (recently-dropped defaults still cached in
 // the LLM allowlist) never surfaces on starred cards.
-let userTagsForFilter: string[] = [];
-if (user.hashtags_json !== null && user.hashtags_json !== '') {
-  try {
-    const parsed = JSON.parse(user.hashtags_json) as unknown;
-    if (Array.isArray(parsed)) {
-      userTagsForFilter = parsed.filter((v): v is string => typeof v === 'string');
-    }
-  } catch { /* fall back to empty filter set */ }
-}
-const userTagSet = new Set<string>(userTagsForFilter);
+const userTagSet = new Set<string>(parseHashtags(user.hashtags_json));
 ---
 
 <Base title="Starred articles">

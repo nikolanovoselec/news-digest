@@ -1,4 +1,6 @@
-// Implements REQ-SET-002, REQ-AUTH-003
+// Implements REQ-SET-002
+// Implements REQ-AUTH-001
+// Implements REQ-AUTH-003
 //
 // POST /api/tags — replace the authenticated user's hashtag list.
 //

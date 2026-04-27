@@ -22,6 +22,7 @@ import { loadSession } from '~/middleware/auth';
 import { requireSettingsComplete } from '~/middleware/settings-gate';
 import { loadTodayPayload } from '~/pages/api/digest/today';
 import { localDateInTz, DEFAULT_TZ, isValidTz } from '~/lib/tz';
+import { parseHashtags } from '~/lib/hashtags';
 
 const env = Astro.locals.runtime.env;
 if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
@@ -56,17 +57,7 @@ const user = session.user;
 
 // Parse the user's active hashtags for the tag strip + the global-pool
 // query.
-let userTags: string[] = [];
-if (user.hashtags_json !== null && user.hashtags_json !== '') {
-  try {
-    const parsed = JSON.parse(user.hashtags_json) as unknown;
-    if (Array.isArray(parsed)) {
-      userTags = parsed.filter((v): v is string => typeof v === 'string');
-    }
-  } catch {
-    userTags = [];
-  }
-}
+const userTags = parseHashtags(user.hashtags_json);
 
 // Fetch the dashboard payload in-process. loadTodayPayload returns
 // articles + last_scrape_run + next_scrape_at in the same shape the

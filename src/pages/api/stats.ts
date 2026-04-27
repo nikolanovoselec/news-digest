@@ -28,6 +28,7 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { loadSession } from '~/middleware/auth';
+import { parseHashtags } from '~/lib/hashtags';
 
 interface CountRow {
   n: number | null;
@@ -35,18 +36,6 @@ interface CountRow {
 
 interface SumRow {
   n: number | null;
-}
-
-/** Parse the stored `hashtags_json` user column into a bare string list. */
-function parseHashtags(raw: string | null): string[] {
-  if (raw === null || raw === '') return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((v): v is string => typeof v === 'string');
-  } catch {
-    return [];
-  }
 }
 
 export async function GET(context: APIContext): Promise<Response> {

@@ -403,7 +403,7 @@ describe('POST/DELETE /api/articles/:id/star — REQ-STAR-001', () => {
     expect(deletes[0]?.params[1]).toBe('art-99');
   });
 
-  it('CF-028: returns 429 when the per-user star bucket is exhausted', async () => {
+  it('REQ-AUTH-001 AC 9 / CF-028: returns 429 when the per-user star bucket is exhausted', async () => {
     // Pre-load the rate-limit window's KV counter to the rule's limit
     // so the next call observes a full bucket and short-circuits with
     // a Retry-After header.

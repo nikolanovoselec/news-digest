@@ -23,6 +23,8 @@ import { isUrlSafe } from '~/lib/ssrf';
 import { readCachedHeadlines, writeCachedHeadlines } from '~/lib/headline-cache';
 import { log } from '~/lib/log';
 import { mapConcurrent } from '~/lib/concurrency';
+import { stripHtmlToText } from '~/lib/html-text';
+import { FEED_FETCH_TIMEOUT_MS as FETCH_TIMEOUT_MS } from '~/lib/fetch-policy';
 
 /** Hard-cap returned by `fanOutForTags`. 300 overflowed
  * llama-3.1-8b-instruct-fp8-fast's 30K token context window: ~24K
@@ -32,9 +34,11 @@ import { mapConcurrent } from '~/lib/concurrency';
  * just means a tighter candidate pool, which raises the bar for what
  * gets summarized. */
 const MAX_COMBINED_HEADLINES = 100;
-/** 5-second per-fetch timeout. */
-const FETCH_TIMEOUT_MS = 5_000;
-/** 1 MB cap on the response body. */
+/** 1 MB cap on the decoded body — NOT the same shape as
+ *  `FEED_MAX_BODY_BYTES`: this caps the post-decode character count
+ *  passed to the parser, not the raw response byte length. Kept
+ *  module-local so a future maintainer doesn't silently switch the
+ *  semantic during a fetch-policy "completion" pass. */
 const FETCH_MAX_BYTES = 1_024 * 1_024;
 /** Source-fetch concurrency cap across every {tag × source} pair.
  *  CF-008: renamed from GLOBAL_CONCURRENCY so the constant doesn't
@@ -285,26 +289,6 @@ export async function fetchFromSourceWithResult(
   return { headlines, fetched: true, success: true };
 }
 
-/**
- * Fetch headlines for `tag` from `source`, checking the shared KV cache
- * first. On a cache miss, a live fetch is performed with 5s timeout and
- * 1MB body cap; successful results are written back to the cache with
- * a 10-minute TTL (see `headline-cache.ts`). Errors — network, HTTP,
- * parse, extract — are logged and surfaced as an empty array so the
- * caller can carry on with other sources.
- *
- * Thin compatibility shim over {@link fetchFromSourceWithResult} for
- * callers that only need the headline list.
- */
-export async function fetchFromSource(
-  source: SourceAdapter,
-  tag: string,
-  kv: KVNamespace,
-): Promise<Headline[]> {
-  const result = await fetchFromSourceWithResult(source, tag, kv);
-  return result.headlines;
-}
-
 // ---------- Fan-out ------------------------------------------------------
 
 /**
@@ -354,8 +338,8 @@ export async function fanOutForTags(
     jobs,
     SOURCE_FETCH_CONCURRENCY,
     async (job) => {
-      const headlines = await fetchFromSource(job.source, job.tag, kv);
-      return { kind: job.kind, tag: job.tag, headlines };
+      const result = await fetchFromSourceWithResult(job.source, job.tag, kv);
+      return { kind: job.kind, tag: job.tag, headlines: result.headlines };
     },
   );
 
@@ -591,30 +575,14 @@ function extractNodeText(node: unknown): string | null {
 }
 
 /**
- * Strip HTML tags + collapse whitespace + HTML-entity-decode a small
- * set of common sequences. Intended for feed-snippet cleanup before
- * the text lands in the LLM prompt — not a full HTML sanitizer (the
- * output is never rendered as HTML anywhere). Caps at 1200 characters
- * so a giant `<content:encoded>` body can't blow up the chunk prompt
- * budget.
+ * Strip HTML tags + collapse whitespace + HTML-entity-decode for
+ * feed-snippet cleanup before the text lands in the LLM prompt. Caps
+ * at 1200 characters so a giant `<content:encoded>` body can't blow
+ * up the chunk prompt budget. Wraps the shared `stripHtmlToText`
+ * helper in `~/lib/html-text`.
  */
 function htmlSnippetToText(raw: string): string {
-  const noTags = raw.replace(/<[^>]+>/g, ' ');
-  const decoded = noTags
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_m, n: string) => {
-      const code = Number.parseInt(n, 10);
-      return Number.isFinite(code) && code >= 32 && code < 65536
-        ? String.fromCharCode(code)
-        : ' ';
-    });
-  const collapsed = decoded.replace(/\s+/g, ' ').trim();
-  return collapsed.length > 1200 ? collapsed.slice(0, 1200) : collapsed;
+  return stripHtmlToText(raw, { maxLength: 1200 });
 }
 
 /**

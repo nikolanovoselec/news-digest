@@ -30,11 +30,13 @@ import { extractResponsePayload, type AIRunResponse } from '~/lib/generate';
 import { isUrlSafe } from '~/lib/ssrf';
 import { log } from '~/lib/log';
 import type { DiscoveredFeed, SourcesCacheValue } from '~/lib/types';
+import {
+  FEED_FETCH_TIMEOUT_MS,
+  FEED_MAX_BODY_BYTES,
+} from '~/lib/fetch-policy';
 
-/** 5-second per-URL fetch timeout — LLM can suggest slow hosts. */
-const FETCH_TIMEOUT_MS = 5_000;
-/** 1 MB response body cap — a feed that doesn't fit is not a feed. */
-const MAX_BODY_BYTES = 1_048_576;
+const FETCH_TIMEOUT_MS = FEED_FETCH_TIMEOUT_MS;
+const MAX_BODY_BYTES = FEED_MAX_BODY_BYTES;
 /** Evict after 2 consecutive discovery failures. Mirrors the per-feed
  * eviction threshold in REQ-DISC-003 AC 2 applied at the tag level:
  * two attempts without a usable feed and the tag is parked. */

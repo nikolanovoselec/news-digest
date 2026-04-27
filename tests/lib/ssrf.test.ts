@@ -1,7 +1,7 @@
 // Tests for src/lib/ssrf.ts — REQ-DISC-005 (discovery prompt injection protection
 // via SSRF filter) and REQ-GEN-003 (source fan-out, HTTPS-only, no private ranges).
 import { describe, it, expect } from 'vitest';
-import { isUrlSafe, assertUrlSafe } from '~/lib/ssrf';
+import { isUrlSafe } from '~/lib/ssrf';
 
 describe('isUrlSafe', () => {
   describe('scheme enforcement', () => {
@@ -124,26 +124,3 @@ describe('isUrlSafe', () => {
   });
 });
 
-describe('assertUrlSafe', () => {
-  it('REQ-DISC-005: returns void for safe URLs', () => {
-    expect(() => assertUrlSafe('https://example.com')).not.toThrow();
-    expect(() => assertUrlSafe('https://api.github.com')).not.toThrow();
-  });
-
-  it('REQ-DISC-005: throws for unsafe URLs', () => {
-    expect(() => assertUrlSafe('http://example.com')).toThrow();
-    expect(() => assertUrlSafe('https://127.0.0.1')).toThrow();
-    expect(() => assertUrlSafe('https://user@example.com')).toThrow();
-    expect(() => assertUrlSafe('not a url')).toThrow();
-  });
-
-  it('REQ-DISC-005: thrown error mentions the URL for debuggability', () => {
-    try {
-      assertUrlSafe('https://127.0.0.1');
-      throw new Error('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(Error);
-      expect((e as Error).message).toContain('127.0.0.1');
-    }
-  });
-});

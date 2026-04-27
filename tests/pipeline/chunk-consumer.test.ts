@@ -558,7 +558,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     expect(sendMock).toHaveBeenCalledTimes(1);
   });
 
-  it('REQ-PIPE-002: addChunkStats is gated by completion INSERT — no double-count under redelivery', async () => {
+  it('REQ-PIPE-006 AC 7: addChunkStats is gated by completion INSERT — no double-count under redelivery', async () => {
     // CF-002 hardening: addChunkStats issues an additive UPDATE
     // (`tokens_in = tokens_in + ?, ...`) so an unguarded second
     // invocation would double the per-chunk tokens, cost, and article

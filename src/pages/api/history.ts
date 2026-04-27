@@ -27,6 +27,8 @@ import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
 import { loadSession } from '~/middleware/auth';
 import { localDateInTz, DEFAULT_TZ } from '~/lib/tz';
+import { parseJsonStringArray as parseStringArray } from '~/lib/json-string-array';
+import { parseHashtags } from '~/lib/hashtags';
 
 /** 7 days of history per REQ-HIST-001 AC 1. */
 const WINDOW_SECONDS = 7 * 86_400;
@@ -56,30 +58,6 @@ interface ScrapeRunRow {
   status: string;
 }
 
-/** Parse the stored `hashtags_json` user column into a bare string list. */
-function parseHashtags(raw: string | null): string[] {
-  if (raw === null || raw === '') return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((v): v is string => typeof v === 'string');
-  } catch {
-    return [];
-  }
-}
-
-/** Parse a JSON string-array column (tags_json). Returns [] on malformed
- *  input so the handler never crashes on a corrupted row. */
-function parseStringArray(json: string | null): string[] {
-  if (json === null || json === '') return [];
-  try {
-    const parsed = JSON.parse(json) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((v): v is string => typeof v === 'string');
-  } catch {
-    return [];
-  }
-}
 
 /** Wire shape for an article inside a day group. */
 interface WireArticle {

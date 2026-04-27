@@ -43,14 +43,29 @@ export async function GET(context: APIContext): Promise<Response> {
   );
   if (session === null) return errorResponse('unauthorized');
 
+  // Optional ?run_id=… pins the lookup to a specific run rather than
+  // the most-recent row. Useful when the dashboard countdown polls
+  // immediately after a Force Refresh and a new run has not quite
+  // become "most recent" yet.
+  const requestedRunId = new URL(context.request.url).searchParams.get('run_id');
   let row: ScrapeRunRow | null = null;
   try {
-    row = await env.DB
-      .prepare(
-        `SELECT id, started_at, finished_at, status, chunk_count, articles_ingested
-           FROM scrape_runs ORDER BY started_at DESC LIMIT 1`,
-      )
-      .first<ScrapeRunRow>();
+    if (requestedRunId !== null && requestedRunId !== '') {
+      row = await env.DB
+        .prepare(
+          `SELECT id, started_at, finished_at, status, chunk_count, articles_ingested
+             FROM scrape_runs WHERE id = ?1`,
+        )
+        .bind(requestedRunId)
+        .first<ScrapeRunRow>();
+    } else {
+      row = await env.DB
+        .prepare(
+          `SELECT id, started_at, finished_at, status, chunk_count, articles_ingested
+             FROM scrape_runs ORDER BY started_at DESC LIMIT 1`,
+        )
+        .first<ScrapeRunRow>();
+    }
   } catch {
     row = null;
   }

@@ -28,6 +28,7 @@ import { errorResponse } from '~/lib/errors';
 import { loadSession } from '~/middleware/auth';
 import { slugify } from '~/lib/slug';
 import { parseHashtags } from '~/lib/hashtags';
+import { parseJsonStringArray as parseStringArray } from '~/lib/json-string-array';
 import { log } from '~/lib/log';
 
 /** Raw row shape for the global-pool article query. */
@@ -53,18 +54,6 @@ interface ScrapeRunRow {
   status: string;
 }
 
-/** Parse a JSON-encoded string array column (`tags_json`, `details_json`).
- * Returns `[]` on null / malformed input. */
-function parseStringArray(json: string | null): string[] {
-  if (json === null || json === '') return [];
-  try {
-    const parsed = JSON.parse(json) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((v): v is string => typeof v === 'string');
-  } catch {
-    return [];
-  }
-}
 
 /** Wire shape — what the dashboard consumes per article. */
 export interface WireArticle {

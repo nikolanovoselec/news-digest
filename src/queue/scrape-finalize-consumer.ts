@@ -35,7 +35,7 @@
 // double-count.
 
 import { log } from '~/lib/log';
-import { applyForeignKeysPragma, batch as batchExec } from '~/lib/db';
+import { applyForeignKeysPragma } from '~/lib/db';
 import { addChunkStats } from '~/lib/scrape-run';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
 import { FINALIZE_DEDUP_SYSTEM, finalizeDedupUserPrompt, LLM_PARAMS } from '~/lib/prompts';
@@ -207,7 +207,7 @@ export async function processOneFinalize(
   // Step 7 — execute the batch atomically. D1 rolls back the whole
   // batch on any statement failure, so a partial merge can't land.
   if (statements.length > 0) {
-    await batchExec(env.DB, statements);
+    await env.DB.batch(statements);
   }
 
   // Step 8 — fold cost into the run's totals. Gate on losersDeleted > 0

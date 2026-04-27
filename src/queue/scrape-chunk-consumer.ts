@@ -50,7 +50,7 @@ import { FALLBACK_MODEL_ID } from '~/lib/models';
 import { runJsonWithFallback, previewRawResponse } from '~/lib/llm-json';
 import { addChunkStats, finishRun } from '~/lib/scrape-run';
 import { generateUlid } from '~/lib/ulid';
-import { applyForeignKeysPragma, batch as batchExec } from '~/lib/db';
+import { applyForeignKeysPragma } from '~/lib/db';
 import { log } from '~/lib/log';
 
 /** Shape of every `scrape-chunks` queue message. Produced by the
@@ -503,7 +503,7 @@ export async function processOneChunk(
   }
 
   if (statements.length > 0) {
-    await batchExec(env.DB, statements);
+    await env.DB.batch(statements);
   }
 
   // CF-002: atomic chunk-completion via D1. The previous KV-counter

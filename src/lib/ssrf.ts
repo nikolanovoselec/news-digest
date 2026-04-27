@@ -73,16 +73,6 @@ export function isUrlSafe(url: string): boolean {
   return true;
 }
 
-/**
- * Throw if {@link url} is not safe per {@link isUrlSafe}. The thrown
- * error message includes the URL so callers get a useful log line.
- */
-export function assertUrlSafe(url: string): void {
-  if (!isUrlSafe(url)) {
-    throw new Error(`Unsafe URL rejected by SSRF filter: ${url}`);
-  }
-}
-
 /** True iff {@link host} is an IPv4 literal (four numeric octets). */
 function isIpv4Literal(host: string): boolean {
   const parts = host.split('.');

@@ -24,6 +24,7 @@ import {
   RESTORE_DEFAULTS_LABEL,
 } from '~/lib/default-hashtags';
 import { CURATED_SOURCES } from '~/lib/curated-sources';
+import { parseJsonStringArray } from '~/lib/json-string-array';
 
 
 const env = Astro.locals.runtime.env;
@@ -114,26 +115,13 @@ const showModelSelect = false;
 // the Restore / Delete buttons to surface. Corrupt JSON or a
 // non-array payload is treated as an empty list so the form still
 // renders. REQ-SET-002 AC 8.
-let userHashtags: string[] = [];
-if (typeof user.hashtags_json === 'string' && user.hashtags_json !== '') {
-  try {
-    const parsed = JSON.parse(user.hashtags_json) as unknown;
-    if (Array.isArray(parsed)) {
-      // Normalise on read so legacy rows that were stored before the
-      // write-path normalisation landed (mixed case, leading `#`,
-      // stray whitespace) still match DEFAULT_HASHTAGS set-membership
-      // comparisons below. Without this, showDelete stayed false for
-      // an account seeded with `['#ai', 'AI', ...]` because
-      // userHashtagSet.has('ai') returned false on case mismatch.
-      userHashtags = parsed
-        .filter((v): v is string => typeof v === 'string')
-        .map((t) => t.trim().toLowerCase().replace(/^#/, ''))
-        .filter((t) => t !== '');
-    }
-  } catch {
-    userHashtags = [];
-  }
-}
+//
+// Normalise on read so legacy rows stored before the write-path
+// normalisation landed (mixed case, leading `#`, stray whitespace)
+// still match DEFAULT_HASHTAGS set-membership comparisons below.
+const userHashtags = parseJsonStringArray(user.hashtags_json)
+  .map((t) => t.trim().toLowerCase().replace(/^#/, ''))
+  .filter((t) => t !== '');
 const userHashtagSet = new Set<string>(userHashtags);
 // Restore is shown when at least one default tag is missing — the
 // button would actually add something.
@@ -685,6 +673,14 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
   // engines that eat the submit. The server's POST handler returns a
   // 303 to /?account_deleted=1.
 
+  // Run ID captured from the post-force-refresh redirect. Sticks
+  // until the run finishes so the poll can pin its lookup to that
+  // specific run via ?run_id=… (CF-050) — without it the first few
+  // polls race the most-recent ordering and may briefly report the
+  // *previous* run's terminal state instead of the new run's
+  // start-up. Cleared when the server reports running: false.
+  let pinnedRunId: string | null = null;
+
   /** Poll /api/scrape-status every 5s and write a "X/Y chunks done,
    *  N articles ingested" line into [data-scrape-progress]. Hides
    *  the element when no run is active, cheap to keep running —
@@ -693,7 +689,11 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     const el = document.querySelector<HTMLElement>('[data-scrape-progress]');
     if (el === null) return;
     try {
-      const res = await fetch('/api/scrape-status', {
+      const url =
+        pinnedRunId !== null
+          ? `/api/scrape-status?run_id=${encodeURIComponent(pinnedRunId)}`
+          : '/api/scrape-status';
+      const res = await fetch(url, {
         credentials: 'same-origin',
         headers: { Accept: 'application/json' },
       });
@@ -711,6 +711,10 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       if (!body.running) {
         el.hidden = true;
         el.textContent = '';
+        // Run finished — drop the pin so the next force-refresh can
+        // pick up a different run id, and so future polls fall back
+        // to the most-recent path.
+        pinnedRunId = null;
         return;
       }
       // Bucketed progress — 0 / 25 / 50 / 75 / 100 %. Snap DOWN to
@@ -820,6 +824,14 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               forceRefresh === 'reused' ? 'Scrape already running; reused that run.' :
               forceRefresh === 'error' ? 'Force refresh failed; check logs.' :
               `Force refresh: ${forceRefresh}`;
+          }
+          // CF-050: pin the next /api/scrape-status polls to the
+          // run_id the redirect carries, so the very first poll never
+          // races the most-recent ordering and reports the previous
+          // run's terminal state.
+          const runId = params.get('run_id');
+          if (runId !== null && runId !== '') {
+            pinnedRunId = runId;
           }
         }
         if (saved !== null || errorCode !== null || forceRefresh !== null) {

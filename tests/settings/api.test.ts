@@ -592,7 +592,7 @@ describe('PUT /api/settings', () => {
     expect(batchCalls.length).toBe(0);
   });
 
-  it('CF-028: returns 429 when the per-user TAGS_MUTATION bucket is exhausted (PUT closes the bypass)', async () => {
+  it('REQ-AUTH-001 AC 9 / CF-028: returns 429 when the per-user TAGS_MUTATION bucket is exhausted (PUT closes the bypass)', async () => {
     // PUT /api/settings is the alternative tag-mutation write path
     // alongside POST /api/tags*. The bucket counter is shared so a
     // client that drove POST /api/tags to the limit must also be

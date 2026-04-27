@@ -19,14 +19,19 @@
 
 import { isUrlSafe } from '~/lib/ssrf';
 import { mapConcurrent } from '~/lib/concurrency';
+import { stripHtmlToText } from '~/lib/html-text';
+import {
+  ARTICLE_FETCH_TIMEOUT_MS,
+  ARTICLE_MAX_BODY_BYTES,
+} from '~/lib/fetch-policy';
 
 /** Default fan-out for body fetches. Roughly 2x the feed-fetch limit
  *  because article HTML pages are smaller, faster, and tolerate
  *  higher origin pressure than feed re-fetches. */
 export const ARTICLE_BODY_FETCH_CONCURRENCY = 20;
 
-const FETCH_TIMEOUT_MS = 8_000;
-const MAX_BODY_BYTES = 1_500_000;
+const FETCH_TIMEOUT_MS = ARTICLE_FETCH_TIMEOUT_MS;
+const MAX_BODY_BYTES = ARTICLE_MAX_BODY_BYTES;
 const SNIPPET_CAP = 3000;
 
 /**
@@ -80,44 +85,13 @@ export function extractArticleText(html: string): string {
 
   let best = '';
   for (const c of candidates) {
-    const text = stripAndDecode(c);
+    const text = stripHtmlToText(c);
     if (text.length > best.length) best = text;
   }
   const result = best.length > SNIPPET_CAP ? best.slice(0, SNIPPET_CAP) : best;
   return result;
 }
 
-/** Remove HTML tags, decode common entities, collapse whitespace. */
-function stripAndDecode(raw: string): string {
-  const stripped = raw.replace(/<[^>]+>/g, ' ');
-  const decoded = stripped
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&mdash;/g, '—')
-    .replace(/&ndash;/g, '–')
-    .replace(/&rsquo;/g, '\u2019')
-    .replace(/&lsquo;/g, '\u2018')
-    .replace(/&rdquo;/g, '\u201d')
-    .replace(/&ldquo;/g, '\u201c')
-    .replace(/&hellip;/g, '\u2026')
-    .replace(/&#(\d+);/g, (_m, n: string) => {
-      const code = Number.parseInt(n, 10);
-      return Number.isFinite(code) && code >= 32 && code < 65536
-        ? String.fromCharCode(code)
-        : ' ';
-    })
-    .replace(/&#x([0-9a-fA-F]+);/g, (_m, h: string) => {
-      const code = Number.parseInt(h, 16);
-      return Number.isFinite(code) && code >= 32 && code < 65536
-        ? String.fromCharCode(code)
-        : ' ';
-    });
-  return decoded.replace(/\s+/g, ' ').trim();
-}
 
 /**
  * Fetch one article URL and return its extracted body text, or
@@ -143,11 +117,9 @@ export async function fetchArticleBody(
     contactUrl !== undefined && contactUrl !== ''
       ? `Mozilla/5.0 (compatible; news-digest/1.0; +${contactUrl})`
       : 'Mozilla/5.0 (compatible; news-digest/1.0)';
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
-      signal: controller.signal,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       redirect: 'follow',
       headers: {
         'User-Agent': ua,
@@ -197,8 +169,6 @@ export async function fetchArticleBody(
     return text.length >= 100 ? text : null;
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

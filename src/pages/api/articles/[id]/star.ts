@@ -1,4 +1,5 @@
 // Implements REQ-STAR-001
+// Implements REQ-AUTH-001
 //
 // POST /api/articles/:id/star  — star an article for the session user
 // DELETE /api/articles/:id/star — unstar

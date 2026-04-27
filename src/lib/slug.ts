@@ -28,23 +28,6 @@ export function slugify(title: string): string {
   return stripHyphens(trimmed.slice(0, MAX_SLUG_LENGTH));
 }
 
-/**
- * Ensure {@link slug} does not collide with any value in {@link existing}.
- * When a collision is detected, append `-2`, `-3`, ... until a free slot
- * is found. The input array is not mutated.
- */
-export function deduplicateSlug(slug: string, existing: string[]): string {
-  const taken = new Set(existing);
-  if (!taken.has(slug)) {
-    return slug;
-  }
-  let suffix = 2;
-  while (taken.has(`${slug}-${suffix}`)) {
-    suffix++;
-  }
-  return `${slug}-${suffix}`;
-}
-
 /** Remove leading and trailing hyphens. */
 function stripHyphens(s: string): string {
   return s.replace(/^-+|-+$/g, '');

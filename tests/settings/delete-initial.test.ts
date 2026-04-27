@@ -213,7 +213,7 @@ describe('POST /api/tags/delete-initial — REQ-SET-002 AC 8', () => {
     expect(persisted).toEqual([]);
   });
 
-  it('CF-028: returns 429 when the per-user TAGS_MUTATION bucket is exhausted', async () => {
+  it('REQ-AUTH-001 AC 9 / CF-028: returns 429 when the per-user TAGS_MUTATION bucket is exhausted', async () => {
     const db = makeDb(userWith('["a","b"]'));
     const e = env(db);
     const nowSec = Math.floor(Date.now() / 1000);

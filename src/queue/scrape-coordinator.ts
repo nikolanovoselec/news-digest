@@ -12,10 +12,11 @@
 // last chunk via counter==0.
 //
 // Per-source fetch reuses the 10-worker semaphore pattern from
-// src/lib/sources.ts (fetchFromSource + KV cache + 5s timeout + 1MB
-// cap). Curated sources are trusted (not gated through SSRF), but
-// discovered-tag feeds are synthesised on-the-fly via
-// adaptersForDiscoveredFeeds so the SSRF gate still fires.
+// src/lib/sources.ts (fetchFromSourceWithResult + KV cache + per-fetch
+// timeout + body cap from ~/lib/fetch-policy). Curated sources are
+// trusted (not gated through SSRF); discovered-tag feeds are
+// synthesised on-the-fly via adaptersForDiscoveredFeeds so the SSRF
+// gate still fires.
 
 import {
   CURATED_SOURCES,
@@ -240,7 +241,7 @@ export async function runCoordinator(
   // value in an href attribute is NOT enough — Astro's escaping
   // prevents HTML injection but a `javascript:` href is valid HTML).
   const candidates: Candidate[] = [];
-  const nowSec = Math.floor(Date.now() / 1000);
+  const evictionNowSec = Math.floor(Date.now() / 1000);
   // Drop candidates whose source pubDate is more than 48 hours old.
   // Cron runs every 4 hours, so anything older than two days has
   // either been seen on a prior tick (and is already in the pool)
@@ -248,10 +249,10 @@ export async function runCoordinator(
   // summarising it wastes LLM budget and clutters the dashboard with
   // 'new ingest, old publish_at' cards that sort below genuinely
   // fresh stories and make the feed look stuck. candidates with an
-  // unparsable pubDate (we fall back to nowSec) are kept — a missing
-  // date is not the same as a stale date.
+  // unparsable pubDate (we fall back to evictionNowSec) are kept — a
+  // missing date is not the same as a stale date.
   const FRESHNESS_WINDOW_SEC = 48 * 60 * 60;
-  const staleCutoff = nowSec - FRESHNESS_WINDOW_SEC;
+  const staleCutoff = evictionNowSec - FRESHNESS_WINDOW_SEC;
   let droppedStale = 0;
   let missingPubdateKept = 0;
   for (const row of rawHeadlines) {
@@ -260,7 +261,7 @@ export async function runCoordinator(
     if (!isSafeWebUrl(canonical)) continue;
     const hasParsedPub =
       typeof row.headline.published_at === 'number' && row.headline.published_at > 0;
-    const pub = hasParsedPub ? (row.headline.published_at as number) : nowSec;
+    const pub = hasParsedPub ? (row.headline.published_at as number) : evictionNowSec;
     if (hasParsedPub && pub < staleCutoff) {
       droppedStale += 1;
       continue;
@@ -316,7 +317,7 @@ export async function runCoordinator(
     .map((c) => c.primary.canonical_url)
     .filter((url) => existing.has(url));
   if (reSeenUrls.length > 0) {
-    const nowSec = Math.floor(Date.now() / 1000);
+    const refreshNowSec = Math.floor(Date.now() / 1000);
     const REFRESH_BATCH = 100;
     for (let i = 0; i < reSeenUrls.length; i += REFRESH_BATCH) {
       const slice = reSeenUrls.slice(i, i + REFRESH_BATCH);
@@ -325,7 +326,7 @@ export async function runCoordinator(
         .prepare(
           `UPDATE articles SET ingested_at = ?1 WHERE canonical_url IN (${placeholders})`,
         )
-        .bind(nowSec, ...slice)
+        .bind(refreshNowSec, ...slice)
         .run();
     }
     log('info', 'digest.generation', {

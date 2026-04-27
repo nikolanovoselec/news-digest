@@ -35,20 +35,6 @@ export interface Headline {
   published_at?: number;
 }
 
-export interface GeneratedArticle {
-  title: string;
-  url: string;
-  one_liner: string;
-  details: string[];
-  /** User hashtags this article belongs to. Returned by the LLM and
-   * validated server-side against the user's current hashtag list. */
-  tags: string[];
-  /** Resolved from the dedupe headline map by canonicalized URL; `null` when
-   * the LLM returned a URL not present in the fetched headlines (should be
-   * rare — the prompt instructs the model to pick from the headline list). */
-  source_name: string | null;
-}
-
 export interface DiscoveredFeed {
   name: string;
   url: string;

@@ -1,4 +1,6 @@
-// Implements REQ-SET-002 AC 8 (restore defaults) + REQ-AUTH-003 (Origin check).
+// Implements REQ-SET-002
+// Implements REQ-AUTH-001
+// Implements REQ-AUTH-003
 //
 // POST /api/tags/restore — replace the authenticated user's hashtag list
 // with the bundled DEFAULT_HASHTAGS and 303-redirect to /digest.

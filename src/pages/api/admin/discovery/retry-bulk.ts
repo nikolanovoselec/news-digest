@@ -40,27 +40,20 @@ import { log } from '~/lib/log';
 import { loadSession } from '~/middleware/auth';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
+import { parseJsonStringArray } from '~/lib/json-string-array';
 
 /** Parse the user's stored hashtags_json (a JSON array of strings,
  *  possibly prefixed with `#`) into a normalised lowercase array.
  *  Mirrors the normalisation used by /api/admin/discovery/retry so a legacy
  *  row carrying mixed-case entries still produces matching KV keys. */
 function userHashtags(hashtagsJson: string | null): string[] {
-  if (hashtagsJson === null || hashtagsJson === '') return [];
-  try {
-    const parsed = JSON.parse(hashtagsJson);
-    if (!Array.isArray(parsed)) return [];
-    const out: string[] = [];
-    for (const entry of parsed) {
-      if (typeof entry !== 'string') continue;
-      const stripped = entry.startsWith('#') ? entry.slice(1) : entry;
-      const normalized = stripped.toLowerCase();
-      if (normalized !== '' && !out.includes(normalized)) out.push(normalized);
-    }
-    return out;
-  } catch {
-    return [];
+  const out: string[] = [];
+  for (const entry of parseJsonStringArray(hashtagsJson)) {
+    const stripped = entry.startsWith('#') ? entry.slice(1) : entry;
+    const normalized = stripped.toLowerCase();
+    if (normalized !== '' && !out.includes(normalized)) out.push(normalized);
   }
+  return out;
 }
 
 /** True iff the parsed `sources:{tag}` value has an explicitly empty

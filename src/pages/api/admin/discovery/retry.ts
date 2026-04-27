@@ -45,6 +45,7 @@ import { log } from '~/lib/log';
 import { loadSession } from '~/middleware/auth';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
+import { parseJsonStringArray } from '~/lib/json-string-array';
 
 interface RetryBody {
   tag?: unknown;
@@ -76,18 +77,10 @@ function isFormEncoded(request: Request): boolean {
  */
 function userHashtagSet(hashtagsJson: string | null): Set<string> {
   const out = new Set<string>();
-  if (hashtagsJson === null || hashtagsJson === '') return out;
-  try {
-    const parsed = JSON.parse(hashtagsJson);
-    if (!Array.isArray(parsed)) return out;
-    for (const entry of parsed) {
-      if (typeof entry !== 'string') continue;
-      const stripped = entry.startsWith('#') ? entry.slice(1) : entry;
-      const normalized = stripped.toLowerCase();
-      if (normalized !== '') out.add(normalized);
-    }
-  } catch {
-    return out;
+  for (const entry of parseJsonStringArray(hashtagsJson)) {
+    const stripped = entry.startsWith('#') ? entry.slice(1) : entry;
+    const normalized = stripped.toLowerCase();
+    if (normalized !== '') out.add(normalized);
   }
   return out;
 }

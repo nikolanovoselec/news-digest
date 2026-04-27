@@ -19,6 +19,7 @@ import TagStrip from '~/components/TagStrip.astro';
 import { loadSession } from '~/middleware/auth';
 import { slugify } from '~/lib/slug';
 import { GET as getHistory } from '~/pages/api/history';
+import { parseHashtags } from '~/lib/hashtags';
 
 interface WireArticle {
   id: string;
@@ -137,20 +138,9 @@ if (isFilteringByTag) {
   }
 }
 
-// User's active hashtags (from the session row) — drives the chip
-// set. Parsing mirrors digest.astro.
+// User's active hashtags (from the session row) — drives the chip set.
 const sessionUser = session.user;
-let userTags: string[] = [];
-if (sessionUser.hashtags_json !== null && sessionUser.hashtags_json !== '') {
-  try {
-    const parsed = JSON.parse(sessionUser.hashtags_json) as unknown;
-    if (Array.isArray(parsed)) {
-      userTags = parsed.filter((v): v is string => typeof v === 'string');
-    }
-  } catch {
-    userTags = [];
-  }
-}
+const userTags = parseHashtags(sessionUser.hashtags_json);
 
 // Set of user-active tags for filtering displayed article tags so
 // stale taxonomy (e.g. recently-dropped defaults still cached in the

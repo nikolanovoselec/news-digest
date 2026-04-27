@@ -1,4 +1,6 @@
-// Implements REQ-SET-002 AC 8 (delete all tags) + REQ-AUTH-003 (Origin check).
+// Implements REQ-SET-002
+// Implements REQ-AUTH-001
+// Implements REQ-AUTH-003
 //
 // POST /api/tags/delete-initial — clear the authenticated user's
 // entire hashtag list, regardless of whether a tag came from the
