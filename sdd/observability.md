@@ -65,6 +65,27 @@ Structured JSON logging as the single operational surface — no external observ
 
 ---
 
+### REQ-OPS-005: Admin force-refresh endpoint
+
+**Intent:** The owner can trigger an out-of-band scrape tick when the regular every-four-hours cron has not yet fired and a manual top-up is wanted. Same work as the cron, no per-user state, no LLM cost difference. Behind the three-layer admin gate so other signed-in users cannot trigger it.
+
+**Applies To:** Admin
+
+**Acceptance Criteria:**
+1. The endpoint accepts both POST (from the Settings page button) and GET (for direct URL visits and operator scripts). Both methods do the same work.
+2. Triggering the endpoint starts a fresh scrape run with status running and sends one coordinator message — the same work the every-four-hours cron does.
+3. If a run started by an earlier cron tick or a previous manual trigger is still running and started within the last two minutes, the endpoint reuses that run rather than starting a new one. This protects against accidental double-clicks and tab-restore replays.
+4. The response is content-negotiated. Browsers and direct URL visits get a `303 See Other` redirect to `/settings?force_refresh=ok&run_id=...`. Operator scripts that send `Accept: application/json` get `200 OK` with `{ run_id, started_at, reused }`.
+5. The endpoint is gated by all three admin layers per REQ-AUTH-001 AC 8: Cloudflare Access at the zone level (optionally audience-pinned via `CF_ACCESS_AUD`), a valid worker session, and the session email matching the operator allowlist. Failure at any layer returns the layer's native deny response (Access challenge, 401 unauthorized, or 403 forbidden).
+
+**Constraints:** CON-AUTH-001, CON-SEC-001
+**Priority:** P2
+**Dependencies:** REQ-PIPE-001, REQ-AUTH-001
+**Verification:** Integration test
+**Status:** Implemented
+
+---
+
 ### REQ-OPS-004: Crawler policy and public-surface discoverability
 
 **Intent:** The landing page is the only public surface and should be cleanly indexable; every authenticated surface is explicitly hidden from crawlers. Well-behaved AI training crawlers are denied across the whole site. SEO metadata, a sitemap, a machine-readable crawling policy, and search-engine friendly error pages round out the contract so the one public URL is discoverable without leaking user content or feeding model training.

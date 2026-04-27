@@ -1,13 +1,15 @@
-// Tests for /api/admin/force-refresh — operator-only manual coordinator kick.
+// Tests for /api/admin/force-refresh — REQ-OPS-005 operator-only manual
+// coordinator kick. Cross-cuts: REQ-PIPE-001 (same backend work as the
+// every-4-hours cron), REQ-AUTH-001 AC 8 (three-layer admin gate).
 //
 // Coverage:
-//   - CF-001 admin gate: missing Cf-Access-Jwt-Assertion → 401, missing
-//     session → 401, non-admin email → 403.
+//   - REQ-AUTH-001 AC 8 admin gate: missing Cf-Access-Jwt-Assertion → 401,
+//     missing session → 401, non-admin email → 403.
 //   - POST rejects missing/foreign Origin (REQ-AUTH-003 CSRF defence)
-//   - POST happy path: startRun + SCRAPE_COORDINATOR.send, 303 redirect
-//   - GET happy path: same backend work, JSON response
-//   - Concurrency guard: if a status='running' row exists within
-//     REUSE_WINDOW_SECONDS, both paths reuse it instead of kicking
+//   - REQ-OPS-005 AC 1+2: POST and GET both kick startRun + SCRAPE_COORDINATOR.send.
+//   - REQ-OPS-005 AC 4: POST happy path returns 303, GET with Accept JSON returns 200 JSON.
+//   - REQ-OPS-005 AC 3: REUSE_WINDOW_SECONDS guard — if a status='running'
+//     row exists within 120s, both paths reuse it instead of kicking
 //     a second coordinator message (prevents double-click storms
 //     and preview-bot refetches from multiplying LLM cost).
 
