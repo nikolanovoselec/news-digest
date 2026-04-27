@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-27
 
+- REQ-PIPE-008 AC 9 refined: a second transient outage of the run-state store landing inside the same closing handoff (i.e. the lock-clearing rollback itself failing) now records a structured operator-visible log entry naming the stranded lock and the original send error, and the original send error is the one surfaced to the queue retry path so the underlying cause is not masked. The previous wording quietly assumed the rollback always succeeded.
+
 - REQ-PIPE-006 AC 6 added and REQ-PIPE-008 AC 9 added: the history page's per-tick duration no longer drifts forward when the queue redelivers the closing message of a scrape, and a transient queue hiccup at the moment a tick closes can no longer strand the run without its cross-chunk dedup pass — the next redelivery picks up the handoff so the dedup eventually runs and the LLM is never billed twice for the same tick.
 
 - REQ-AUTH-002 AC 4 silent-refresh threshold updated from "less than 15 minutes" to "less than 5 minutes", and now extends across plain page navigation, not just XHR API calls — so users actively reading the dashboard no longer hard-expire after 60 minutes mid-session.
