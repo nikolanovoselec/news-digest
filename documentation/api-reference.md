@@ -309,7 +309,35 @@ Replaces the user's hashtag list with the curated default seed from `DEFAULT_HAS
 
 ---
 
+### POST /api/tags/delete-initial
+
+Clears the new-user "would you like our suggested tags?" seed prompt by writing an empty `hashtags_json = '[]'` for the calling user. The settings page checks `hashtags_json IS NULL` to decide whether to show the seed prompt; setting it to a JSON empty array dismisses the prompt without committing the user to any tags.
+
+**Auth:** Required (session cookie). Origin check applies — the form submits as `application/x-www-form-urlencoded` from `/settings` with the same-origin Origin header.
+
+**Rate limit:** 30 requests / 60 seconds per user id (`tags_mutation` rule).
+
+**Response:** `303 → /digest` on success | `401` if unauthenticated | `403 origin_mismatch` | `429 rate_limit_exceeded` | `500 { ok: false, error: "db_failed" }`
+
+**Implements:** [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9
+
+---
+
 ## Developer Tools
+
+### POST /api/dev/login
+
+Dev-only session minter. Bypasses the OAuth round-trip and writes a pre-baked session cookie for the synthetic e2e user (or `DEV_BYPASS_USER_ID` when set). Used by `scripts/e2e-test.sh` and local Playwright runs to skip browser-based sign-in.
+
+**Access control:** Endpoint returns `404` when `DEV_BYPASS_TOKEN` is unset OR when the request's `Authorization: Bearer <token>` doesn't timing-safe-match it. The endpoint deliberately does not distinguish "wrong token" from "not found" — this avoids enumeration of dev-mode deployments. Endpoint also returns `404` if `OAUTH_JWT_SECRET` is missing (no JWT can be minted).
+
+**Default user:** When `DEV_BYPASS_USER_ID` is unset the endpoint mints a session for `__e2e__` (the synthetic row from `migrations/0006_e2e_user.sql`), so e2e flows never mutate the operator's own account. Setting `DEV_BYPASS_USER_ID` to a real user id impersonates that user — only set this manually on staging.
+
+**Response (success):** `204` with `Set-Cookie: oauth_session=...` (HttpOnly, Secure, SameSite=Lax). `401` if Bearer header is missing/malformed. `404` if disabled or token mismatch.
+
+**Implements:** [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-dev-bypass-for-end-to-end-testing) (when present); otherwise the endpoint exists purely as a test scaffold and is not part of the user-facing contract.
+
+---
 
 ### POST /api/dev/trigger-scrape
 

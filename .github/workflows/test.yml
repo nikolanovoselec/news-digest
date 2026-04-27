@@ -33,6 +33,12 @@ jobs:
       - name: Install dependencies
         run: npm install --no-fund --no-audit
 
+      # CF-033 — fail the build on any HIGH+ npm advisory so we don't
+      # ship a known-vulnerable dep. `--audit-level=high` ignores LOW
+      # and MODERATE noise (those are tracked via Dependabot PRs).
+      - name: npm audit (high+)
+        run: npm audit --audit-level=high
+
       - name: Lint
         run: npm run lint
 
