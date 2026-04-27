@@ -104,21 +104,33 @@ describe('refresh-tokens — REQ-AUTH-008', () => {
     expect(newRow!.revoked_at).toBeNull();
   });
 
-  it('REQ-AUTH-008 AC 2: rotateRefreshToken returns null on concurrent rotation', async () => {
+  it('REQ-AUTH-008 AC 2: rotateRefreshToken returns null on concurrent rotation, no orphan child created', async () => {
     // Simulate two callers both holding the same refresh row in memory.
     const req = fakeRequest({ ua: 'Mozilla/5.0', country: 'CH' });
-    const { value } = await issueRefreshToken(env.DB, USER_ID, req);
+    const { value, id: parentId } = await issueRefreshToken(env.DB, USER_ID, req);
     const rowA = await findRefreshToken(env.DB, value);
     const rowB = await findRefreshToken(env.DB, value);
     expect(rowA).not.toBeNull();
     expect(rowB).not.toBeNull();
 
-    const winner = await rotateRefreshToken(env.DB, rowA!, req);
+    // Both rotations called with the SAME `now` so the same-second
+    // collision case is exercised — the predicate must still produce
+    // exactly one child.
+    const sameNow = Math.floor(Date.now() / 1000);
+    const winner = await rotateRefreshToken(env.DB, rowA!, req, sameNow);
     expect(winner).not.toBeNull();
 
-    // Loser presents the same (now-revoked) parent row.
-    const loser = await rotateRefreshToken(env.DB, rowB!, req);
+    const loser = await rotateRefreshToken(env.DB, rowB!, req, sameNow);
     expect(loser).toBeNull();
+
+    // Exactly one unrevoked child exists for the parent — no orphan row.
+    const childCount = await env.DB
+      .prepare(
+        'SELECT COUNT(*) AS n FROM refresh_tokens WHERE parent_id = ?1 AND revoked_at IS NULL',
+      )
+      .bind(parentId)
+      .first<{ n: number }>();
+    expect(childCount!.n).toBe(1);
   });
 
   it('CodeQL js/sensitive-data-treatment: row id is not the cookie value', async () => {

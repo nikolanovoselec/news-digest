@@ -212,6 +212,15 @@ export async function rotateRefreshToken(
   // it's 0, a concurrent rotation already happened. We DO NOT insert
   // the new row in that case — let the winner's row be the surviving
   // child, and the caller decides what to serve.
+  //
+  // Conditional INSERT predicate guards on "no unrevoked child exists
+  // for this parent yet". This is tighter than the more obvious
+  // `revoked_at = ?5` predicate, which fails when two rotations land
+  // in the same Math.floor second — both the winner and loser would
+  // see `parent.revoked_at = N` (their shared `now`), and both
+  // INSERTs would fire, leaving an orphan unrevoked child. The
+  // "no-existing-unrevoked-child" predicate makes the INSERT
+  // contention-free regardless of timestamp granularity.
   const batch = await db.batch([
     db
       .prepare(
@@ -225,9 +234,9 @@ export async function rotateRefreshToken(
         `INSERT INTO refresh_tokens
            (id, token_hash, user_id, device_fingerprint_hash, issued_at, last_used_at, expires_at, revoked_at, parent_id, rotation_count)
          SELECT ?1, ?2, ?3, ?4, ?5, ?5, ?6, NULL, ?7, ?8
-          WHERE EXISTS (
+          WHERE NOT EXISTS (
              SELECT 1 FROM refresh_tokens
-              WHERE id = ?7 AND revoked_at = ?5
+              WHERE parent_id = ?7 AND revoked_at IS NULL
           )`,
       )
       .bind(

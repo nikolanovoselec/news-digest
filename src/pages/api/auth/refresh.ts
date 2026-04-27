@@ -96,7 +96,22 @@ export async function POST(context: APIContext): Promise<Response> {
   // REQ-AUTH-008 AC 4 — reuse detection with grace-window tolerance.
   if (row.revoked_at !== null) {
     const sinceRevoked = nowSec - row.revoked_at;
-    if (sinceRevoked <= ROTATION_GRACE_SECONDS) {
+    // Negative `sinceRevoked` (clock skew / replication lag) must not
+    // open the grace window indefinitely.
+    if (sinceRevoked >= 0 && sinceRevoked <= ROTATION_GRACE_SECONDS) {
+      // REQ-AUTH-008 AC 1 — fingerprint check applies in the grace
+      // branch too, otherwise a stolen cookie within the rotation
+      // window mints one free access JWT off any device.
+      const presentFp = await deviceFingerprint(context.request);
+      if (presentFp !== row.device_fingerprint_hash) {
+        await revokeAllForUser(env.DB, row.user_id, nowSec);
+        log('warn', 'auth.refresh.grace_fingerprint_mismatch', {
+          user_id: row.user_id,
+          refresh_token_id: row.id,
+          via: 'explicit_refresh',
+        });
+        return unauthorizedResponse();
+      }
       // Concurrent-rotation collision — serve a fresh access JWT
       // off the surviving child without rotating again.
       const child = await findUnrevokedChild(env.DB, row.id);

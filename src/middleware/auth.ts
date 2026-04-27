@@ -196,7 +196,24 @@ export async function loadSession(
   // every refresh row for the user.
   if (refreshRow.revoked_at !== null) {
     const sinceRevoked = nowSec - refreshRow.revoked_at;
-    if (sinceRevoked <= ROTATION_GRACE_SECONDS) {
+    // Negative `sinceRevoked` (revoked_at is in the future — clock
+    // skew, replication lag, malicious DB write) MUST NOT pass the
+    // grace check; otherwise an attacker who can advance the row's
+    // revoked_at into the future gets unbounded grace.
+    if (sinceRevoked >= 0 && sinceRevoked <= ROTATION_GRACE_SECONDS) {
+      // REQ-AUTH-008 AC 1 — even in the benign-collision branch, the
+      // device fingerprint must match. Otherwise an attacker with a
+      // freshly-stolen-and-just-rotated cookie could ride the grace
+      // window to mint one extra 5-min access JWT.
+      const presentFingerprint = await deviceFingerprint(request);
+      if (presentFingerprint !== refreshRow.device_fingerprint_hash) {
+        await revokeAllForUser(db, refreshRow.user_id, nowSec);
+        log('warn', 'auth.refresh.grace_fingerprint_mismatch', {
+          user_id: refreshRow.user_id,
+          refresh_token_id: refreshRow.id,
+        });
+        return null;
+      }
       const child = await findUnrevokedChild(db, refreshRow.id);
       if (child !== null) {
         const userRow = await loadUserById(db, refreshRow.user_id);
