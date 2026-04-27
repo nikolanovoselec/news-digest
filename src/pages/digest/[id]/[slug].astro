@@ -619,12 +619,10 @@ const articleDataset = {
   }
 </style>
 
-<script>
-  // The site's CSP is `script-src 'self'` — Astro inlines small page-
-  // level scripts directly into the HTML, and the browser blocks them
-  // as inline-CSP violations. This `import` makes Astro bundle the
-  // module externally instead, so it loads as `<script src="...">`
-  // and actually executes. See src/scripts/article-detail.ts for the
-  // star-toggle + back-button logic that lives in the bundle.
-  import '~/scripts/article-detail';
-</script>
+{/* Astro 5 directRenderScript inlines the bundled output of any
+    pure-import script tag regardless of size, which the site's
+    `script-src 'self'` CSP then blocks at runtime. The only reliable
+    workaround is a static-served file in /public loaded via
+    is:inline (Astro renders the tag verbatim, no processing). The .ts
+    source under src/scripts/article-detail.ts mirrors this file. */}
+<script is:inline type="module" src="/scripts/article-detail.js"></script>

@@ -50,12 +50,12 @@ const initialLabel = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m ${secs}s
   </section>
 </Base>
 
-<script>
-  // Logic moved to src/scripts/rate-limited.ts so Astro emits an
-  // external bundle (CSP `script-src 'self'` blocks the inline
-  // bundle Astro would otherwise produce for small scripts).
-  import '~/scripts/rate-limited';
-</script>
+{/* Static-served from /public so the site CSP `script-src 'self'`
+    permits it. Astro 5 directRenderScript inlines pure-import script
+    tags regardless of size, and the inline emit is then blocked by
+    CSP. The .ts source under src/scripts/rate-limited.ts mirrors this
+    file. */}
+<script is:inline type="module" src="/scripts/rate-limited.js"></script>
 
 <style>
   .rate-limited {

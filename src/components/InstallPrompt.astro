@@ -53,12 +53,12 @@ const { class: className = '' } = Astro.props;
   </p>
 </div>
 
-<script>
-  // Logic moved to src/scripts/install-prompt.ts so Astro emits an
-  // external bundle (CSP `script-src 'self'` blocks the inline
-  // bundle Astro would otherwise produce for small scripts).
-  import '~/scripts/install-prompt';
-</script>
+{/* Static-served from /public so the site CSP `script-src 'self'`
+    permits it. Astro 5 directRenderScript inlines pure-import script
+    tags regardless of size, and the inline emit is then blocked by
+    CSP. The .ts source under src/scripts/install-prompt.ts mirrors
+    this file. */}
+<script is:inline type="module" src="/scripts/install-prompt.js"></script>
 
 <style>
   .install-prompt {
