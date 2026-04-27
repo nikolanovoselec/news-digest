@@ -591,12 +591,27 @@ export async function processOneChunk(
         // the send. Without this, a transient send failure would mark
         // finalize_enqueued = 1 forever, and the next redelivery
         // would short-circuit, losing the finalize permanently.
-        await env.DB
-          .prepare(
-            'UPDATE scrape_runs SET finalize_enqueued = 0 WHERE id = ?1',
-          )
-          .bind(body.scrape_run_id)
-          .run();
+        //
+        // The rollback itself is wrapped — if D1 is the failing
+        // dependency we still want to surface the original send error
+        // to the queue retry path. Logging the rollback failure is
+        // the only way an operator can see the lock is now stranded
+        // at 1 and the finalize message is lost.
+        try {
+          await env.DB
+            .prepare(
+              'UPDATE scrape_runs SET finalize_enqueued = 0 WHERE id = ?1',
+            )
+            .bind(body.scrape_run_id)
+            .run();
+        } catch (rollbackErr) {
+          log('error', 'digest.generation', {
+            status: 'finalize_lock_rollback_failed',
+            scrape_run_id: body.scrape_run_id,
+            send_error: String(sendErr).slice(0, 500),
+            rollback_error: String(rollbackErr).slice(0, 500),
+          });
+        }
         throw sendErr;
       }
     }
