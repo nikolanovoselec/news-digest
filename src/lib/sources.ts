@@ -22,6 +22,7 @@ import type { DiscoveredFeed, Headline } from '~/lib/types';
 import { isUrlSafe } from '~/lib/ssrf';
 import { readCachedHeadlines, writeCachedHeadlines } from '~/lib/headline-cache';
 import { log } from '~/lib/log';
+import { mapConcurrent } from '~/lib/concurrency';
 
 /** Hard-cap returned by `fanOutForTags`. 300 overflowed
  * llama-3.1-8b-instruct-fp8-fast's 30K token context window: ~24K
@@ -35,8 +36,10 @@ const MAX_COMBINED_HEADLINES = 100;
 const FETCH_TIMEOUT_MS = 5_000;
 /** 1 MB cap on the response body. */
 const FETCH_MAX_BYTES = 1_024 * 1_024;
-/** Global concurrency cap across every {tag × source} pair. */
-const GLOBAL_CONCURRENCY = 10;
+/** Source-fetch concurrency cap across every {tag × source} pair.
+ *  CF-008: renamed from GLOBAL_CONCURRENCY so the constant doesn't
+ *  collide with the coordinator's own concurrency cap. */
+const SOURCE_FETCH_CONCURRENCY = 10;
 /** Max items pulled from a discovered (tag-specific) feed per tag. */
 const DISCOVERED_FEED_ITEM_CAP = 20;
 
@@ -340,34 +343,21 @@ export async function fanOutForTags(
     }
   }
 
-  // Simple semaphore: each worker pulls the next job index until the
-  // list is exhausted. Results are stored in the same index so ordering
-  // is preserved regardless of network latency.
-  type JobResult =
-    | { kind: 'discovered' | 'generic'; tag: string; headlines: Headline[] }
-    | undefined;
-  const results: JobResult[] = [];
-  for (let i = 0; i < jobs.length; i++) {
-    results.push(undefined);
-  }
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    while (true) {
-      const i = cursor++;
-      if (i >= jobs.length) return;
-      const job = jobs[i];
-      if (job === undefined) return;
-      const headlines = await fetchFromSource(job.source, job.tag, kv);
-      results[i] = { kind: job.kind, tag: job.tag, headlines };
-    }
+  // Bounded fan-out across {tag × source} jobs. Results are returned
+  // in input order so the dedup pass below sees deterministic precedence.
+  type JobResult = {
+    kind: 'discovered' | 'generic';
+    tag: string;
+    headlines: Headline[];
   };
-
-  const workerCount = Math.min(GLOBAL_CONCURRENCY, jobs.length);
-  const workers: Promise<void>[] = [];
-  for (let w = 0; w < workerCount; w++) {
-    workers.push(worker());
-  }
-  await Promise.all(workers);
+  const results = await mapConcurrent<typeof jobs[number], JobResult>(
+    jobs,
+    SOURCE_FETCH_CONCURRENCY,
+    async (job) => {
+      const headlines = await fetchFromSource(job.source, job.tag, kv);
+      return { kind: job.kind, tag: job.tag, headlines };
+    },
+  );
 
   // Deduplicate by canonical URL. First occurrence wins for title /
   // source_name (tag-specific jobs come first in `jobs`), but the
@@ -377,14 +367,17 @@ export async function fanOutForTags(
   const seen = new Map<string, Headline>();
   const order: string[] = [];
   for (const r of results) {
-    if (r === undefined) continue;
     for (const h of r.headlines) {
       const key = canonicalize(h.url);
       const existing = seen.get(key);
       if (existing !== undefined) {
+        // CF-011: replace the existing entry with an immutable copy so
+        // upstream callers that share a Headline reference (e.g. the
+        // chunk consumer reading the same map) cannot observe a
+        // half-updated source_tags array mid-iteration.
         const tags = new Set(existing.source_tags ?? []);
         tags.add(r.tag);
-        existing.source_tags = Array.from(tags);
+        seen.set(key, { ...existing, source_tags: Array.from(tags) });
         continue;
       }
       seen.set(key, { ...h, source_tags: [r.tag] });

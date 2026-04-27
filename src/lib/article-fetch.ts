@@ -18,6 +18,12 @@
 //     per-chunk prompt balloons.
 
 import { isUrlSafe } from '~/lib/ssrf';
+import { mapConcurrent } from '~/lib/concurrency';
+
+/** Default fan-out for body fetches. Roughly 2x the feed-fetch limit
+ *  because article HTML pages are smaller, faster, and tolerate
+ *  higher origin pressure than feed re-fetches. */
+export const ARTICLE_BODY_FETCH_CONCURRENCY = 20;
 
 const FETCH_TIMEOUT_MS = 8_000;
 const MAX_BODY_BYTES = 1_500_000;
@@ -203,23 +209,13 @@ export async function fetchArticleBody(
  */
 export async function fetchArticleBodies(
   urls: readonly string[],
-  concurrency = 20,
+  concurrency = ARTICLE_BODY_FETCH_CONCURRENCY,
   contactUrl?: string,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  const queue = [...urls];
-  async function worker(): Promise<void> {
-    while (queue.length > 0) {
-      const url = queue.shift();
-      if (url === undefined) break;
-      const body = await fetchArticleBody(url, contactUrl);
-      if (body !== null && body !== '') out.set(url, body);
-    }
-  }
-  const workers: Promise<void>[] = [];
-  for (let i = 0; i < Math.min(concurrency, urls.length); i++) {
-    workers.push(worker());
-  }
-  await Promise.all(workers);
+  await mapConcurrent(urls, concurrency, async (url) => {
+    const body = await fetchArticleBody(url, contactUrl);
+    if (body !== null && body !== '') out.set(url, body);
+  });
   return out;
 }
