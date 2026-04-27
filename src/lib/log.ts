@@ -54,7 +54,10 @@ export type LogEvent =
   | 'auth.refresh.reuse_detected'
   | 'auth.refresh.purge_completed'
   | 'auth.refresh.purge_failed'
-  | 'auth.logout.refresh_revoke_failed';
+  | 'auth.refresh.rate_limited'
+  | 'auth.logout.refresh_revoke_failed'
+  | 'auth.logout.sv_bump_failed'
+  | 'rate.limit.kv_error';
 
 /** Shape of every emitted log line. */
 export interface LogRecord {

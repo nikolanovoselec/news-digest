@@ -19,7 +19,7 @@
 //     + chunks_remaining so the user sees live progress.
 
 import type { APIContext } from 'astro';
-import { applyRefreshCookie, loadSession } from '~/middleware/auth';
+import { applyRefreshCookie, requireSession } from '~/middleware/auth';
 import { errorResponse } from '~/lib/errors';
 
 interface ScrapeRunRow {
@@ -36,12 +36,8 @@ export async function GET(context: APIContext): Promise<Response> {
   if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
     return errorResponse('app_not_configured');
   }
-  const session = await loadSession(
-    context.request,
-    env.DB,
-    env.OAUTH_JWT_SECRET,
-  );
-  if (session === null) return errorResponse('unauthorized');
+  const auth = await requireSession(context.request, env);
+  if (!auth.ok) return auth.response;
 
   // Optional ?run_id=… pins the lookup to a specific run rather than
   // the most-recent row. Useful when the dashboard countdown polls
@@ -76,7 +72,7 @@ export async function GET(context: APIContext): Promise<Response> {
         status: 200,
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
       }),
-      session,
+      auth,
     );
   }
 

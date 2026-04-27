@@ -12,7 +12,7 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
-import { loadSession } from '~/middleware/auth';
+import { requireSession } from '~/middleware/auth';
 
 /** Row shape returned by the SELECT below. */
 interface PendingRow {
@@ -25,22 +25,20 @@ export async function GET(context: APIContext): Promise<Response> {
     return errorResponse('app_not_configured');
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    return errorResponse('unauthorized');
-  }
+  const auth = await requireSession(context.request, env);
+  if (!auth.ok) return auth.response;
 
   let rows: PendingRow[];
   try {
     const result = await env.DB.prepare(
       'SELECT tag FROM pending_discoveries WHERE user_id = ?1',
     )
-      .bind(session.user.id)
+      .bind(auth.user.id)
       .all<PendingRow>();
     rows = result.results ?? [];
   } catch (err) {
     log('error', 'discovery.queued', {
-      user_id: session.user.id,
+      user_id: auth.user.id,
       error_code: 'internal_error',
       detail: String(err).slice(0, 500),
     });
@@ -50,7 +48,7 @@ export async function GET(context: APIContext): Promise<Response> {
   const pending = rows.map((r) => r.tag);
 
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-  for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
 
   return new Response(JSON.stringify({ pending }), { status: 200, headers });
 }

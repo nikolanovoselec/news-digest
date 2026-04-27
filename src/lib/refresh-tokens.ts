@@ -300,12 +300,27 @@ export async function revokeRefreshToken(
  * Triggered when a token with `revoked_at` set is presented OUTSIDE
  * the grace window — within the window, see ROTATION_GRACE_SECONDS.
  * REQ-AUTH-008 AC 4.
+ *
+ * Idempotent under retry: a second call against an already-revoked
+ * user is a no-op. Without this short-circuit a browser replaying a
+ * dead refresh cookie against an inline-refresh path would re-bump
+ * session_version on every request, causing ongoing session churn for
+ * the legitimate user. Race window between two concurrent first-time
+ * callers is narrow but possible; the over-bump cost is bounded
+ * (session_version is monotonically increasing).
  */
 export async function revokeAllForUser(
   db: D1Database,
   userId: string,
   now: number = Math.floor(Date.now() / 1000),
 ): Promise<void> {
+  const existing = await db
+    .prepare(
+      `SELECT 1 FROM refresh_tokens WHERE user_id = ?1 AND revoked_at IS NULL LIMIT 1`,
+    )
+    .bind(userId)
+    .first();
+  if (existing === null) return;
   await db.batch([
     db
       .prepare(

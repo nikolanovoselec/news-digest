@@ -37,7 +37,7 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
-import { loadSession } from '~/middleware/auth';
+import { requireSession } from '~/middleware/auth';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { parseJsonStringArray } from '~/lib/json-string-array';
@@ -161,12 +161,10 @@ export async function POST(context: APIContext): Promise<Response> {
     return originResult.response;
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    return errorResponse('unauthorized');
-  }
+  const auth = await requireSession(context.request, env);
+  if (!auth.ok) return auth.response;
 
-  const result = await executeRetryBulk(env, session.user.id, session.user.hashtags_json);
+  const result = await executeRetryBulk(env, auth.user.id, auth.user.hashtags_json);
   if (!result.ok) {
     return errorResponse(result.error);
   }
@@ -174,7 +172,7 @@ export async function POST(context: APIContext): Promise<Response> {
   const headers = new Headers({
     Location: `/settings?rediscover=ok&count=${result.count}`,
   });
-  for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(null, { status: 303, headers });
 }
 
@@ -208,18 +206,17 @@ export async function GET(context: APIContext): Promise<Response> {
     });
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    if (wantsJson) {
-      return errorResponse('unauthorized');
-    }
-    return new Response(null, {
-      status: 303,
-      headers: { Location: `${appOrigin}/settings?rediscover=error` },
-    });
-  }
+  const auth = await requireSession(context.request, env, () =>
+    wantsJson
+      ? errorResponse('unauthorized')
+      : new Response(null, {
+          status: 303,
+          headers: { Location: `${appOrigin}/settings?rediscover=error` },
+        }),
+  );
+  if (!auth.ok) return auth.response;
 
-  const result = await executeRetryBulk(env, session.user.id, session.user.hashtags_json);
+  const result = await executeRetryBulk(env, auth.user.id, auth.user.hashtags_json);
   if (!result.ok) {
     if (wantsJson) {
       return new Response(JSON.stringify({ ok: false, error: result.error }), {
@@ -243,6 +240,6 @@ export async function GET(context: APIContext): Promise<Response> {
   const headers = new Headers({
     Location: `${appOrigin}/settings?rediscover=ok&count=${result.count}`,
   });
-  for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(null, { status: 303, headers });
 }

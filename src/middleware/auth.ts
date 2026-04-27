@@ -22,6 +22,7 @@ import { readCookie as readCookieCanonical } from '~/lib/crypto';
 import {
   REFRESH_TOKEN_COOKIE_NAME,
   ROTATION_GRACE_SECONDS,
+  buildClearRefreshCookie,
   buildRefreshCookie,
   deviceFingerprint,
   findRefreshToken,
@@ -29,7 +30,13 @@ import {
   rotateRefreshToken,
   revokeAllForUser,
 } from '~/lib/refresh-tokens';
+import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
+import {
+  RATE_LIMIT_RULES,
+  clientIp,
+  enforceRateLimit,
+} from '~/lib/rate-limit';
 import type { AuthenticatedUser } from '~/lib/types';
 
 export const SESSION_COOKIE_NAME = '__Host-news_digest_session';
@@ -82,20 +89,37 @@ export function buildClearSessionCookie(): string {
 }
 
 /**
- * Result of {@link loadSession}.
- *
- * `cookiesToSet` is the list of `Set-Cookie` strings the caller must
- * append to the outgoing response. It can carry zero, one, or two
- * entries depending on what the middleware did:
- *   - empty: access JWT was already valid, no cookie churn.
- *   - one: a dead refresh cookie was cleared (reuse / fingerprint /
- *     expired-refresh — already null-returning paths use this).
- *   - two: refresh-token rotation succeeded, both the new access JWT
- *     and the new refresh-token cookie are returned.
+ * Result of {@link loadSession}. Always non-null; auth failure is
+ * signalled by `user === null`. `cookiesToSet` is the list of
+ * `Set-Cookie` strings the caller must append to the outgoing
+ * response (use {@link applyRefreshCookie}). Possible shapes:
+ *   - `{ user: <row>, cookiesToSet: [] }` — access JWT valid.
+ *   - `{ user: <row>, cookiesToSet: [session, refresh] }` — refresh
+ *     rotation succeeded, both new cookies returned.
+ *   - `{ user: <row>, cookiesToSet: [session] }` — concurrent-rotation
+ *     grace branch, fresh access JWT only.
+ *   - `{ user: null, cookiesToSet: [clearSession, clearRefresh] }` —
+ *     theft / fingerprint mismatch / expired refresh / unknown row;
+ *     dead cookies are cleared so the browser stops replaying them.
+ *   - `{ user: null, cookiesToSet: [] }` — no cookies present, or
+ *     inline-refresh rate limit hit (don't clear; let the client retry).
  */
 export interface LoadSessionResult {
-  user: AuthenticatedUser;
+  user: AuthenticatedUser | null;
   cookiesToSet: string[];
+}
+
+/** Convenience constant — the cookie strings that clear both auth cookies. */
+const CLEAR_BOTH_COOKIES: readonly string[] = [
+  buildClearSessionCookie(),
+  buildClearRefreshCookie(),
+];
+
+function unauthenticated(clearCookies: boolean): LoadSessionResult {
+  return {
+    user: null,
+    cookiesToSet: clearCookies ? [...CLEAR_BOTH_COOKIES] : [],
+  };
 }
 
 async function loadUserById(
@@ -131,10 +155,15 @@ function toAuthenticatedUser(row: UserRow): AuthenticatedUser {
 
 /**
  * Load the session user for {@link request} against {@link db} and
- * {@link jwtSecret}. Returns `null` when no valid session exists
- * (missing cookies, bad signatures, expired refresh, user deleted,
- * session_version mismatch, fingerprint mismatch). Never throws — bad
- * input means no user.
+ * {@link jwtSecret}. Always returns a {@link LoadSessionResult} —
+ * `user === null` signals "not authenticated" and `cookiesToSet` may
+ * carry clear-cookie directives that the caller must attach via
+ * {@link applyRefreshCookie}. Never throws.
+ *
+ * Pass {@link kv} to rate-limit the inline refresh-token rotation path
+ * (the same `AUTH_REFRESH` bucket as `POST /api/auth/refresh`). When
+ * omitted, the inline path runs unrate-limited — only acceptable for
+ * unit tests; production callers must always pass the namespace.
  *
  * Two paths:
  *   1. Access JWT valid → return the user, no cookie churn.
@@ -149,7 +178,8 @@ export async function loadSession(
   request: Request,
   db: D1Database,
   jwtSecret: string,
-): Promise<LoadSessionResult | null> {
+  kv?: KVNamespace,
+): Promise<LoadSessionResult> {
   const cookieHeader = request.headers.get('Cookie');
   const accessToken = readCookie(cookieHeader, SESSION_COOKIE_NAME);
   const refreshValue = readCookie(cookieHeader, REFRESH_TOKEN_COOKIE_NAME);
@@ -169,13 +199,38 @@ export async function loadSession(
   }
 
   // Path 2 — fall through to refresh-token flow.
-  if (refreshValue === null) return null;
+  if (refreshValue === null) {
+    // No refresh cookie either. If the access JWT was present-but-bad
+    // we still want to clear it so the browser stops sending it.
+    return unauthenticated(accessToken !== null);
+  }
+
+  // REQ-AUTH-001 AC 9 — rate-limit the inline refresh path on the
+  // SAME `AUTH_REFRESH` bucket as `POST /api/auth/refresh`, so an
+  // attacker can't pivot to GET endpoints to bypass the explicit-
+  // endpoint limit. Skipped only when `kv` is omitted (test-only).
+  if (kv !== undefined) {
+    const rate = await enforceRateLimit(
+      { KV: kv },
+      RATE_LIMIT_RULES.AUTH_REFRESH,
+      `ip:${clientIp(request)}`,
+    );
+    if (!rate.ok) {
+      log('warn', 'auth.refresh.rate_limited', {
+        ip: clientIp(request),
+        retry_after_seconds: rate.retryAfter,
+      });
+      // Don't clear cookies — the user may be legitimate and just
+      // bursty; let the next request after the window succeed.
+      return unauthenticated(false);
+    }
+  }
 
   const refreshRow = await findRefreshToken(db, refreshValue);
   if (refreshRow === null) {
-    // Cookie value not in DB. Could be a stale cookie from a deleted
-    // session — clear it.
-    return null;
+    // Cookie value not in DB. Stale cookie from a deleted session, or
+    // a cookie issued before a DB rebuild — clear it.
+    return unauthenticated(true);
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
@@ -211,12 +266,12 @@ export async function loadSession(
           user_id: refreshRow.user_id,
           refresh_token_id: refreshRow.id,
         });
-        return null;
+        return unauthenticated(true);
       }
       const child = await findUnrevokedChild(db, refreshRow.id);
       if (child !== null) {
         const userRow = await loadUserById(db, refreshRow.user_id);
-        if (userRow === null) return null;
+        if (userRow === null) return unauthenticated(true);
         const fresh = await signSession(
           {
             sub: userRow.id,
@@ -249,7 +304,7 @@ export async function loadSession(
       refresh_token_id: refreshRow.id,
       since_revoked_seconds: sinceRevoked,
     });
-    return null;
+    return unauthenticated(true);
   }
 
   if (refreshRow.expires_at <= nowSec) {
@@ -257,7 +312,7 @@ export async function loadSession(
       user_id: refreshRow.user_id,
       refresh_token_id: refreshRow.id,
     });
-    return null;
+    return unauthenticated(true);
   }
 
   // Device fingerprint check — UA + Cf-IPCountry hashed at issuance.
@@ -271,12 +326,12 @@ export async function loadSession(
       user_id: refreshRow.user_id,
       refresh_token_id: refreshRow.id,
     });
-    return null;
+    return unauthenticated(true);
   }
 
   // All checks passed — rotate.
   const userRow = await loadUserById(db, refreshRow.user_id);
-  if (userRow === null) return null;
+  if (userRow === null) return unauthenticated(true);
 
   let rotated: { value: string; id: string } | null;
   try {
@@ -286,7 +341,7 @@ export async function loadSession(
       user_id: refreshRow.user_id,
       detail: String(err).slice(0, 500),
     });
-    return null;
+    return unauthenticated(true);
   }
 
   // Concurrent-rotation collision — another caller rotated this row
@@ -342,7 +397,7 @@ export async function loadSession(
 /**
  * Apply any cookies the middleware produced to the outgoing response.
  * Pass the {@link LoadSessionResult} from {@link loadSession} (or its
- * `cookiesToSet` array directly).
+ * `cookiesToSet` array directly). Accepts `null` for legacy callers.
  */
 export function applyRefreshCookie(
   response: Response,
@@ -358,5 +413,99 @@ export function applyRefreshCookie(
     statusText: response.statusText,
     headers,
   });
+}
+
+/** Subset of `Env` that auth helpers actually need — narrow on purpose so
+ *  the helper is testable without constructing the full Env shape. */
+export interface AuthEnv {
+  DB: D1Database;
+  OAUTH_JWT_SECRET: string;
+  KV: KVNamespace;
+}
+
+/**
+ * Result of {@link requireSession}: either an authenticated user with the
+ * cookies the caller must attach to its success response, or a pre-built
+ * unauthorized {@link Response} (already cookie-cleared) the caller can
+ * return verbatim. Mirrors the shape of `requireAdminSession` so route
+ * handlers have one consistent gate pattern.
+ */
+export type RequireSessionResult =
+  | { ok: true; user: AuthenticatedUser; cookiesToSet: string[] }
+  | { ok: false; response: Response };
+
+/**
+ * API-route session gate. Wraps {@link loadSession} and the unauthorized-
+ * branch cookie-clearing dance so callers don't have to repeat them.
+ * Pass {@link unauthorized} to customise the failure response (e.g. a
+ * 303 redirect instead of the default `errorResponse('unauthorized')`).
+ *
+ * Usage:
+ * ```ts
+ * const auth = await requireSession(context.request, env);
+ * if (!auth.ok) return auth.response;
+ * // auth.user.id, auth.cookiesToSet
+ * ```
+ */
+export async function requireSession(
+  request: Request,
+  env: AuthEnv,
+  unauthorized: () => Response = () => errorResponse('unauthorized'),
+): Promise<RequireSessionResult> {
+  const session = await loadSession(
+    request,
+    env.DB,
+    env.OAUTH_JWT_SECRET,
+    env.KV,
+  );
+  if (session.user === null) {
+    return { ok: false, response: applyRefreshCookie(unauthorized(), session) };
+  }
+  return {
+    ok: true,
+    user: session.user,
+    cookiesToSet: session.cookiesToSet,
+  };
+}
+
+/** What {@link loadSessionForPage} hands back to the caller. */
+export interface PageSessionResult {
+  /** Authenticated user, or null when the caller should redirect. */
+  user: AuthenticatedUser | null;
+  /** Cookies that have already been appended to the page-response
+   *  Headers. Returned again so callers that produce an additional
+   *  Response (e.g. a settings-gate redirect) can paint the same
+   *  Set-Cookie strings onto its headers without re-running auth. */
+  cookiesToSet: string[];
+}
+
+/**
+ * Astro-page session gate. Mutates {@link responseHeaders} (typically
+ * `Astro.response.headers`) so refresh-rotation cookies — and clear-
+ * cookie directives on the unauthenticated branch — land on the page
+ * response without the caller having to loop manually.
+ *
+ * Usage:
+ * ```ts
+ * const session = await loadSessionForPage(Astro.request, env, Astro.response.headers);
+ * if (session.user === null) return Astro.redirect('/', 303);
+ * Astro.locals.user = session.user;
+ * // If a settings-gate hands back its own redirect Response:
+ * for (const c of session.cookiesToSet) gated.headers.append('Set-Cookie', c);
+ * ```
+ */
+export async function loadSessionForPage(
+  request: Request,
+  env: AuthEnv,
+  responseHeaders: Headers,
+): Promise<PageSessionResult> {
+  const session = await loadSession(
+    request,
+    env.DB,
+    env.OAUTH_JWT_SECRET,
+    env.KV,
+  );
+  for (const c of session.cookiesToSet) responseHeaders.append('Set-Cookie', c);
+  return { user: session.user, cookiesToSet: session.cookiesToSet };
 }
 

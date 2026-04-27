@@ -105,21 +105,26 @@ describe('buildClearSessionCookie', () => {
 });
 
 describe('loadSession — access-JWT path', () => {
-  it('REQ-AUTH-002: returns null when no session cookie is present', async () => {
+  it('REQ-AUTH-002: returns user=null with no cookies when no session cookie is present', async () => {
     const { db } = makeDb(null);
     const req = new Request('https://example.com/');
-    expect(await loadSession(req, db, SECRET)).toBeNull();
+    const result = await loadSession(req, db, SECRET);
+    expect(result.user).toBeNull();
+    expect(result.cookiesToSet).toEqual([]);
   });
 
-  it('REQ-AUTH-002: returns null when the JWT is invalid AND no refresh cookie present', async () => {
+  it('REQ-AUTH-002: returns user=null and clears the bad session cookie when the JWT is invalid', async () => {
     const { db } = makeDb(null);
     const req = new Request('https://example.com/', {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=not.a.jwt` },
     });
-    expect(await loadSession(req, db, SECRET)).toBeNull();
+    const result = await loadSession(req, db, SECRET);
+    expect(result.user).toBeNull();
+    // Bad access JWT with no refresh cookie → clear both dead cookies.
+    expect(result.cookiesToSet.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true);
   });
 
-  it('REQ-AUTH-002: returns null when the user row does not exist', async () => {
+  it('REQ-AUTH-002: returns user=null when the user row does not exist', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       SECRET,
@@ -128,10 +133,11 @@ describe('loadSession — access-JWT path', () => {
     const req = new Request('https://example.com/', {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
     });
-    expect(await loadSession(req, db, SECRET)).toBeNull();
+    const result = await loadSession(req, db, SECRET);
+    expect(result.user).toBeNull();
   });
 
-  it('REQ-AUTH-002: returns null when session_version mismatches (instant revocation)', async () => {
+  it('REQ-AUTH-002: returns user=null when session_version mismatches (instant revocation)', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       SECRET,
@@ -141,7 +147,8 @@ describe('loadSession — access-JWT path', () => {
     const req = new Request('https://example.com/', {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
     });
-    expect(await loadSession(req, db, SECRET)).toBeNull();
+    const result = await loadSession(req, db, SECRET);
+    expect(result.user).toBeNull();
   });
 
   it('REQ-AUTH-002: returns the user with empty cookiesToSet on a valid access JWT', async () => {
@@ -155,17 +162,17 @@ describe('loadSession — access-JWT path', () => {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
     });
     const result = await loadSession(req, db, SECRET);
-    expect(result).not.toBeNull();
-    expect(result!.user.id).toBe('12345');
-    expect(result!.user.email).toBe('alice@example.com');
-    expect(result!.user.gh_login).toBe('alice');
-    expect(result!.user.session_version).toBe(1);
+    expect(result.user).not.toBeNull();
+    expect(result.user!.id).toBe('12345');
+    expect(result.user!.email).toBe('alice@example.com');
+    expect(result.user!.gh_login).toBe('alice');
+    expect(result.user!.session_version).toBe(1);
     // The access-JWT path does NOT touch the refresh cookie — empty array.
-    expect(result!.cookiesToSet).toEqual([]);
+    expect(result.cookiesToSet).toEqual([]);
     expect(bindSpy).toHaveBeenCalledWith('12345');
   });
 
-  it('REQ-AUTH-008: returns null when the D1 user query throws', async () => {
+  it('REQ-AUTH-008: returns user=null when the D1 user query throws', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       SECRET,
@@ -177,7 +184,8 @@ describe('loadSession — access-JWT path', () => {
     const req = new Request('https://example.com/', {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
     });
-    expect(await loadSession(req, db, SECRET)).toBeNull();
+    const result = await loadSession(req, db, SECRET);
+    expect(result.user).toBeNull();
   });
 });
 

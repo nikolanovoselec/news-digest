@@ -8,16 +8,16 @@
 // regardless of session state.
 
 import Base from '~/layouts/Base.astro';
-import { loadSession } from '~/middleware/auth';
+import { loadSessionForPage } from '~/middleware/auth';
 import { configuredProviders, providerByName } from '~/lib/oauth-providers';
 
 const env = Astro.locals.runtime.env;
 if (typeof env.OAUTH_JWT_SECRET === 'string' && env.OAUTH_JWT_SECRET !== '') {
-  const session = await loadSession(Astro.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session !== null) {
-    // CF-010 — attach silent-refresh cookie before redirecting so a
-    // user landing here mid-session doesn't lose their JWT extension.
-    for (const c of session.cookiesToSet) Astro.response.headers.append('Set-Cookie', c);
+  // CF-010 — loadSessionForPage attaches silent-refresh cookies (or
+  // clear-cookie directives on the unauthenticated branch) directly
+  // to Astro.response.headers. We just check whether to redirect.
+  const session = await loadSessionForPage(Astro.request, env, Astro.response.headers);
+  if (session.user !== null) {
     return Astro.redirect('/digest', 303);
   }
 }

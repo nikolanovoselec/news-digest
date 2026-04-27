@@ -80,9 +80,8 @@ export async function POST(context: APIContext): Promise<Response> {
       } catch (err) {
         // A row lookup failure (race with account deletion) is not a
         // user-facing error — the cookie still gets cleared below.
-        log('error', 'auth.callback.failed', {
+        log('error', 'auth.logout.sv_bump_failed', {
           user_id: claims.sub,
-          error_code: 'logout_sv_bump_failed',
           detail: String(err).slice(0, 500),
         });
       }

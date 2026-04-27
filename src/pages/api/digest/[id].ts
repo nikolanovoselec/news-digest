@@ -12,7 +12,7 @@
 
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
-import { loadSession } from '~/middleware/auth';
+import { requireSession } from '~/middleware/auth';
 
 interface DigestRow {
   id: string;
@@ -49,10 +49,8 @@ export async function GET(context: APIContext): Promise<Response> {
     return errorResponse('app_not_configured');
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    return errorResponse('unauthorized');
-  }
+  const auth = await requireSession(context.request, env);
+  if (!auth.ok) return auth.response;
 
   const rawId = context.params['id'];
   const digestId = typeof rawId === 'string' ? rawId.trim() : '';
@@ -60,7 +58,7 @@ export async function GET(context: APIContext): Promise<Response> {
     return errorResponse('bad_request');
   }
 
-  const userId = session.user.id;
+  const userId = auth.user.id;
 
   // User-scoped SELECT — the `user_id = ?1` filter is mandatory to
   // prevent IDOR. A mismatch returns 404, not 403, to avoid leaking
@@ -99,7 +97,7 @@ export async function GET(context: APIContext): Promise<Response> {
   }
 
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-  for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
 
   return new Response(
     JSON.stringify({

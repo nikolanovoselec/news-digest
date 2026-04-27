@@ -212,11 +212,11 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
       cookie: `${REFRESH_TOKEN_COOKIE_NAME}=${value}`,
     });
     const result = await loadSession(req, env.DB, SECRET);
-    expect(result).not.toBeNull();
-    expect(result!.user.id).toBe(USER_ID);
-    expect(result!.cookiesToSet.length).toBe(2);
-    expect(result!.cookiesToSet[0]).toContain(`${SESSION_COOKIE_NAME}=`);
-    expect(result!.cookiesToSet[1]).toContain(`${REFRESH_TOKEN_COOKIE_NAME}=`);
+    expect(result.user).not.toBeNull();
+    expect(result.user!.id).toBe(USER_ID);
+    expect(result.cookiesToSet.length).toBe(2);
+    expect(result.cookiesToSet[0]).toContain(`${SESSION_COOKIE_NAME}=`);
+    expect(result.cookiesToSet[1]).toContain(`${REFRESH_TOKEN_COOKIE_NAME}=`);
 
     // The old refresh-token row must be revoked.
     const oldRow = await findRefreshToken(env.DB, value);
@@ -234,7 +234,9 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
       cookie: `${REFRESH_TOKEN_COOKIE_NAME}=${value}`,
     });
     const result = await loadSession(req, env.DB, SECRET);
-    expect(result).toBeNull();
+    expect(result.user).toBeNull();
+    // Dead refresh cookie must be cleared so the browser stops replaying.
+    expect(result.cookiesToSet.some((c) => c.includes(`${REFRESH_TOKEN_COOKIE_NAME}=;`))).toBe(true);
 
     // Row must NOT be marked revoked (other devices can still use their
     // own refresh tokens — only THIS device-mismatched attempt is rejected).
@@ -260,7 +262,7 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
       cookie: `${REFRESH_TOKEN_COOKIE_NAME}=${value}`,
     });
     const result = await loadSession(replayReq, env.DB, SECRET);
-    expect(result).toBeNull();
+    expect(result.user).toBeNull();
 
     // Other device's refresh row is now revoked (global wipe).
     const otherRow = await findRefreshToken(env.DB, otherValue);
@@ -292,7 +294,7 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
       cookie: `${REFRESH_TOKEN_COOKIE_NAME}=${value}`,
     });
     const result = await loadSession(replayReq, env.DB, SECRET);
-    expect(result).toBeNull();
+    expect(result.user).toBeNull();
 
     // Theft branch fired — global wipe + session_version bump (both
     // halves of revokeAllForUser must run).
@@ -322,11 +324,11 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
       cookie: `${REFRESH_TOKEN_COOKIE_NAME}=${oldValue}`,
     });
     const result = await loadSession(replayReq, env.DB, SECRET);
-    expect(result).not.toBeNull();
-    expect(result!.user.id).toBe(USER_ID);
+    expect(result.user).not.toBeNull();
+    expect(result.user!.id).toBe(USER_ID);
     // Just the access JWT — refresh row was already rotated by winner.
-    expect(result!.cookiesToSet.length).toBe(1);
-    expect(result!.cookiesToSet[0]).toContain(`${SESSION_COOKIE_NAME}=`);
+    expect(result.cookiesToSet.length).toBe(1);
+    expect(result.cookiesToSet[0]).toContain(`${SESSION_COOKIE_NAME}=`);
 
     // Other device's row must NOT be revoked — concurrent collision
     // is benign, no global wipe.
@@ -356,7 +358,7 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
       cookie: `${REFRESH_TOKEN_COOKIE_NAME}=${oldValue}`,
     });
     const result = await loadSession(replayReq, env.DB, SECRET);
-    expect(result).toBeNull();
+    expect(result.user).toBeNull();
 
     // Every refresh row for the user is now revoked, including the
     // second device's row.
@@ -382,7 +384,7 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
       cookie: `${SESSION_COOKIE_NAME}=${access}`,
     });
     const result = await loadSession(req, env.DB, SECRET);
-    expect(result).not.toBeNull();
-    expect(result!.cookiesToSet).toEqual([]);
+    expect(result.user).not.toBeNull();
+    expect(result.cookiesToSet).toEqual([]);
   });
 });

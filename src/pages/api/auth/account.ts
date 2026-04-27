@@ -18,7 +18,7 @@ import type { APIContext } from 'astro';
 import { applyForeignKeysPragma } from '~/lib/db';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
-import { loadSession, buildClearSessionCookie } from '~/middleware/auth';
+import { applyRefreshCookie, loadSession, buildClearSessionCookie } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
 interface DeleteAccountBody {
@@ -68,9 +68,12 @@ async function deleteAccountCore(
     return { ok: false, response: originResult.response };
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    return { ok: false, response: errorResponse('unauthorized') };
+  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET, env.KV);
+  if (session.user === null) {
+    return {
+      ok: false,
+      response: applyRefreshCookie(errorResponse('unauthorized'), session),
+    };
   }
 
   if (confirm !== 'DELETE') {

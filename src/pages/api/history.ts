@@ -25,7 +25,7 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
-import { loadSession } from '~/middleware/auth';
+import { requireSession } from '~/middleware/auth';
 import { localDateInTz, DEFAULT_TZ } from '~/lib/tz';
 import { parseJsonStringArray as parseStringArray } from '~/lib/json-string-array';
 import { parseHashtags } from '~/lib/hashtags';
@@ -104,12 +104,10 @@ export async function GET(context: APIContext): Promise<Response> {
     return errorResponse('app_not_configured');
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    return errorResponse('unauthorized');
-  }
+  const auth = await requireSession(context.request, env);
+  if (!auth.ok) return auth.response;
 
-  const user = session.user;
+  const user = auth.user;
   const tz = user.tz === '' ? DEFAULT_TZ : user.tz;
   const userTags = parseHashtags(user.hashtags_json);
 
@@ -236,7 +234,7 @@ export async function GET(context: APIContext): Promise<Response> {
   const body: HistoryResponse = { days };
 
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-  for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(JSON.stringify(body), { status: 200, headers });
 }
 

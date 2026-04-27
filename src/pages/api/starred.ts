@@ -15,7 +15,7 @@
 
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
-import { loadSession } from '~/middleware/auth';
+import { requireSession } from '~/middleware/auth';
 import { slugify } from '~/lib/slug';
 import { log } from '~/lib/log';
 import { parseJsonStringArray as parseStringArray } from '~/lib/json-string-array';
@@ -119,19 +119,13 @@ export async function GET(context: APIContext): Promise<Response> {
     return errorResponse('app_not_configured');
   }
 
-  const session = await loadSession(
-    context.request,
-    env.DB,
-    env.OAUTH_JWT_SECRET,
-  );
-  if (session === null) {
-    return errorResponse('unauthorized');
-  }
+  const auth = await requireSession(context.request, env);
+  if (!auth.ok) return auth.response;
 
-  const payload = await loadStarredPayload(env.DB, session.user.id);
+  const payload = await loadStarredPayload(env.DB, auth.user.id);
 
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-  for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
 
   return new Response(JSON.stringify(payload), { status: 200, headers });
 }

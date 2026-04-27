@@ -16,7 +16,7 @@ import type { APIContext } from 'astro';
 import Base from '~/layouts/Base.astro';
 import DigestCard from '~/components/DigestCard.astro';
 import TagStrip from '~/components/TagStrip.astro';
-import { loadSession } from '~/middleware/auth';
+import { loadSessionForPage } from '~/middleware/auth';
 import { slugify } from '~/lib/slug';
 import { GET as getHistory } from '~/pages/api/history';
 import { parseHashtags } from '~/lib/hashtags';
@@ -53,16 +53,15 @@ if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
   return new Response('Application not configured', { status: 500 });
 }
 
-const session = await loadSession(
+// CF-010 — silent-refresh: loadSessionForPage attaches near-expiry
+// re-issued cookies and clear-cookie directives directly onto
+// Astro.response.headers (REQ-AUTH-002 AC 4 / REQ-AUTH-008 AC 4).
+const session = await loadSessionForPage(
   Astro.request,
-  env.DB,
-  env.OAUTH_JWT_SECRET,
+  env,
+  Astro.response.headers,
 );
-if (session === null) {
-  return Astro.redirect('/', 303);
-}
-// CF-010 — silent-refresh: attach near-expiry re-issued cookie.
-for (const c of session.cookiesToSet) Astro.response.headers.append('Set-Cookie', c);
+if (session.user === null) return Astro.redirect('/', 303);
 Astro.locals.user = session.user;
 
 // Fetch the day-grouped payload in-process. Same pattern as digest.astro:

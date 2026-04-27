@@ -28,7 +28,7 @@ import {
   rateLimitResponse,
   RATE_LIMIT_RULES,
 } from '~/lib/rate-limit';
-import { loadSession } from '~/middleware/auth';
+import { applyRefreshCookie, loadSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
 /** Extract and validate the article id path parameter. Returns the id
@@ -70,9 +70,13 @@ async function authorize(
     context.request,
     env.DB,
     env.OAUTH_JWT_SECRET,
+    env.KV,
   );
-  if (session === null) {
-    return { kind: 'reject', response: errorResponse('unauthorized') };
+  if (session.user === null) {
+    return {
+      kind: 'reject',
+      response: applyRefreshCookie(errorResponse('unauthorized'), session),
+    };
   }
 
   const articleId = readArticleId(context);
