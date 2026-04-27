@@ -683,7 +683,7 @@ async function loadAllowedTags(kv: KVNamespace): Promise<string[]> {
     // strong reason. CF-056: surface the failure in logs so silent
     // degradation is observable.
     log('warn', 'digest.generation', {
-      stage: 'allowed_tags.list_failed',
+      status: 'allowed_tags.list_failed',
       error: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
     });
   }

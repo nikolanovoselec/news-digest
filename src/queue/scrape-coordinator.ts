@@ -445,7 +445,7 @@ interface SourceForFetch {
 /** One evicted feed — emitted by fetchAllSources when a URL's health
  * counter crosses the threshold. Only discovered feeds participate
  * (curated URLs have `discoveredTag = null` and are skipped upstream). */
-interface FeedEviction {
+export interface FeedEviction {
   tag: string;
   url: string;
   failureCount: number;
@@ -664,7 +664,7 @@ async function fetchAllSources(
  *
  * Implements REQ-DISC-003 AC 2-3.
  */
-async function applyEvictions(
+export async function applyEvictions(
   env: Env,
   evictions: FeedEviction[],
   scrape_run_id: string,
