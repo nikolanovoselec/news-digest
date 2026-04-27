@@ -90,6 +90,23 @@ Dependabot is configured (`.github/dependabot.yml`) to open weekly PRs every Mon
 
 CI workflows use `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'` at the workflow level so all actions run under Node.js 24 regardless of the action's bundled Node version.
 
+### PR Checks — CI gates (`test.yml`)
+
+Every push to `develop` (and every PR targeting `main`) runs the following gates in order. All must pass before the deploy workflow fires:
+
+| Step | Command | What it enforces |
+|---|---|---|
+| Install | `npm install --no-fund --no-audit` | Dependency resolution |
+| Security audit (advisory-only) | `npm audit --omit=dev --audit-level=high` with `continue-on-error: true` | Surfaces HIGH+ advisories in runtime dep tree but does NOT fail the build. Worker runtime is workerd, not Node.js, so most advisories live in build tooling (`@astrojs/cloudflare`, `wrangler`, `miniflare`, `undici`) and don't reach the deployed bundle. Operators read the advisory list from CI logs and act via Dependabot PRs; failing the build on these would block legitimate work without improving production security. |
+| Lint | `npm run lint` | Oxlint rules |
+| REQ backlink coverage | `node scripts/check-req-backlinks.mjs` | Every `REQ-X-NNN` reference in `src/`, `tests/`, `documentation/`, and `migrations/` resolves to a header in `sdd/`. Catches stale doc or code references to retired requirements before they reach production (CF-069). |
+| Dead code | `npm run knip` | No unused exports or files |
+| Unit + integration tests | `npx vitest run` | Vitest suite |
+
+Security advisories surfaced by the audit step are non-blocking — Dependabot opens PRs weekly for runtime dep upgrades, which is the project's enforcement path.
+
+When the REQ backlink gate fails, either the referenced REQ-ID needs to be added to `sdd/` (if it is a new requirement), or the stale reference in the source/doc file needs to be updated to point at the correct live REQ.
+
 ## Admin-only routes (Cloudflare Access gating)
 
 A handful of operator endpoints drive LLM calls or queue work on demand — budget-sensitive operations that must be reachable only by the site operator. These endpoints are protected by two independent layers:
