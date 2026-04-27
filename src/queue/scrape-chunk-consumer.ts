@@ -35,13 +35,9 @@ import {
   processChunkUserPrompt,
 } from '~/lib/prompts';
 import {
-  extractResponsePayload,
-  extractTokensIn,
-  extractTokensOut,
   parseLLMPayload,
   sanitizeText,
 } from '~/lib/generate';
-import type { AIRunResponse } from '~/lib/generate';
 import {
   mergeClustersByLlmHints,
   type Candidate,
@@ -50,7 +46,8 @@ import {
 import { fetchArticleBodies } from '~/lib/article-fetch';
 import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
 import { splitIntoParagraphs } from '~/lib/paragraph-split';
-import { DEFAULT_MODEL_ID, FALLBACK_MODEL_ID, estimateCost } from '~/lib/models';
+import { FALLBACK_MODEL_ID } from '~/lib/models';
+import { runJsonWithFallback, previewRawResponse } from '~/lib/llm-json';
 import { addChunkStats, finishRun } from '~/lib/scrape-run';
 import { generateUlid } from '~/lib/ulid';
 import { applyForeignKeysPragma, batch as batchExec } from '~/lib/db';
@@ -220,82 +217,55 @@ export async function processOneChunk(
     });
   }
 
-  // Call Workers AI with the primary model, then fall through to the
-  // OpenAI-native-JSON failover model if the primary returns malformed
-  // JSON. This preserves the cheap default (gemma-4) as the hot path
-  // while keeping a reliable safety net (gpt-oss-20b) for the runs
-  // where Google's JSON-prompt-following wobbles.
-  const ai = env.AI as unknown as {
-    run: (model: string, params: Record<string, unknown>) => Promise<AIRunResponse>;
-  };
-  const runLLM = async (modelId: string): Promise<AIRunResponse> =>
-    ai.run(modelId, {
+  // CF-009: primary-then-fallback retry centralised in
+  // src/lib/llm-json.ts so chunk + finalize + discovery share the
+  // same waste-cost accounting and the same single-attempt narrowing.
+  // The hot path stays on the cheap default (gemma-4); the fallback
+  // (gpt-oss-20b) is JSON-strict for runs where the primary's
+  // prompt-following wobbles.
+  const llmRun = await runJsonWithFallback({
+    ai: env.AI as unknown as { run: (m: string, p: Record<string, unknown>) => Promise<unknown> },
+    params: {
       messages: [
         { role: 'system', content: PROCESS_CHUNK_SYSTEM },
         { role: 'user', content: processChunkUserPrompt(promptCandidates, allowedTags) },
       ],
       ...LLM_PARAMS,
-    });
-
-  let modelUsed = DEFAULT_MODEL_ID;
-  let aiResult = await runLLM(modelUsed);
-  let rawResponse = extractResponsePayload(aiResult);
-  let parsed = narrowChunkPayload(parseLLMPayload(rawResponse), rawResponse);
-
-  // Wasted tokens — the primary call that failed still cost money even
-  // though its output was unusable. Accumulate here so a fallback
-  // success doesn't silently drop them from cost reporting.
-  let wastedTokensIn = 0;
-  let wastedTokensOut = 0;
-  let wastedCostUsd = 0;
-
-  if (parsed === null) {
-    // Primary model returned unparseable output. Log the event and
-    // retry once with the fallback — gpt-oss-20b has OpenAI's native
-    // response_format: json_object which hard-guarantees valid JSON.
-    wastedTokensIn = extractTokensIn(aiResult);
-    wastedTokensOut = extractTokensOut(aiResult);
-    wastedCostUsd = estimateCost(DEFAULT_MODEL_ID, wastedTokensIn, wastedTokensOut);
-    // Dump the first chunk of raw response so wrangler tail can show
-    // WHAT the model emitted — the user was stuck with
-    // status=failed runs with no diagnostic signal. Trim hard so the
-    // log line stays Cloudflare-size-safe.
-    const primaryPreview = typeof rawResponse === 'string'
-      ? rawResponse.slice(0, 400)
-      : JSON.stringify(rawResponse).slice(0, 400);
-    log('warn', 'digest.generation', {
-      status: 'chunk_invalid_json_fallback_try',
-      scrape_run_id: body.scrape_run_id,
-      chunk_index: body.chunk_index,
-      primary_model: DEFAULT_MODEL_ID,
-      fallback_model: FALLBACK_MODEL_ID,
-      primary_tokens_in: wastedTokensIn,
-      primary_tokens_out: wastedTokensOut,
-      primary_cost_usd: wastedCostUsd,
-      primary_response_preview: primaryPreview,
-    });
-    modelUsed = FALLBACK_MODEL_ID;
-    aiResult = await runLLM(modelUsed);
-    rawResponse = extractResponsePayload(aiResult);
-    parsed = narrowChunkPayload(parseLLMPayload(rawResponse), rawResponse);
-    if (parsed === null) {
-      const fallbackPreview = typeof rawResponse === 'string'
-        ? rawResponse.slice(0, 400)
-        : JSON.stringify(rawResponse).slice(0, 400);
-      const fallbackTokensIn = extractTokensIn(aiResult);
-      const fallbackTokensOut = extractTokensOut(aiResult);
+    },
+    narrow: (raw) => narrowChunkPayload(parseLLMPayload(raw), raw),
+    onPrimaryFailure: (info) => {
       log('warn', 'digest.generation', {
-        status: 'chunk_invalid_json',
+        status: 'chunk_invalid_json_fallback_try',
         scrape_run_id: body.scrape_run_id,
         chunk_index: body.chunk_index,
+        primary_model: info.modelUsed,
         fallback_model: FALLBACK_MODEL_ID,
-        fallback_tokens_in: fallbackTokensIn,
-        fallback_tokens_out: fallbackTokensOut,
-        fallback_response_preview: fallbackPreview,
+        primary_tokens_in: info.tokensIn,
+        primary_tokens_out: info.tokensOut,
+        primary_cost_usd: info.costUsd,
+        primary_response_preview: previewRawResponse(info.rawResponse),
       });
-      throw new Error('chunk_invalid_json');
-    }
+    },
+  });
+
+  if (!llmRun.ok) {
+    log('warn', 'digest.generation', {
+      status: 'chunk_invalid_json',
+      scrape_run_id: body.scrape_run_id,
+      chunk_index: body.chunk_index,
+      fallback_model: llmRun.fallback.modelUsed,
+      fallback_tokens_in: llmRun.fallback.tokensIn,
+      fallback_tokens_out: llmRun.fallback.tokensOut,
+      fallback_response_preview: previewRawResponse(llmRun.fallback.rawResponse),
+    });
+    throw new Error('chunk_invalid_json');
   }
+
+  const parsed = llmRun.parsed;
+  const modelUsed = llmRun.modelUsed;
+  const wastedTokensIn = llmRun.wastedTokensIn;
+  const wastedTokensOut = llmRun.wastedTokensOut;
+  const wastedCostUsd = llmRun.wastedCostUsd;
 
   const rawArticles = Array.isArray(parsed.articles) ? parsed.articles : [];
   const dedupGroups = normaliseDedupGroups(parsed.dedup_groups);
@@ -540,17 +510,14 @@ export async function processOneChunk(
   // Accumulate chunk stats into the scrape_runs row. Tokens from the
   // failed primary call (when the fallback was taken) count too — they
   // burned real budget even though their output was unusable — so we
-  // add them to the reported totals.
-  const successTokensIn = extractTokensIn(aiResult);
-  const successTokensOut = extractTokensOut(aiResult);
-  const tokensIn = successTokensIn + wastedTokensIn;
-  const tokensOut = successTokensOut + wastedTokensOut;
-  // Cost attribution uses the model that actually produced the output
-  // for the success path, plus the primary-model cost for the wasted
-  // attempt when a fallback fired. `modelUsed` is DEFAULT_MODEL_ID on
-  // the happy path but flips to FALLBACK_MODEL_ID when the fallback
-  // retry succeeded.
-  const costUsd = estimateCost(modelUsed, successTokensIn, successTokensOut) + wastedCostUsd;
+  // add them to the reported totals. Both live and wasted counters
+  // come from runJsonWithFallback (CF-009).
+  const tokensIn = llmRun.tokensIn + wastedTokensIn;
+  const tokensOut = llmRun.tokensOut + wastedTokensOut;
+  // `modelUsed` is DEFAULT_MODEL_ID on the happy path, FALLBACK_MODEL_ID
+  // when the fallback retry produced the output. Cost = winning attempt
+  // + wasted primary attempt (zero on the happy path).
+  const costUsd = llmRun.costUsd + wastedCostUsd;
   // Deduped count = input candidates that ended up collapsed into a
   // primary plus input candidates that were dropped entirely (e.g. zero
   // valid tags after validation).

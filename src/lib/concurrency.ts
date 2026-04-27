@@ -1,3 +1,4 @@
+// Implements REQ-PIPE-001
 // Implements REQ-PIPE-002
 //
 // Bounded-concurrency map. Replaces three near-identical worker-pool
@@ -27,9 +28,12 @@ export async function mapConcurrent<T, R>(
   concurrency: number,
   fn: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
+  if (!Number.isFinite(concurrency) || concurrency < 1) {
+    throw new Error(`mapConcurrent: concurrency must be >= 1, got ${concurrency}`);
+  }
   const total = items.length;
   if (total === 0) return [];
-  const workerCount = Math.max(1, Math.min(concurrency, total));
+  const workerCount = Math.min(concurrency, total);
   const results = new Array<R>(total);
   let cursor = 0;
   const worker = async (): Promise<void> => {

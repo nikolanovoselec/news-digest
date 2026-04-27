@@ -356,10 +356,11 @@ export async function runCoordinator(
   // fan-out past MAX_CHUNKS_PER_TICK. Any excess is simply deferred to
   // the next 4-hour tick (the existing-URL filter keeps tick-N+1 from
   // re-processing the chunks we emit this tick).
-  // CF-012: avoid the in-place `chunks.length = N` truncation. Cap by
-  // returning a fresh slice when the limit is exceeded so any caller
-  // that keeps a reference to the original array (or that we add to
-  // this function later) cannot observe a half-truncated state.
+  // CF-012: replace in-place `chunks.length = N` truncation with a
+  // fresh slice. `chunks` is local today, but project policy forbids
+  // mutation; using slice() keeps the cap site immutable so a future
+  // refactor that exports `chunks` (e.g. for tests) cannot leak a
+  // half-truncated array.
   const droppedChunks = Math.max(0, chunks.length - MAX_CHUNKS_PER_TICK);
   const keptChunks =
     droppedChunks > 0 ? chunks.slice(0, MAX_CHUNKS_PER_TICK) : chunks;

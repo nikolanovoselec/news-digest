@@ -52,6 +52,15 @@ describe('mapConcurrent — REQ-PIPE-002', () => {
     ).rejects.toThrow('boom');
   });
 
+  it('REQ-PIPE-002: rejects non-positive concurrency', async () => {
+    await expect(mapConcurrent([1, 2, 3], 0, async (n) => n)).rejects.toThrow(
+      /concurrency must be >= 1/,
+    );
+    await expect(mapConcurrent([1, 2, 3], -5, async (n) => n)).rejects.toThrow(
+      /concurrency must be >= 1/,
+    );
+  });
+
   it('REQ-PIPE-002: caps worker count to items.length when concurrency exceeds it', async () => {
     let inFlight = 0;
     let peak = 0;

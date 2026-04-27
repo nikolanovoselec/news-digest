@@ -37,15 +37,10 @@
 import { log } from '~/lib/log';
 import { applyForeignKeysPragma, batch as batchExec } from '~/lib/db';
 import { addChunkStats } from '~/lib/scrape-run';
-import { DEFAULT_MODEL_ID, FALLBACK_MODEL_ID, estimateCost } from '~/lib/models';
+import { FALLBACK_MODEL_ID } from '~/lib/models';
 import { FINALIZE_DEDUP_SYSTEM, finalizeDedupUserPrompt, LLM_PARAMS } from '~/lib/prompts';
-import {
-  extractResponsePayload,
-  extractTokensIn,
-  extractTokensOut,
-  parseLLMJson,
-  type AIRunResponse,
-} from '~/lib/generate';
+import { parseLLMJson } from '~/lib/generate';
+import { runJsonWithFallback } from '~/lib/llm-json';
 import { pickWinner, buildMergeStatements, type FinalizeRow } from '~/lib/finalize-merge';
 
 /** Hard cap on candidates per finalize call. Comfortable headroom over
@@ -138,56 +133,46 @@ export async function processOneFinalize(
     published_at: r.published_at,
   }));
 
-  const ai = env.AI as unknown as {
-    run: (model: string, params: Record<string, unknown>) => Promise<AIRunResponse>;
-  };
-  const runLLM = async (modelId: string): Promise<AIRunResponse> =>
-    ai.run(modelId, {
+  // Step 4 — primary-then-fallback retry centralised in
+  // src/lib/llm-json.ts (CF-009) so chunk + finalize share identical
+  // waste-cost accounting and single-attempt narrowing.
+  const llmRun = await runJsonWithFallback({
+    ai: env.AI as unknown as { run: (m: string, p: Record<string, unknown>) => Promise<unknown> },
+    params: {
       messages: [
         { role: 'system', content: FINALIZE_DEDUP_SYSTEM },
         { role: 'user', content: finalizeDedupUserPrompt(candidates) },
       ],
       ...LLM_PARAMS,
-    });
-
-  // Step 4 — primary call, then fall back to the JSON-strict secondary
-  // model if the primary returns malformed JSON. Mirrors the chunk
-  // consumer's pattern at scrape-chunk-consumer.ts:230-296.
-  let modelUsed = DEFAULT_MODEL_ID;
-  let aiResult = await runLLM(modelUsed);
-  let rawResponse = extractResponsePayload(aiResult);
-  let parsed = parseLLMJson(rawResponse);
-
-  let wastedTokensIn = 0;
-  let wastedTokensOut = 0;
-  let wastedCostUsd = 0;
-
-  if (parsed === null) {
-    wastedTokensIn = extractTokensIn(aiResult);
-    wastedTokensOut = extractTokensOut(aiResult);
-    wastedCostUsd = estimateCost(DEFAULT_MODEL_ID, wastedTokensIn, wastedTokensOut);
-    log('warn', 'digest.generation', {
-      status: 'finalize_invalid_json_fallback_try',
-      scrape_run_id: body.scrape_run_id,
-      primary_model: DEFAULT_MODEL_ID,
-      fallback_model: FALLBACK_MODEL_ID,
-      primary_tokens_in: wastedTokensIn,
-      primary_tokens_out: wastedTokensOut,
-      primary_cost_usd: wastedCostUsd,
-    });
-    modelUsed = FALLBACK_MODEL_ID;
-    aiResult = await runLLM(modelUsed);
-    rawResponse = extractResponsePayload(aiResult);
-    parsed = parseLLMJson(rawResponse);
-    if (parsed === null) {
-      log('error', 'digest.generation', {
-        status: 'finalize_invalid_json',
+    },
+    narrow: (raw) => parseLLMJson(raw),
+    onPrimaryFailure: (info) => {
+      log('warn', 'digest.generation', {
+        status: 'finalize_invalid_json_fallback_try',
         scrape_run_id: body.scrape_run_id,
+        primary_model: info.modelUsed,
         fallback_model: FALLBACK_MODEL_ID,
+        primary_tokens_in: info.tokensIn,
+        primary_tokens_out: info.tokensOut,
+        primary_cost_usd: info.costUsd,
       });
-      throw new Error('finalize_invalid_json');
-    }
+    },
+  });
+
+  if (!llmRun.ok) {
+    log('error', 'digest.generation', {
+      status: 'finalize_invalid_json',
+      scrape_run_id: body.scrape_run_id,
+      fallback_model: llmRun.fallback.modelUsed,
+    });
+    throw new Error('finalize_invalid_json');
   }
+
+  const parsed = llmRun.parsed;
+  const modelUsed = llmRun.modelUsed;
+  const wastedTokensIn = llmRun.wastedTokensIn;
+  const wastedTokensOut = llmRun.wastedTokensOut;
+  const wastedCostUsd = llmRun.wastedCostUsd;
 
   // Step 5 — extract dedup_groups from the parsed payload.
   const dedupGroups = normaliseDedupGroups(
@@ -227,12 +212,11 @@ export async function processOneFinalize(
 
   // Step 8 — fold cost into the run's totals. Gate on losersDeleted > 0
   // so a clean retry (every loser already deleted, zero merges performed)
-  // doesn't double-count tokens. AC 5 + AC 7.
-  const successTokensIn = extractTokensIn(aiResult);
-  const successTokensOut = extractTokensOut(aiResult);
-  const tokensIn = successTokensIn + wastedTokensIn;
-  const tokensOut = successTokensOut + wastedTokensOut;
-  const costUsd = estimateCost(modelUsed, successTokensIn, successTokensOut) + wastedCostUsd;
+  // doesn't double-count tokens. AC 5 + AC 7. Counters from the
+  // runJsonWithFallback helper (CF-009).
+  const tokensIn = llmRun.tokensIn + wastedTokensIn;
+  const tokensOut = llmRun.tokensOut + wastedTokensOut;
+  const costUsd = llmRun.costUsd + wastedCostUsd;
   if (losersDeleted > 0) {
     await addChunkStats(env.DB, body.scrape_run_id, {
       tokens_in: tokensIn,
