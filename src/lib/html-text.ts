@@ -14,11 +14,18 @@
  *  article HTML. Covers named entities, decimal `&#NNN;`, and hex
  *  `&#xHH;` numeric refs. Codepoints below 32 or above 0xFFFF are
  *  replaced with a single space (control chars + non-BMP — safe for
- *  prompt budgets). */
+ *  prompt budgets).
+ *
+ *  Order matters: `&amp;` is decoded LAST so an input like
+ *  `&amp;lt;` (the literal text representation of `&lt;`) does NOT
+ *  cascade into a real `<` after a downstream pass. CodeQL's
+ *  `js/double-escaping` rule flags the inverse order. Numeric refs
+ *  must also run before `&amp;` for the same reason — `&amp;#39;`
+ *  preserves its literal form rather than collapsing to an apostrophe.
+ */
 export function decodeHtmlEntities(input: string): string {
   return input
     .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
@@ -42,7 +49,9 @@ export function decodeHtmlEntities(input: string): string {
       return Number.isFinite(code) && code >= 32 && code < 65536
         ? String.fromCharCode(code)
         : ' ';
-    });
+    })
+    // `&amp;` LAST — see comment above. CodeQL js/double-escaping #170.
+    .replace(/&amp;/g, '&');
 }
 
 /** Strip HTML tags, decode entities, collapse runs of whitespace.
