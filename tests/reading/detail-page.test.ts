@@ -15,6 +15,7 @@
 import { describe, it, expect } from 'vitest';
 
 import detailSource from '../../src/pages/digest/[id]/[slug].astro?raw';
+import articleDetailScript from '../../src/scripts/article-detail.ts?raw';
 
 describe('detail page source contract — REQ-READ-002', () => {
   it('REQ-READ-002: declares it implements REQ-READ-002 and REQ-READ-003', () => {
@@ -100,34 +101,36 @@ describe('detail page source contract — REQ-READ-002', () => {
     expect(detailSource).toMatch(/href="\/digest"/);
   });
 
-  it('REQ-READ-002: back-button hijack accepts SPA-nav signal (history.state.index > 0) AND same-origin referrer', () => {
-    // The earlier implementation used document.referrer alone to
-    // decide whether to call window.history.back(). SPA navigations
-    // never refresh document.referrer (the document was never re-
-    // fetched), so a user who hard-loaded /history and SPA-clicked
-    // a card landed on this page with referrer === '' and the
-    // hijack fell through to the static href="/digest" — taking
-    // them to the dashboard instead of back to /history. Astro's
-    // ClientRouter sets history.state.index on every navigation;
-    // index > 0 proves an in-app SPA hop has happened.
+  it('REQ-READ-002: page imports the external article-detail module (CSP-compatible)', () => {
+    // The site CSP is `script-src 'self'`. Inline `<script>` bodies
+    // (which Astro emits when a page-level script has no imports)
+    // are blocked at runtime — bindBack never ran on the live site,
+    // so the in-UI back arrow always fell through to its static
+    // `href="/digest"` fallback regardless of the hijack logic.
+    // Importing the module forces Astro to bundle it as
+    // `<script type="module" src="...">`, which CSP allows from
+    // the same origin.
     expect(detailSource).toMatch(
-      /history\.state[\s\S]{0,200}\.index/,
+      /<script>\s*[\s\S]*import\s+['"]~\/scripts\/article-detail['"]\s*;?\s*[\s\S]*<\/script>/,
     );
-    expect(detailSource).toMatch(
+  });
+
+  it('REQ-READ-002: article-detail.ts back-button hijack uses both SPA-nav and same-origin signals', () => {
+    // history.state.index > 0 is Astro's ClientRouter pushState
+    // marker — proves an in-app SPA hop has happened.
+    expect(articleDetailScript).toMatch(
       /typeof\s+stateIndex\s*===\s*['"]number['"]\s*&&\s*stateIndex\s*>\s*0/,
     );
-    // Same-origin referrer remains a valid in-app signal for the
-    // hard-load case (no SPA navigation happened, so history.state
-    // may still be index 0).
-    expect(detailSource).toMatch(
+    // Same-origin referrer covers the hard-load case (history.state
+    // may still be index 0 if no SPA nav happened yet).
+    expect(articleDetailScript).toMatch(
       /document\.referrer[\s\S]{0,200}window\.location\.origin/,
     );
-    // The handler still calls window.history.back() when at least
-    // one of the two signals is present.
-    expect(detailSource).toMatch(
+    // history.back() fires when EITHER signal is present.
+    expect(articleDetailScript).toMatch(
       /if\s*\(\s*!arrivedInAppViaSpa\s*&&\s*!sameOriginReferrer\s*\)/,
     );
-    expect(detailSource).toContain('window.history.back()');
+    expect(articleDetailScript).toContain('window.history.back()');
   });
 
   it('REQ-READ-002: articleId and slug are pulled from Astro.params', () => {

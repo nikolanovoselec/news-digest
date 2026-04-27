@@ -1,53 +1,60 @@
-// Tests for src/layouts/Base.astro view-transition wiring.
+// Tests for the layout's view-transition wiring. The behaviour
+// originally lived inline in src/layouts/Base.astro but the site's
+// CSP (`script-src 'self'`) silently blocked every inline `<script>`
+// block, dropping the morph animation and the per-path scroll
+// restore on the floor. The fix moves the code into
+// src/scripts/page-effects.ts so Astro emits it as an external
+// bundle (CSP-allowed) and the layout's `<script>` block becomes a
+// single `import '~/scripts/page-effects'`.
 //
-// Pure source-string regression tests (matching the pattern of
-// tests/history/page.test.ts and tests/reading/digest-page.test.ts):
-// the layout cannot be SSR'd in a vitest worker, so we pin the
-// presence of the load-bearing event listeners and CSS rules so a
-// future refactor cannot silently undo them.
-//
-// Two behaviours are pinned:
-//   1. preOpenHistoryDayInIncomingDocument — restores the morph
-//      animation on /history → /digest/[id]/[slug] → back navigation
-//      by opening the saved day's <details> in ev.newDocument BEFORE
-//      the View-Transition snapshot is captured.
-//   2. data-vt-active flag toggled on documentElement during a view
-//      transition + matching CSS that forces the .site-header opaque
-//      and drops backdrop-filter so the body cross-fade ghost does
-//      not swim through the translucent header on back-nav.
+// We pin THREE things now:
+//   1. Base.astro imports the external module — without that the
+//      whole thing is dead code at runtime.
+//   2. The external module wires up preOpenHistoryDayInIncomingDocument
+//      and the after-swap sync scroll restore.
+//   3. Base.astro keeps the [data-vt-active] CSS rule that depends
+//      on the dataset flag toggled by the module.
 
 import { describe, it, expect } from 'vitest';
 
 import baseSource from '../../src/layouts/Base.astro?raw';
+import effectsSource from '../../src/scripts/page-effects.ts?raw';
 
-describe('Base.astro — view-transition wiring (REQ-DES-003 / REQ-HIST-001)', () => {
-  it('registers preOpenHistoryDayInIncomingDocument as an astro:before-swap listener', () => {
-    // Function definition exists.
-    expect(baseSource).toContain('preOpenHistoryDayInIncomingDocument');
-    // Function is wired up to before-swap (the event that fires before
-    // the snapshot is captured).
+describe('Base.astro / page-effects.ts — view-transition wiring (REQ-DES-003 / REQ-HIST-001)', () => {
+  it('Base.astro imports the external page-effects module so CSP allows the script', () => {
+    // The site CSP is `script-src 'self'` — inline `<script>` bodies
+    // are blocked. Astro bundles imports into external `<script src>`
+    // tags which CSP allows from the same origin. Lose this import
+    // and every behaviour below silently disappears at runtime.
     expect(baseSource).toMatch(
-      /addEventListener\(\s*['"]astro:before-swap['"]\s*,\s*preOpenHistoryDayInIncomingDocument\s*\)/,
+      /<script>\s*import\s+['"]~\/scripts\/page-effects['"]\s*;?\s*<\/script>/,
     );
   });
 
-  it('reads the saved sessionStorage day-state key matching history.astro', () => {
-    // The on-page restore in history.astro and the pre-open in
-    // Base.astro must agree on the storage key — drift would silently
-    // make the morph animation disappear again.
-    expect(baseSource).toContain("'history:last-day-state'");
+  it('page-effects.ts registers preOpenHistoryDayInIncomingDocument as an astro:before-swap listener', () => {
+    expect(effectsSource).toContain('preOpenHistoryDayInIncomingDocument');
+    expect(effectsSource).toMatch(
+      /addEventListener\(\s*\n?\s*['"]astro:before-swap['"]\s*,\s*\n?\s*preOpenHistoryDayInIncomingDocument\s*\n?\s*\)/,
+    );
   });
 
-  it('toggles the data-vt-active flag on astro:before-preparation and clears it on astro:after-swap', () => {
+  it('page-effects.ts reads the saved sessionStorage day-state key matching history.astro', () => {
+    // The on-page restore in history.astro and the pre-open in the
+    // shared module must agree on the storage key — drift would
+    // silently make the morph animation disappear again.
+    expect(effectsSource).toContain("'history:last-day-state'");
+  });
+
+  it('page-effects.ts toggles the data-vt-active flag on astro:before-preparation and clears it on astro:after-swap', () => {
     // Set on before-preparation so the snapshot is captured with the
     // header already in its opaque state.
-    expect(baseSource).toMatch(
+    expect(effectsSource).toMatch(
       /astro:before-preparation[\s\S]{0,200}vtActive/,
     );
     // Clear on after-swap so normal scroll restores the frosted-glass
     // look. A half-fix that sets but never clears would leave the
     // header solid permanently after the first navigation.
-    expect(baseSource).toMatch(
+    expect(effectsSource).toMatch(
       /astro:after-swap[\s\S]{0,200}delete\s+document\.documentElement\.dataset\[['"]vtActive['"]\]/,
     );
   });

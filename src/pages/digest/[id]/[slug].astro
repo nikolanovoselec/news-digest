@@ -620,110 +620,11 @@ const articleDataset = {
 </style>
 
 <script>
-  // Implements REQ-STAR-001 — inline handler for the metadata-line star
-  // button. Attaches once per page via the
-  // [data-star-detail-bound] sentinel; survives view transitions by
-  // re-running on astro:page-load. The DigestCard script is NOT in
-  // this page's graph (no cards render here), so we repeat the
-  // minimal toggle handler instead of relying on that component.
-  async function handleStarClick(button: HTMLButtonElement): Promise<void> {
-    const articleId = button.dataset['articleId'];
-    if (articleId === undefined || articleId === '') return;
-    const wasPressed = button.getAttribute('aria-pressed') === 'true';
-    const nextPressed = !wasPressed;
-    button.setAttribute('aria-pressed', nextPressed ? 'true' : 'false');
-    try {
-      const res = await fetch(
-        `/api/articles/${encodeURIComponent(articleId)}/star`,
-        {
-          method: nextPressed ? 'POST' : 'DELETE',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-        },
-      );
-      if (!res.ok) {
-        button.setAttribute('aria-pressed', wasPressed ? 'true' : 'false');
-      }
-    } catch {
-      button.setAttribute('aria-pressed', wasPressed ? 'true' : 'false');
-    }
-  }
-
-  function init(): void {
-    if (document.documentElement.dataset['starDetailBound'] === '1') return;
-    document.documentElement.dataset['starDetailBound'] = '1';
-    document.addEventListener('click', (e) => {
-      const target = e.target;
-      if (!(target instanceof Element)) return;
-      const button = target.closest<HTMLButtonElement>('[data-star-toggle]');
-      if (button === null) return;
-      e.preventDefault();
-      e.stopPropagation();
-      void handleStarClick(button);
-    }, true);
-  }
-
-  function teardown(): void {
-    // The document-level `data-star-detail-bound` flag persists across
-    // view transitions intentionally. The listener is added on
-    // `document` so it survives DOM swaps; init() only runs once.
-  }
-
-  init();
-  document.addEventListener('astro:page-load', init);
-  document.addEventListener('astro:before-swap', teardown);
-
-  // Back button — return to the exact previous page (search results,
-  // dashboard, /starred, etc.) when the user arrived via in-app
-  // navigation. Falls through to the plain href="/digest" only on a
-  // genuine direct-link visit so the anchor stays a valid link
-  // without JS.
-  //
-  // Two independent in-app signals — at least one must be present
-  // before we hijack the click:
-  //   1. window.history.state.index > 0
-  //      Astro's ClientRouter pushState's `{ index, scrollX, scrollY }`
-  //      on every SPA navigation, starting at index 0 on first load.
-  //      An index above zero proves at least one same-realm SPA
-  //      navigation has happened — the back stack contains the
-  //      previous in-app page.
-  //   2. document.referrer is on the same origin
-  //      Catches the path where the user landed on this article via a
-  //      hard HTTP navigation from another same-site page (no SPA
-  //      pushState yet, so history.state may still be index 0). The
-  //      back-stack entry is the referring page.
-  //
-  // document.referrer alone was insufficient: SPA navigations don't
-  // update document.referrer (the document was never re-fetched), so
-  // a user who hard-loaded /history and SPA-clicked a card landed on
-  // this page with referrer === '' — the prior heuristic then sent
-  // them to the static /digest fallback even though history.back()
-  // would have correctly returned to /history.
-  function handleBackClick(this: HTMLAnchorElement, e: MouseEvent): void {
-    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
-      return;
-    }
-    const stateIndex = (window.history.state as { index?: unknown } | null)
-      ?.index;
-    const arrivedInAppViaSpa =
-      typeof stateIndex === 'number' && stateIndex > 0;
-    const sameOriginReferrer =
-      document.referrer !== '' &&
-      new URL(document.referrer).origin === window.location.origin;
-    if (!arrivedInAppViaSpa && !sameOriginReferrer) {
-      return; // genuine direct-link — fall through to href="/digest"
-    }
-    e.preventDefault();
-    window.history.back();
-  }
-
-  function bindBack(): void {
-    const link = document.querySelector<HTMLAnchorElement>('[data-article-back]');
-    if (link === null) return;
-    if (link.dataset['backBound'] === '1') return;
-    link.dataset['backBound'] = '1';
-    link.addEventListener('click', handleBackClick);
-  }
-  bindBack();
-  document.addEventListener('astro:page-load', bindBack);
+  // The site's CSP is `script-src 'self'` — Astro inlines small page-
+  // level scripts directly into the HTML, and the browser blocks them
+  // as inline-CSP violations. This `import` makes Astro bundle the
+  // module externally instead, so it loads as `<script src="...">`
+  // and actually executes. See src/scripts/article-detail.ts for the
+  // star-toggle + back-button logic that lives in the bundle.
+  import '~/scripts/article-detail';
 </script>
