@@ -123,11 +123,13 @@ describe('titlesShareAnyToken — REQ-PIPE-002', () => {
         'BetaCorp launch announcement details',
       ),
     ).toBe(true); // 'announcement' + 'details' overlap
+    // Each side must have at least 2 substantive (non-stopword,
+    // length ≥ 4) tokens, otherwise the size<2 short-circuit fires.
     expect(
       titlesShareAnyToken(
-        'AlphaCorp announces release',
-        'BetaCorp announces launch',
+        'AlphaCorp ProductX announces release',
+        'BetaCorp ServiceY announces launch',
       ),
-    ).toBe(false); // 'alphacorp' vs 'betacorp' alone — no overlap; 'announces' is a stopword
+    ).toBe(false); // alphacorp/productx vs betacorp/servicey — no overlap; 'announces' is a stopword
   });
 });

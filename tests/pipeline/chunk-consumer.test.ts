@@ -839,4 +839,56 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     expect(articleInserts[0]!.params).toContain('A');
     expect(articleInserts[0]!.params).not.toContain('Hallucinated');
   });
+
+  it('REQ-PIPE-002 / CF-056: KV.list failure on loadAllowedTags emits degraded log and falls back to DEFAULT_HASHTAGS', async () => {
+    // The chunk consumer reads the tag allowlist from KV (`sources:*`)
+    // unioned with DEFAULT_HASHTAGS. If KV.list throws (binding outage,
+    // transient 500), the consumer must NOT block the chunk — it falls
+    // back to the bundled defaults and emits a structured warn log so
+    // operators can spot the silent degradation.
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const aiResponse = {
+        response: JSON.stringify({
+          // Tag is in DEFAULT_HASHTAGS — survives even with empty KV result.
+          articles: [{ title: 'A', details: 'body.', tags: ['cloudflare'] }],
+          dedup_groups: [],
+        }),
+        usage: { input_tokens: 10, output_tokens: 10 },
+      };
+      const { db, records } = makeDb();
+      const { kv } = makeKv();
+      // Override list to throw — simulates a KV outage during the
+      // allowed-tags scan. The consumer's catch block should swallow it.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (kv.list as any) = vi.fn().mockRejectedValue(new Error('kv list 500'));
+      const env = makeEnv(db, kv, aiResponse);
+
+      await expect(processOneChunk(env, makeChunk())).resolves.toBeUndefined();
+
+      // Degraded log fired with the structured event field.
+      const degradedLog = consoleSpy.mock.calls.find((args: unknown[]) => {
+        const payload = args[0];
+        return (
+          typeof payload === 'string' &&
+          payload.includes('allowed_tags.list_failed')
+        );
+      });
+      expect(degradedLog).toBeDefined();
+      const payload = degradedLog![0] as string;
+      expect(payload).toContain('"level":"warn"');
+      expect(payload).toContain('kv list 500');
+
+      // The chunk still wrote the article — DEFAULT_HASHTAGS fallback
+      // accepted `cloudflare` so the row landed in articles.
+      const articleInserts = records.filter(
+        (r) =>
+          r.via === 'batch' &&
+          r.sql.startsWith('INSERT OR IGNORE INTO articles'),
+      );
+      expect(articleInserts.length).toBe(1);
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
 });

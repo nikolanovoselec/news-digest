@@ -166,22 +166,23 @@ describe('Atom feed extraction — <published> / <updated>', () => {
   const extract = extractorFor('googlenews');
 
   it('parses Atom <published> into published_at', () => {
+    // CF-071: the parser is configured with `attributeNamePrefix: ''`
+    // (see src/lib/sources.ts), so fxp emits attributes without a
+    // prefix — the link object's attribute is `href`, not `@_href`.
+    // The previous fixture used `@_href` and a silent early-return
+    // that masked the failure.
     const parsed = {
       feed: {
         entry: {
           title: 'Atom post',
-          link: { '@_href': 'https://example.com/atom' },
+          link: { href: 'https://example.com/atom' },
           published: '2026-04-02T10:00:00Z',
         },
       },
     };
     const [head] = extract(parsed);
-    // atomLinkHref needs the real attr key. fxp emits either a string
-    // or an object with `@_href` depending on parser flags. If the
-    // extractor couldn't resolve the link the item is dropped, and
-    // this test exits without asserting the date. Guard via ?.
-    if (head === undefined) return;
-    expect(head.published_at).toBe(
+    expect(head).toBeDefined();
+    expect(head?.published_at).toBe(
       Math.floor(Date.parse('2026-04-02T10:00:00Z') / 1000),
     );
   });

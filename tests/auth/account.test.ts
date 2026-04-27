@@ -255,6 +255,57 @@ describe('DELETE /api/auth/account', () => {
     expect(deleted).toContain('user:12345:banner-dismiss');
   });
 
+  it('REQ-AUTH-005 / CF-054: paginates KV.list via cursor until list_complete is true', async () => {
+    const token = await signSession(
+      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
+      JWT_SECRET,
+    );
+    const { db } = makeDb(baseRow());
+    // Multi-page KV.list — first page returns list_complete: false +
+    // a cursor; second page is the terminal page. The handler must
+    // forward the cursor on the second call and delete every key
+    // across both pages.
+    const deleted: string[] = [];
+    const cursorsSeen: Array<string | undefined> = [];
+    const list = vi.fn().mockImplementation(async (args: { prefix?: string; cursor?: string }) => {
+      cursorsSeen.push(args.cursor);
+      if (args.cursor === undefined) {
+        return {
+          keys: [
+            { name: 'user:12345:p1' },
+            { name: 'user:12345:p2' },
+          ],
+          list_complete: false,
+          cursor: 'c2',
+        };
+      }
+      return {
+        keys: [{ name: 'user:12345:p3' }],
+        list_complete: true,
+      };
+    });
+    const kv = {
+      list,
+      delete: vi.fn().mockImplementation(async (name: string) => {
+        deleted.push(name);
+      }),
+    } as unknown as KVNamespace;
+    const req = await deleteRequest({
+      origin: APP_ORIGIN,
+      cookie: `${SESSION_COOKIE_NAME}=${token}`,
+      body: { confirm: 'DELETE' },
+    });
+    await DELETE(makeContext(req, env(db, kv)) as never);
+    // First call has no cursor (initial page); second call carries
+    // 'c2' from the first page's response.
+    expect(cursorsSeen).toEqual([undefined, 'c2']);
+    // All three keys across the two pages got deleted.
+    expect(deleted).toEqual(
+      expect.arrayContaining(['user:12345:p1', 'user:12345:p2', 'user:12345:p3']),
+    );
+    expect(deleted).toHaveLength(3);
+  });
+
   it('REQ-AUTH-005: returns redirect hint in JSON body', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },

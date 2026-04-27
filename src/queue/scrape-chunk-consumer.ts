@@ -677,10 +677,15 @@ async function loadAllowedTags(kv: KVNamespace): Promise<string[]> {
       }
       cursor = listResult.list_complete ? undefined : listResult.cursor;
     } while (cursor !== undefined);
-  } catch {
+  } catch (err) {
     // KV list is best-effort; fall back to DEFAULT_HASHTAGS if the
     // binding misbehaves. A strict failure would block the chunk for no
-    // strong reason.
+    // strong reason. CF-056: surface the failure in logs so silent
+    // degradation is observable.
+    log('warn', 'digest.generation', {
+      stage: 'allowed_tags.list_failed',
+      error: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
+    });
   }
   return Array.from(set);
 }
