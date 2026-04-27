@@ -26,7 +26,7 @@ import { loadSession } from '~/middleware/auth';
 import { requireSettingsComplete } from '~/middleware/settings-gate';
 import { slugify } from '~/lib/slug';
 import { splitIntoParagraphs } from '~/lib/paragraph-split';
-import { DEFAULT_TZ } from '~/lib/tz';
+import { DEFAULT_TZ, localeForTz } from '~/lib/tz';
 
 interface ArticleRow {
   id: string;
@@ -196,19 +196,16 @@ const publishedLabel = formatDate(publishedSec);
 // "when did this story land in our pool" as the more useful signal.
 // Renders in the user's IANA timezone (DEFAULT_TZ when the user hasn't
 // set one) so a Europe/Zurich reader sees CET wall-clock; a US-Pacific
-// reader sees PT. `Intl.DateTimeFormat` picks the locale-appropriate
-// 24h vs 12h convention based on the timeZone — Europe and most of
-// the world get 24h; en-US falls back to 12h.
+// reader sees PT. The locale comes from `localeForTz` so 24h vs 12h
+// follows the timezone's regional convention rather than the runtime's
+// default (which is en-US on workerd → 12h everywhere).
 const userTz =
   typeof session.user.tz === 'string' && session.user.tz !== ''
     ? session.user.tz
     : DEFAULT_TZ;
 function formatIngestedAt(unixSec: number, tz: string): string {
-  // Date part — short month + day, locale-neutral (matches publishedLabel
-  // format style). Time part — Intl-formatted in user tz to honor 24h vs
-  // 12h conventions per the IANA zone's canonical locale.
   const datePart = formatDate(unixSec);
-  const timeFmt = new Intl.DateTimeFormat([], {
+  const timeFmt = new Intl.DateTimeFormat(localeForTz(tz), {
     timeZone: tz,
     hour: '2-digit',
     minute: '2-digit',

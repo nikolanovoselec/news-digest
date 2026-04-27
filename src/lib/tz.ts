@@ -14,6 +14,22 @@
 export const DEFAULT_TZ = 'UTC';
 
 /**
+ * Locale tag to use with `Intl.DateTimeFormat` so the rendered time
+ * follows the timezone's regional convention (24h vs 12h). Mirrors the
+ * client-side `timeLangForTz` heuristic in settings.astro: America/* zones
+ * use `en-US` (12h with AM/PM), everything else uses `en-GB` (24h).
+ *
+ * `Intl.DateTimeFormat` derives 24h-vs-12h from the locale, NOT the
+ * `timeZone` option, so callers that want a 24h display in a Zurich tz
+ * must pass this locale explicitly. The Workers runtime's default locale
+ * is `en-US`, which would otherwise force 12h on every server-rendered
+ * time string regardless of the user's tz.
+ */
+export function localeForTz(tz: string): string {
+  return tz.startsWith('America/') ? 'en-US' : 'en-GB';
+}
+
+/**
  * Return the local date in {@link tz} as `YYYY-MM-DD` for the given
  * Unix timestamp (seconds). Uses Intl.DateTimeFormat so DST transitions
  * are handled correctly — no manual offset math.

@@ -1,6 +1,6 @@
 // Tests for src/pages/api/history.ts — REQ-HIST-001.
 //
-// The handler returns a day-grouped view of the last 7 days of articles
+// The handler returns a day-grouped view of the last 14 days of articles
 // whose tags intersect the user's active tags, plus the scrape_runs
 // that happened in the same window (aggregated per local-date).
 
@@ -178,13 +178,13 @@ describe('GET /api/history — REQ-HIST-001', () => {
     expect(res.status).toBe(401);
   });
 
-  it('REQ-HIST-001: returns up to 7 day-groups', async () => {
+  it('REQ-HIST-001: returns up to 14 day-groups', async () => {
     const token = await authedToken();
-    // Seed articles across 10 distinct UTC dates so the handler must
-    // clamp to the 7-day window (via SQL) and to 7 groups (via slice).
+    // Seed articles across 16 distinct UTC dates so the handler must
+    // clamp to the 14-day window (via SQL) and to 14 groups (via slice).
     const now = Math.floor(Date.now() / 1000);
     const articles: ArticleRow[] = [];
-    for (let i = 0; i < 10; i += 1) {
+    for (let i = 0; i < 16; i += 1) {
       articles.push(fakeArticle(`a${i}`, now - i * 86_400 - 3600, ['ai']));
     }
     const { db } = makeDb(baseRow('UTC'), articles, []);
@@ -194,7 +194,7 @@ describe('GET /api/history — REQ-HIST-001', () => {
     const body = (await res.json()) as {
       days: { local_date: string; article_count: number }[];
     };
-    expect(body.days.length).toBeLessThanOrEqual(7);
+    expect(body.days.length).toBeLessThanOrEqual(14);
   });
 
   it('REQ-HIST-001: each day-group aggregates articles + ticks + token/cost sums', async () => {

@@ -5,7 +5,7 @@
 // Daily retention cleanup. The `0 3 * * *` cron in `src/worker.ts` calls
 // `runCleanup(env)` once per day. Three independent passes:
 //
-//   1. Article retention (REQ-PIPE-005): articles older than 7 days are
+//   1. Article retention (REQ-PIPE-005): articles older than 14 days are
 //      deleted unless at least one user has starred them. Child rows in
 //      `article_sources`, `article_tags`, and `article_reads` are
 //      removed via FK ON DELETE CASCADE declared in

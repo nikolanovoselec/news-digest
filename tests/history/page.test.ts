@@ -130,8 +130,8 @@ describe('history.astro — REQ-HIST-001', () => {
     );
   });
 
-  it('REQ-HIST-001: empty state reads "No articles in the last 7 days."', () => {
-    expect(historyPageSource).toContain('No articles in the last 7 days.');
+  it('REQ-HIST-001: empty state reads "No articles in the last 14 days."', () => {
+    expect(historyPageSource).toContain('No articles in the last 14 days.');
   });
 
   it('REQ-HIST-001: UserMenu link label reads "Search & History" (route stays /history)', () => {

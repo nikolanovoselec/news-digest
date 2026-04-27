@@ -90,7 +90,7 @@ const days = data.days;
 // opens the matching day pre-expanded and filters the list to just
 // that day so users arriving from the dashboard "see today" tile land
 // on a focused single-day view. The back button strips the param and
-// returns to the full 7-day list.
+// returns to the full 14-day list.
 const rawDateParam = Astro.url.searchParams.get('date');
 const dateParam =
   typeof rawDateParam === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDateParam)
@@ -147,7 +147,7 @@ const userTags = parseHashtags(sessionUser.hashtags_json);
 // LLM allowlist) never surfaces on cards.
 const userTagSet = new Set<string>(userTags);
 
-// Count tag occurrences across every article in the 7-day window so
+// Count tag occurrences across every article in the 14-day window so
 // each chip can render its count (distinct from dashboard's today-
 // scoped count — here we want the full search pool).
 const tagCounts = new Map<string, number>();
@@ -782,7 +782,7 @@ function formatCostUsd(value: number | null | undefined): string {
       'click',
       (ev) => {
         const a = (ev.target as HTMLElement | null)?.closest<HTMLAnchorElement>('a[href^="/digest/"]');
-        if (a === null) return;
+        if (a === null || a === undefined) return;
         const li = a.closest<HTMLElement>('[data-history-day]');
         if (li === null) return;
         const date = li.dataset['date'];
@@ -849,7 +849,7 @@ function formatCostUsd(value: number | null | undefined): string {
   }
 
   /* Back button shown only in single-day deep-link mode. Strips
-     ?date= and returns the user to the full 7-day history list. */
+     ?date= and returns the user to the full 14-day history list. */
   .history__back {
     display: inline-flex;
     align-items: center;
