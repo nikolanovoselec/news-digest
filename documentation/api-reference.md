@@ -209,7 +209,7 @@ Reads one `scrape_runs` row (most recent by `started_at DESC`) plus one KV key (
 
 Verifies the submitted tag is in the session user's `hashtags_json`, clears `sources:{tag}` and `discovery_failures:{tag}` KV entries, then inserts a fresh `pending_discoveries` row so the next 5-minute discovery cron repopulates the tag.
 
-The endpoint is additionally gated by Cloudflare Access at the zone level — see [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Only the configured admin email can reach it in production regardless of session state.
+**Access control:** `/api/admin/*` is protected by two independent layers — Cloudflare Access (zone-level JWT assertion header) and a Worker-side gate (`src/middleware/admin-auth.ts`) that also requires a valid session cookie and an `ADMIN_EMAIL` match. See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8.
 
 **Content-type: application/json**
 
@@ -229,7 +229,7 @@ The endpoint is additionally gated by Cloudflare Access at the zone level — se
 
 Re-queues every "stuck" tag for the session user in one shot. A tag is stuck when its `sources:{tag}` KV entry has an explicitly empty `feeds` array (REQ-DISC-001 exhaustion path or REQ-DISC-003 self-healing eviction). Brand-new tags (no entry yet) are not queued — they are still discovering, not stuck. Backs the **Discover missing sources** button on `/settings`.
 
-The endpoint is additionally gated by Cloudflare Access at the zone level — see [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Only the configured admin email can reach it in production regardless of session state.
+**Access control:** `/api/admin/*` is protected by two independent layers — Cloudflare Access (zone-level JWT assertion header) and a Worker-side gate (`src/middleware/admin-auth.ts`) that also requires a valid session cookie and an `ADMIN_EMAIL` match. See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8.
 
 **POST — canonical form submit path:**
 
@@ -330,7 +330,7 @@ The pipeline runs asynchronously via Queues. Poll `GET /api/scrape-status` to wa
 
 Operator-only endpoint that kicks the global-feed coordinator on demand — identical to what the `0 */4 * * *` cron fires automatically (every 4 hours at 00/04/08/12/16/20 UTC). Creates a fresh `scrape_runs` row with `status='running'` and sends a `SCRAPE_COORDINATOR` queue message.
 
-**Access control:** Intended to be gated by Cloudflare Access at the zone level. `POST` additionally enforces the standard Origin check ([REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)) as defence-in-depth against CSRF from a logged-in browser session. `GET` is exempt from the Origin check so operators can trigger from a bookmark or `curl`.
+**Access control:** `/api/admin/*` is protected by two independent layers — Cloudflare Access (zone-level JWT assertion header) and a Worker-side gate (`src/middleware/admin-auth.ts`) that also requires a valid session cookie and an `ADMIN_EMAIL` match. `POST` additionally enforces the standard Origin check ([REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)) as defence-in-depth against CSRF. `GET` is exempt from the Origin check so operators can trigger from a bookmark or `curl`. See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8.
 
 **Concurrency guard (120-second reuse window):** Before creating a new run, the handler queries for any `scrape_runs` row with `status='running'` started within the last 120 seconds. If one is found it is reused instead of dispatching a second coordinator. This absorbs double-clicks and link-preview bot refetches. Note: two truly concurrent requests can both pass the SELECT before either INSERT commits — the ULIDs are unique so no PK collision collapses the race; for an operator-only endpoint the tradeoff is acceptable.
 

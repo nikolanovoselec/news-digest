@@ -154,6 +154,7 @@ Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-su
 | `migrations/0003_global_feed.sql` | Global-feed rework — drops per-user digests + articles tables; creates global articles, article_sources, article_tags, article_stars, article_reads, scrape_runs | (foundational) |
 | `migrations/0004_system_user.sql` | System-user sentinel for `__system__`-owned pending discovery rows | (schema evolution) |
 | `migrations/0005_auth_links.sql` | Cross-provider account dedup — adds `auth_links (provider, provider_sub, user_id, linked_at)` table; performs a one-time merge of any duplicate-email `users` rows that pre-date this migration | [REQ-AUTH-007](../sdd/authentication.md#req-auth-007-cross-provider-account-dedup) |
+| `migrations/0006_e2e_user.sql` | Synthetic e2e test user — inserts a `__e2e__` sentinel row (`email_enabled=0`, `email='e2e@invalid.local'`) so `/api/dev/login` lands on it by default. Sandboxes e2e test runs so they never mutate the operator's account. The id is a sentinel string no OAuth provider can return, making the row unreachable from a real sign-in. | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) |
 
 ### Worker Entry and Queue
 
