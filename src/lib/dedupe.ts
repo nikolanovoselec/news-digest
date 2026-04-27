@@ -18,8 +18,6 @@
 // Both functions are pure — they never touch D1/KV/fetch — so they're
 // trivially testable and reusable from anywhere in the pipeline.
 
-export { canonicalize } from '~/lib/canonical-url';
-
 /**
  * A single article candidate that came out of a curated-source fetch.
  * `canonical_url` is the output of `canonicalize(source_url)`; callers

@@ -12,10 +12,11 @@
 // last chunk via counter==0.
 //
 // Per-source fetch reuses the 10-worker semaphore pattern from
-// src/lib/sources.ts (fetchFromSource + KV cache + 5s timeout + 1MB
-// cap). Curated sources are trusted (not gated through SSRF), but
-// discovered-tag feeds are synthesised on-the-fly via
-// adaptersForDiscoveredFeeds so the SSRF gate still fires.
+// src/lib/sources.ts (fetchFromSourceWithResult + KV cache + per-fetch
+// timeout + body cap from ~/lib/fetch-policy). Curated sources are
+// trusted (not gated through SSRF); discovered-tag feeds are
+// synthesised on-the-fly via adaptersForDiscoveredFeeds so the SSRF
+// gate still fires.
 
 import {
   CURATED_SOURCES,

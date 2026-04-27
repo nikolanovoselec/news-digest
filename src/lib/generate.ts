@@ -2,8 +2,6 @@
 // (src/queue/scrape-chunk-consumer.ts). The per-user generateDigest
 // function was retired in the global-feed rework (Wave 3).
 
-import { canonicalize } from '~/lib/canonical-url';
-import type { GeneratedArticle } from '~/lib/types';
 
 /** Shape Workers AI `.run()` returns. Different models surface token counts
  * under slightly different keys — the reader at the usage site tolerates all
@@ -182,71 +180,6 @@ function extractFirstJsonObject(raw: string): string | null {
   return null;
 }
 
-/** Convert a validated LLM payload into a sanitized list of articles ready
- * for insertion. Drops entries that lack required fields or produce empty
- * text after sanitization. Each article's `source_name` is resolved from
- * the supplied map by canonicalized URL; articles whose URL is not in the
- * map (i.e., the LLM hallucinated a URL outside the fetched headlines)
- * get `source_name: null`. */
-function sanitizeArticles(
-  payload: LLMPayload,
-  sourceNameByCanonicalUrl: Map<string, string>,
-  sourceTagsByCanonicalUrl: Map<string, string[]>,
-  userHashtags: string[],
-): GeneratedArticle[] {
-  const rawArticles = Array.isArray(payload.articles) ? payload.articles : [];
-  const userHashtagSet = new Set(userHashtags);
-  const out: GeneratedArticle[] = [];
-  for (const a of rawArticles) {
-    if (a === null || typeof a !== 'object') continue;
-    const title = sanitizeText(a['title']);
-    const url = typeof a['url'] === 'string' ? a['url'].trim() : '';
-    const oneLiner = sanitizeText(a['one_liner']);
-    const detailsRaw = Array.isArray(a['details']) ? a['details'] : [];
-    const details: string[] = [];
-    for (const d of detailsRaw) {
-      const sanitized = sanitizeText(d);
-      if (sanitized !== '') details.push(sanitized);
-    }
-    if (title === '' || url === '' || oneLiner === '') continue;
-    const canonical = canonicalize(url);
-    const sourceName = sourceNameByCanonicalUrl.get(canonical) ?? null;
-    // Tags: validated twice — first against the user's current hashtag
-    // list (so a hallucinated tag never reaches the DB), then — if the
-    // LLM omitted / returned all-invalid tags — fall back to the
-    // source_tags that the fan-out recorded for this URL. Either path
-    // yields a subset of the user's hashtags.
-    const llmTags = Array.isArray(a['tags']) ? a['tags'] : [];
-    const validatedTags: string[] = [];
-    const seenTags = new Set<string>();
-    for (const t of llmTags) {
-      if (typeof t !== 'string') continue;
-      const lower = t.trim().toLowerCase().replace(/^#/, '');
-      if (lower === '' || seenTags.has(lower)) continue;
-      if (!userHashtagSet.has(lower)) continue;
-      seenTags.add(lower);
-      validatedTags.push(lower);
-    }
-    if (validatedTags.length === 0) {
-      const fallback = sourceTagsByCanonicalUrl.get(canonical) ?? [];
-      for (const t of fallback) {
-        if (seenTags.has(t) || !userHashtagSet.has(t)) continue;
-        seenTags.add(t);
-        validatedTags.push(t);
-      }
-    }
-    out.push({
-      title,
-      url,
-      one_liner: oneLiner,
-      details,
-      tags: validatedTags,
-      source_name: sourceName,
-    });
-  }
-  return out;
-}
-
 /**
  * Sanitize a single plaintext field. Applied to titles, one-liners, and each
  * bullet in details.
@@ -314,7 +247,6 @@ export function extractTokensOut(r: AIRunResponse): number {
  * full pipeline. Not part of the public contract. */
 export const __test = {
   parseLLMPayload,
-  sanitizeArticles,
   sanitizeText,
   extractTokensIn,
   extractTokensOut,

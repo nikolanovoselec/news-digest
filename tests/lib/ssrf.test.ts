@@ -1,7 +1,7 @@
 // Tests for src/lib/ssrf.ts — REQ-DISC-005 (discovery prompt injection protection
 // via SSRF filter) and REQ-GEN-003 (source fan-out, HTTPS-only, no private ranges).
 import { describe, it, expect } from 'vitest';
-import { isUrlSafe, assertUrlSafe } from '~/lib/ssrf';
+import { isUrlSafe } from '~/lib/ssrf';
 
 describe('isUrlSafe', () => {
   describe('scheme enforcement', () => {

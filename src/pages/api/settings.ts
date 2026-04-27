@@ -28,6 +28,7 @@ import {
   rateLimitResponse,
   RATE_LIMIT_RULES,
 } from '~/lib/rate-limit';
+import { parseHashtags as parseHashtagsShared } from '~/lib/hashtags';
 import { isValidTz } from '~/lib/tz';
 import { loadSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
@@ -66,22 +67,8 @@ interface UserSettingsRow {
   email_enabled: number;
 }
 
-/**
- * Parse the user's stored hashtags JSON into a string array. Returns
- * `[]` when the column is NULL or the stored value is not a well-formed
- * JSON array of strings — the UI prefers an empty list over a parse
- * error here since the GET response shape is non-nullable.
- */
-function parseHashtagsJson(raw: string | null): string[] {
-  if (raw === null || raw === '') return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((v): v is string => typeof v === 'string');
-  } catch {
-    return [];
-  }
-}
+// Parse the user's stored hashtags JSON via the shared helper.
+const parseHashtagsJson = parseHashtagsShared;
 
 /**
  * Normalize a single user-typed hashtag:

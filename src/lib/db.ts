@@ -22,21 +22,3 @@ export async function applyForeignKeysPragma(db: D1Database): Promise<void> {
   await db.exec('PRAGMA foreign_keys = ON');
 }
 
-/**
- * Atomically execute multiple prepared statements.
- *
- * Thin pass-through over `db.batch` with a typed result. Used by multi-row
- * writes that must succeed or fail as a unit — most notably the digest
- * finalization write (one `digests` row + many `articles` rows) performed
- * by `generateDigest` in the Phase 5 queue consumer.
- *
- * Ordering is preserved; results are returned in the same order as the
- * input statements. If any statement fails the entire batch rolls back and
- * the promise rejects.
- */
-export async function batch<T = unknown>(
-  db: D1Database,
-  statements: D1PreparedStatement[],
-): Promise<D1Result<T>[]> {
-  return db.batch<T>(statements);
-}

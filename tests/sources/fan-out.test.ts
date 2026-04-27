@@ -4,7 +4,18 @@
 // 100-headline cap respected by the upstream caller.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fanOutForTags, fetchFromSource } from '~/lib/sources';
+import { fanOutForTags, fetchFromSourceWithResult } from '~/lib/sources';
+
+// Local wrapper for the historical fetchFromSource shape (CF-042
+// deleted the production shim; the tests still want the headline-only
+// view because they predate the result wrapper).
+async function fetchFromSource(
+  source: Parameters<typeof fetchFromSourceWithResult>[0],
+  tag: string,
+  kv: Parameters<typeof fetchFromSourceWithResult>[2],
+): Promise<Awaited<ReturnType<typeof fetchFromSourceWithResult>>['headlines']> {
+  return (await fetchFromSourceWithResult(source, tag, kv)).headlines;
+}
 import type { SourceAdapter } from '~/lib/sources';
 import type { Headline } from '~/lib/types';
 
