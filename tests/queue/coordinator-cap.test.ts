@@ -7,15 +7,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { capChunks } from '~/queue/scrape-coordinator';
 
 describe('capChunks — REQ-PIPE-001 (CF-012 + CF-073)', () => {
+  let consoleLog: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
-    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   it('REQ-PIPE-001: under the cap → returns input unchanged, no warning logged', () => {
     const input = Array.from({ length: 12 }, (_, i) => `chunk-${i}`);
-    const consoleLog = console.log as ReturnType<typeof vi.fn>;
     const out = capChunks(input, 40, 'run-under');
     expect(out).toBe(input);
     expect(out).toHaveLength(12);
@@ -27,7 +28,6 @@ describe('capChunks — REQ-PIPE-001 (CF-012 + CF-073)', () => {
 
   it('REQ-PIPE-001: exactly at the cap → returns input unchanged, no warning logged', () => {
     const input = Array.from({ length: 40 }, (_, i) => `chunk-${i}`);
-    const consoleLog = console.log as ReturnType<typeof vi.fn>;
     const out = capChunks(input, 40, 'run-equal');
     expect(out).toBe(input);
     expect(out).toHaveLength(40);
@@ -39,7 +39,6 @@ describe('capChunks — REQ-PIPE-001 (CF-012 + CF-073)', () => {
 
   it('REQ-PIPE-001: 41 chunks → returns exactly 40 + emits one coordinator_chunks_capped warning', () => {
     const input = Array.from({ length: 41 }, (_, i) => `chunk-${i}`);
-    const consoleLog = console.log as ReturnType<typeof vi.fn>;
     const out = capChunks(input, 40, 'run-over');
     expect(out).toHaveLength(40);
     // The dropped chunk is the last one ("chunk-40").
