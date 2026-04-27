@@ -34,7 +34,9 @@ export async function mapConcurrent<T, R>(
   const total = items.length;
   if (total === 0) return [];
   const workerCount = Math.min(concurrency, total);
-  const results = new Array<R>(total);
+  // Pre-size with a literal pattern (lint forbids new Array(n)). The
+  // null sentinel is overwritten before any worker reads it.
+  const results: R[] = Array.from({ length: total }, () => null as unknown as R);
   let cursor = 0;
   const worker = async (): Promise<void> => {
     while (true) {

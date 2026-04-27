@@ -262,7 +262,6 @@ export async function processOneChunk(
   }
 
   const parsed = llmRun.parsed;
-  const modelUsed = llmRun.modelUsed;
   const wastedTokensIn = llmRun.wastedTokensIn;
   const wastedTokensOut = llmRun.wastedTokensOut;
   const wastedCostUsd = llmRun.wastedCostUsd;
@@ -514,9 +513,9 @@ export async function processOneChunk(
   // come from runJsonWithFallback (CF-009).
   const tokensIn = llmRun.tokensIn + wastedTokensIn;
   const tokensOut = llmRun.tokensOut + wastedTokensOut;
-  // `modelUsed` is DEFAULT_MODEL_ID on the happy path, FALLBACK_MODEL_ID
-  // when the fallback retry produced the output. Cost = winning attempt
-  // + wasted primary attempt (zero on the happy path).
+  // llmRun.costUsd attributes to the model that actually produced the
+  // output (DEFAULT on the happy path, FALLBACK when the retry
+  // succeeded). Add the wasted-primary cost on top (zero on happy path).
   const costUsd = llmRun.costUsd + wastedCostUsd;
   // Deduped count = input candidates that ended up collapsed into a
   // primary plus input candidates that were dropped entirely (e.g. zero
