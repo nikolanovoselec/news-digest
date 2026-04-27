@@ -108,15 +108,6 @@ export async function POST(context: APIContext): Promise<Response> {
     return unauthorizedResponse();
   }
 
-  // Tier 2 (post-validation): user-keyed limit. Catches a stolen
-  // cookie distributed across many IPs that bypasses the per-IP tier.
-  const userRate = await enforceRateLimit(
-    env,
-    RATE_LIMIT_RULES.AUTH_REFRESH_USER,
-    `user:${row.user_id}`,
-  );
-  if (!userRate.ok) return rateLimitResponse(userRate.retryAfter);
-
   const nowSec = Math.floor(Date.now() / 1000);
 
   // REQ-AUTH-008 AC 4 — reuse detection with grace-window tolerance.
@@ -175,6 +166,18 @@ export async function POST(context: APIContext): Promise<Response> {
   if (row.expires_at <= nowSec) {
     return unauthorizedResponse();
   }
+
+  // Tier 2 (post-validation): user-keyed limit. Catches a stolen
+  // cookie distributed across many IPs that bypasses the per-IP tier.
+  // MUST run AFTER the revoked-row branch so an attacker replaying a
+  // stolen-and-already-revoked cookie doesn't burn the legitimate
+  // user's budget before reuse-detection fires.
+  const userRate = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.AUTH_REFRESH_USER,
+    `user:${row.user_id}`,
+  );
+  if (!userRate.ok) return rateLimitResponse(userRate.retryAfter);
 
   // Device fingerprint check.
   const present = await deviceFingerprint(context.request);

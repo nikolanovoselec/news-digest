@@ -16,7 +16,6 @@ import {
   requireSession,
   SESSION_COOKIE_NAME,
 } from '~/middleware/auth';
-import { errorResponse } from '~/lib/errors';
 import { signSession } from '~/lib/session-jwt';
 
 /**

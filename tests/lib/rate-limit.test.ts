@@ -119,6 +119,38 @@ describe('enforceRateLimit', () => {
     if (result.ok) return;
     expect(result.retryAfter).toBe(RATE_LIMIT_RULES.AUTH_REFRESH_USER.windowSec);
   });
+
+  it('REQ-AUTH-001 AC 9: failClosed rule denies on KV.put error too (write outage cannot bypass the limit)', async () => {
+    // KV.get succeeds (returns null = counter at 0), but KV.put rejects.
+    // For a failClosed rule the helper must deny, otherwise a sustained
+    // KV write outage means the counter never ticks up and the limit
+    // is effectively gone.
+    const env = makeKv({
+      get: vi.fn().mockResolvedValue(null),
+      put: vi.fn().mockRejectedValue(new Error('kv put down')),
+    });
+    const result = await enforceRateLimit(
+      env as unknown as { KV: KVNamespace },
+      RATE_LIMIT_RULES.AUTH_REFRESH_IP,
+      'ip:1.2.3.4',
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.retryAfter).toBe(RATE_LIMIT_RULES.AUTH_REFRESH_IP.windowSec);
+  });
+
+  it('CF-028: KV.put error on a fail-open rule still permits the request (preserves prior behavior)', async () => {
+    const env = makeKv({
+      get: vi.fn().mockResolvedValue(null),
+      put: vi.fn().mockRejectedValue(new Error('kv put down')),
+    });
+    const result = await enforceRateLimit(
+      env as unknown as { KV: KVNamespace },
+      RATE_LIMIT_RULES.AUTH_LOGIN,
+      'ip:1.2.3.4',
+    );
+    expect(result.ok).toBe(true);
+  });
 });
 
 describe('rateLimitResponse', () => {

@@ -236,26 +236,6 @@ export async function loadSession(
     return unauthenticated(true);
   }
 
-  // Tier 2 (post-validation): user-keyed limit. Catches a stolen
-  // cookie distributed across many IPs (botnet / proxy network) that
-  // the per-IP tier alone would miss. Run AFTER findRefreshToken so
-  // we have a stable user identity even on revoked / expired rows.
-  if (kv !== undefined) {
-    const rate = await enforceRateLimit(
-      { KV: kv },
-      RATE_LIMIT_RULES.AUTH_REFRESH_USER,
-      `user:${refreshRow.user_id}`,
-    );
-    if (!rate.ok) {
-      log('warn', 'auth.refresh.rate_limited', {
-        user_id: refreshRow.user_id,
-        bucket: 'user',
-        retry_after_seconds: rate.retryAfter,
-      });
-      return unauthenticated(false);
-    }
-  }
-
   const nowSec = Math.floor(Date.now() / 1000);
 
   // REQ-AUTH-008 AC 4 — reuse detection vs. concurrent-rotation
@@ -336,6 +316,27 @@ export async function loadSession(
       refresh_token_id: refreshRow.id,
     });
     return unauthenticated(true);
+  }
+
+  // Tier 2 (post-validation): user-keyed limit. Catches a stolen
+  // cookie distributed across many IPs that the per-IP tier alone
+  // would miss. MUST run AFTER the revoked-row branch so an attacker
+  // replaying a stolen-and-already-revoked cookie doesn't burn the
+  // legitimate user's budget before reuse-detection fires.
+  if (kv !== undefined) {
+    const rate = await enforceRateLimit(
+      { KV: kv },
+      RATE_LIMIT_RULES.AUTH_REFRESH_USER,
+      `user:${refreshRow.user_id}`,
+    );
+    if (!rate.ok) {
+      log('warn', 'auth.refresh.rate_limited', {
+        user_id: refreshRow.user_id,
+        bucket: 'user',
+        retry_after_seconds: rate.retryAfter,
+      });
+      return unauthenticated(false);
+    }
   }
 
   // Device fingerprint check — UA + Cf-IPCountry hashed at issuance.

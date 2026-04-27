@@ -105,10 +105,24 @@ export async function enforceRateLimit(
       // even if KV write propagation runs slow.
       expirationTtl: rule.windowSec * 2,
     });
-  } catch {
-    // Increment failure is non-fatal — fall through and permit the
-    // request. The next caller's read may miss this increment but
-    // the absolute ceiling stays bounded.
+  } catch (err) {
+    // For fail-closed rules, KV.put failure must NOT silently let the
+    // request through — otherwise a sustained KV write outage means
+    // the counter never ticks up, every read returns the previous
+    // value, and `failClosed: true` is effectively bypassed.
+    if (rule.failClosed === true) {
+      log('warn', 'rate.limit.kv_error', {
+        route_class: rule.routeClass,
+        identity,
+        kv_op: 'put',
+        kv_error: String(err).slice(0, 200),
+        decision: 'fail_closed',
+      });
+      return { ok: false, retryAfter: rule.windowSec };
+    }
+    // For fail-open rules, swallow the error — the next caller's
+    // read may miss this increment but the absolute ceiling stays
+    // bounded by the surrounding window.
   }
   return { ok: true };
 }
