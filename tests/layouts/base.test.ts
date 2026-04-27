@@ -21,13 +21,16 @@ import baseSource from '../../src/layouts/Base.astro?raw';
 import effectsSource from '../../src/scripts/page-effects.ts?raw';
 
 describe('Base.astro / page-effects.ts — view-transition wiring (REQ-DES-003 / REQ-HIST-001)', () => {
-  it('Base.astro imports the external page-effects module so CSP allows the script', () => {
-    // The site CSP is `script-src 'self'` — inline `<script>` bodies
-    // are blocked. Astro bundles imports into external `<script src>`
-    // tags which CSP allows from the same origin. Lose this import
-    // and every behaviour below silently disappears at runtime.
+  it('Base.astro references /scripts/page-effects.js as a static-served module so CSP allows it', () => {
+    // The site CSP is `script-src 'self'`. Astro 5 directRenderScript
+    // INLINES `<script>import './module';</script>` bundles regardless
+    // of size, and the inline emit is then blocked at runtime. The
+    // workaround is to reference public/scripts/page-effects.js with
+    // is:inline so Astro renders the tag verbatim — no processing, no
+    // inlining, just a same-origin <script src=> the browser fetches
+    // straight from the static asset pipeline.
     expect(baseSource).toMatch(
-      /<script>\s*import\s+['"]~\/scripts\/page-effects['"]\s*;?\s*<\/script>/,
+      /<script\s+is:inline\s+type="module"\s+src="\/scripts\/page-effects\.js"\s*>\s*<\/script>/,
     );
   });
 
