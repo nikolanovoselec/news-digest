@@ -10,7 +10,8 @@ import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { env, applyD1Migrations } from '../fixtures/cloudflare-test';
 import { startRun, finishRun } from '~/lib/scrape-run';
 
-const RUN_ID = '01JSCRAPERUNGUARDTEST000001';
+// Crockford base32 — no I L O U allowed in the 26-char ULID alphabet.
+const RUN_ID = '01JSCRAPERN0GA0RDTEST00001';
 
 async function readStatus(): Promise<string | null> {
   const row = await env.DB
@@ -68,6 +69,23 @@ describe('finishRun — REQ-PIPE-006 status-flap guard', () => {
     expect(await readStatus()).toBe('running');
 
     await finishRun(env.DB, RUN_ID, 'failed');
+    expect(await readStatus()).toBe('failed');
+  });
+
+  it('REQ-PIPE-006: a failed run stays failed when a late ready handoff arrives', async () => {
+    // Symmetric counterpart to the ready→failed-blocked case: REQ-PIPE-006
+    // AC 4 states that once a run leaves 'running' the status is terminal
+    // in BOTH directions. A delayed success path can't flip a failed run
+    // back to ready either.
+    await startRun(env.DB, {
+      id: RUN_ID,
+      model_id: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
+      chunk_count: 3,
+    });
+    await finishRun(env.DB, RUN_ID, 'failed');
+    expect(await readStatus()).toBe('failed');
+
+    await finishRun(env.DB, RUN_ID, 'ready');
     expect(await readStatus()).toBe('failed');
   });
 
