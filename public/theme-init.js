@@ -23,7 +23,9 @@
         'theme=' + theme + '; Path=/; Max-Age=' + oneYear + '; SameSite=Lax';
     }
 
-    // Logout cache clear hook (REQ-PWA-002 logout cache handling).
+    // Logout cache clear hook (originally tied to a PWA offline-reading
+    // REQ that was retired; the cache-clear is kept because it still
+    // matches the logout UX expectation).
     // Iterate every cache name and purge anything under the
     // `digest-cache-` prefix so a runtime-cache version bump never
     // leaves a stale copy of the prior user's content behind.

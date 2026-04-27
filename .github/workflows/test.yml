@@ -33,8 +33,28 @@ jobs:
       - name: Install dependencies
         run: npm install --no-fund --no-audit
 
+      # CF-033 — surface HIGH+ npm advisories in CI logs.
+      # `continue-on-error` keeps this advisory-only because Worker
+      # runtime is workerd (not Node.js), so most npm-audit findings
+      # land in build tooling (wrangler, miniflare, undici, astro
+      # build helpers) whose CVEs don't reach the deployed bundle.
+      # The step still runs on every push so operators see the list
+      # and can act via Dependabot PRs; failing the build on transient
+      # build-tool CVEs would block legitimate work without improving
+      # production security. Pin / upgrade decisions are tracked via
+      # Dependabot, not enforced here.
+      - name: npm audit (production deps, high+ — advisory only)
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
       - name: Lint
         run: npm run lint
+
+      # CF-069 — fail the build when source/tests/docs reference a REQ
+      # id that doesn't exist in sdd/. Catches drift between docs +
+      # SDD spec ahead of doc-updater's per-push pass.
+      - name: REQ backlink coverage
+        run: node scripts/check-req-backlinks.mjs
 
       - name: Dead code check
         run: npm run knip

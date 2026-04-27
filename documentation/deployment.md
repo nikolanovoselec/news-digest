@@ -75,9 +75,10 @@ The `scripts/e2e-test.sh` script still exists for manual invocation (`bash scrip
 | Resource | Type | Name | Purpose |
 |---|---|---|---|
 | `DB` | D1 database | `ai-news-digest` | Primary store |
-| `KV` | KV namespace | `news-digest-kv` | Caches (headlines, sources, health) |
+| `KV` | KV namespace | `ai-news-digest-kv` (derived: `${WORKER_NAME}-kv` in `scripts/bootstrap-resources.sh`, where `WORKER_NAME = "ai-news-digest"` from `wrangler.toml`) | Caches (headlines, sources, health) |
 | `SCRAPE_COORDINATOR` | Queue | `scrape-coordinator` | Every-4-hours coordinator dispatch (00/04/08/12/16/20 UTC) |
 | `SCRAPE_CHUNKS` | Queue | `scrape-chunks` | LLM chunk jobs |
+| `SCRAPE_FINALIZE` | Queue | `scrape-finalize` | Cross-chunk semantic dedup pass; one message enqueued by the last chunk consumer per scrape run ([REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)) |
 | `AI` | Workers AI | (account-level) | LLM inference |
 
 ## Dependency Automation
@@ -88,6 +89,23 @@ Dependabot is configured (`.github/dependabot.yml`) to open weekly PRs every Mon
 - **GitHub Actions** — action pin bumps are PRed automatically, preventing slow-drip deprecation warnings (e.g., Node.js 20 → 24 runner transitions, CodeQL v3 → v4 upgrades).
 
 CI workflows use `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'` at the workflow level so all actions run under Node.js 24 regardless of the action's bundled Node version.
+
+### PR Checks — CI gates (`test.yml`)
+
+Every push to `develop` (and every PR targeting `main`) runs the following gates in order. All must pass before the deploy workflow fires:
+
+| Step | Command | What it enforces |
+|---|---|---|
+| Install | `npm install --no-fund --no-audit` | Dependency resolution |
+| Security audit (advisory-only) | `npm audit --omit=dev --audit-level=high` with `continue-on-error: true` | Surfaces HIGH+ advisories in runtime dep tree but does NOT fail the build. Worker runtime is workerd, not Node.js, so most advisories live in build tooling (`@astrojs/cloudflare`, `wrangler`, `miniflare`, `undici`) and don't reach the deployed bundle. Operators read the advisory list from CI logs and act via Dependabot PRs; failing the build on these would block legitimate work without improving production security. |
+| Lint | `npm run lint` | Oxlint rules |
+| REQ backlink coverage | `node scripts/check-req-backlinks.mjs` | Every `REQ-X-NNN` reference in `src/`, `tests/`, `documentation/`, and `migrations/` resolves to a header in `sdd/`. Catches stale doc or code references to retired requirements before they reach production (CF-069). |
+| Dead code | `npm run knip` | No unused exports or files |
+| Unit + integration tests | `npx vitest run` | Vitest suite |
+
+Security advisories surfaced by the audit step are non-blocking — Dependabot opens PRs weekly for runtime dep upgrades, which is the project's enforcement path.
+
+When the REQ backlink gate fails, either the referenced REQ-ID needs to be added to `sdd/` (if it is a new requirement), or the stale reference in the source/doc file needs to be updated to point at the correct live REQ.
 
 ## Admin-only routes (Cloudflare Access gating)
 

@@ -1,19 +1,24 @@
 # PWA icons
 
-This directory holds the PNG icon set declared by `/manifest.webmanifest` and
-the Apple touch icon referenced from `src/layouts/Base.astro`.
+This directory holds the icon assets referenced by `public/manifest.webmanifest`
+and the Apple touch icon link in `src/layouts/Base.astro`.
 
-Required files (populated in Phase 12 polish):
+## Current assets
 
-| File                        | Size     | Purpose                                    |
-| --------------------------- | -------- | ------------------------------------------ |
-| `icon-192.png`              | 192×192  | Android launcher / desktop PWA icon        |
-| `icon-512.png`              | 512×512  | High-resolution PWA icon                   |
-| `icon-512-maskable.png`     | 512×512  | Maskable variant for adaptive launchers    |
-| `apple-touch-icon.png`      | 180×180  | iOS home-screen icon (REQ-PWA-001 AC 3)    |
+| File | Purpose | Referenced from |
+|---|---|---|
+| `app-icon.svg` | Single SVG used for every PWA icon size and the Apple touch icon. Safari 13+ accepts SVG via `apple-touch-icon`; older Safari falls back to the `<link rel="icon">` chain. | `public/manifest.webmanifest` (192×192 and 512×512 entries), `src/layouts/Base.astro:139` |
+| `.gitkeep` | Preserves directory in git. | — |
 
-ICON_STATUS: generated placeholders expected before Phase 13 deploy.
+There are no PNG fallbacks. The SVG is the source of truth for all sizes,
+keeping the brand palette in one place. If a future deployment target
+needs raster icons (e.g., a store listing that rejects SVG), generate
+them from `app-icon.svg` at build time rather than committing them.
 
-Do not commit real, non-placeholder binaries before the brand palette is
-frozen — the `theme_color` / `background_color` in the manifest and the
-Apple status-bar style in `Base.astro` must agree with the final artwork.
+## Updating the icon
+
+1. Edit `app-icon.svg` (or replace it).
+2. Verify `theme_color` and `background_color` in `public/manifest.webmanifest`
+   still agree with the SVG palette.
+3. Verify `<meta name="theme-color">` in `src/layouts/Base.astro` agrees
+   with the manifest.

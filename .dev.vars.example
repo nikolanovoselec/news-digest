@@ -17,3 +17,13 @@ GH_OAUTH_CLIENT_SECRET=your-github-oauth-app-client-secret
 # (digests still generate). Set both together or leave both blank.
 RESEND_API_KEY=re_xxxxxxxx
 RESEND_FROM=News Digest <digest@localhost>
+
+# Optional — dev/e2e bypass. When DEV_BYPASS_TOKEN is set, /api/dev/login
+# and /api/dev/trigger-scrape accept a Bearer token to mint a synthetic
+# session without going through OAuth. Leave unset on production
+# deploys (those endpoints return 404 when the token is missing).
+# DEV_BYPASS_TOKEN=local-only-bypass-token
+# DEV_BYPASS_USER_ID overrides the user id minted by /api/dev/login.
+# Defaults to the synthetic __e2e__ row from migrations/0006_e2e_user.sql
+# so e2e tests never mutate the operator's account.
+# DEV_BYPASS_USER_ID=__e2e__
