@@ -247,12 +247,12 @@ const initialTheme = cookieTheme ?? 'light';
             inside the new-page snapshot (REQ-DES-003 / REQ-HIST-001).
           - data-vt-active flag for header opacity. */}
     {/* Astro 5 directRenderScript inlines the bundled output of any
-        <script>import '...';</script> block regardless of size, which
-        the site's `script-src 'self'` CSP then blocks at runtime. The
-        only reliable workaround is a static-served file in /public
-        loaded via is:inline (Astro renders the tag verbatim, no
-        processing). The .ts source under src/scripts/page-effects.ts
-        mirrors this file. */}
+        pure-import script tag regardless of size, which the site's
+        `script-src 'self'` CSP then blocks at runtime. The only
+        reliable workaround is a static-served file in /public loaded
+        via is:inline (Astro renders the tag verbatim, no processing).
+        The .ts source under src/scripts/page-effects.ts mirrors this
+        file. */}
     <script is:inline type="module" src="/scripts/page-effects.js"></script>
 
     {/* Scroll save/restore + view-transition handlers also live in

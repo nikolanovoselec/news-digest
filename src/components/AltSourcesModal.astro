@@ -122,12 +122,12 @@ const primaryIso = toIsoDatetime(primaryPublishedAt);
   </div>
 </dialog>
 
-<script>
-  // Logic moved to src/scripts/alt-sources-modal.ts so Astro emits an
-  // external bundle (CSP `script-src 'self'` blocks the inline
-  // bundle Astro would otherwise produce for small scripts).
-  import '~/scripts/alt-sources-modal';
-</script>
+{/* Static-served from /public so the site CSP `script-src 'self'`
+    permits it. Astro 5 directRenderScript inlines pure-import script
+    tags regardless of size, and the inline emit is then blocked by
+    CSP. The .ts source under src/scripts/alt-sources-modal.ts mirrors
+    this file. */}
+<script is:inline type="module" src="/scripts/alt-sources-modal.js"></script>
 
 <style>
   /* Editorial modal: serif heading, small-caps metadata line inside

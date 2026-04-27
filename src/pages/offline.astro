@@ -34,12 +34,12 @@ import Base from '~/layouts/Base.astro';
   </section>
 </Base>
 
-<script>
-  // Logic moved to src/scripts/offline.ts so Astro emits an
-  // external bundle (CSP `script-src 'self'` blocks the inline
-  // bundle Astro would otherwise produce for small scripts).
-  import '~/scripts/offline';
-</script>
+{/* Static-served from /public so the site CSP `script-src 'self'`
+    permits it. Astro 5 directRenderScript inlines pure-import script
+    tags regardless of size, and the inline emit is then blocked by
+    CSP. The .ts source under src/scripts/offline.ts mirrors this
+    file. */}
+<script is:inline type="module" src="/scripts/offline.js"></script>
 
 <style>
   .offline-page {
