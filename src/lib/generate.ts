@@ -149,7 +149,21 @@ function stripFencesAndPreamble(raw: string): string {
 
 /** Walk the string and return the first balanced {...} substring.
  * Respects string literals so a `}` inside a string does not close the
- * outer object. Returns null when no balanced pair is found. */
+ * outer object. Returns null when no balanced pair is found.
+ *
+ * State machine — three booleans/counters track parser context:
+ *   - `depth`    — nesting level. Increments on each unescaped `{`,
+ *                  decrements on each unescaped `}`. The substring is
+ *                  complete the first time `depth` returns to 0.
+ *   - `inString` — true while scanning inside a `"..."` string literal.
+ *                  Toggled by an unescaped `"`. Braces inside strings
+ *                  must NOT count toward depth (e.g. `{"k":"a } b"}`
+ *                  would otherwise close after the inner `}`).
+ *   - `escape`   — true for exactly one character after a `\`. Used so
+ *                  `"\""` (an escaped quote inside a string) does not
+ *                  end the string, and so `"\\"` (escaped backslash)
+ *                  does not start an escape on the next character.
+ */
 function extractFirstJsonObject(raw: string): string | null {
   const start = raw.indexOf('{');
   if (start < 0) return null;
@@ -158,22 +172,29 @@ function extractFirstJsonObject(raw: string): string | null {
   let escape = false;
   for (let i = start; i < raw.length; i++) {
     const ch = raw[i];
+    // Skip the next character whole — handles `\"`, `\\`, `\n` etc.
     if (escape) {
       escape = false;
       continue;
     }
+    // Backslash arms the escape latch for the following character.
     if (ch === '\\') {
       escape = true;
       continue;
     }
+    // Toggle string state. We only enter/leave strings via an unescaped
+    // quote, which is why this branch runs after the escape checks.
     if (ch === '"') {
       inString = !inString;
       continue;
     }
+    // Anything inside a string literal is opaque — braces don't count.
     if (inString) continue;
     if (ch === '{') depth++;
     else if (ch === '}') {
       depth--;
+      // First close-brace that brings us back to outer scope ends the
+      // object; return the slice from the opening `{` through this `}`.
       if (depth === 0) return raw.slice(start, i + 1);
     }
   }

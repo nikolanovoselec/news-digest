@@ -26,6 +26,7 @@ import { loadSession } from '~/middleware/auth';
 import { requireSettingsComplete } from '~/middleware/settings-gate';
 import { slugify } from '~/lib/slug';
 import { splitIntoParagraphs } from '~/lib/paragraph-split';
+import { DEFAULT_TZ } from '~/lib/tz';
 
 interface ArticleRow {
   id: string;
@@ -175,17 +176,6 @@ try {
 
 const transitionName = `card-${canonicalSlug}`;
 
-// Reading-time estimate from the sum of detail-paragraph word counts.
-// 220 wpm is the standard desk-reader rate; clamp to ≥1 minute so a
-// very short article doesn't read "0 MIN".
-function countWords(s: string): number {
-  const t = s.trim();
-  if (t === '') return 0;
-  return t.split(/\s+/u).length;
-}
-const totalWords = details.reduce((acc, p) => acc + countWords(p), 0);
-const readMinutes = Math.max(1, Math.ceil(totalWords / 220));
-
 // Publish-date formatting. Render in the US editorial short style
 // (APR 23, NOV 8). Pure display, no timezone affordances needed
 // because the field is informational, not interactive.
@@ -199,6 +189,34 @@ function formatDate(unixSec: number): string {
 }
 const publishedSec = articleRow.published_at;
 const publishedLabel = formatDate(publishedSec);
+
+// Ingestion-time formatting. Replaces the previous "X MIN READ" pill
+// per a user request — the read-time estimate was load-bearing nowhere
+// else, so removing it simplifies the metadata strip while surfacing
+// "when did this story land in our pool" as the more useful signal.
+// Renders in the user's IANA timezone (DEFAULT_TZ when the user hasn't
+// set one) so a Europe/Zurich reader sees CET wall-clock; a US-Pacific
+// reader sees PT. `Intl.DateTimeFormat` picks the locale-appropriate
+// 24h vs 12h convention based on the timeZone — Europe and most of
+// the world get 24h; en-US falls back to 12h.
+const userTz =
+  typeof session.user.tz === 'string' && session.user.tz !== ''
+    ? session.user.tz
+    : DEFAULT_TZ;
+function formatIngestedAt(unixSec: number, tz: string): string {
+  // Date part — short month + day, locale-neutral (matches publishedLabel
+  // format style). Time part — Intl-formatted in user tz to honor 24h vs
+  // 12h conventions per the IANA zone's canonical locale.
+  const datePart = formatDate(unixSec);
+  const timeFmt = new Intl.DateTimeFormat([], {
+    timeZone: tz,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const timePart = timeFmt.format(new Date(unixSec * 1000));
+  return `INGESTED ${datePart}, ${timePart}`;
+}
+const ingestedLabel = formatIngestedAt(articleRow.ingested_at, userTz);
 
 // Display source: prefer the primary_source_name (minus the `feed:`
 // namespace prefix), fall back to the outbound URL's host so a null
@@ -276,7 +294,7 @@ const articleDataset = {
         }
         <span class="article-detail__meta-item">{publishedLabel}</span>
         <span class="article-detail__meta-sep" aria-hidden="true">·</span>
-        <span class="article-detail__meta-item">{readMinutes} MIN READ</span>
+        <span class="article-detail__meta-item">{ingestedLabel}</span>
         <span class="article-detail__meta-sep" aria-hidden="true">·</span>
         {/* Implements REQ-STAR-001 — star toggle at the end of the
             metadata line. Same optimistic toggle as the card button;

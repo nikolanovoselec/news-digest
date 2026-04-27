@@ -94,14 +94,14 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 ---
 
-### REQ-PIPE-005: Seven-day retention with starred-exempt cleanup
+### REQ-PIPE-005: Fourteen-day retention with starred-exempt cleanup
 
-**Intent:** The global pool stays small and fast by dropping stories older than a week, but articles any user has starred are preserved indefinitely.
+**Intent:** The global pool stays small and fast by dropping stories older than two weeks, but articles any user has starred are preserved indefinitely.
 
 **Applies To:** System
 
 **Acceptance Criteria:**
-1. A daily cron fires at 03:00 UTC and deletes articles whose published-at timestamp is older than 7 days, when no user has starred the article.
+1. A daily cron fires at 03:00 UTC and deletes articles whose published-at timestamp is older than 14 days, when no user has starred the article.
 2. An article starred by any user is preserved regardless of age.
 3. Deletion cascades remove the article's alternative sources, tag rows, and read-tracking rows so no orphans remain.
 4. The cleanup run is independent of the global scrape run and never blocks ingestion.

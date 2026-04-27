@@ -72,7 +72,7 @@ Three triggers are declared in `wrangler.toml`:
 | Schedule | Purpose |
 |---|---|
 | `0 */4 * * *` | Every-4-hour global-feed coordinator — fires the scrape pipeline at 00/04/08/12/16/20 UTC ([REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)) |
-| `0 3 * * *` | Daily retention cleanup — removes articles older than 7 days ([REQ-PIPE-005](../sdd/generation.md#req-pipe-005-seven-day-retention-with-starred-exempt-cleanup)) |
+| `0 3 * * *` | Daily retention cleanup — removes articles older than 7 days ([REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup)) |
 | `*/5 * * * *` | Every-5-minute tick — email dispatcher fan-out per user ([REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email)) |
 | `*/5 * * * *` | Every-5-minute tick — pending-discovery drain (LLM source discovery for newly added tags) — *previously also covered by [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking) per-user-generation rate limiting (Deprecated 2026-04-24)*; now implemented purely as a worker queue + cron consumer with no per-user gating |
 

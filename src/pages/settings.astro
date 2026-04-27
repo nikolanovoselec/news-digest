@@ -48,6 +48,18 @@ if (session.refreshCookie !== null) {
 }
 Astro.locals.user = session.user;
 
+// Admin gate for the operator-only settings sections (force refresh,
+// stuck-tag rediscovery). The same ADMIN_EMAIL secret that gates
+// /api/admin/* in `src/middleware/admin-auth.ts` decides which user
+// sees these sections at all. Hiding non-admin entry points is a
+// progressive-disclosure cleanup — the API endpoints themselves stay
+// gated server-side regardless of what the page renders.
+const adminEmail =
+  typeof env.ADMIN_EMAIL === 'string' ? env.ADMIN_EMAIL : '';
+const isAdmin =
+  adminEmail !== '' &&
+  session.user.email.toLowerCase() === adminEmail.toLowerCase();
+
 // Enforce the settings-incomplete / already-complete redirect rules.
 // The helper only reads `request` and `locals`; cast to `APIContext`
 // for the remainder of the surface it does not touch.
@@ -103,6 +115,18 @@ const tzOptions: string[] = canonicalTzList.includes(tzValue)
   : [tzValue, ...canonicalTzList].sort((a, b) => a.localeCompare(b));
 const currentModelId = user.model_id ?? DEFAULT_MODEL_ID;
 const emailEnabled = user.email_enabled === 1;
+
+// Locale hint for the native <input type="time"> — browsers honor the
+// `lang` attribute when picking 12h vs 24h display. Most of the world
+// uses 24h; the US (America/*) is the main 12h holdout. The selected
+// IANA zone determines the hint, which the JS handler keeps in sync
+// when the tz dropdown changes. The submitted value is always
+// canonical "HH:MM" 24h regardless of the display format, so the
+// server contract is unchanged.
+function timeLangForTz(tz: string): string {
+  return tz.startsWith('America/') ? 'en-US' : 'en-GB';
+}
+const timeInputLang = timeLangForTz(tzValue);
 
 // REQ-SET-004 — ModelSelect is hidden while the global pipeline runs on
 // a single default model. The stored `model_id` preference is still
@@ -255,6 +279,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
             name="time"
             data-time-input
             value={timeValue}
+            lang={timeInputLang}
             required
             class="settings__time-input"
           />
@@ -389,15 +414,17 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     }
 
     {
-      !isFirstRun && emptyFeedTags.length > 0 && (
+      isAdmin && !isFirstRun && emptyFeedTags.length > 0 && (
         /* Implements REQ-DISC-004 — single bulk "Discover missing
            sources" button posts to /api/admin/discovery/retry-bulk which
-           re-queues every empty-feed tag in one shot. The settings
+           re-queues every empty-feed tag in one shot. Gated to admin
+           users only — the API endpoint itself remains gated by
+           ADMIN_EMAIL + Cloudflare Access regardless of what we render
+           here. Non-admins simply don't see the section. The settings
            page no longer renders a button per stuck tag; clicking
            once is enough. Native form POST chosen over JS for the
            same Samsung-Browser/in-app-webview reliability reason as
-           the rest of the page. The endpoint is additionally gated
-           by Cloudflare Access so only the admin can execute it. */
+           the rest of the page. */
         <fieldset class="settings__section settings__section--standalone">
           <legend class="settings__legend">Stuck tags</legend>
           <p class="settings__hint">
@@ -460,37 +487,39 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               </a>
             </div>
           </fieldset>
-          <fieldset class="settings__section">
-            <legend class="settings__legend">Force refresh</legend>
-            <p class="settings__hint">
-              Fire the global scrape pipeline immediately instead of
-              waiting for the next 4-hour tick. Useful after a deploy
-              to verify the coordinator + chunk consumer end-to-end.
-              This endpoint is gated by Cloudflare Access — only
-              operators with an Access session can reach it.
-            </p>
-            <div class="settings__actions-row">
-              <form method="post" action="/api/admin/force-refresh">
-                <button
-                  type="submit"
-                  class="settings__secondary-button"
-                >
-                  Force refresh now
-                </button>
-              </form>
-            </div>
-            {/* Live progress line for any in-flight scrape run. Hidden
-                by default; the script at the bottom of this page polls
-                /api/scrape-status every 5s and fills it with a
-                "chunks done / articles ingested" line while status is
-                running. Clears itself when the run completes. */}
-            <p
-              class="settings__status"
-              data-scrape-progress
-              aria-live="polite"
-              hidden
-            ></p>
-          </fieldset>
+          {isAdmin && (
+            <fieldset class="settings__section">
+              <legend class="settings__legend">Force refresh</legend>
+              <p class="settings__hint">
+                Fire the global scrape pipeline immediately instead of
+                waiting for the next 4-hour tick. Useful after a deploy
+                to verify the coordinator + chunk consumer end-to-end.
+                This endpoint is gated by Cloudflare Access — only
+                operators with an Access session can reach it.
+              </p>
+              <div class="settings__actions-row">
+                <form method="post" action="/api/admin/force-refresh">
+                  <button
+                    type="submit"
+                    class="settings__secondary-button"
+                  >
+                    Force refresh now
+                  </button>
+                </form>
+              </div>
+              {/* Live progress line for any in-flight scrape run. Hidden
+                  by default; the script at the bottom of this page polls
+                  /api/scrape-status every 5s and fills it with a
+                  "chunks done / articles ingested" line while status is
+                  running. Clears itself when the run completes. */}
+              <p
+                class="settings__status"
+                data-scrape-progress
+                aria-live="polite"
+                hidden
+              ></p>
+            </fieldset>
+          )}
           <fieldset class="settings__section">
             <legend class="settings__legend">Delete account</legend>
             <p class="settings__hint">
@@ -783,6 +812,20 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     const status = form.querySelector<HTMLElement>('[data-settings-status]');
     const submit = form.querySelector<HTMLButtonElement>('[data-settings-submit]');
     const tzSelect = form.querySelector('[data-tz-select]') as HTMLSelectElement | null;
+    const timeInput = form.querySelector('[data-time-input]') as HTMLInputElement | null;
+
+    // Keep <input type="time"> lang in sync with the selected tz so a
+    // user switching from Europe/Zurich to America/Los_Angeles flips
+    // the picker from 24h to 12h immediately, without a reload.
+    // Mirrors `timeLangForTz` in the frontmatter.
+    function timeLangForTz(tz: string): string {
+      return tz.startsWith('America/') ? 'en-US' : 'en-GB';
+    }
+    if (tzSelect !== null && timeInput !== null) {
+      tzSelect.addEventListener('change', () => {
+        timeInput.lang = timeLangForTz(tzSelect.value);
+      });
+    }
 
     // Surface the native-POST round-trip outcome inline next to the
     // Save button (instead of a top-of-page banner). The /api/settings
