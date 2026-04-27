@@ -1,4 +1,5 @@
-// Implements REQ-PIPE-003
+// Implements REQ-PIPE-002
+// Implements REQ-PIPE-008
 //
 // Single LLM-call entrypoint with primary-then-fallback retry, used
 // by every Workers-AI site that expects a JSON response. Replaces
