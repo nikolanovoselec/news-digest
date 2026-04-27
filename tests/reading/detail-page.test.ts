@@ -33,9 +33,18 @@ describe('detail page source contract — REQ-READ-002', () => {
     expect(detailSource).toContain('article-detail__paragraph--lead');
   });
 
-  it('REQ-READ-002: metadata line renders source, date, and read-time', () => {
+  it('REQ-READ-002: metadata line renders source, published date, and ingested time', () => {
+    // The metadata strip is `<source> · <publishedLabel> · <ingestedLabel>`.
+    // ingestedLabel is wall-clock time only — the published date is right
+    // beside it in the strip, so prefixing the ingested slot with a
+    // duplicate "INGESTED APR 27" was redundant noise.
     expect(detailSource).toContain('article-detail__meta');
-    expect(detailSource).toMatch(/MIN READ/);
+    expect(detailSource).toContain('publishedLabel');
+    expect(detailSource).toContain('ingestedLabel');
+    // Time-only formatter: hour:minute, no date, no "INGESTED " prefix.
+    expect(detailSource).not.toMatch(/INGESTED \$\{datePart\}/);
+    expect(detailSource).toMatch(/hour:\s*['"]2-digit['"]/);
+    expect(detailSource).toMatch(/minute:\s*['"]2-digit['"]/);
   });
 
   it('REQ-READ-002: never uses innerHTML in the frontmatter render', () => {
