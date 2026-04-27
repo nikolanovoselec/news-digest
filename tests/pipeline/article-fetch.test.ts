@@ -88,6 +88,48 @@ describe('extractArticleText — REQ-PIPE-001 AC 8', () => {
     expect(text).not.toContain('Please enable JavaScript');
   });
 
+  // CodeQL js/bad-tag-filter #142 / #171 — the original strip regex
+  // required a literal `</script>` and missed `</script >` (whitespace
+  // before the `>`), `</script\n>` (newline), and `</script foo>`
+  // (attribute-shaped junk). HTML parsers tolerate ALL these forms,
+  // so attacker-controlled feed bodies could smuggle script content
+  // into the LLM-prompt body. The fix uses `</script\b[^>]*>`.
+  it('REQ-PIPE-001: strips script/style with whitespace and junk before the closing >', () => {
+    const html = `
+      <article>
+        Clean body text we do want.
+        <script>window.__leak1 = 1;</script >
+        <script>window.__leak2 = 2;</script\n>
+        <style>.x { color: red; }</style >
+        <script foo="bar">window.__leak3 = 3;</script bar>
+      </article>
+    `;
+    const text = extractArticleText(html);
+    expect(text).toContain('Clean body text');
+    expect(text).not.toMatch(/window\.__leak1/);
+    expect(text).not.toMatch(/window\.__leak2/);
+    expect(text).not.toMatch(/color: red/);
+    expect(text).not.toMatch(/window\.__leak3/);
+  });
+
+  // CodeQL #171 — isolates the case where the attribute-shaped close
+  // is the ONLY closing variant in the document (no later strict
+  // `</script>` for the lazy quantifier to fall through to). The
+  // earlier composite test had a trailing `</article>` that masked
+  // this branch — a stricter `</script\s*>` regex looked correct
+  // against the composite input but still let this fixture leak.
+  it('REQ-PIPE-001: strips a script when its attribute-shaped close is the ONLY closing variant', () => {
+    const html =
+      '<html><body>Article body that is plenty long to ground a summary across the threshold. ' +
+      '<script>window.__smuggle = 42;</script attr-only>' +
+      'Trailing prose that keeps the body candidate populated.</body></html>';
+    const text = extractArticleText(html);
+    expect(text).toContain('Article body that is plenty long');
+    expect(text).toContain('Trailing prose');
+    expect(text).not.toMatch(/window\.__smuggle/);
+    expect(text).not.toMatch(/= 42/);
+  });
+
   it('REQ-PIPE-001: falls back to <body> when no known container matches', () => {
     const html = `
       <html>

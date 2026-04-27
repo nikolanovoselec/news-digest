@@ -91,6 +91,36 @@ describe('detail page source contract — REQ-READ-002', () => {
     expect(detailSource).toMatch(/href="\/digest"/);
   });
 
+  it('REQ-READ-002: back-button hijack accepts SPA-nav signal (history.state.index > 0) AND same-origin referrer', () => {
+    // The earlier implementation used document.referrer alone to
+    // decide whether to call window.history.back(). SPA navigations
+    // never refresh document.referrer (the document was never re-
+    // fetched), so a user who hard-loaded /history and SPA-clicked
+    // a card landed on this page with referrer === '' and the
+    // hijack fell through to the static href="/digest" — taking
+    // them to the dashboard instead of back to /history. Astro's
+    // ClientRouter sets history.state.index on every navigation;
+    // index > 0 proves an in-app SPA hop has happened.
+    expect(detailSource).toMatch(
+      /history\.state[\s\S]{0,200}\.index/,
+    );
+    expect(detailSource).toMatch(
+      /typeof\s+stateIndex\s*===\s*['"]number['"]\s*&&\s*stateIndex\s*>\s*0/,
+    );
+    // Same-origin referrer remains a valid in-app signal for the
+    // hard-load case (no SPA navigation happened, so history.state
+    // may still be index 0).
+    expect(detailSource).toMatch(
+      /document\.referrer[\s\S]{0,200}window\.location\.origin/,
+    );
+    // The handler still calls window.history.back() when at least
+    // one of the two signals is present.
+    expect(detailSource).toMatch(
+      /if\s*\(\s*!arrivedInAppViaSpa\s*&&\s*!sameOriginReferrer\s*\)/,
+    );
+    expect(detailSource).toContain('window.history.back()');
+  });
+
   it('REQ-READ-002: articleId and slug are pulled from Astro.params', () => {
     expect(detailSource).toContain("Astro.params['id']");
     expect(detailSource).toContain("Astro.params['slug']");

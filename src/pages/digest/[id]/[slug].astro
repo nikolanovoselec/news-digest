@@ -675,22 +675,43 @@ const articleDataset = {
 
   // Back button — return to the exact previous page (search results,
   // dashboard, /starred, etc.) when the user arrived via in-app
-  // navigation. Falls through to the plain href="/digest" when the
-  // user direct-linked here (history.length === 1 or navigation type
-  // is "reload") so the anchor stays a valid link without JS.
+  // navigation. Falls through to the plain href="/digest" only on a
+  // genuine direct-link visit so the anchor stays a valid link
+  // without JS.
+  //
+  // Two independent in-app signals — at least one must be present
+  // before we hijack the click:
+  //   1. window.history.state.index > 0
+  //      Astro's ClientRouter pushState's `{ index, scrollX, scrollY }`
+  //      on every SPA navigation, starting at index 0 on first load.
+  //      An index above zero proves at least one same-realm SPA
+  //      navigation has happened — the back stack contains the
+  //      previous in-app page.
+  //   2. document.referrer is on the same origin
+  //      Catches the path where the user landed on this article via a
+  //      hard HTTP navigation from another same-site page (no SPA
+  //      pushState yet, so history.state may still be index 0). The
+  //      back-stack entry is the referring page.
+  //
+  // document.referrer alone was insufficient: SPA navigations don't
+  // update document.referrer (the document was never re-fetched), so
+  // a user who hard-loaded /history and SPA-clicked a card landed on
+  // this page with referrer === '' — the prior heuristic then sent
+  // them to the static /digest fallback even though history.back()
+  // would have correctly returned to /history.
   function handleBackClick(this: HTMLAnchorElement, e: MouseEvent): void {
-    // Don't override middle-click, cmd/ctrl-click, etc.
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
       return;
     }
-    // Only hijack when there IS a back entry that's on our own origin.
-    // document.referrer is the cheapest signal — the reliable hint
-    // that the user came from another page on this site.
-    const sameOrigin =
+    const stateIndex = (window.history.state as { index?: unknown } | null)
+      ?.index;
+    const arrivedInAppViaSpa =
+      typeof stateIndex === 'number' && stateIndex > 0;
+    const sameOriginReferrer =
       document.referrer !== '' &&
       new URL(document.referrer).origin === window.location.origin;
-    if (!sameOrigin) {
-      return; // let the href="/digest" fallback do its job
+    if (!arrivedInAppViaSpa && !sameOriginReferrer) {
+      return; // genuine direct-link — fall through to href="/digest"
     }
     e.preventDefault();
     window.history.back();

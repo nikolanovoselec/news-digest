@@ -129,7 +129,11 @@ export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed
       });
       return [];
     }
-  } else if (typeof payloadRaw === 'object' && payloadRaw !== null) {
+  } else if (typeof payloadRaw === 'object') {
+    // The earlier `payloadRaw === null` early-return already excludes
+    // null, so the redundant runtime null check that was here was
+    // flagged by CodeQL #166 (js/comparison-between-incompatible-types)
+    // as comparing a non-nullable type to null.
     payload = payloadRaw as LLMDiscoveryPayload;
   } else {
     log('warn', 'discovery.completed', {

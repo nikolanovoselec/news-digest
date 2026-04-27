@@ -65,4 +65,20 @@ describe('Base.astro — view-transition wiring (REQ-DES-003 / REQ-HIST-001)', (
       /\[data-vt-active\]\s*\.site-header\s*\{[\s\S]*background-color:\s*var\(--bg\)/,
     );
   });
+
+  it('synchronously restores scroll on astro:after-swap so view-transition snapshots include below-fold cards', () => {
+    // Without an in-callback scroll restore, the View-Transition
+    // snapshot of the new page is captured at scrollY=0. Any card
+    // outside the initial viewport (e.g. a /history card buried
+    // inside an expanded day deep in the 14-day list) is dropped
+    // from the snapshot and the morph silently no-ops.
+    //
+    // The async page-load tick loop still runs to handle lazy-image
+    // and filter-driven layout reflow, but it cannot replace the
+    // sync restore — by the time page-load fires, the snapshot is
+    // already captured.
+    expect(baseSource).toMatch(
+      /astro:after-swap[\s\S]{0,400}window\.scrollTo\(\s*0\s*,\s*target\s*\)/,
+    );
+  });
 });

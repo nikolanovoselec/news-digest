@@ -50,16 +50,26 @@ const SNIPPET_CAP = 3000;
 export function extractArticleText(html: string): string {
   // Drop non-content blocks BEFORE tag-stripping so their contents
   // don't leak in.
+  //
+  // Closing-tag pattern uses `\b[^>]*>` so any non-`>` characters
+  // (whitespace, attributes, junk) between the tag name and `>` are
+  // accepted (e.g. `</script >`, `</script\t\n>`, `</script foo>`,
+  // `</script bar baz>`). HTML parsers tolerate all of these, and a
+  // strict `</script>` literal — or even `</script\s*>` (CodeQL
+  // #171) — lets an attacker smuggle a `<script>...</script foo>`
+  // block past the strip and into the LLM-prompt body when the
+  // attribute-shaped close is the only closing variant in the doc.
+  // The `\b` anchor blocks `</scripted>` collisions.
   const cleaned = html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
-    .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
-    .replace(/<header[\s\S]*?<\/header>/gi, ' ')
-    .replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
-    .replace(/<aside[\s\S]*?<\/aside>/gi, ' ')
-    .replace(/<form[\s\S]*?<\/form>/gi, ' ')
-    .replace(/<svg[\s\S]*?<\/svg>/gi, ' ');
+    .replace(/<script\b[\s\S]*?<\/script\b[^>]*>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style\b[^>]*>/gi, ' ')
+    .replace(/<noscript\b[\s\S]*?<\/noscript\b[^>]*>/gi, ' ')
+    .replace(/<nav\b[\s\S]*?<\/nav\b[^>]*>/gi, ' ')
+    .replace(/<header\b[\s\S]*?<\/header\b[^>]*>/gi, ' ')
+    .replace(/<footer\b[\s\S]*?<\/footer\b[^>]*>/gi, ' ')
+    .replace(/<aside\b[\s\S]*?<\/aside\b[^>]*>/gi, ' ')
+    .replace(/<form\b[\s\S]*?<\/form\b[^>]*>/gi, ' ')
+    .replace(/<svg\b[\s\S]*?<\/svg\b[^>]*>/gi, ' ');
 
   // Collect every candidate container body text — we take whichever
   // produces the longest clean output.

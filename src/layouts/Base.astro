@@ -474,6 +474,29 @@ const initialTheme = cookieTheme ?? 'light';
         document.addEventListener('astro:before-swap', preFilterIncomingDocument);
         document.addEventListener('astro:before-swap', preOpenHistoryDayInIncomingDocument);
         document.addEventListener('astro:before-swap', saveScroll);
+        // Synchronous scroll restore inside the View-Transition update
+        // callback. View-Transition snapshots include only elements
+        // inside the viewport at capture time — without this, the
+        // browser captures the new page at scrollY=0 and any source
+        // element below the fold (e.g. a card deep inside an expanded
+        // /history day) is dropped from the new snapshot, the morph
+        // pair fails, and the navigation falls back to the default
+        // root cross-fade. The `astro:page-load` rAF restore below
+        // still runs to handle lazy-image and filter-driven layout
+        // reflow that happens after the transition completes.
+        document.addEventListener('astro:after-swap', () => {
+          try {
+            const raw = sessionStorage.getItem(
+              `scroll:${window.location.pathname}`,
+            );
+            if (raw === null) return;
+            const target = Number.parseInt(raw, 10);
+            if (!Number.isFinite(target) || target <= 0) return;
+            window.scrollTo(0, target);
+          } catch {
+            /* storage disabled — no-op */
+          }
+        });
         // Force the site header opaque during a view transition so the
         // body-root cross-fade ghost (old + new content overlapping at
         // 50% opacity mid-transition) does not "swim" through the

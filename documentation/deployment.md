@@ -155,3 +155,4 @@ Keep the Cloudflare Access policy in sync with deploys — Access is the first l
 
 - [Configuration](configuration.md) — Env vars and secrets
 - [Architecture](architecture.md) — System overview
+- [Security Policy](../SECURITY.md) — Vulnerability reporting scope and contact
