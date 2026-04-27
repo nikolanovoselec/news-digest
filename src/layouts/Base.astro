@@ -461,6 +461,14 @@ const initialTheme = cookieTheme ?? 'light';
         background-color: color-mix(in oklab, var(--bg) 88%, transparent);
         backdrop-filter: saturate(160%) blur(12px);
         -webkit-backdrop-filter: saturate(160%) blur(12px);
+        /* Issue #93 — give the header its own view-transition group so
+           it morphs independently from the page-body root snapshot.
+           Without this, the body's old→new morph plays underneath the
+           translucent header and content bleeds through, producing the
+           "flicker behind newsdigest header" the user reported. With
+           the named transition the browser captures the header as a
+           stable layer on top of the body morph. */
+        view-transition-name: site-header;
       }
 
       .site-header__brand {

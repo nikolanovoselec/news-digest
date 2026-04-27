@@ -25,6 +25,7 @@ import { log } from '~/lib/log';
 import { mapConcurrent } from '~/lib/concurrency';
 import { stripHtmlToText } from '~/lib/html-text';
 import { FEED_FETCH_TIMEOUT_MS as FETCH_TIMEOUT_MS } from '~/lib/fetch-policy';
+import { definedProp } from '~/lib/optional-prop';
 
 /** Hard-cap returned by `fanOutForTags`. 300 overflowed
  * llama-3.1-8b-instruct-fp8-fast's 30K token context window: ~24K
@@ -110,7 +111,7 @@ const HACKER_NEWS: SourceAdapter = {
         title,
         url,
         source_name: 'hackernews',
-        ...(snippet !== null ? { snippet } : {}),
+        ...definedProp('snippet', snippet),
       });
     }
     return out;
@@ -167,7 +168,7 @@ const REDDIT: SourceAdapter = {
         title,
         url,
         source_name: 'reddit',
-        ...(snippet !== null ? { snippet } : {}),
+        ...definedProp('snippet', snippet),
       });
     }
     return out;
@@ -519,8 +520,8 @@ function extractJsonFeed(parsed: unknown, sourceName: string): Headline[] {
       title,
       url,
       source_name: sourceName,
-      ...(published_at !== null ? { published_at } : {}),
-      ...(snippet !== null ? { snippet } : {}),
+      ...definedProp('published_at', published_at),
+      ...definedProp('snippet', snippet),
     });
   }
   return out;
@@ -641,8 +642,8 @@ function itemToHeadline(item: unknown, sourceName: string): Headline | null {
     title,
     url: link,
     source_name: sourceName,
-    ...(published_at !== null ? { published_at } : {}),
-    ...(snippet !== null ? { snippet } : {}),
+    ...definedProp('published_at', published_at),
+    ...definedProp('snippet', snippet),
   };
 }
 
@@ -664,8 +665,8 @@ function entryToHeadline(entry: unknown, sourceName: string): Headline | null {
     title,
     url,
     source_name: sourceName,
-    ...(published_at !== null ? { published_at } : {}),
-    ...(snippet !== null ? { snippet } : {}),
+    ...definedProp('published_at', published_at),
+    ...definedProp('snippet', snippet),
   };
 }
 

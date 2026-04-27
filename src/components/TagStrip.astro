@@ -23,7 +23,7 @@ export interface Props {
   /** Tags to render as chips, pre-sorted by the host. */
   tags: string[];
   /** Count to show in each chip's slot (e.g. articles today, or
-   *  articles in the 7-day window). Missing entries render blank. */
+   *  articles in the 14-day window). Missing entries render blank. */
   counts: Map<string, number>;
   /** Chips whose tag appears in this set render pre-selected
    *  (`is-selected` class + aria-pressed="true"). Optional; defaults
@@ -31,7 +31,7 @@ export interface Props {
   initialSelected?: Set<string>;
   /** User-facing fragment appended to each chip's aria-label after
    *  the tag name and count — e.g. "articles today" or "articles in
-   *  the last 7 days". */
+   *  the last 14 days". */
   countNoun: string;
 }
 

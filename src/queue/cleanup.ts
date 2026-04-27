@@ -5,7 +5,7 @@
 // Daily retention cleanup. The `0 3 * * *` cron in `src/worker.ts` calls
 // `runCleanup(env)` once per day. Three independent passes:
 //
-//   1. Article retention (REQ-PIPE-005): articles older than 7 days are
+//   1. Article retention (REQ-PIPE-005): articles older than 14 days are
 //      deleted unless at least one user has starred them. Child rows in
 //      `article_sources`, `article_tags`, and `article_reads` are
 //      removed via FK ON DELETE CASCADE declared in
@@ -34,8 +34,9 @@ import { log } from '~/lib/log';
 
 /** Retention window. Articles whose `published_at` is older than this
  * many seconds before `now` are eligible for deletion when no user has
- * starred them. */
-const RETENTION_SECONDS = 7 * 86400;
+ * starred them. Extended from 7 → 14 days per issue #97 so the history
+ * view has a longer lookback before retention kicks in. */
+const RETENTION_SECONDS = 14 * 86400;
 
 /** Stuck-tag prune window. A tag whose `sources:{tag}` cache has been
  * in the empty-feeds state (feeds: []) for more than this many seconds
@@ -66,7 +67,7 @@ export async function runCleanup(env: Env): Promise<{
   return { articlesDeleted, orphanTagsDeleted, stuckTagsPruned };
 }
 
-/** REQ-PIPE-005 — delete articles older than 7 days unless starred. */
+/** REQ-PIPE-005 — delete articles older than 14 days unless starred. */
 async function runArticleRetention(env: Env): Promise<number> {
   const cutoff = Math.floor(Date.now() / 1000) - RETENTION_SECONDS;
   try {

@@ -27,7 +27,16 @@
 // integration expects to find exported as `onRequest`.
 
 /** Exact Content-Security-Policy value required by REQ-OPS-003 AC 1.
- * Pinned byte-for-byte in tests — do not reformat or reorder directives. */
+ * Pinned byte-for-byte in tests — do not reformat or reorder directives.
+ *
+ * Open issue: GitHub #91 (CF-027) tracks the migration off
+ * `style-src 'self' 'unsafe-inline'` toward `style-src 'self'` (or a
+ * per-request nonce). The migration is gated on a runtime audit pass
+ * — the dashboard has 19 inline `<style>` blocks plus 2 scoped/global
+ * blocks that Astro 5 may extract or inline depending on the build,
+ * so the safe path is `Content-Security-Policy-Report-Only` first,
+ * read DevTools for violations, then enforce. Not changing the
+ * enforced header here without that runtime verification. */
 export const CSP_HEADER_VALUE =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com";
 

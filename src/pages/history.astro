@@ -1,7 +1,7 @@
 ---
 // Implements REQ-HIST-001
 //
-// /history — day-grouped list of the authenticated user's last 7 days
+// /history — day-grouped list of the authenticated user's last 14 days
 // of articles, plus per-day aggregates from the global `scrape_runs`
 // table. Each day row expands via a native <details> element to reveal
 // its tick list (every scrape run's timestamp, articles ingested,
@@ -90,7 +90,7 @@ const days = data.days;
 // opens the matching day pre-expanded and filters the list to just
 // that day so users arriving from the dashboard "see today" tile land
 // on a focused single-day view. The back button strips the param and
-// returns to the full 7-day list.
+// returns to the full 14-day list.
 const rawDateParam = Astro.url.searchParams.get('date');
 const dateParam =
   typeof rawDateParam === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDateParam)
@@ -147,7 +147,7 @@ const userTags = parseHashtags(sessionUser.hashtags_json);
 // LLM allowlist) never surfaces on cards.
 const userTagSet = new Set<string>(userTags);
 
-// Count tag occurrences across every article in the 7-day window so
+// Count tag occurrences across every article in the 14-day window so
 // each chip can render its count (distinct from dashboard's today-
 // scoped count — here we want the full search pool).
 const tagCounts = new Map<string, number>();
@@ -221,7 +221,7 @@ function formatCostUsd(value: number | null | undefined): string {
           tags={sortedUserTags}
           counts={tagCounts}
           initialSelected={initialSelectedTagSet}
-          countNoun="articles in the last 7 days"
+          countNoun="articles in the last 14 days"
         />
       </div>
     )}
@@ -267,7 +267,7 @@ function formatCostUsd(value: number | null | undefined): string {
         <p class="history__empty" data-history-empty>
           {isFocused
             ? `No articles on ${dateParam}.`
-            : 'No articles in the last 7 days.'}
+            : 'No articles in the last 14 days.'}
         </p>
       ) : (
         <ol class="history__list" data-history-list hidden={isFilteringByTag}>
@@ -700,6 +700,120 @@ function formatCostUsd(value: number | null | undefined): string {
     }
     hwin.__historySearchTeardown = initHistorySearch();
     initTagAdd();
+    initDayStatePersistence();
+  }
+
+  // Persist the user's last-expanded day + scroll position across the
+  // /history → /digest/:id/:slug → back round-trip. Without this, the
+  // <details open={isFocused}> server-render collapses every day on
+  // back-nav (the URL no longer carries ?date=) and the user loses
+  // their place. Stored under a single sessionStorage key keyed by the
+  // history page's pathname so unrelated routes don't pollute it.
+  function initDayStatePersistence(): void {
+    const STORAGE_KEY = 'history:last-day-state';
+    const list = document.querySelector<HTMLElement>('[data-history-list]');
+    if (list === null) return;
+
+    interface DayState {
+      date: string;
+      scrollY: number;
+    }
+
+    function read(): DayState | null {
+      try {
+        const raw = sessionStorage.getItem(STORAGE_KEY);
+        if (raw === null || raw === '') return null;
+        const parsed = JSON.parse(raw) as unknown;
+        if (
+          typeof parsed === 'object' &&
+          parsed !== null &&
+          typeof (parsed as Record<string, unknown>)['date'] === 'string' &&
+          typeof (parsed as Record<string, unknown>)['scrollY'] === 'number'
+        ) {
+          return parsed as DayState;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    }
+
+    function write(state: DayState): void {
+      try {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch {
+        // Quota / private mode — silent fallback (no persistence).
+      }
+    }
+
+    function clear(): void {
+      try {
+        sessionStorage.removeItem(STORAGE_KEY);
+      } catch {
+        // Same fallback.
+      }
+    }
+
+    // Save state when a day's details opens. We listen on the list
+    // delegated so a single handler covers every day row, and on
+    // `toggle` so the state reflects the actual expansion (not just
+    // a click that might have been on a child element).
+    list.addEventListener('toggle', (ev) => {
+      const target = ev.target as HTMLElement | null;
+      if (target === null || !(target instanceof HTMLDetailsElement)) return;
+      if (!target.matches('.history__details')) return;
+      const li = target.closest<HTMLElement>('[data-history-day]');
+      if (li === null) return;
+      const date = li.dataset['date'];
+      if (typeof date !== 'string' || date === '') return;
+      if (target.open) {
+        write({ date, scrollY: window.scrollY });
+      } else {
+        // Collapsing the saved day clears the bookmark.
+        const saved = read();
+        if (saved !== null && saved.date === date) clear();
+      }
+    }, true /* capture so we get the first toggle */);
+
+    // Also save the latest scroll-y on click of any DigestCard inside
+    // an expanded day — that's the moment the user is about to leave
+    // the page; sessionStorage at that point captures the right Y.
+    list.addEventListener(
+      'click',
+      (ev) => {
+        const a = (ev.target as HTMLElement | null)?.closest<HTMLAnchorElement>('a[href^="/digest/"]');
+        if (a === null || a === undefined) return;
+        const li = a.closest<HTMLElement>('[data-history-day]');
+        if (li === null) return;
+        const date = li.dataset['date'];
+        if (typeof date !== 'string' || date === '') return;
+        write({ date, scrollY: window.scrollY });
+      },
+      true,
+    );
+
+    // Restore on load. Only runs when no `?date=` deep-link is present
+    // — that path already pre-expands the focused day server-side, so
+    // adding sessionStorage on top would race with the URL state.
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('date')) return;
+
+    const state = read();
+    if (state === null) return;
+    const day = list.querySelector<HTMLElement>(
+      `[data-history-day][data-date="${CSS.escape(state.date)}"]`,
+    );
+    if (day === null) return;
+    const det = day.querySelector<HTMLDetailsElement>('.history__details');
+    if (det === null) return;
+    det.open = true;
+    // Scroll restoration — wait one paint so the expanded grid lays
+    // out before we measure / scroll. Browsers' native bfcache tries
+    // to do this themselves; the manual restore is the fallback when
+    // bfcache is bypassed (which Astro's ClientRouter does).
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: state.scrollY, left: 0, behavior: 'auto' });
+    });
   }
 
   if (document.documentElement.dataset['historySearchBound'] !== '1') {
@@ -735,7 +849,7 @@ function formatCostUsd(value: number | null | undefined): string {
   }
 
   /* Back button shown only in single-day deep-link mode. Strips
-     ?date= and returns the user to the full 7-day history list. */
+     ?date= and returns the user to the full 14-day history list. */
   .history__back {
     display: inline-flex;
     align-items: center;

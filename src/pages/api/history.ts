@@ -1,11 +1,11 @@
 // Implements REQ-HIST-001
 //
-// GET /api/history — day-grouped view of the last 7 days of articles
+// GET /api/history — day-grouped view of the last 14 days of articles
 // that match the authenticated user's active tags, plus per-day
 // aggregates from `scrape_runs` (token/cost/ingested sums and the list
 // of individual ticks for expansion).
 //
-// The handler produces at most 7 day-groups, keyed by the user's
+// The handler produces at most 14 day-groups, keyed by the user's
 // timezone (users.tz) so rows flip over at local midnight rather than
 // UTC midnight. Articles are filtered to the user's active tags via the
 // `article_tags` join; scrape_runs are global (one tick affects every
@@ -30,8 +30,9 @@ import { localDateInTz, DEFAULT_TZ } from '~/lib/tz';
 import { parseJsonStringArray as parseStringArray } from '~/lib/json-string-array';
 import { parseHashtags } from '~/lib/hashtags';
 
-/** 7 days of history per REQ-HIST-001 AC 1. */
-const WINDOW_SECONDS = 7 * 86_400;
+/** 14 days of history per REQ-HIST-001 AC 1 (extended from 7 → 14
+ *  per issue #97 alongside REQ-PIPE-005's retention window). */
+const WINDOW_SECONDS = 14 * 86_400;
 
 /** Row shape for the articles+tags query. */
 interface ArticleRow {
@@ -113,7 +114,7 @@ export async function GET(context: APIContext): Promise<Response> {
   const userTags = parseHashtags(user.hashtags_json);
 
   const now = Math.floor(Date.now() / 1000);
-  const sevenDaysAgo = now - WINDOW_SECONDS;
+  const windowStart = now - WINDOW_SECONDS;
 
   // --- Articles ---------------------------------------------------------
   // Restrict to articles in the window whose tag set intersects the
@@ -149,7 +150,7 @@ export async function GET(context: APIContext): Promise<Response> {
     try {
       const result = await env.DB
         .prepare(articlesSql)
-        .bind(sevenDaysAgo, ...userTags)
+        .bind(windowStart, ...userTags)
         .all<ArticleRow>();
       articleRows = result.results ?? [];
     } catch (err) {
@@ -173,7 +174,7 @@ export async function GET(context: APIContext): Promise<Response> {
           `tokens_in, tokens_out, estimated_cost_usd, status ` +
           `FROM scrape_runs WHERE started_at >= ?1 ORDER BY started_at DESC`,
       )
-      .bind(sevenDaysAgo)
+      .bind(windowStart)
       .all<ScrapeRunRow>();
     runRows = result.results ?? [];
   } catch (err) {
@@ -226,10 +227,11 @@ export async function GET(context: APIContext): Promise<Response> {
     group.day_articles_ingested += run.articles_ingested;
   }
 
-  // Sort the map entries by local_date DESC and take up to 7 day groups.
+  // Sort the map entries by local_date DESC and take up to 14 day groups
+  // (extended per issue #97 alongside REQ-PIPE-005's retention window).
   const days: DayGroup[] = Array.from(dayMap.values())
     .sort((a, b) => (a.local_date < b.local_date ? 1 : a.local_date > b.local_date ? -1 : 0))
-    .slice(0, 7);
+    .slice(0, 14);
 
   const body: HistoryResponse = { days };
 

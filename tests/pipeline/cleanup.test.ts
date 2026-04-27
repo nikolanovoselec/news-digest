@@ -108,7 +108,7 @@ describe('cleanup cron — REQ-PIPE-005', () => {
     await insertUser(env.DB, USER_ID);
   });
 
-  it('REQ-PIPE-005: deletes articles older than 7 days when no user has starred them', async () => {
+  it('REQ-PIPE-005: deletes articles older than 14 days when no user has starred them', async () => {
     const freshId = '01JCLEAN000000000000000001';
     const staleUnstarredId = '01JCLEAN000000000000000002';
     const staleStarredId = '01JCLEAN000000000000000003';
@@ -118,15 +118,18 @@ describe('cleanup cron — REQ-PIPE-005', () => {
       canonicalUrl: 'https://example.com/fresh',
       publishedAt: daysAgo(1),
     });
+    // Past the 14-day retention boundary so the unstarred row is
+    // eligible for deletion. Bumped from 8 → 15 days when the
+    // window extended in PR6 (REQ-PIPE-005).
     await insertArticle(env.DB, {
       id: staleUnstarredId,
       canonicalUrl: 'https://example.com/stale-unstarred',
-      publishedAt: daysAgo(8),
+      publishedAt: daysAgo(15),
     });
     await insertArticle(env.DB, {
       id: staleStarredId,
       canonicalUrl: 'https://example.com/stale-starred',
-      publishedAt: daysAgo(8),
+      publishedAt: daysAgo(15),
     });
     await insertStar(env.DB, USER_ID, staleStarredId);
 
@@ -135,6 +138,32 @@ describe('cleanup cron — REQ-PIPE-005', () => {
     expect(await articleExists(env.DB, freshId)).toBe(true);
     expect(await articleExists(env.DB, staleUnstarredId)).toBe(false);
     expect(await articleExists(env.DB, staleStarredId)).toBe(true);
+  });
+
+  it('REQ-PIPE-005: window edge — articles at daysAgo(13) survive, daysAgo(15) are deleted', async () => {
+    // Pins the 14-day boundary explicitly (REQ-HIST-001 AC 8: history
+    // and retention windows must stay in lockstep). A regression that
+    // drifts RETENTION_SECONDS without updating WINDOW_SECONDS would
+    // either show empty history rows or hide pool entries; this test
+    // catches the retention side of that drift.
+    const insideId = '01JCLEAN0000000000000EDGE01';
+    const outsideId = '01JCLEAN0000000000000EDGE02';
+
+    await insertArticle(env.DB, {
+      id: insideId,
+      canonicalUrl: 'https://example.com/edge-inside',
+      publishedAt: daysAgo(13),
+    });
+    await insertArticle(env.DB, {
+      id: outsideId,
+      canonicalUrl: 'https://example.com/edge-outside',
+      publishedAt: daysAgo(15),
+    });
+
+    await runCleanup(env);
+
+    expect(await articleExists(env.DB, insideId)).toBe(true);
+    expect(await articleExists(env.DB, outsideId)).toBe(false);
   });
 
   it('REQ-PIPE-005: preserves articles starred by any user regardless of age', async () => {
@@ -154,7 +183,9 @@ describe('cleanup cron — REQ-PIPE-005', () => {
 
   it('REQ-PIPE-005: FK cascades remove article_sources, article_tags, article_reads when an article is deleted', async () => {
     const articleId = '01JCLEAN000000000000000020';
-    const publishedAt = daysAgo(10);
+    // 15 days > 14-day retention window so cleanup actually deletes
+    // the parent row and exercises the FK cascade.
+    const publishedAt = daysAgo(15);
 
     await insertArticle(env.DB, {
       id: articleId,
@@ -214,7 +245,7 @@ describe('cleanup cron — REQ-PIPE-005', () => {
       await insertArticle(env.DB, {
         id: `01JCLEAN00000000000000003${i}`,
         canonicalUrl: `https://example.com/stale-${i}`,
-        publishedAt: daysAgo(9),
+        publishedAt: daysAgo(15),
       });
     }
 
@@ -405,7 +436,7 @@ describe('cleanup cron — REQ-PIPE-007 orphan-tag sweep', () => {
     await insertArticle(env.DB, {
       id: staleId,
       canonicalUrl: 'https://example.com/stale-iso',
-      publishedAt: daysAgo(10),
+      publishedAt: daysAgo(15),
     });
     await seedSources('ikea');
 

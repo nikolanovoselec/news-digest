@@ -1,7 +1,13 @@
 // Tests for src/lib/tz.ts — REQ-SET-003 (scheduled digest time with timezone)
 // and REQ-GEN-001 (scheduled generation via cron dispatcher).
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_TZ, localDateInTz, localHourMinuteInTz, isValidTz } from '~/lib/tz';
+import {
+  DEFAULT_TZ,
+  localDateInTz,
+  localHourMinuteInTz,
+  isValidTz,
+  localeForTz,
+} from '~/lib/tz';
 
 // 2026-04-22 12:00:00 UTC — a Wednesday at noon UTC.
 // In Europe/Zurich (CEST, UTC+2) this is 14:00 local, same date.
@@ -21,6 +27,24 @@ const LATE_UTC_2026_04_22 = 1776900600;
 describe('DEFAULT_TZ', () => {
   it('REQ-SET-003: DEFAULT_TZ is UTC', () => {
     expect(DEFAULT_TZ).toBe('UTC');
+  });
+});
+
+describe('localeForTz', () => {
+  // Pins the heuristic that drives 24h-vs-12h selection for both
+  // server-rendered ingestion times (digest detail page) and the
+  // <input type="time"> widget on /settings. A regression that
+  // flips this to always-en-US would silently re-introduce the
+  // 12h-on-Europe/Zurich bug fixed in PR6.
+  it('REQ-SET-003: America/* zones use en-US (12h)', () => {
+    expect(localeForTz('America/Los_Angeles')).toBe('en-US');
+    expect(localeForTz('America/New_York')).toBe('en-US');
+  });
+
+  it('REQ-SET-003: non-America zones use en-GB (24h)', () => {
+    expect(localeForTz('Europe/Zurich')).toBe('en-GB');
+    expect(localeForTz('Asia/Tokyo')).toBe('en-GB');
+    expect(localeForTz('UTC')).toBe('en-GB');
   });
 });
 
