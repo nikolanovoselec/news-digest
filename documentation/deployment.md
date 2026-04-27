@@ -122,7 +122,7 @@ Every admin endpoint sits under `/api/admin/*` so a **single wildcard rule** cov
 
 | Path | What it does |
 |---|---|
-| `/api/admin/force-refresh` | Manually kicks the global-feed coordinator (every-4-hours cron). |
+| `/api/admin/force-refresh` | Manually kicks the global-feed coordinator (every-4-hours cron). Implements [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint). |
 | `/api/admin/discovery/retry` | Re-queues a single tag for LLM-assisted source discovery. |
 | `/api/admin/discovery/retry-bulk` | Re-queues every "stuck" (empty-feeds) tag for the session user in one shot — backs the **Discover missing sources** button on `/settings`. |
 

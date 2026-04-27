@@ -1,5 +1,5 @@
 // Implements REQ-PIPE-001
-// Implements REQ-OPS-004
+// Implements REQ-OPS-005
 // Implements REQ-AUTH-001
 //
 // Operator-only manual kick of the global-feed coordinator (every-4-hours cron).
