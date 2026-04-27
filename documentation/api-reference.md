@@ -514,6 +514,7 @@ Implements [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-log
 | `auth.refresh.purge_failed` | Daily purge threw |
 | `email.send.failed` | Resend API call failed |
 | `email.dispatch.degraded` | Per-user D1 data-fetch failed during dispatch; static-fallback email still sent |
+| `email.dispatch.skipped_invalid_tz` | User row has an empty or unrecognised IANA timezone; row skipped, sibling buckets continue |
 | `discovery.completed` | Per-tag LLM discovery run finished |
 | `discovery.queued` | A new per-tag discovery job was inserted into `pending_discoveries` |
 | `settings.update.failed` | D1 update in `PUT /api/settings` threw |
