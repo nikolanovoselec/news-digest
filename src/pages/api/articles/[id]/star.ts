@@ -52,7 +52,7 @@ async function authorize(
       kind: 'ok';
       userId: string;
       articleId: string;
-      refreshCookie: string | null;
+      cookiesToSet: string[];
     }
 > {
   const env = context.locals.runtime.env;
@@ -96,17 +96,15 @@ async function authorize(
     kind: 'ok',
     userId: session.user.id,
     articleId,
-    refreshCookie: session.refreshCookie,
+    cookiesToSet: session.cookiesToSet,
   };
 }
 
-/** Build a successful JSON response with `{ starred: <bool> }` and the
- *  session refresh cookie appended when present. */
-function successResponse(starred: boolean, refreshCookie: string | null): Response {
+/** Build a successful JSON response with `{ starred: <bool> }` and any
+ *  refresh / refresh-token cookies appended. */
+function successResponse(starred: boolean, cookiesToSet: readonly string[]): Response {
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-  if (refreshCookie !== null) {
-    headers.append('Set-Cookie', refreshCookie);
-  }
+  for (const c of cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(JSON.stringify({ starred }), { status: 200, headers });
 }
 
@@ -135,7 +133,7 @@ export async function POST(context: APIContext): Promise<Response> {
     return errorResponse('internal_error');
   }
 
-  return successResponse(true, auth.refreshCookie);
+  return successResponse(true, auth.cookiesToSet);
 }
 
 export async function DELETE(context: APIContext): Promise<Response> {
@@ -161,5 +159,5 @@ export async function DELETE(context: APIContext): Promise<Response> {
     return errorResponse('internal_error');
   }
 
-  return successResponse(false, auth.refreshCookie);
+  return successResponse(false, auth.cookiesToSet);
 }

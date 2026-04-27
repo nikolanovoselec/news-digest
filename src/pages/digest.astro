@@ -36,9 +36,7 @@ if (session === null) {
 // CF-010 — silent-refresh: attach the re-issued session cookie when
 // loadSession says it's near expiry so plain page navigation extends
 // the session per REQ-AUTH-002 AC 4.
-if (session.refreshCookie !== null) {
-  Astro.response.headers.append('Set-Cookie', session.refreshCookie);
-}
+for (const c of session.cookiesToSet) Astro.response.headers.append('Set-Cookie', c);
 Astro.locals.user = session.user;
 
 const gated = requireSettingsComplete({
@@ -47,9 +45,7 @@ const gated = requireSettingsComplete({
 } as unknown as APIContext);
 if (gated !== null) {
   // The gate may emit a redirect; preserve the silent-refresh cookie.
-  if (session.refreshCookie !== null) {
-    gated.headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of session.cookiesToSet) gated.headers.append('Set-Cookie', c);
   return gated;
 }
 

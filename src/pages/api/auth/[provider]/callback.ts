@@ -1,4 +1,4 @@
-// Implements REQ-AUTH-001, REQ-AUTH-002, REQ-AUTH-004, REQ-AUTH-007
+// Implements REQ-AUTH-001, REQ-AUTH-002, REQ-AUTH-004, REQ-AUTH-007, REQ-AUTH-008
 //
 // GET /api/auth/<provider>/callback — finish the OAuth/OIDC code flow
 // for any configured provider. The dynamic `[provider]` segment maps
@@ -31,6 +31,10 @@ import { signSession } from '~/lib/session-jwt';
 import { mapOAuthError, type OAuthErrorCode } from '~/lib/oauth-errors';
 import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
 import { buildSessionCookie } from '~/middleware/auth';
+import {
+  buildRefreshCookie,
+  issueRefreshToken,
+} from '~/lib/refresh-tokens';
 import { originOf } from '~/middleware/origin-check';
 import {
   providerByName,
@@ -478,10 +482,36 @@ export async function GET(context: APIContext): Promise<Response> {
     status: 'success',
   });
 
-  // 7. Redirect.
+  // 7. Issue a refresh token row for this device — REQ-AUTH-008 AC 1.
+  // Bound to UA + Cf-IPCountry; rotated on every refresh; expires in 30
+  // days. The cookie value the client holds is the row id; the server
+  // looks up by SHA-256 hash on every refresh.
+  let refreshCookieValue: string;
+  try {
+    const issued = await issueRefreshToken(env.DB, userId, context.request, nowSec);
+    refreshCookieValue = issued.value;
+  } catch (err) {
+    log('error', 'auth.callback.failed', {
+      provider: provider.name,
+      user_id: userId,
+      error_code: 'refresh_token_issue_failed',
+      detail: String(err).slice(0, 500),
+    });
+    // Continue without a refresh token — the user still gets the 5-min
+    // access JWT, just no long-lived session. They'll be re-prompted
+    // for OAuth on next visit. Failing the whole login here would lock
+    // the user out entirely; partial degrade is the better choice.
+    refreshCookieValue = '';
+  }
+
+  // 8. Redirect — set state-clear cookie + access JWT cookie + refresh
+  // cookie if issuance succeeded.
   const headers = new Headers();
   headers.append('Set-Cookie', clearState);
   headers.append('Set-Cookie', buildSessionCookie(jwt));
+  if (refreshCookieValue !== '') {
+    headers.append('Set-Cookie', buildRefreshCookie(refreshCookieValue));
+  }
   headers.set('Location', `${origin}/digest`);
   return new Response(null, { status: 303, headers });
 }

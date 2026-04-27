@@ -43,9 +43,7 @@ if (session === null) {
   return Astro.redirect('/', 303);
 }
 // CF-010 — silent-refresh: attach near-expiry re-issued cookie.
-if (session.refreshCookie !== null) {
-  Astro.response.headers.append('Set-Cookie', session.refreshCookie);
-}
+for (const c of session.cookiesToSet) Astro.response.headers.append('Set-Cookie', c);
 Astro.locals.user = session.user;
 
 // Admin gate for the operator-only settings sections (force refresh,
@@ -68,9 +66,7 @@ const gated = requireSettingsComplete({
   locals: Astro.locals,
 } as unknown as APIContext);
 if (gated !== null) {
-  if (session.refreshCookie !== null) {
-    gated.headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of session.cookiesToSet) gated.headers.append('Set-Cookie', c);
   return gated;
 }
 

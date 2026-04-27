@@ -29,21 +29,21 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 
 ---
 
-### REQ-AUTH-002: Session cookie and instant revocation
+### REQ-AUTH-002: Access token + refresh token, instant revocation
 
-**Intent:** Keep users signed in between visits without requiring them to re-authenticate, while allowing instant invalidation of every outstanding session on logout or account deletion.
+**Intent:** Keep users signed in for an extended period — at least 30 days of inactivity — without requiring them to re-authenticate, while allowing instant invalidation of every outstanding session on logout or account deletion. Sessions feel like every consumer-grade webapp: closing the tab and coming back next month does not log the user out.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. The session is a stateless HMAC-SHA256 JWT stored in an `__Host-` prefixed cookie with `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, and a 1-hour TTL.
-2. The JWT includes a `session_version` claim that matches the user's current `session_version` integer; mismatched JWTs are rejected even if still cryptographically valid.
-3. Logout increments the user's `session_version`, immediately invalidating every JWT previously issued to that user.
-4. A response middleware auto-refreshes the JWT on any request where less than 5 minutes remain on the current token. Both API routes and Astro page routes attach the re-issued cookie so plain navigation extends the session, not just XHR API calls.
+1. Two cookies make up an authenticated session: a short-lived **access cookie** (HMAC-SHA256 JWT, 5-minute TTL, `__Host-` prefix, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`) and a long-lived **refresh cookie** (opaque random 32-byte value, 30-day TTL, same cookie attributes). Both are issued at OAuth completion.
+2. Every authenticated request first verifies the access JWT, including its `session_version` claim against the current row's `session_version`. Mismatched or expired access JWTs are rejected even if still cryptographically valid; the request then falls through to the refresh-token flow.
+3. Logout increments the user's `session_version` (immediately invalidating every access JWT previously issued to that user) and revokes the active refresh-token row (immediately invalidating the long-lived cookie). Both cookies are cleared on the response.
+4. When the access JWT is missing or expired but the refresh cookie is valid, middleware mints a new access JWT and rotates the refresh-token row inline on the same request. Both API routes and Astro page routes attach the re-issued cookies so plain navigation extends the session, not just XHR API calls. The user never sees a login prompt as a result of access-token expiry alone.
 
 **Constraints:** CON-AUTH-001, CON-SEC-001
 **Priority:** P0
-**Dependencies:** REQ-AUTH-001
+**Dependencies:** REQ-AUTH-001, REQ-AUTH-008
 **Verification:** Automated test
 **Status:** Implemented
 
@@ -125,4 +125,25 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 **Priority:** P1
 **Dependencies:** REQ-AUTH-001
 **Verification:** Integration test
+**Status:** Implemented
+
+---
+
+### REQ-AUTH-008: Refresh-token rotation, device binding, reuse detection
+
+**Intent:** The 30-day refresh cookie is a high-value secret — anyone holding it can mint access tokens for the user. Bind it to the device that signed in, rotate it on every refresh so a stolen value is single-use, and detect reuse so a stolen-then-rotated token surfaces as theft rather than continuing to work alongside the legitimate session.
+
+**Applies To:** User
+
+**Acceptance Criteria:**
+1. Every refresh-token row records a **device fingerprint** at issuance — a hash of the requesting device's User-Agent and country. The fingerprint is computed at OAuth completion and stored alongside the row; subsequent refresh attempts that present a cookie value matching the row but whose User-Agent or country produce a different fingerprint are rejected without rotating, and the user is forced through OAuth on this device. (Mobile networks rotate IPs across the same country during normal use; binding to country preserves day-to-day mobile sessions while still catching cross-country VPN exfiltration.)
+2. Every successful refresh **rotates** the refresh-token row: the existing row is marked revoked with the current timestamp, a new row is inserted with `parent_id` linking back to the old row, and a new opaque cookie value is issued. The old cookie value is single-use — presenting it a second time is treated as reuse per AC 4.
+3. Logout revokes only the active refresh-token row, not every refresh-token row for the user. Logging out on one device does not sign the user out of other devices they are intentionally still using.
+4. **Reuse detection** — if a refresh cookie whose row already has `revoked_at` set is presented, the system cannot distinguish "the rightful owner is replaying an old cookie" from "an attacker is using a stolen-then-rotated cookie." It treats the case as theft: every refresh-token row for the affected user is revoked AND `users.session_version` is incremented (which kills every in-flight access JWT). The user is forced through OAuth on every device.
+5. Expired and old-revoked refresh-token rows are pruned by the daily retention sweep. Revoked rows are kept for at least 7 days after revocation so the reuse-detection branch above can see the `revoked_at` timestamp before the row is deleted.
+
+**Constraints:** CON-AUTH-001, CON-SEC-001
+**Priority:** P0
+**Dependencies:** REQ-AUTH-002
+**Verification:** Automated test
 **Status:** Implemented

@@ -17,9 +17,7 @@ if (typeof env.OAUTH_JWT_SECRET === 'string' && env.OAUTH_JWT_SECRET !== '') {
   if (session !== null) {
     // CF-010 — attach silent-refresh cookie before redirecting so a
     // user landing here mid-session doesn't lose their JWT extension.
-    if (session.refreshCookie !== null) {
-      Astro.response.headers.append('Set-Cookie', session.refreshCookie);
-    }
+    for (const c of session.cookiesToSet) Astro.response.headers.append('Set-Cookie', c);
     return Astro.redirect('/digest', 303);
   }
 }

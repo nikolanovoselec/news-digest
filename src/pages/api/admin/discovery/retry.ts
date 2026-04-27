@@ -191,18 +191,14 @@ export async function POST(context: APIContext): Promise<Response> {
     const headers = new Headers({
       Location: `/settings?rediscover=ok&tag=${encodeURIComponent(tag)}`,
     });
-    if (session.refreshCookie !== null) {
-      headers.append('Set-Cookie', session.refreshCookie);
-    }
+    for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
     return new Response(null, { status: 303, headers });
   }
 
   // If the middleware silent-refresh issued a near-expiry re-issue of
   // the session cookie, pass it through so the client stays logged in.
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
 
   return new Response(JSON.stringify({ ok: true }), {
     status: 200,

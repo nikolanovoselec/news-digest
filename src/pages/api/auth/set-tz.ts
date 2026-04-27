@@ -68,8 +68,6 @@ export async function POST(context: APIContext): Promise<Response> {
   const headers = new Headers({ 'Content-Type': 'application/json' });
   // Attach the refresh cookie if the session was near-expiry — POST
   // still extends the session like any other authenticated request.
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(JSON.stringify({ ok: true, tz }), { status: 200, headers });
 }

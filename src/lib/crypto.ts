@@ -95,6 +95,18 @@ export async function timingSafeEqualHmac(
 }
 
 /**
+ * Hex-encode a Uint8Array. Lowercase, no separator. Used by the
+ * refresh-token module for cookie values + SHA-256 digests.
+ */
+export function hexEncode(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    out += bytes[i]!.toString(16).padStart(2, '0');
+  }
+  return out;
+}
+
+/**
  * Parse a single cookie value out of a Cookie header string. Returns
  * null when absent. Case-sensitive per RFC 6265.
  *

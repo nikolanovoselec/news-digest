@@ -31,12 +31,12 @@ import { loadSession } from '~/middleware/auth';
 import { log } from '~/lib/log';
 import { base64UrlDecode } from '~/lib/crypto';
 
-/** Successful admin auth result. The `refreshCookie` is forwarded to the
- *  caller so they can attach it to their outgoing response — admin routes
- *  participate in silent-refresh just like every other authenticated
- *  endpoint. */
+/** Successful admin auth result. `cookiesToSet` is forwarded to the
+ *  caller so they can attach the access + refresh cookies to their
+ *  outgoing response — admin routes participate in the access/refresh
+ *  flow just like every other authenticated endpoint. */
 export type AdminAuthResult =
-  | { ok: true; userId: string; email: string; refreshCookie: string | null }
+  | { ok: true; userId: string; email: string; cookiesToSet: string[] }
   | { ok: false; response: Response };
 
 interface AccessJwtClaims {
@@ -152,6 +152,6 @@ export async function requireAdminSession(
     ok: true,
     userId: session.user.id,
     email: session.user.email,
-    refreshCookie: session.refreshCookie,
+    cookiesToSet: session.cookiesToSet,
   };
 }

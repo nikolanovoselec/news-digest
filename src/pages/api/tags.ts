@@ -116,9 +116,7 @@ export async function POST(context: APIContext): Promise<Response> {
   }
 
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(
     JSON.stringify({ ok: true, tags, discovering }),
     { status: 200, headers },

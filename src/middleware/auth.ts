@@ -1,22 +1,39 @@
-// Implements REQ-AUTH-002
+// Implements REQ-AUTH-002, REQ-AUTH-008
 //
-// Session validation middleware for Astro routes. Reads the
-// `__Host-news_digest_session` cookie, verifies the JWT via
-// src/lib/session-jwt, checks `sv` against users.session_version, and
-// auto-refreshes the cookie when less than 5 minutes remain (AC 4 —
-// threshold lowered from 15 → 5 min in CF-010).
+// Session validation middleware for Astro routes.
 //
-// The middleware is intentionally framework-agnostic: it operates on
-// Request/Response and mutates a generic locals bag (`{ user?: ... }`).
-// Astro routes consume the populated `locals.user`; API route handlers
-// can call the exported helpers directly.
+// Auth lives in two cookies:
+//   1. `__Host-news_digest_session` — short-lived (5 min) HMAC-SHA256
+//      JWT. Carries `sub`, `email`, `ghl`, `sv`, `exp`. Verified on
+//      every request.
+//   2. `__Host-news_digest_refresh` — long-lived (30 day) opaque
+//      random ID. Looked up against the `refresh_tokens` D1 table on
+//      access-token expiry.
+//
+// `loadSession` is the single entry point. It tries the access JWT
+// first; if missing or expired, it tries the refresh-token flow
+// inline (one D1 lookup, fingerprint check, rotate on success). Both
+// new cookies come back through `refreshCookie` / `rotatedRefreshCookie`
+// so the caller can attach them via `applyRefreshCookie` before
+// returning the response.
 
-import { signSession, verifySession, shouldRefreshJWT } from '~/lib/session-jwt';
+import { signSession, verifySession } from '~/lib/session-jwt';
 import { readCookie as readCookieCanonical } from '~/lib/crypto';
+import {
+  REFRESH_TOKEN_COOKIE_NAME,
+  buildRefreshCookie,
+  buildClearRefreshCookie,
+  deviceFingerprint,
+  findRefreshToken,
+  rotateRefreshToken,
+  revokeAllForUser,
+  type RefreshTokenRow,
+} from '~/lib/refresh-tokens';
+import { log } from '~/lib/log';
 import type { AuthenticatedUser } from '~/lib/types';
 
 export const SESSION_COOKIE_NAME = '__Host-news_digest_session';
-const SESSION_TTL_SECONDS = 3600; // 1h — REQ-AUTH-002 AC 1
+const SESSION_TTL_SECONDS = 5 * 60; // 5 min — REQ-AUTH-002 AC 1
 const SESSION_COOKIE_ATTRS = `HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_SECONDS}`;
 
 /**
@@ -65,65 +82,40 @@ export function buildClearSessionCookie(): string {
 }
 
 /**
- * Load the session user for {@link request} against {@link db} and
- * {@link jwtSecret}. Returns `null` when no valid session exists (missing
- * cookie, bad signature, expired, user deleted, session_version
- * mismatch). Never throws — bad input means no user.
+ * Result of {@link loadSession}.
  *
- * On near-expiry (less than 5 minutes remain) the returned object
- * includes a `refreshCookie` string that the caller MUST attach to the
- * outgoing response as a `Set-Cookie` header. This is how REQ-AUTH-002
- * AC 4 silent-refresh is implemented: the middleware doesn't own the
- * response object, but it produces the header value.
+ * `cookiesToSet` is the list of `Set-Cookie` strings the caller must
+ * append to the outgoing response. It can carry zero, one, or two
+ * entries depending on what the middleware did:
+ *   - empty: access JWT was already valid, no cookie churn.
+ *   - one: a dead refresh cookie was cleared (reuse / fingerprint /
+ *     expired-refresh — already null-returning paths use this).
+ *   - two: refresh-token rotation succeeded, both the new access JWT
+ *     and the new refresh-token cookie are returned.
  */
-export async function loadSession(
-  request: Request,
+export interface LoadSessionResult {
+  user: AuthenticatedUser;
+  cookiesToSet: string[];
+}
+
+async function loadUserById(
   db: D1Database,
-  jwtSecret: string,
-): Promise<{ user: AuthenticatedUser; refreshCookie: string | null } | null> {
-  const token = readCookie(request.headers.get('Cookie'), SESSION_COOKIE_NAME);
-  if (token === null) return null;
-
-  const claims = await verifySession(token, jwtSecret);
-  if (claims === null) return null;
-
-  // AC 2 — session_version must match the current row. A mismatch means
-  // logout or account deletion happened on another session. Returning
-  // null here triggers the logged-out UX without any cookie churn on the
-  // caller (the browser still holds a cryptographically valid but stale
-  // token; it expires on its own within the hour).
-  let row: UserRow | null;
+  userId: string,
+): Promise<UserRow | null> {
   try {
-    row = await db
+    return await db
       .prepare(
         'SELECT id, email, gh_login, tz, digest_hour, digest_minute, hashtags_json, model_id, email_enabled, session_version FROM users WHERE id = ?1',
       )
-      .bind(claims.sub)
+      .bind(userId)
       .first<UserRow>();
   } catch {
     return null;
   }
-  if (row === null) return null;
-  if (row.session_version !== claims.sv) return null;
+}
 
-  // AC 4 — re-issue when less than 5 minutes remain on the active
-  // token. We sign a fresh JWT with the SAME sv (the row sv we just
-  // loaded is authoritative) so a logout in flight still wins.
-  let refreshCookie: string | null = null;
-  if (shouldRefreshJWT(claims)) {
-    const fresh = await signSession(
-      {
-        sub: row.id,
-        email: row.email,
-        ghl: row.gh_login,
-        sv: row.session_version,
-      },
-      jwtSecret,
-    );
-    refreshCookie = buildSessionCookie(fresh);
-  }
-
-  const user: AuthenticatedUser = {
+function toAuthenticatedUser(row: UserRow): AuthenticatedUser {
+  return {
     id: row.id,
     email: row.email,
     gh_login: row.gh_login,
@@ -135,23 +127,163 @@ export async function loadSession(
     email_enabled: row.email_enabled,
     session_version: row.session_version,
   };
-  return { user, refreshCookie };
 }
 
 /**
- * Apply a refresh cookie to the outgoing response headers, if present.
- * Callers pass the `refreshCookie` string from {@link loadSession} and
- * the Response they are about to return; on near-expiry the header is
- * appended (not replaced), preserving any Set-Cookie the handler itself
- * wrote.
+ * Load the session user for {@link request} against {@link db} and
+ * {@link jwtSecret}. Returns `null` when no valid session exists
+ * (missing cookies, bad signatures, expired refresh, user deleted,
+ * session_version mismatch, fingerprint mismatch). Never throws — bad
+ * input means no user.
+ *
+ * Two paths:
+ *   1. Access JWT valid → return the user, no cookie churn.
+ *   2. Access JWT missing/expired but refresh cookie valid →
+ *      a. fingerprint matches → mint new access JWT + rotate refresh
+ *         token (REQ-AUTH-008 AC 2)
+ *      b. revoked refresh token presented → revoke ALL of the user's
+ *         refresh tokens + bump session_version (REQ-AUTH-008 AC 4)
+ *      c. fingerprint mismatch or expired → clear refresh cookie
  */
-export function applyRefreshCookie(response: Response, refreshCookie: string | null): Response {
-  if (refreshCookie === null) return response;
+export async function loadSession(
+  request: Request,
+  db: D1Database,
+  jwtSecret: string,
+): Promise<LoadSessionResult | null> {
+  const cookieHeader = request.headers.get('Cookie');
+  const accessToken = readCookie(cookieHeader, SESSION_COOKIE_NAME);
+  const refreshValue = readCookie(cookieHeader, REFRESH_TOKEN_COOKIE_NAME);
+
+  // Path 1 — access JWT present & valid.
+  if (accessToken !== null) {
+    const claims = await verifySession(accessToken, jwtSecret);
+    if (claims !== null) {
+      const row = await loadUserById(db, claims.sub);
+      if (row !== null && row.session_version === claims.sv) {
+        return {
+          user: toAuthenticatedUser(row),
+          cookiesToSet: [],
+        };
+      }
+    }
+  }
+
+  // Path 2 — fall through to refresh-token flow.
+  if (refreshValue === null) return null;
+
+  const refreshRow = await findRefreshToken(db, refreshValue);
+  if (refreshRow === null) {
+    // Cookie value not in DB. Could be a stale cookie from a deleted
+    // session — clear it.
+    return null;
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  // REQ-AUTH-008 AC 4 — reuse detection. A revoked token reappearing
+  // means either replay-of-old-cookie (benign) or post-rotation theft
+  // (not benign). We can't tell, so we revoke every refresh row for
+  // the user AND bump session_version to kill in-flight access JWTs.
+  if (refreshRow.revoked_at !== null) {
+    await revokeAllForUser(db, refreshRow.user_id, nowSec);
+    log('warn', 'auth.refresh.reuse_detected', {
+      user_id: refreshRow.user_id,
+      refresh_token_id: refreshRow.id,
+    });
+    return null;
+  }
+
+  if (refreshRow.expires_at <= nowSec) {
+    log('info', 'auth.refresh.expired', {
+      user_id: refreshRow.user_id,
+      refresh_token_id: refreshRow.id,
+    });
+    return null;
+  }
+
+  // Device fingerprint check — UA + Cf-IPCountry hashed at issuance.
+  const presentFingerprint = await deviceFingerprint(request);
+  if (presentFingerprint !== refreshRow.device_fingerprint_hash) {
+    // Treat fingerprint mismatch as suspicious. Don't nuke the whole
+    // user (that would lock them out across legitimate device-rotation
+    // events like a browser-version bump on a different tab) — just
+    // revoke this row and force re-login on this device.
+    log('warn', 'auth.refresh.fingerprint_mismatch', {
+      user_id: refreshRow.user_id,
+      refresh_token_id: refreshRow.id,
+    });
+    return null;
+  }
+
+  // All checks passed — rotate.
+  const userRow = await loadUserById(db, refreshRow.user_id);
+  if (userRow === null) return null;
+
+  let rotated: { value: string; id: string };
+  try {
+    rotated = await rotateRefreshToken(db, refreshRow, request, nowSec);
+  } catch (err) {
+    log('error', 'auth.refresh.rotate_failed', {
+      user_id: refreshRow.user_id,
+      detail: String(err).slice(0, 500),
+    });
+    return null;
+  }
+
+  const fresh = await signSession(
+    {
+      sub: userRow.id,
+      email: userRow.email,
+      ghl: userRow.gh_login,
+      sv: userRow.session_version,
+    },
+    jwtSecret,
+  );
+
+  log('info', 'auth.refresh.rotated', {
+    user_id: userRow.id,
+    refresh_token_id: rotated.id,
+    parent_id: refreshRow.id,
+  });
+
+  return {
+    user: toAuthenticatedUser(userRow),
+    cookiesToSet: [
+      buildSessionCookie(fresh),
+      buildRefreshCookie(rotated.value),
+    ],
+  };
+}
+
+/**
+ * Apply any cookies the middleware produced to the outgoing response.
+ * Pass the {@link LoadSessionResult} from {@link loadSession} (or its
+ * `cookiesToSet` array directly).
+ */
+export function applyRefreshCookie(
+  response: Response,
+  result: { cookiesToSet: string[] } | readonly string[] | null,
+): Response {
+  if (result === null) return response;
+  const cookies = Array.isArray(result) ? result : (result as { cookiesToSet: string[] }).cookiesToSet;
+  if (cookies.length === 0) return response;
   const headers = new Headers(response.headers);
-  headers.append('Set-Cookie', refreshCookie);
+  for (const c of cookies) headers.append('Set-Cookie', c);
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
   });
+}
+
+/** Extract the active refresh-token row id (if any) from the request,
+ *  for the logout path which wants to revoke just that row rather than
+ *  bumping session_version on every login site for the user. */
+export async function activeRefreshTokenRow(
+  request: Request,
+  db: D1Database,
+): Promise<RefreshTokenRow | null> {
+  const refreshValue = readCookie(request.headers.get('Cookie'), REFRESH_TOKEN_COOKIE_NAME);
+  if (refreshValue === null) return null;
+  return findRefreshToken(db, refreshValue);
 }

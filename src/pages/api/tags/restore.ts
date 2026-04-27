@@ -96,8 +96,6 @@ export async function POST(context: APIContext): Promise<Response> {
   }
 
   const headers = new Headers({ Location: '/digest' });
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(null, { status: 303, headers });
 }

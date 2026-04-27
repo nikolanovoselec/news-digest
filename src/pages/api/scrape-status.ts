@@ -76,7 +76,7 @@ export async function GET(context: APIContext): Promise<Response> {
         status: 200,
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
       }),
-      session.refreshCookie,
+      session,
     );
   }
 
@@ -114,6 +114,6 @@ export async function GET(context: APIContext): Promise<Response> {
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
       },
     ),
-    session.refreshCookie,
+    session,
   );
 }

@@ -174,9 +174,7 @@ export async function POST(context: APIContext): Promise<Response> {
   const headers = new Headers({
     Location: `/settings?rediscover=ok&count=${result.count}`,
   });
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(null, { status: 303, headers });
 }
 
@@ -245,8 +243,6 @@ export async function GET(context: APIContext): Promise<Response> {
   const headers = new Headers({
     Location: `${appOrigin}/settings?rediscover=ok&count=${result.count}`,
   });
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of session.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(null, { status: 303, headers });
 }

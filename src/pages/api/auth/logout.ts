@@ -1,4 +1,4 @@
-// Implements REQ-AUTH-002, REQ-AUTH-003
+// Implements REQ-AUTH-002, REQ-AUTH-003, REQ-AUTH-008
 //
 // POST /api/auth/logout — bump `users.session_version` for the
 // currently authenticated user, then clear the session cookie and
@@ -23,6 +23,12 @@ import { verifySession } from '~/lib/session-jwt';
 import { SESSION_COOKIE_NAME, buildClearSessionCookie } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { readCookie } from '~/lib/crypto';
+import {
+  REFRESH_TOKEN_COOKIE_NAME,
+  buildClearRefreshCookie,
+  findRefreshToken,
+  revokeRefreshToken,
+} from '~/lib/refresh-tokens';
 
 // `readCookie` is imported from `~/lib/crypto` (CF-005 — was duplicated
 // here, in `auth/[provider]/callback.ts`, and in `middleware/auth.ts`).
@@ -42,7 +48,9 @@ export async function POST(context: APIContext): Promise<Response> {
   // Identify the user from the JWT (by subject) — we don't rely on
   // auth middleware here because logout must succeed even if the row's
   // session_version has already been bumped by another tab.
-  const token = readCookie(context.request.headers.get('Cookie'), SESSION_COOKIE_NAME);
+  const cookieHeader = context.request.headers.get('Cookie');
+  const token = readCookie(cookieHeader, SESSION_COOKIE_NAME);
+  const refreshValue = readCookie(cookieHeader, REFRESH_TOKEN_COOKIE_NAME);
   const jwtSecret = env.OAUTH_JWT_SECRET;
   let loggedOutUserId: string | null = null;
   if (token !== null && typeof jwtSecret === 'string' && jwtSecret !== '') {
@@ -65,12 +73,32 @@ export async function POST(context: APIContext): Promise<Response> {
     }
   }
 
+  // REQ-AUTH-008 AC 3 — revoke the active refresh-token row so the
+  // long-lived cookie can't be re-used. We revoke just THIS row, not
+  // every row for the user — logging out on one device shouldn't sign
+  // out other devices the user is intentionally still using.
+  if (refreshValue !== null) {
+    try {
+      const row = await findRefreshToken(env.DB, refreshValue);
+      if (row !== null && row.revoked_at === null) {
+        await revokeRefreshToken(env.DB, row.id);
+        if (loggedOutUserId === null) loggedOutUserId = row.user_id;
+      }
+    } catch (err) {
+      log('error', 'auth.logout.refresh_revoke_failed', {
+        user_id: loggedOutUserId ?? 'unknown',
+        detail: String(err).slice(0, 500),
+      });
+    }
+  }
+
   if (loggedOutUserId !== null) {
     log('info', 'auth.logout', { user_id: loggedOutUserId });
   }
 
   const headers = new Headers();
   headers.append('Set-Cookie', buildClearSessionCookie());
+  headers.append('Set-Cookie', buildClearRefreshCookie());
   headers.set('Location', `${appOrigin}/?logged_out=1`);
   return new Response(null, { status: 303, headers });
 }

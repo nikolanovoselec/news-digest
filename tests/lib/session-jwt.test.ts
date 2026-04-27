@@ -1,7 +1,7 @@
 // Tests for src/lib/session-jwt.ts — REQ-AUTH-002 (session cookie + instant revocation).
 // Verifies HMAC-SHA256 JWT sign/verify, expiry, tampering, and refresh threshold.
 import { describe, it, expect } from 'vitest';
-import { signSession, verifySession, shouldRefreshJWT, type SessionClaims } from '~/lib/session-jwt';
+import { signSession, verifySession, type SessionClaims } from '~/lib/session-jwt';
 
 const SECRET = 'test-secret-key-for-hmac-sha256-signing-minimum-length';
 
@@ -122,66 +122,9 @@ describe('session-jwt', () => {
     });
   });
 
-  describe('shouldRefreshJWT', () => {
-    it('REQ-AUTH-002: returns true when less than 5 minutes remain (CF-010)', () => {
-      const now = 1_000_000;
-      const claims: SessionClaims = {
-        sub: '1',
-        email: 'a@b.c',
-        ghl: 'a',
-        sv: 1,
-        iat: now - 3000,
-        exp: now + 2 * 60, // 2 minutes remaining — well under 5-min threshold
-      };
-      expect(shouldRefreshJWT(claims, now)).toBe(true);
-    });
-
-    it('REQ-AUTH-002: returns false when more than 5 minutes remain (CF-010)', () => {
-      const now = 1_000_000;
-      const claims: SessionClaims = {
-        sub: '1',
-        email: 'a@b.c',
-        ghl: 'a',
-        sv: 1,
-        iat: now - 600,
-        exp: now + 30 * 60, // 30 minutes remaining
-      };
-      expect(shouldRefreshJWT(claims, now)).toBe(false);
-    });
-
-    it('REQ-AUTH-002: returns false for already-expired claims', () => {
-      const now = 1_000_000;
-      const claims: SessionClaims = {
-        sub: '1',
-        email: 'a@b.c',
-        ghl: 'a',
-        sv: 1,
-        iat: now - 10_000,
-        exp: now - 1, // already expired — verifySession rejects; no refresh
-      };
-      expect(shouldRefreshJWT(claims, now)).toBe(false);
-    });
-
-    it('REQ-AUTH-002: uses current time when `now` is omitted', () => {
-      const nowSec = Math.floor(Date.now() / 1000);
-      const near: SessionClaims = {
-        sub: '1',
-        email: 'a@b.c',
-        ghl: 'a',
-        sv: 1,
-        iat: nowSec - 3000,
-        exp: nowSec + 2 * 60, // 2 minutes — within 5-min threshold (CF-010)
-      };
-      const far: SessionClaims = {
-        sub: '1',
-        email: 'a@b.c',
-        ghl: 'a',
-        sv: 1,
-        iat: nowSec - 600,
-        exp: nowSec + 60 * 60,
-      };
-      expect(shouldRefreshJWT(near)).toBe(true);
-      expect(shouldRefreshJWT(far)).toBe(false);
-    });
-  });
+  // shouldRefreshJWT was removed when REQ-AUTH-002 moved to the
+  // access/refresh-token model (REQ-AUTH-008). The access JWT no
+  // longer sliding-refreshes — long-term presence is provided by the
+  // 30-day refresh token. See tests/auth/refresh-tokens.test.ts for
+  // refresh-flow coverage.
 });

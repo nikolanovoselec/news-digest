@@ -1,6 +1,9 @@
-// Tests for src/middleware/auth.ts — REQ-AUTH-002 (session validation,
-// session_version check, auto-refresh when <5 min remain — threshold
-// lowered from 15 → 5 min in CF-010).
+// Tests for src/middleware/auth.ts — REQ-AUTH-002, REQ-AUTH-008.
+//
+// Covers the access-JWT-only path: valid JWT → user, no cookie churn.
+// Refresh-token flow tests live in tests/auth/refresh-tokens.test.ts —
+// those need a real D1 because the middleware writes to the
+// `refresh_tokens` table on rotation.
 
 import { describe, it, expect, vi } from 'vitest';
 import {
@@ -31,8 +34,8 @@ function setCookiesOf(res: Response): string[] {
 const SECRET = 'test-secret-for-hmac-sha256-signing-minimum-length';
 
 /** Construct a fake D1 whose first() returns {@link row}, recording the
- * bound parameters. Designed for loadSession which binds exactly one
- * user id. */
+ * bound parameters. Designed for the access-JWT-only path of
+ * loadSession — the refresh-token branch needs a real DB. */
 function makeDb(row: unknown): {
   db: D1Database;
   bindSpy: ReturnType<typeof vi.fn>;
@@ -83,9 +86,9 @@ describe('readCookie', () => {
 });
 
 describe('buildSessionCookie', () => {
-  it('REQ-AUTH-002: uses __Host- prefix, HttpOnly, Secure, SameSite=Lax, Path=/, 1h Max-Age', () => {
+  it('REQ-AUTH-002: uses __Host- prefix, HttpOnly, Secure, SameSite=Lax, Path=/, 5min Max-Age', () => {
     const c = buildSessionCookie('the-jwt');
-    expect(c).toBe(`__Host-news_digest_session=the-jwt; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600`);
+    expect(c).toBe(`__Host-news_digest_session=the-jwt; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=300`);
   });
 });
 
@@ -101,14 +104,14 @@ describe('buildClearSessionCookie', () => {
   });
 });
 
-describe('loadSession', () => {
+describe('loadSession — access-JWT path', () => {
   it('REQ-AUTH-002: returns null when no session cookie is present', async () => {
     const { db } = makeDb(null);
     const req = new Request('https://example.com/');
     expect(await loadSession(req, db, SECRET)).toBeNull();
   });
 
-  it('REQ-AUTH-002: returns null when the JWT is invalid', async () => {
+  it('REQ-AUTH-002: returns null when the JWT is invalid AND no refresh cookie present', async () => {
     const { db } = makeDb(null);
     const req = new Request('https://example.com/', {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=not.a.jwt` },
@@ -141,11 +144,11 @@ describe('loadSession', () => {
     expect(await loadSession(req, db, SECRET)).toBeNull();
   });
 
-  it('REQ-AUTH-002: returns the user on a valid session with no refresh needed', async () => {
+  it('REQ-AUTH-002: returns the user with empty cookiesToSet on a valid access JWT', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       SECRET,
-      3600, // fresh 1h token — more than 15 min remaining, no refresh
+      300, // fresh 5-min token
     );
     const { db, bindSpy } = makeDb(baseRow(1));
     const req = new Request('https://example.com/', {
@@ -157,53 +160,12 @@ describe('loadSession', () => {
     expect(result!.user.email).toBe('alice@example.com');
     expect(result!.user.gh_login).toBe('alice');
     expect(result!.user.session_version).toBe(1);
-    expect(result!.refreshCookie).toBeNull();
+    // The access-JWT path does NOT touch the refresh cookie — empty array.
+    expect(result!.cookiesToSet).toEqual([]);
     expect(bindSpy).toHaveBeenCalledWith('12345');
   });
 
-  it('REQ-AUTH-002: issues a refresh cookie when <5 min remain on the token (CF-010)', async () => {
-    // 2-minute TTL -> shouldRefreshJWT returns true under the new
-    // 5-minute threshold (CF-010 lowered from 15 → 5 min).
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      SECRET,
-      2 * 60,
-    );
-    const { db } = makeDb(baseRow(1));
-    const req = new Request('https://example.com/', {
-      headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
-    });
-    const result = await loadSession(req, db, SECRET);
-    expect(result).not.toBeNull();
-    expect(result!.refreshCookie).not.toBeNull();
-    expect(result!.refreshCookie!).toContain('__Host-news_digest_session=');
-    expect(result!.refreshCookie!).toContain('Max-Age=3600');
-  });
-
-  it('REQ-AUTH-002: refresh cookie carries the CURRENT session_version, not the JWT claim', async () => {
-    // Token has sv=1, but the row's sv also equals 1 (otherwise we'd
-    // return null above). The refresh must mint with the row's sv so
-    // future requests remain consistent with the server source of truth.
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      SECRET,
-      2 * 60, // CF-010 — 2 min triggers refresh under 5-min threshold
-    );
-    const { db } = makeDb(baseRow(1));
-    const req = new Request('https://example.com/', {
-      headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
-    });
-    const result = await loadSession(req, db, SECRET);
-    expect(result).not.toBeNull();
-    // Extract the JWT from the Set-Cookie header and verify its payload.
-    const match = result!.refreshCookie!.match(/^__Host-news_digest_session=([^;]+);/);
-    expect(match).not.toBeNull();
-    const newToken = match![1]!;
-    // The new token is distinct from the old (fresh iat/exp).
-    expect(newToken).not.toBe(token);
-  });
-
-  it('REQ-AUTH-002: returns null when the D1 query throws', async () => {
+  it('REQ-AUTH-008: returns null when the D1 user query throws', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       SECRET,
@@ -220,7 +182,13 @@ describe('loadSession', () => {
 });
 
 describe('applyRefreshCookie', () => {
-  it('REQ-AUTH-002: returns the original response when refreshCookie is null', () => {
+  it('REQ-AUTH-002: returns the original response when no cookies to set', () => {
+    const original = new Response('ok', { status: 200 });
+    const out = applyRefreshCookie(original, { cookiesToSet: [] });
+    expect(out).toBe(original);
+  });
+
+  it('REQ-AUTH-002: returns the original response when null is passed', () => {
     const original = new Response('ok', { status: 200 });
     const out = applyRefreshCookie(original, null);
     expect(out).toBe(original);
@@ -231,13 +199,26 @@ describe('applyRefreshCookie', () => {
       status: 200,
       headers: { 'X-Custom': 'yes', 'Set-Cookie': 'other=1' },
     });
-    const refreshCookie = `__Host-news_digest_session=new-jwt; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600`;
-    const out = applyRefreshCookie(original, refreshCookie);
+    const accessCookie = `__Host-news_digest_session=new-jwt; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=300`;
+    const refreshCookie = `__Host-news_digest_refresh=abc123; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`;
+    const out = applyRefreshCookie(original, {
+      cookiesToSet: [accessCookie, refreshCookie],
+    });
     expect(out).not.toBe(original);
     expect(await out.text()).toBe('ok');
     expect(out.headers.get('X-Custom')).toBe('yes');
     const joined = setCookiesOf(out).join('\n');
     expect(joined).toContain('other=1');
     expect(joined).toContain('__Host-news_digest_session=new-jwt');
+    expect(joined).toContain('__Host-news_digest_refresh=abc123');
+  });
+
+  it('REQ-AUTH-008: accepts a bare string array (rotated cookies)', async () => {
+    const original = new Response('ok', { status: 200 });
+    const out = applyRefreshCookie(original, [
+      `${SESSION_COOKIE_NAME}=jwt-x; Max-Age=300`,
+    ]);
+    const joined = setCookiesOf(out).join('\n');
+    expect(joined).toContain(`${SESSION_COOKIE_NAME}=jwt-x`);
   });
 });
