@@ -28,7 +28,7 @@
 //   same bucket (the `last_emailed_local_date` gate absorbs any
 //   double-fire from cron jitter).
 
-import { localDateInTz, localHourMinuteInTz, localMidnightUnixInTz } from '~/lib/tz';
+import { isValidTz, localDateInTz, localHourMinuteInTz, localMidnightUnixInTz } from '~/lib/tz';
 import { log } from '~/lib/log';
 import { renderDigestReadyEmail, sendEmail } from '~/lib/email';
 import {
@@ -89,8 +89,15 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
 
   let tzRows: TzRow[];
   try {
+    // Empty/null tz rows are filtered here: localHourMinuteInTz feeds
+    // tz to Intl.DateTimeFormat, which throws RangeError on '' or
+    // unrecognised zones. Settings save enforces a non-empty IANA tz,
+    // but legacy/manually-edited rows can still slip through.
     const res = await env.DB.prepare(
-      `SELECT DISTINCT tz FROM users WHERE email_enabled = 1`,
+      `SELECT DISTINCT tz FROM users
+        WHERE email_enabled = 1
+          AND tz IS NOT NULL
+          AND tz != ''`,
     ).all<TzRow>();
     tzRows = res.results ?? [];
   } catch (err) {
@@ -103,6 +110,14 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
   }
 
   for (const { tz } of tzRows) {
+    // Defence-in-depth: even after the SQL filter, an unrecognised
+    // IANA name (e.g. a deprecated zone the runtime no longer knows)
+    // would throw inside localHourMinuteInTz and abort the whole tick.
+    // Skip and log so the operator can find affected users.
+    if (!isValidTz(tz)) {
+      log('warn', 'email.dispatch.skipped_invalid_tz', { tz });
+      continue;
+    }
     const { hour, minute } = localHourMinuteInTz(now, tz);
     const bucketStart = minute - (minute % 5);
     const bucketEnd = bucketStart + 5;
