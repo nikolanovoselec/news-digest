@@ -214,7 +214,8 @@ describe('rediscovery lifecycle — REQ-DISC-003 / REQ-DISC-006 (CF-075)', () =>
     const after = (await readSourcesEntry()) as {
       feeds: Array<{ url: string }>;
     } | null;
-    expect(after?.feeds.map((f) => f.url)).toEqual([FEED_URL]);
+    expect(after).not.toBeNull();
+    expect(after!.feeds.map((f) => f.url)).toEqual([FEED_URL]);
     expect(await countPendingDiscoveries(SYSTEM_USER_ID, TAG)).toBe(0);
   });
 
