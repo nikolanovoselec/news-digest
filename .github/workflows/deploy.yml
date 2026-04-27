@@ -75,6 +75,9 @@ jobs:
           RESEND_FROM: ${{ secrets.RESEND_FROM }}
           APP_URL: ${{ secrets.APP_URL }}
           DEV_BYPASS_TOKEN: ${{ secrets.DEV_BYPASS_TOKEN }}
+          DEV_BYPASS_USER_ID: ${{ secrets.DEV_BYPASS_USER_ID }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}
         run: |
           set -e
           # Required regardless of which sign-in providers are enabled —
@@ -155,6 +158,38 @@ jobs:
             TMP=$(mktemp)
             printf '%s' "$DEV_BYPASS_TOKEN" > "$TMP"
             npx --yes wrangler secret put DEV_BYPASS_TOKEN < "$TMP"
+            rm "$TMP"
+          fi
+
+          # Optional: DEV_BYPASS_USER_ID overrides which user id /api/dev/login
+          # mints a session for (defaults to first non-system user when unset).
+          if [ -n "${DEV_BYPASS_USER_ID:-}" ]; then
+            TMP=$(mktemp)
+            printf '%s' "$DEV_BYPASS_USER_ID" > "$TMP"
+            npx --yes wrangler secret put DEV_BYPASS_USER_ID < "$TMP"
+            rm "$TMP"
+          fi
+
+          # Optional: ADMIN_EMAIL gates /api/admin/* (REQ-AUTH-001 AC 8).
+          # When unset every admin endpoint returns 403 — fork-friendly
+          # default that locks down the surface until an operator opts in.
+          if [ -n "${ADMIN_EMAIL:-}" ]; then
+            TMP=$(mktemp)
+            printf '%s' "$ADMIN_EMAIL" > "$TMP"
+            npx --yes wrangler secret put ADMIN_EMAIL < "$TMP"
+            rm "$TMP"
+          else
+            echo "ADMIN_EMAIL not configured — admin endpoints will return 403"
+          fi
+
+          # Optional: CF_ACCESS_AUD validates the aud claim of the
+          # Cf-Access-Jwt-Assertion header (REQ-AUTH-001 AC 8). When
+          # unset, only header presence is required (Cloudflare Access
+          # has already verified the JWT signature before forwarding).
+          if [ -n "${CF_ACCESS_AUD:-}" ]; then
+            TMP=$(mktemp)
+            printf '%s' "$CF_ACCESS_AUD" > "$TMP"
+            npx --yes wrangler secret put CF_ACCESS_AUD < "$TMP"
             rm "$TMP"
           fi
 
