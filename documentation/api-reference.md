@@ -66,11 +66,37 @@ New accounts are inserted with complete onboarding defaults at the moment of fir
 - `access_denied`, `no_verified_email`, `oauth_error` — 3xx redirect to `/?error={code}&provider={name}`. The provider name lets the landing page surface a precise message ("Google did not return a verified email" instead of guessing).
 - `invalid_state` (CSRF state mismatch) — HTTP 403 with an HTML body that meta-refreshes to `/?error=invalid_state`. Browsers do not auto-follow `Location` on 4xx responses, so the redirect is delivered via `<meta http-equiv="refresh">` in the body. The origin value interpolated into the body is HTML-escaped.
 
+### POST /api/auth/refresh
+
+Force-rotates the refresh-token row and mints a new 5-minute access JWT. Used by long-running tabs that need a fresh access JWT before issuing a state-changing XHR (the inline middleware refresh cannot safely rotate on the same POST that mutates state).
+
+**Auth:** Requires the `__Host-news_digest_refresh` refresh cookie (the access JWT need not be valid). Origin check applies.
+
+**Rate limit:** 10 requests / 60 seconds per IP (`auth_refresh` rule). Exhausted → `429 Too Many Requests` with `Retry-After` header.
+
+**Response (success):** `200` with both `Set-Cookie` headers (new access JWT + rotated refresh cookie).
+
+**Response (concurrent-rotation collision within 30 s grace window):** `200` with a new access JWT only; the refresh row is not re-rotated (concurrent call already won the race — this is a benign collision per [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection) AC 4).
+
+**Response (failure — missing/invalid/expired refresh cookie, reuse detected, fingerprint mismatch):** `401` with both cookies cleared, so a half-cleared session cannot persist.
+
+**Error codes:** `unauthorized`, `forbidden_origin`
+
+**Implements:** [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation) AC 5, [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection)
+
 ### POST /api/auth/logout
 
-Provider-agnostic. Bumps `session_version`, clears cookie, redirects to `/?logged_out=1`. The session JWT carries the canonical user id; logout doesn't care which provider issued it.
+Provider-agnostic. Bumps `session_version`, revokes the active refresh-token row (single-device-only — does not sign the user out of other devices), clears both the access and refresh cookies, redirects to `/?logged_out=1`.
 
-**Implements:** [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation)
+**Auth:** Requires a valid session (access JWT or inline-refreshed via refresh cookie). Origin check applies.
+
+**Rate limit:** 5 requests / 60 seconds per IP (`auth_logout` rule). Exhausted → `429 Too Many Requests` with `Retry-After` header.
+
+**Response:** `303` redirect to `/?logged_out=1`
+
+**Error codes:** `unauthorized`, `forbidden_origin`
+
+**Implements:** [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation) AC 3, [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection) AC 3
 
 ### POST /api/auth/set-tz
 
@@ -201,7 +227,7 @@ Both the `running: false` and `running: true` responses carry a `Set-Cookie` ref
 - `/digest` — swaps the "Next update in Xm" countdown for "Update in progress" while `running=true`.
 - `/settings` Force Refresh section — polls every 5s after form submission to show live `articles_ingested` and `chunks_remaining`.
 
-**Implements:** [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress), [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation)
+**Implements:** [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress), [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation) AC 4, [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection)
 
 ---
 
@@ -467,13 +493,24 @@ Implements [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-log
 | `auth.login` | Successful OAuth callback — user created or re-authenticated |
 | `auth.callback.failed` | Any failure in the OAuth callback (token exchange, user fetch, DB) |
 | `auth.callback.invalid_state` | CSRF state mismatch in the OAuth callback — returns 403 |
-| `auth.logout` | Session version bumped; cookie cleared |
+| `auth.logout` | Session version bumped; both cookies cleared; active refresh-token row revoked |
+| `auth.logout.refresh_revoke_failed` | D1 revoke call in logout threw — session_version was still bumped so the session is invalidated; the refresh row will expire naturally |
 | `auth.account.delete` | User row deleted from D1 (info on success, warn when no row affected) |
 | `auth.account.delete.failed` | D1 delete threw, or KV cleanup threw |
 | `auth.set_tz.failed` | D1 update in `POST /api/auth/set-tz` threw |
 | `digest.generation` | Digest generation completed (success or failure) |
 | `source.fetch.failed` | An individual source could not be fetched during fan-out |
 | `refresh.rejected` | Manual refresh rejected (rate-limited or already in progress) |
+| `auth.refresh.rotated` | Refresh-token row successfully rotated (inline middleware or explicit `/api/auth/refresh`) |
+| `auth.refresh.rotate_failed` | D1 batch in `rotateRefreshToken` threw |
+| `auth.refresh.expired` | Refresh cookie presented but the row is past its 30-day TTL |
+| `auth.refresh.fingerprint_mismatch` | Refresh cookie valid but device fingerprint (UA + Cf-IPCountry) does not match the stored row — rejected |
+| `auth.refresh.grace_fingerprint_mismatch` | Within the 30 s concurrent-rotation grace window but fingerprint still mismatches — rejected |
+| `auth.refresh.concurrent_collision` | Refresh cookie's row is already revoked but within the 30 s grace window — served a fresh access JWT off the surviving child row without re-rotating |
+| `auth.refresh.concurrent_lost_race` | Same as above; no surviving child row found — treated as reuse |
+| `auth.refresh.reuse_detected` | Revoked refresh cookie presented outside the grace window — every refresh row for the user revoked + `session_version` bumped |
+| `auth.refresh.purge_completed` | Daily purge of expired/old-revoked refresh-token rows completed |
+| `auth.refresh.purge_failed` | Daily purge threw |
 | `email.send.failed` | Resend API call failed |
 | `email.dispatch.degraded` | Per-user D1 data-fetch failed during dispatch; static-fallback email still sent |
 | `discovery.completed` | Per-tag LLM discovery run finished |
