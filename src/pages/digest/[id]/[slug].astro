@@ -185,10 +185,12 @@ function formatDate(unixSec: number): string {
 const publishedSec = articleRow.published_at;
 const publishedLabel = formatDate(publishedSec);
 
-// Ingestion-time formatting. Replaces the previous "X MIN READ" pill
-// per a user request — the read-time estimate was load-bearing nowhere
-// else, so removing it simplifies the metadata strip while surfacing
-// "when did this story land in our pool" as the more useful signal.
+// Ingestion-time formatting — wall-clock time only. The metadata strip
+// already shows the published date right before this slot, and the
+// "ingested today" date repeats redundantly when ingestion lands the
+// same day; surfacing just the time keeps the line tight while still
+// answering "when did this story land in our pool."
+//
 // Renders in the user's IANA timezone (DEFAULT_TZ when the user hasn't
 // set one) so a Europe/Zurich reader sees CET wall-clock; a US-Pacific
 // reader sees PT. The locale comes from `localeForTz` so 24h vs 12h
@@ -199,14 +201,12 @@ const userTz =
     ? session.user.tz
     : DEFAULT_TZ;
 function formatIngestedAt(unixSec: number, tz: string): string {
-  const datePart = formatDate(unixSec);
   const timeFmt = new Intl.DateTimeFormat(localeForTz(tz), {
     timeZone: tz,
     hour: '2-digit',
     minute: '2-digit',
   });
-  const timePart = timeFmt.format(new Date(unixSec * 1000));
-  return `INGESTED ${datePart}, ${timePart}`;
+  return timeFmt.format(new Date(unixSec * 1000));
 }
 const ingestedLabel = formatIngestedAt(articleRow.ingested_at, userTz);
 
