@@ -93,7 +93,15 @@ export async function POST(context: APIContext): Promise<Response> {
     RATE_LIMIT_RULES.AUTH_REFRESH_IP,
     `ip:${clientIp(context.request)}`,
   );
-  if (!ipRate.ok) return rateLimitResponse(ipRate.retryAfter);
+  if (!ipRate.ok) {
+    log('warn', 'auth.refresh.rate_limited', {
+      ip: clientIp(context.request),
+      bucket: 'ip',
+      via: 'explicit_refresh',
+      retry_after_seconds: ipRate.retryAfter,
+    });
+    return rateLimitResponse(ipRate.retryAfter);
+  }
 
   const refreshValue = readCookie(
     context.request.headers.get('Cookie'),
@@ -144,7 +152,16 @@ export async function POST(context: APIContext): Promise<Response> {
           RATE_LIMIT_RULES.AUTH_REFRESH_USER,
           `user:${row.user_id}`,
         );
-        if (!userRate.ok) return rateLimitResponse(userRate.retryAfter);
+        if (!userRate.ok) {
+          log('warn', 'auth.refresh.rate_limited', {
+            user_id: row.user_id,
+            bucket: 'user',
+            path: 'grace_collision',
+            via: 'explicit_refresh',
+            retry_after_seconds: userRate.retryAfter,
+          });
+          return rateLimitResponse(userRate.retryAfter);
+        }
         const user = await env.DB
           .prepare(
             'SELECT id, email, gh_login, session_version FROM users WHERE id = ?1',
@@ -189,7 +206,16 @@ export async function POST(context: APIContext): Promise<Response> {
     RATE_LIMIT_RULES.AUTH_REFRESH_USER,
     `user:${row.user_id}`,
   );
-  if (!userRate.ok) return rateLimitResponse(userRate.retryAfter);
+  if (!userRate.ok) {
+    log('warn', 'auth.refresh.rate_limited', {
+      user_id: row.user_id,
+      bucket: 'user',
+      path: 'rotation',
+      via: 'explicit_refresh',
+      retry_after_seconds: userRate.retryAfter,
+    });
+    return rateLimitResponse(userRate.retryAfter);
+  }
 
   // Device fingerprint check.
   const present = await deviceFingerprint(context.request);
