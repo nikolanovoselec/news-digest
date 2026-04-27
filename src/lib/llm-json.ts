@@ -34,6 +34,7 @@ import {
   extractResponsePayload,
   extractTokensIn,
   extractTokensOut,
+  type AIRunResponse,
 } from '~/lib/generate';
 
 /** Minimal Workers-AI binding shape. We intentionally do not import
@@ -94,7 +95,12 @@ export async function runJsonWithFallback<T>(
   const primaryModel = options.primaryModel ?? DEFAULT_MODEL_ID;
   const fallbackModel = options.fallbackModel ?? FALLBACK_MODEL_ID;
 
-  const primaryResult = await options.ai.run(primaryModel, options.params);
+  // The Workers-AI binding's contract is `Promise<unknown>` because
+  // every model emits a slightly different envelope. The shared
+  // helpers in ~/lib/generate accept the wider AIRunResponse shape
+  // (which has an index signature) and gracefully tolerate missing
+  // fields, so a single cast at the boundary is safe.
+  const primaryResult = (await options.ai.run(primaryModel, options.params)) as AIRunResponse;
   const primaryRaw = extractResponsePayload(primaryResult);
   const primaryParsed = options.narrow(primaryRaw);
   const primaryTokensIn = extractTokensIn(primaryResult);
@@ -126,7 +132,7 @@ export async function runJsonWithFallback<T>(
   };
   options.onPrimaryFailure?.(primaryAttempt);
 
-  const fallbackResult = await options.ai.run(fallbackModel, options.params);
+  const fallbackResult = (await options.ai.run(fallbackModel, options.params)) as AIRunResponse;
   const fallbackRaw = extractResponsePayload(fallbackResult);
   const fallbackParsed = options.narrow(fallbackRaw);
   const fallbackTokensIn = extractTokensIn(fallbackResult);
