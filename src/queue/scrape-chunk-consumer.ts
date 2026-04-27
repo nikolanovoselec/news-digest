@@ -506,30 +506,6 @@ export async function processOneChunk(
     await batchExec(env.DB, statements);
   }
 
-  // Accumulate chunk stats into the scrape_runs row. Tokens from the
-  // failed primary call (when the fallback was taken) count too — they
-  // burned real budget even though their output was unusable — so we
-  // add them to the reported totals. Both live and wasted counters
-  // come from runJsonWithFallback (CF-009).
-  const tokensIn = llmRun.tokensIn + wastedTokensIn;
-  const tokensOut = llmRun.tokensOut + wastedTokensOut;
-  // llmRun.costUsd attributes to the model that actually produced the
-  // output (DEFAULT on the happy path, FALLBACK when the retry
-  // succeeded). Add the wasted-primary cost on top (zero on happy path).
-  const costUsd = llmRun.costUsd + wastedCostUsd;
-  // Deduped count = input candidates that ended up collapsed into a
-  // primary plus input candidates that were dropped entirely (e.g. zero
-  // valid tags after validation).
-  const articlesIngested = prepared.length;
-  const articlesDeduped = body.candidates.length - articlesIngested;
-  await addChunkStats(env.DB, body.scrape_run_id, {
-    tokens_in: tokensIn,
-    tokens_out: tokensOut,
-    estimated_cost_usd: costUsd,
-    articles_ingested: articlesIngested,
-    articles_deduped: articlesDeduped,
-  });
-
   // CF-002: atomic chunk-completion via D1. The previous KV-counter
   // decrement was non-atomic — two concurrent consumers reading the
   // same chunks_remaining value could race to "0" and double-finalize.
@@ -537,13 +513,46 @@ export async function processOneChunk(
   // retries/redelivery, and the COUNT(*) gives the exact "completed
   // so far" total without depending on a counter another writer might
   // be mutating in parallel.
+  //
+  // The completion INSERT runs FIRST so we can use its `meta.changes`
+  // as the idempotency gate for `addChunkStats` below — that update is
+  // additive (`col = col + ?`) and would double-count tokens, cost,
+  // and article counters on every queue redelivery. Article INSERTs
+  // above are already idempotent via `INSERT OR IGNORE` on
+  // canonical_url, so they don't need the gate.
   const completedAt = Math.floor(Date.now() / 1000);
-  await env.DB
+  const completionResult = await env.DB
     .prepare(
       'INSERT OR IGNORE INTO scrape_chunk_completions (scrape_run_id, chunk_index, completed_at) VALUES (?1, ?2, ?3)',
     )
     .bind(body.scrape_run_id, body.chunk_index, completedAt)
     .run();
+  const isFirstCompletion = (completionResult.meta?.changes ?? 0) === 1;
+
+  if (isFirstCompletion) {
+    // Tokens from the failed primary call (when the fallback was taken)
+    // count too — they burned real budget even though their output was
+    // unusable — so we add them to the reported totals. Both live and
+    // wasted counters come from runJsonWithFallback (CF-009).
+    const tokensIn = llmRun.tokensIn + wastedTokensIn;
+    const tokensOut = llmRun.tokensOut + wastedTokensOut;
+    // llmRun.costUsd attributes to the model that actually produced the
+    // output (DEFAULT on the happy path, FALLBACK when the retry
+    // succeeded). Add the wasted-primary cost on top (zero on happy path).
+    const costUsd = llmRun.costUsd + wastedCostUsd;
+    // Deduped count = input candidates that ended up collapsed into a
+    // primary plus input candidates that were dropped entirely (e.g. zero
+    // valid tags after validation).
+    const articlesIngested = prepared.length;
+    const articlesDeduped = body.candidates.length - articlesIngested;
+    await addChunkStats(env.DB, body.scrape_run_id, {
+      tokens_in: tokensIn,
+      tokens_out: tokensOut,
+      estimated_cost_usd: costUsd,
+      articles_ingested: articlesIngested,
+      articles_deduped: articlesDeduped,
+    });
+  }
   const completedRow = await env.DB
     .prepare(
       'SELECT COUNT(*) AS done FROM scrape_chunk_completions WHERE scrape_run_id = ?1',

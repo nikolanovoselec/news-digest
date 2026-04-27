@@ -558,6 +558,31 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     expect(sendMock).toHaveBeenCalledTimes(1);
   });
 
+  it('REQ-PIPE-002: addChunkStats is gated by completion INSERT — no double-count under redelivery', async () => {
+    // CF-002 hardening: addChunkStats issues an additive UPDATE
+    // (`tokens_in = tokens_in + ?, ...`) so an unguarded second
+    // invocation would double the per-chunk tokens, cost, and article
+    // counters in scrape_runs. The fix is to gate the UPDATE on the
+    // completion INSERT's meta.changes — only the first delivery for
+    // a given (run_id, chunk_index) pair runs addChunkStats, the
+    // redelivery sees changes === 0 and short-circuits.
+    const aiResponse = {
+      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }], dedup_groups: [] }),
+      usage: { input_tokens: 10, output_tokens: 10 },
+    };
+    const { db, records } = makeDb();
+    const { kv } = makeKv();
+    const env = makeEnv(db, kv, aiResponse);
+    await processOneChunk(env, makeChunk());
+    await processOneChunk(env, makeChunk());
+    const statsCalls = records.filter(
+      (r) =>
+        r.sql.includes('UPDATE scrape_runs') &&
+        r.sql.includes('tokens_in = tokens_in +'),
+    );
+    expect(statsCalls).toHaveLength(1);
+  });
+
   it('REQ-PIPE-008: send-failure rollback — clears finalize_enqueued so the queue retry can re-attempt', async () => {
     // CF-002 follow-up: the atomic UPDATE-then-send sequence has a
     // failure mode that the original KV gate didn't have — if send()
