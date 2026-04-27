@@ -50,16 +50,24 @@ const SNIPPET_CAP = 3000;
 export function extractArticleText(html: string): string {
   // Drop non-content blocks BEFORE tag-stripping so their contents
   // don't leak in.
+  //
+  // Closing-tag pattern accepts optional whitespace + attribute-shaped
+  // garbage between the tag name and `>` (e.g. `</script >`,
+  // `</script\n>`, `</script foo>`). The HTML spec is permissive
+  // enough that real-world parsers tolerate these forms, and the
+  // strict `</script>` literal CodeQL flagged (#142, js/bad-tag-filter)
+  // would let an attacker smuggle a `<script>...</script foo>` block
+  // past the strip and into the LLM-prompt body.
   const cleaned = html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
-    .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
-    .replace(/<header[\s\S]*?<\/header>/gi, ' ')
-    .replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
-    .replace(/<aside[\s\S]*?<\/aside>/gi, ' ')
-    .replace(/<form[\s\S]*?<\/form>/gi, ' ')
-    .replace(/<svg[\s\S]*?<\/svg>/gi, ' ');
+    .replace(/<script\b[\s\S]*?<\/script\s*>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style\s*>/gi, ' ')
+    .replace(/<noscript\b[\s\S]*?<\/noscript\s*>/gi, ' ')
+    .replace(/<nav\b[\s\S]*?<\/nav\s*>/gi, ' ')
+    .replace(/<header\b[\s\S]*?<\/header\s*>/gi, ' ')
+    .replace(/<footer\b[\s\S]*?<\/footer\s*>/gi, ' ')
+    .replace(/<aside\b[\s\S]*?<\/aside\s*>/gi, ' ')
+    .replace(/<form\b[\s\S]*?<\/form\s*>/gi, ' ')
+    .replace(/<svg\b[\s\S]*?<\/svg\s*>/gi, ' ');
 
   // Collect every candidate container body text — we take whichever
   // produces the longest clean output.
