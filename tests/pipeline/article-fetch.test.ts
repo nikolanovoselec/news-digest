@@ -88,6 +88,29 @@ describe('extractArticleText — REQ-PIPE-001 AC 8', () => {
     expect(text).not.toContain('Please enable JavaScript');
   });
 
+  // CodeQL js/bad-tag-filter #142 — the original strip regex required
+  // a literal `</script>` and missed `</script >` (with whitespace
+  // before the `>`) and `</script foo>` (with attribute-shaped junk).
+  // HTML parsers tolerate those forms, so attacker-controlled feed
+  // bodies could smuggle script content into the LLM-prompt body.
+  it('REQ-PIPE-001: strips script/style with whitespace and junk before the closing >', () => {
+    const html = `
+      <article>
+        Clean body text we do want.
+        <script>window.__leak1 = 1;</script >
+        <script>window.__leak2 = 2;</script\n>
+        <style>.x { color: red; }</style >
+        <script foo="bar">window.__leak3 = 3;</script bar>
+      </article>
+    `;
+    const text = extractArticleText(html);
+    expect(text).toContain('Clean body text');
+    expect(text).not.toMatch(/window\.__leak1/);
+    expect(text).not.toMatch(/window\.__leak2/);
+    expect(text).not.toMatch(/color: red/);
+    expect(text).not.toMatch(/window\.__leak3/);
+  });
+
   it('REQ-PIPE-001: falls back to <body> when no known container matches', () => {
     const html = `
       <html>
