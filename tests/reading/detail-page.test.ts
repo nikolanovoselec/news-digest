@@ -101,17 +101,17 @@ describe('detail page source contract — REQ-READ-002', () => {
     expect(detailSource).toMatch(/href="\/digest"/);
   });
 
-  it('REQ-READ-002: page imports the external article-detail module (CSP-compatible)', () => {
-    // The site CSP is `script-src 'self'`. Inline `<script>` bodies
-    // (which Astro emits when a page-level script has no imports)
-    // are blocked at runtime — bindBack never ran on the live site,
-    // so the in-UI back arrow always fell through to its static
-    // `href="/digest"` fallback regardless of the hijack logic.
-    // Importing the module forces Astro to bundle it as
-    // `<script type="module" src="...">`, which CSP allows from
-    // the same origin.
+  it('REQ-READ-002: page references /scripts/article-detail.js as a static-served module (CSP-compatible)', () => {
+    // Astro 5 directRenderScript INLINES `<script>import './module';</script>`
+    // bundles regardless of size, and the site's `script-src 'self'`
+    // CSP blocks every inline emit. Pinning is:inline + a static
+    // public/scripts file is the only configuration that survives
+    // both Astro's processing and CSP at runtime — bindBack actually
+    // executes, the in-UI back arrow's hijack works, and the
+    // href="/digest" fallback only fires for genuine direct-link
+    // visits.
     expect(detailSource).toMatch(
-      /<script>\s*[\s\S]*import\s+['"]~\/scripts\/article-detail['"]\s*;?\s*[\s\S]*<\/script>/,
+      /<script\s+is:inline\s+type="module"\s+src="\/scripts\/article-detail\.js"\s*>\s*<\/script>/,
     );
   });
 
