@@ -52,6 +52,7 @@ import { addChunkStats, finishRun } from '~/lib/scrape-run';
 import { generateUlid } from '~/lib/ulid';
 import { applyForeignKeysPragma } from '~/lib/db';
 import { log } from '~/lib/log';
+import { titlesShareAnyToken } from '~/lib/title-overlap';
 
 /** Shape of every `scrape-chunks` queue message. Produced by the
  * coordinator in `src/queue/scrape-coordinator.ts`. `candidates` are the
@@ -653,48 +654,7 @@ export async function processOneChunk(
   void collapsedSet;
 }
 
-/** Very cheap token-overlap check for defense-in-depth against LLM
- * summaries that echo the correct candidate index but describe a
- * different candidate's story. Returns true when the two titles share
- * at least one non-trivial token (alnum, length ≥ 4, case-insensitive,
- * common English stopwords excluded). Returns true trivially when
- * either title is empty or very short (we only reject when BOTH titles
- * are substantial enough to compare meaningfully — never drop on a
- * short headline). */
-function titlesShareAnyToken(a: string, b: string): boolean {
-  const tokensA = tokenizeTitle(a);
-  const tokensB = tokenizeTitle(b);
-  // Be conservative: if either side has fewer than 2 meaningful tokens
-  // the overlap signal is too noisy — accept rather than drop.
-  if (tokensA.size < 2 || tokensB.size < 2) return true;
-  for (const t of tokensA) {
-    if (tokensB.has(t)) return true;
-  }
-  return false;
-}
-
-const TITLE_STOPWORDS = new Set([
-  'the', 'that', 'this', 'with', 'from', 'into', 'over', 'your', 'their',
-  'have', 'will', 'been', 'were', 'what', 'when', 'about', 'after',
-  'announce', 'announces', 'announced', 'release', 'released', 'launches',
-  'launch', 'update', 'updates', 'updated', 'says', 'said', 'introduces',
-  'introduced', 'adds', 'added', 'gets', 'gains', 'makes', 'made',
-  'using', 'uses', 'based', 'new', 'via', 'now', 'for', 'and',
-]);
-
-/** Extract meaningful tokens from a title for the overlap check:
- *  lowercase, alnum only, length ≥ 4, not in the small stopword list. */
-function tokenizeTitle(title: string): Set<string> {
-  const out = new Set<string>();
-  const lowered = title.toLowerCase();
-  const words = lowered.split(/[^a-z0-9]+/);
-  for (const w of words) {
-    if (w.length < 4) continue;
-    if (TITLE_STOPWORDS.has(w)) continue;
-    out.add(w);
-  }
-  return out;
-}
+// titlesShareAnyToken / tokenizeTitle moved to ~/lib/title-overlap (CF-058).
 
 /** Load the tag allowlist: DEFAULT_HASHTAGS ∪ any tag whose
  * `sources:{tag}` KV key exists. De-duplicated, lowercase, no leading `#`. */

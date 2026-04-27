@@ -3,18 +3,16 @@
 //
 // The pipeline guarantees that HTML tags, control characters, and
 // collapsed whitespace never reach the articles table. These tests
-// pin down sanitizeText at the unit level via the `__test` export —
-// full pipeline verification lives in pipeline.test.ts.
+// pin down sanitizeText at the unit level — full pipeline verification
+// lives in pipeline.test.ts.
 //
 // CF-017 deleted sanitizeArticles + GeneratedArticle (production no
-// longer called the helper — the chunk consumer assembles articles
-// inline and only consumes sanitizeText). The dedicated
-// sanitizeArticles describe blocks were removed alongside.
+// longer called the helper). CF-016 deleted the `__test` bag — every
+// helper it exposed (parseLLMPayload, sanitizeText, extractTokensIn,
+// extractTokensOut) was already a direct named export.
 
 import { describe, expect, it } from 'vitest';
-import { __test } from '~/lib/generate';
-
-const { sanitizeText } = __test;
+import { sanitizeText } from '~/lib/generate';
 
 describe('sanitizeText', () => {
   it('REQ-PIPE-002: strips simple HTML tags', () => {

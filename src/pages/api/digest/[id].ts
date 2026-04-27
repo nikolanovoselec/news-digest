@@ -1,4 +1,4 @@
-// Implements REQ-READ-004, REQ-READ-005
+// Implements REQ-READ-005
 //
 // GET /api/digest/:id — return a specific digest by id, scoped to the
 // authenticated user. The same response shape as /api/digest/today
