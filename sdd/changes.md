@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-27
 
+- REQ-MAIL-002 AC 3 refined: a missing or unrecognised stored timezone on one user row no longer aborts the whole 5-minute dispatch tick — that bucket is skipped with a structured warn log and sibling buckets continue, so a single corrupted legacy row can't silently halt the daily email for everyone else.
+
 - REQ-READ-002 AC 4 refined: the back control now also returns the user to the originating page when they arrived via a same-app client-side navigation (not just a hard page load), and the reverse card-morph now plays even when the originating card sits below the fold of the source page (e.g. inside an expanded day on `/history`) — the prior implementation silently degraded to a root cross-fade in both cases, sending users to `/digest` or losing the morph animation entirely.
 
 - REQ-READ-002 AC 1 refined: the article-detail metadata line's third slot is the article's ingestion time (when the story landed in our pool) rather than an estimated read-time pill, rendered as wall-clock hour:minute only in the user's IANA timezone — the publish date already sits beside it on the same line, so duplicating the ingestion date there read as noise.

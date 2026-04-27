@@ -40,7 +40,7 @@ Resend-backed notification sent after every successful digest — whether genera
 **Acceptance Criteria:**
 1. The Resend POST uses a short request timeout.
 2. Any non-2xx response, network failure, or timeout is logged as a structured error event; no exception bubbles up to the cron handler.
-3. One user's failed send never blocks or aborts another user's send in the same cron invocation.
+3. One user's failed send never blocks or aborts another user's send in the same cron invocation, and a precondition error against one timezone bucket (e.g. an unrecognised IANA zone in a stored row) never blocks or aborts sibling buckets in the same tick — the dispatcher skips the bad row, logs it as a structured warning, and continues.
 4. The reading surfaces stay fully usable regardless of email outcome.
 5. On send failure, the per-user "last emailed date" marker is NOT advanced, so the next cron tick retries the same user naturally.
 
