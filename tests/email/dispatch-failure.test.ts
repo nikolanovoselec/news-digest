@@ -471,7 +471,11 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
                       tz: 'UTC',
                       digest_hour: 14,
                       digest_minute: 0,
-                      hashtags_json: null,
+                      // Need non-empty tags so selectUnreadHeadlinesForUser
+                      // actually issues the SELECT against D1 — the helper
+                      // short-circuits to [] when userTags is empty,
+                      // skipping the throw path we want to exercise.
+                      hashtags_json: JSON.stringify(['cloudflare']),
                       last_emailed_local_date: null,
                     },
                   ],
