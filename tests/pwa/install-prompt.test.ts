@@ -35,7 +35,9 @@ describe('InstallPrompt source content', () => {
   });
 
   it('REQ-PWA-001: shows the iOS "Add to Home Screen" instructional note (AC 4)', () => {
-    expect(installPromptSource).toContain('Add to Home Screen');
+    // The user-facing copy lives in the template, the rendering branch
+    // logic lives in the script.
+    expect(installPromptTemplate).toContain('Add to Home Screen');
   });
 
   it('REQ-PWA-001: detects standalone via matchMedia(display-mode: standalone)', () => {
@@ -47,7 +49,11 @@ describe('InstallPrompt source content', () => {
   });
 
   it('REQ-PWA-001: checks navigator.standalone in the iOS branch (AC 4)', () => {
-    expect(installPromptSource).toContain('navigator.standalone');
+    // The script casts navigator to a typed view (`const nav = navigator
+    // as IosNavigator`) before reading the iOS-specific .standalone
+    // property — so the literal "navigator.standalone" doesn't appear,
+    // but the .standalone access does. Pin the access shape.
+    expect(installPromptSource).toMatch(/\bnav\.standalone\b/);
   });
 });
 
