@@ -28,6 +28,9 @@ function makeDb(opts: {
    *  the chunk consumer drives finishRun off this count, not off the
    *  legacy KV chunks_remaining counter. */
   initialCompletedChunks?: number;
+  /** Inject a one-shot failure on the finalize-lock rollback UPDATE
+   *  so we can exercise the double-fault path (CF-002 follow-up). */
+  failNextRollback?: boolean;
 } = {}): { db: D1Database; records: SqlRecord[] } {
   const records = opts.records ?? [];
   // Track inserted (run_id, chunk_index) pairs so INSERT OR IGNORE
@@ -72,6 +75,12 @@ function makeDb(opts: {
           sql.includes('finalize_enqueued = 0') &&
           !sql.includes('finalize_enqueued = 1')
         ) {
+          if (opts.failNextRollback === true) {
+            // Consume the one-shot — only the first rollback throws,
+            // so a follow-up retry sees a healthy D1.
+            opts.failNextRollback = false;
+            throw new Error('d1 transient outage during rollback');
+          }
           finalizeLocked.delete(String(params[0]));
           return { success: true, meta: { changes: 1 } };
         }
@@ -582,6 +591,48 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     // race-acquire UPDATE bumps it back to 1, and send is re-attempted.
     await processOneChunk(env, makeChunk());
     expect(sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('REQ-PIPE-008: rollback-failure path — emits finalize_lock_rollback_failed and surfaces sendErr', async () => {
+    // CF-002 follow-up: when the rollback UPDATE itself throws (a
+    // second transient D1 outage during the catch handler), the
+    // consumer must still surface the original sendErr to the queue
+    // retry path and emit a structured operator-visible log line so
+    // the stranded lock is observable. Pins REQ-PIPE-008 AC 9 (the
+    // "lock-clearing step itself fails" sub-case).
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const aiResponse = {
+        response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }], dedup_groups: [] }),
+        usage: { input_tokens: 10, output_tokens: 10 },
+      };
+      const { db } = makeDb({ failNextRollback: true });
+      const { kv } = makeKv();
+      const env = makeEnv(db, kv, aiResponse);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sendMock = (env.SCRAPE_FINALIZE as any).send as ReturnType<typeof vi.fn>;
+      sendMock.mockRejectedValueOnce(new Error('queue temporarily unavailable'));
+
+      // The original sendErr — not the rollback error — must surface.
+      await expect(processOneChunk(env, makeChunk())).rejects.toThrow(
+        'queue temporarily unavailable',
+      );
+
+      // Operator-visible log captures both errors.
+      const failedLog = consoleSpy.mock.calls.find((args: unknown[]) => {
+        const payload = args[0];
+        return (
+          typeof payload === 'string' &&
+          payload.includes('finalize_lock_rollback_failed')
+        );
+      });
+      expect(failedLog).toBeDefined();
+      const payload = failedLog![0] as string;
+      expect(payload).toContain('"send_error":"Error: queue temporarily unavailable"');
+      expect(payload).toContain('d1 transient outage during rollback');
+    } finally {
+      consoleSpy.mockRestore();
+    }
   });
 
   it('REQ-PIPE-002: updates scrape_runs stats (tokens, cost, ingested, deduped)', async () => {
