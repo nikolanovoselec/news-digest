@@ -12,6 +12,11 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+  RATE_LIMIT_RULES,
+} from '~/lib/rate-limit';
 import { loadSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
@@ -35,6 +40,16 @@ export async function POST(context: APIContext): Promise<Response> {
       status: 303,
       headers: { Location: '/' },
     });
+  }
+
+  // CF-028: per-user rate-limit on tag-list mutations.
+  const rl = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.TAGS_MUTATION,
+    `user:${session.user.id}`,
+  );
+  if (!rl.ok) {
+    return rateLimitResponse(rl.retryAfter);
   }
 
   const tags = Array.from(DEFAULT_HASHTAGS);

@@ -98,10 +98,27 @@ function makeDb(user: UserRow | null): {
 }
 
 function makeEnv(db: D1Database): Partial<Env> {
+  // Minimal in-memory KV for the rate-limit helper. Real values are
+  // never asserted against in this file — the helper only needs `get`
+  // and `put` to succeed.
+  const kvStore = new Map<string, string>();
+  const kv = {
+    get: vi.fn().mockImplementation(async (key: string) => kvStore.get(key) ?? null),
+    put: vi
+      .fn()
+      .mockImplementation(async (key: string, value: string) => {
+        kvStore.set(key, value);
+      }),
+    delete: vi.fn().mockImplementation(async (key: string) => {
+      kvStore.delete(key);
+    }),
+    list: vi.fn().mockResolvedValue({ keys: [], list_complete: true }),
+  } as unknown as KVNamespace;
   return {
     APP_URL,
     OAUTH_JWT_SECRET: JWT_SECRET,
     DB: db,
+    KV: kv,
   };
 }
 
@@ -384,5 +401,30 @@ describe('POST/DELETE /api/articles/:id/star — REQ-STAR-001', () => {
     expect(deletes).toHaveLength(1);
     expect(deletes[0]?.params[0]).toBe('user-B');
     expect(deletes[0]?.params[1]).toBe('art-99');
+  });
+
+  it('CF-028: returns 429 when the per-user star bucket is exhausted', async () => {
+    // Pre-load the rate-limit window's KV counter to the rule's limit
+    // so the next call observes a full bucket and short-circuits with
+    // a Retry-After header.
+    const { db } = makeDb(userRow());
+    const env = makeEnv(db);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const windowSec = 60;
+    const windowIndex = Math.floor(nowSec / windowSec);
+    await env.KV!.put(
+      `ratelimit:article_star:user:user-1:${windowIndex}`,
+      '60',
+    );
+
+    const cookie = await sessionCookieFor('user-1');
+    const req = await starRequest('POST', {
+      articleId: 'art-1',
+      origin: APP_ORIGIN,
+      cookie,
+    });
+    const res = await POST(makeContext(req, env, 'art-1') as never);
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).not.toBeNull();
   });
 });

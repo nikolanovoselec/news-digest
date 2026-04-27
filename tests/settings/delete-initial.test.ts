@@ -85,7 +85,19 @@ function makeDb(
 }
 
 function env(db: D1Database): Partial<Env> {
-  return { APP_URL, OAUTH_JWT_SECRET: JWT_SECRET, DB: db };
+  // Minimal in-memory KV for the rate-limit helper.
+  const kvStore = new Map<string, string>();
+  const kv = {
+    get: vi.fn().mockImplementation(async (key: string) => kvStore.get(key) ?? null),
+    put: vi
+      .fn()
+      .mockImplementation(async (key: string, value: string) => {
+        kvStore.set(key, value);
+      }),
+    delete: vi.fn().mockResolvedValue(undefined),
+    list: vi.fn().mockResolvedValue({ keys: [], list_complete: true }),
+  } as unknown as KVNamespace;
+  return { APP_URL, OAUTH_JWT_SECRET: JWT_SECRET, DB: db, KV: kv };
 }
 
 function makeContext(request: Request, e: Partial<Env>): unknown {

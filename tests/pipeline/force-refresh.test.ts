@@ -341,6 +341,37 @@ describe('GET /api/admin/force-refresh', () => {
     expect(qsent).toHaveLength(0);
   });
 
+  it('GET browser deny: non-admin session is redirected to /settings?force_refresh=denied (no raw 403 body)', async () => {
+    // CF-001 follow-up: when the admin gate denies a browser GET (i.e.,
+    // no `Accept: application/json`), the operator should land on
+    // /settings with an explicit deny marker — never on a bare 403
+    // text body. Scripts that opted into JSON keep the raw status.
+    const fixture: DbFixture = { calls: [] };
+    const db = makeDb(fixture, { ...ADMIN_USER_ROW, email: 'not-admin@example.com' });
+    const queue = makeQueue({ sent: [] });
+    const jwt = await signSession(
+      { sub: ADMIN_USER_ROW.id, email: 'not-admin@example.com', ghl: 'admin', sv: 1 },
+      SECRET,
+    );
+    const req = await refreshRequest('GET', { accept: 'text/html', cookieJwt: jwt });
+    const res = await GET(makeContext(req, makeEnv(db, queue)) as never);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toMatch(/\/settings\?force_refresh=denied$/);
+  });
+
+  it('GET JSON deny: non-admin session keeps the raw 403 (so scripts can detect)', async () => {
+    const fixture: DbFixture = { calls: [] };
+    const db = makeDb(fixture, { ...ADMIN_USER_ROW, email: 'not-admin@example.com' });
+    const queue = makeQueue({ sent: [] });
+    const jwt = await signSession(
+      { sub: ADMIN_USER_ROW.id, email: 'not-admin@example.com', ghl: 'admin', sv: 1 },
+      SECRET,
+    );
+    const req = await refreshRequest('GET', { accept: 'application/json', cookieJwt: jwt });
+    const res = await GET(makeContext(req, makeEnv(db, queue)) as never);
+    expect(res.status).toBe(403);
+  });
+
   it('GET does NOT run Origin check (deliberately — the endpoint is gated by Cloudflare Access, not by browser cookies)', async () => {
     // The absence of Origin headers MUST NOT block a GET — operators
     // trigger via bookmark/curl with no Origin. Only the Access

@@ -22,6 +22,11 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+  RATE_LIMIT_RULES,
+} from '~/lib/rate-limit';
 import { loadSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
@@ -72,6 +77,18 @@ async function authorize(
   const articleId = readArticleId(context);
   if (articleId === null) {
     return { kind: 'reject', response: errorResponse('bad_request') };
+  }
+
+  // CF-028: per-user rate-limit on star toggles. The cap (60/min)
+  // protects against runaway client retries; legitimate humans never
+  // approach it.
+  const rl = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.ARTICLE_STAR,
+    `user:${session.user.id}`,
+  );
+  if (!rl.ok) {
+    return { kind: 'reject', response: rateLimitResponse(rl.retryAfter) };
   }
 
   return {

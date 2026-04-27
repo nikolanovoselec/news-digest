@@ -139,7 +139,17 @@ export async function GET(context: APIContext): Promise<Response> {
   const wantsJson = (context.request.headers.get('Accept') ?? '').includes('application/json');
 
   const adminAuth = await requireAdminSession(context);
-  if (!adminAuth.ok) return adminAuth.response;
+  if (!adminAuth.ok) {
+    // Browsers landing here via the Cloudflare Access callback should
+    // not see a raw 401/403 body — bounce them back to /settings with
+    // an explicit deny marker so the operator can see what happened.
+    // Scripts that opted into JSON keep the raw status response.
+    if (wantsJson) return adminAuth.response;
+    return new Response(null, {
+      status: 303,
+      headers: { Location: `${appOrigin}/settings?force_refresh=denied` },
+    });
+  }
 
   try {
     const { run_id, reused } = await kickCoordinator(env);

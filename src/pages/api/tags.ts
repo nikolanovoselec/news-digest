@@ -16,6 +16,11 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+  RATE_LIMIT_RULES,
+} from '~/lib/rate-limit';
 import { loadSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import {
@@ -42,6 +47,16 @@ export async function POST(context: APIContext): Promise<Response> {
   const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
   if (session === null) {
     return errorResponse('unauthorized');
+  }
+
+  // CF-028: per-user rate-limit on tag-list mutations.
+  const rl = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.TAGS_MUTATION,
+    `user:${session.user.id}`,
+  );
+  if (!rl.ok) {
+    return rateLimitResponse(rl.retryAfter);
   }
 
   let body: TagsBody;
