@@ -242,6 +242,63 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
     expect(row!.revoked_at).toBeNull();
   });
 
+  it('REQ-AUTH-008 AC 1: grace-window + fingerprint mismatch triggers reuse-detection (theft path)', async () => {
+    const issueReq = fakeRequest({ ua: 'Mozilla/5.0', country: 'CH' });
+    const { value } = await issueRefreshToken(env.DB, USER_ID, issueReq);
+    const { value: otherValue } = await issueRefreshToken(env.DB, USER_ID, issueReq);
+
+    // Rotate so the row is revoked within the grace window.
+    const oldRow = await findRefreshToken(env.DB, value);
+    await rotateRefreshToken(env.DB, oldRow!, issueReq);
+
+    // Replay within the grace window but from a DIFFERENT country —
+    // attacker scenario. Must NOT mint a fresh access JWT off the
+    // surviving child. Treat as theft: revokeAllForUser fires.
+    const replayReq = fakeRequest({
+      ua: 'Mozilla/5.0',
+      country: 'US',
+      cookie: `${REFRESH_TOKEN_COOKIE_NAME}=${value}`,
+    });
+    const result = await loadSession(replayReq, env.DB, SECRET);
+    expect(result).toBeNull();
+
+    // Other device's refresh row is now revoked (global wipe).
+    const otherRow = await findRefreshToken(env.DB, otherValue);
+    expect(otherRow!.revoked_at).not.toBeNull();
+    const sv = await env.DB
+      .prepare('SELECT session_version FROM users WHERE id = ?1')
+      .bind(USER_ID)
+      .first<{ session_version: number }>();
+    expect(sv!.session_version).toBeGreaterThan(1);
+  });
+
+  it('REQ-AUTH-008: future revoked_at (clock skew) falls through to theft branch, never mints access JWT', async () => {
+    const issueReq = fakeRequest({ ua: 'Mozilla/5.0', country: 'CH' });
+    const { value } = await issueRefreshToken(env.DB, USER_ID, issueReq);
+    const { value: otherValue } = await issueRefreshToken(env.DB, USER_ID, issueReq);
+
+    // Backdate-into-the-future: revoked_at >> now. Negative
+    // `sinceRevoked` must NOT pass the grace check.
+    const futureSec = Math.floor(Date.now() / 1000) + 3600;
+    const row = await findRefreshToken(env.DB, value);
+    await env.DB
+      .prepare('UPDATE refresh_tokens SET revoked_at = ?2 WHERE id = ?1')
+      .bind(row!.id, futureSec)
+      .run();
+
+    const replayReq = fakeRequest({
+      ua: 'Mozilla/5.0',
+      country: 'CH',
+      cookie: `${REFRESH_TOKEN_COOKIE_NAME}=${value}`,
+    });
+    const result = await loadSession(replayReq, env.DB, SECRET);
+    expect(result).toBeNull();
+
+    // Theft branch fired — global wipe.
+    const otherRow = await findRefreshToken(env.DB, otherValue);
+    expect(otherRow!.revoked_at).not.toBeNull();
+  });
+
   it('REQ-AUTH-008: concurrent-rotation collision within grace window serves access JWT only, no theft fallout', async () => {
     const req1 = fakeRequest({ ua: 'Mozilla/5.0', country: 'CH' });
     const { value: oldValue } = await issueRefreshToken(env.DB, USER_ID, req1);

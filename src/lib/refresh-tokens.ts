@@ -256,10 +256,10 @@ export async function rotateRefreshToken(
   const updateResult = batch[0] as unknown as { meta?: { changes?: number } };
   const updateChanges = updateResult.meta?.changes ?? 0;
   if (updateChanges === 0) {
-    // We lost the race. The conditional INSERT (gated by `WHERE EXISTS`
-    // on `revoked_at = ?5`) also did NOT insert because the parent's
-    // revoked_at is some OTHER timestamp than the one we just tried to
-    // set. No new row was created with our id. Return null.
+    // We lost the race. The conditional INSERT (gated by `WHERE NOT
+    // EXISTS` on an unrevoked child of this parent) also did NOT
+    // insert because the winner's child row already exists. No new
+    // row was created with our id. Return null.
     return null;
   }
 
