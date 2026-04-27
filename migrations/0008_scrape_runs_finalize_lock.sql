@@ -1,0 +1,29 @@
+-- Implements REQ-PIPE-008
+--
+-- Atomic finalize-enqueue gate. CF-002 closed the chunk-count TOCTOU
+-- by moving completion tracking to D1, but a second race remained on
+-- the finalize-enqueue path:
+--
+--   const enqueued = await env.KV.get(enqueuedKey);
+--   if (enqueued === null) {
+--     await env.SCRAPE_FINALIZE.send(...);
+--     await env.KV.put(enqueuedKey, '1');
+--   }
+--
+-- Two concurrent last-chunk consumers (both seeing
+-- completedCount >= total_chunks after CF-002) can both KV.get
+-- `null` and both call SCRAPE_FINALIZE.send before either writes the
+-- gate. Each redundant send burns a Workers-AI call.
+--
+-- This migration adds a `finalize_enqueued` integer column to
+-- scrape_runs. The chunk consumer flips it via a conditional UPDATE:
+--
+--   UPDATE scrape_runs SET finalize_enqueued = 1
+--     WHERE id = ?1 AND finalize_enqueued = 0
+--
+-- D1 returns meta.changes === 1 for exactly one consumer in any
+-- concurrent set; the others see 0. Only the winning consumer enqueues
+-- the finalize message. The race is collapsed into a single atomic
+-- statement.
+
+ALTER TABLE scrape_runs ADD COLUMN finalize_enqueued INTEGER NOT NULL DEFAULT 0;

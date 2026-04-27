@@ -30,7 +30,13 @@ function makeDb(opts: {
   initialCompletedChunks?: number;
 } = {}): { db: D1Database; records: SqlRecord[] } {
   const records = opts.records ?? [];
+  // Track inserted (run_id, chunk_index) pairs so INSERT OR IGNORE
+  // honors PK uniqueness — duplicate inserts are no-ops, matching D1.
+  const completedKeys = new Set<string>();
   let completedChunkCount = opts.initialCompletedChunks ?? 0;
+  // Per-run finalize-lock state (CF-002 follow-up). The conditional
+  // UPDATE returns meta.changes === 1 only on the run-from-0 transition.
+  const finalizeLocked = new Set<string>();
   const prepare = vi.fn().mockImplementation((sql: string) => {
     const binder = (...params: unknown[]) => ({
       __sql: sql,
@@ -38,7 +44,24 @@ function makeDb(opts: {
       run: vi.fn().mockImplementation(async () => {
         records.push({ sql, params, via: 'run' });
         if (sql.startsWith('INSERT OR IGNORE INTO scrape_chunk_completions')) {
-          completedChunkCount += 1;
+          const key = `${String(params[0])}:${String(params[1])}`;
+          if (!completedKeys.has(key)) {
+            completedKeys.add(key);
+            completedChunkCount += 1;
+          }
+          return { success: true, meta: { changes: completedKeys.has(key) ? 1 : 0 } };
+        }
+        if (
+          sql.includes('UPDATE scrape_runs') &&
+          sql.includes('finalize_enqueued = 1') &&
+          sql.includes('finalize_enqueued = 0')
+        ) {
+          const runId = String(params[0]);
+          if (finalizeLocked.has(runId)) {
+            return { success: true, meta: { changes: 0 } };
+          }
+          finalizeLocked.add(runId);
+          return { success: true, meta: { changes: 1 } };
         }
         return { success: true, meta: { changes: 1 } };
       }),
@@ -492,10 +515,12 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
   });
 
   it('REQ-PIPE-008: redelivered last-chunk message does NOT re-enqueue SCRAPE_FINALIZE (LLM cost gate)', async () => {
-    // CF-002: INSERT OR IGNORE makes the per-chunk write idempotent
-    // under retries, but the COUNT(*) gate still fires on redelivery
-    // (count >= total_chunks remains true). The finalize_enqueued KV
-    // flag is the LLM-cost gate that prevents a second send.
+    // CF-002 follow-up: INSERT OR IGNORE makes the per-chunk write
+    // idempotent under retries, but the COUNT(*) gate still fires on
+    // redelivery (count >= total_chunks remains true). The atomic
+    // `UPDATE scrape_runs SET finalize_enqueued = 1 WHERE ...
+    // AND finalize_enqueued = 0` returns meta.changes = 0 on the
+    // second attempt, so the consumer short-circuits before sending.
     const aiResponse = {
       response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }], dedup_groups: [] }),
       usage: { input_tokens: 10, output_tokens: 10 },
@@ -504,9 +529,8 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const { kv, state } = makeKv();
     const env = makeEnv(db, kv, aiResponse);
     await processOneChunk(env, makeChunk());
-    // Replay: KV mirror is at '0', enqueue gate flag is set.
+    // KV mirror has been zeroed; the finalize lock lives on the D1 row.
     expect(state.store.get('scrape_run:test-run:chunks_remaining')).toBe('0');
-    expect(state.store.get('scrape_run:test-run:finalize_enqueued')).toBe('1');
     await processOneChunk(env, makeChunk());
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sendMock = (env.SCRAPE_FINALIZE as any).send as ReturnType<typeof vi.fn>;

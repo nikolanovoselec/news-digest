@@ -568,22 +568,24 @@ export async function processOneChunk(
     // are already visible (run is `ready`) — finalize is a background
     // cleanup that may briefly leave duplicates in the feed.
     //
-    // INSERT OR IGNORE makes per-chunk completion idempotent, but a
-    // redelivered last-chunk message will still see completedCount >=
-    // total_chunks and re-enter this branch — every redelivery would
-    // burn another LLM call. Gate the send on a separate KV "enqueued"
-    // flag; the merge SQL is idempotent on retry but the LLM call is not.
-    const enqueuedKey = `scrape_run:${body.scrape_run_id}:finalize_enqueued`;
-    const alreadyEnqueued = await env.KV.get(enqueuedKey, 'text');
-    if (alreadyEnqueued === null) {
-      // Send first, then mark the gate. If `send()` throws on a transient
-      // queue API failure, the gate is still null and the message retry
-      // gets to try again. The narrow risk this leaves open is a duplicate
-      // send if `send()` succeeded but the subsequent KV.put failed before
-      // ack — that is far rarer and far cheaper than permanently losing
-      // the finalize on a transient send hiccup.
+    // CF-002 follow-up: the previous KV-based gate (KV.get → KV.put)
+    // had its own TOCTOU — two concurrent last-chunk consumers could
+    // both read `null` and both call SCRAPE_FINALIZE.send, burning
+    // duplicate Workers AI calls. Migration 0008 added a
+    // finalize_enqueued column on scrape_runs; the conditional UPDATE
+    // below is atomic in D1 — only the consumer whose statement bumps
+    // the row from 0→1 sees `meta.changes === 1` and enqueues the
+    // finalize message. Every other concurrent or redelivered consumer
+    // sees `changes === 0` and short-circuits.
+    const lockResult = await env.DB
+      .prepare(
+        'UPDATE scrape_runs SET finalize_enqueued = 1 WHERE id = ?1 AND finalize_enqueued = 0',
+      )
+      .bind(body.scrape_run_id)
+      .run();
+    const wonFinalizeRace = (lockResult.meta?.changes ?? 0) === 1;
+    if (wonFinalizeRace) {
       await env.SCRAPE_FINALIZE.send({ scrape_run_id: body.scrape_run_id });
-      await env.KV.put(enqueuedKey, '1', { expirationTtl: 3 * 3600 });
     }
   }
 
