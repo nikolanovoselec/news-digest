@@ -412,4 +412,128 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
     expect(stamped2).toHaveLength(1);
     expect(stamped2[0]!.params[1]).toBe('u-retry');
   });
+
+  // ---------- CF-057: APP_URL missing guard ----------------------------
+
+  it('REQ-MAIL-001 / CF-057: missing APP_URL logs once, no DB scan, no fetch', async () => {
+    const calls: SqlCall[] = [];
+    const db = makeDb({
+      distinctTzs: [{ tz: 'UTC' }],
+      usersByTz: { UTC: [] },
+      calls,
+    });
+    const fetchStub = makeFetch({});
+    const spy = logSpyFactory();
+    try {
+      // makeEnv stubs APP_URL — undo it for this single case.
+      const env = makeEnv(db, fetchStub.fetch) as Env;
+      const stripped = { ...env, APP_URL: '' } as unknown as Env;
+      await dispatchDailyEmails(stripped);
+      // No DB read should fire — the guard returns before the tz probe.
+      expect(calls).toHaveLength(0);
+      expect(fetchStub.calls).toHaveLength(0);
+      // Exactly one structured `email.send.failed` line tagged with the
+      // sentinel error reason so an operator can grep it.
+      const failed = spy.logs.filter(
+        (l) => l.event === 'email.send.failed',
+      );
+      expect(failed).toHaveLength(1);
+      expect(
+        (failed[0]!.fields as { error: string }).error,
+      ).toContain('app_url_not_configured');
+    } finally {
+      spy.restore();
+    }
+  });
+
+  // ---------- CF-055: D1 throw on selectUnreadHeadlinesForUser → degraded log ----------
+
+  it('REQ-MAIL-001 / CF-055: D1 failure on the headlines fetch emits email.dispatch.degraded but still sends + stamps', async () => {
+    const calls: SqlCall[] = [];
+    // Special-case the headlines SELECT so it throws while the main
+    // user scan + the tally COUNT keep working.
+    const prepareImpl = vi.fn().mockImplementation((sql: string) => {
+      const bound: unknown[] = [];
+      return {
+        bind: (...params: unknown[]) => {
+          bound.push(...params);
+          return {
+            all: vi.fn().mockImplementation(async () => {
+              calls.push({ sql, params: [...bound], verb: 'all' });
+              if (sql.includes('SELECT id, email, gh_login')) {
+                return {
+                  success: true,
+                  results: [
+                    {
+                      id: 'u-degraded',
+                      email: 'degraded@x.com',
+                      gh_login: 'degraded',
+                      tz: 'UTC',
+                      digest_hour: 14,
+                      digest_minute: 0,
+                      // Need non-empty tags so selectUnreadHeadlinesForUser
+                      // actually issues the SELECT against D1 — the helper
+                      // short-circuits to [] when userTags is empty,
+                      // skipping the throw path we want to exercise.
+                      hashtags_json: JSON.stringify(['cloudflare']),
+                      last_emailed_local_date: null,
+                    },
+                  ],
+                };
+              }
+              if (sql.includes('FROM articles a')) {
+                throw new Error('d1 transient outage on headlines');
+              }
+              return { success: true, results: [] };
+            }),
+            run: vi.fn().mockImplementation(async () => {
+              calls.push({ sql, params: [...bound], verb: 'run' });
+              return { success: true, meta: { changes: 1 } };
+            }),
+            first: vi.fn().mockImplementation(async () => {
+              calls.push({ sql, params: [...bound], verb: 'first' });
+              if (sql.includes('COUNT(DISTINCT a.id)')) return { total: 0 };
+              return null;
+            }),
+          };
+        },
+        all: vi.fn().mockImplementation(async () => {
+          calls.push({ sql, params: [], verb: 'all' });
+          if (sql.includes('SELECT DISTINCT tz')) {
+            return { success: true, results: [{ tz: 'UTC' }] };
+          }
+          return { success: true, results: [] };
+        }),
+      };
+    });
+    const db = { prepare: prepareImpl } as unknown as D1Database;
+    const fetchStub = makeFetch({ 'degraded@x.com': { kind: 'ok' } });
+    const spy = logSpyFactory();
+    try {
+      await dispatchDailyEmails(makeEnv(db, fetchStub.fetch) as Env);
+      // Degraded log fired with the correct user id and reason
+      // substring.
+      const degraded = spy.logs.filter(
+        (l) => l.event === 'email.dispatch.degraded',
+      );
+      expect(degraded.length).toBeGreaterThanOrEqual(1);
+      const headlinesDegraded = degraded.find(
+        (l) =>
+          (l.fields as { user_id: string }).user_id === 'u-degraded' &&
+          String((l.fields as { error: string }).error).includes('headlines_fetch_failed'),
+      );
+      expect(headlinesDegraded).toBeDefined();
+      // Email still sent (the fetch was called for this user).
+      expect(fetchStub.calls.find((c) => c.to === 'degraded@x.com')).toBeDefined();
+      // last_emailed_local_date was stamped on success.
+      const stamped = calls.find(
+        (c) =>
+          c.sql.includes('UPDATE users SET last_emailed_local_date') &&
+          c.verb === 'run',
+      );
+      expect(stamped).toBeDefined();
+    } finally {
+      spy.restore();
+    }
+  });
 });

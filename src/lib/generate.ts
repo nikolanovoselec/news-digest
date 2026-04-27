@@ -243,11 +243,3 @@ export function extractTokensOut(r: AIRunResponse): number {
   return 0;
 }
 
-/* Expose internals for focused unit tests without forcing them through the
- * full pipeline. Not part of the public contract. */
-export const __test = {
-  parseLLMPayload,
-  sanitizeText,
-  extractTokensIn,
-  extractTokensOut,
-};

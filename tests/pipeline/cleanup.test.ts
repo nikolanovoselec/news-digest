@@ -544,4 +544,20 @@ describe('cleanup cron — REQ-DISC-006 stuck-tag prune', () => {
     // After prune+sweep, the cache is gone.
     expect(await env.KV.get('sources:eldenring')).toBeNull();
   });
+
+  it('REQ-DISC-006 / CF-074: legacy #-prefixed and mixed-case entries match the lower-cased tag and get pruned', async () => {
+    // Legacy hashtags_json rows can carry entries with a leading `#`
+    // and mixed casing (the write-path normalisation landed later).
+    // The prune must strip the prefix and lowercase the entry before
+    // comparing against the stuck-tag set, otherwise a stuck KV
+    // entry `sources:eldenring` would never match a stored
+    // `["#EldenRing"]` even though they describe the same tag.
+    await setUserHashtags(env.DB, USER_ID, ['ai', '#EldenRing']);
+    await seedEmptySources('eldenring', Date.now() - 8 * 86400 * 1000);
+
+    const result = await runCleanup(env);
+
+    expect(result.stuckTagsPruned).toBe(1);
+    expect(await getUserHashtags(USER_ID)).toEqual(['ai']);
+  });
 });
