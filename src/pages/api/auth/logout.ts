@@ -1,4 +1,4 @@
-// Implements REQ-AUTH-002, REQ-AUTH-003
+// Implements REQ-AUTH-002, REQ-AUTH-003, REQ-AUTH-008
 //
 // POST /api/auth/logout — bump `users.session_version` for the
 // currently authenticated user, then clear the session cookie and
@@ -23,6 +23,18 @@ import { verifySession } from '~/lib/session-jwt';
 import { SESSION_COOKIE_NAME, buildClearSessionCookie } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { readCookie } from '~/lib/crypto';
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+  clientIp,
+  RATE_LIMIT_RULES,
+} from '~/lib/rate-limit';
+import {
+  REFRESH_TOKEN_COOKIE_NAME,
+  buildClearRefreshCookie,
+  findRefreshToken,
+  revokeRefreshToken,
+} from '~/lib/refresh-tokens';
 
 // `readCookie` is imported from `~/lib/crypto` (CF-005 — was duplicated
 // here, in `auth/[provider]/callback.ts`, and in `middleware/auth.ts`).
@@ -39,10 +51,22 @@ export async function POST(context: APIContext): Promise<Response> {
     return originResult.response;
   }
 
+  // REQ-AUTH-002 — bound logout calls per IP. Practical blast radius
+  // is small (logout requires a live cookie), but a low ceiling
+  // prevents loop-incrementing session_version under attack.
+  const rateResult = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.AUTH_LOGOUT,
+    `ip:${clientIp(context.request)}`,
+  );
+  if (!rateResult.ok) return rateLimitResponse(rateResult.retryAfter);
+
   // Identify the user from the JWT (by subject) — we don't rely on
   // auth middleware here because logout must succeed even if the row's
   // session_version has already been bumped by another tab.
-  const token = readCookie(context.request.headers.get('Cookie'), SESSION_COOKIE_NAME);
+  const cookieHeader = context.request.headers.get('Cookie');
+  const token = readCookie(cookieHeader, SESSION_COOKIE_NAME);
+  const refreshValue = readCookie(cookieHeader, REFRESH_TOKEN_COOKIE_NAME);
   const jwtSecret = env.OAUTH_JWT_SECRET;
   let loggedOutUserId: string | null = null;
   if (token !== null && typeof jwtSecret === 'string' && jwtSecret !== '') {
@@ -56,12 +80,30 @@ export async function POST(context: APIContext): Promise<Response> {
       } catch (err) {
         // A row lookup failure (race with account deletion) is not a
         // user-facing error — the cookie still gets cleared below.
-        log('error', 'auth.callback.failed', {
+        log('error', 'auth.logout.sv_bump_failed', {
           user_id: claims.sub,
-          error_code: 'logout_sv_bump_failed',
           detail: String(err).slice(0, 500),
         });
       }
+    }
+  }
+
+  // REQ-AUTH-008 AC 3 — revoke the active refresh-token row so the
+  // long-lived cookie can't be re-used. We revoke just THIS row, not
+  // every row for the user — logging out on one device shouldn't sign
+  // out other devices the user is intentionally still using.
+  if (refreshValue !== null) {
+    try {
+      const row = await findRefreshToken(env.DB, refreshValue);
+      if (row !== null && row.revoked_at === null) {
+        await revokeRefreshToken(env.DB, row.id);
+        if (loggedOutUserId === null) loggedOutUserId = row.user_id;
+      }
+    } catch (err) {
+      log('error', 'auth.logout.refresh_revoke_failed', {
+        user_id: loggedOutUserId ?? 'unknown',
+        detail: String(err).slice(0, 500),
+      });
     }
   }
 
@@ -71,6 +113,7 @@ export async function POST(context: APIContext): Promise<Response> {
 
   const headers = new Headers();
   headers.append('Set-Cookie', buildClearSessionCookie());
+  headers.append('Set-Cookie', buildClearRefreshCookie());
   headers.set('Location', `${appOrigin}/?logged_out=1`);
   return new Response(null, { status: 303, headers });
 }

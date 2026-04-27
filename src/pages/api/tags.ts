@@ -23,7 +23,7 @@ import {
   rateLimitResponse,
   RATE_LIMIT_RULES,
 } from '~/lib/rate-limit';
-import { loadSession } from '~/middleware/auth';
+import { requireSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import {
   validateHashtags,
@@ -46,16 +46,14 @@ export async function POST(context: APIContext): Promise<Response> {
     return originResult.response;
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    return errorResponse('unauthorized');
-  }
+  const auth = await requireSession(context.request, env);
+  if (!auth.ok) return auth.response;
 
   // CF-028: per-user rate-limit on tag-list mutations.
   const rl = await enforceRateLimit(
     env,
     RATE_LIMIT_RULES.TAGS_MUTATION,
-    `user:${session.user.id}`,
+    `user:${auth.user.id}`,
   );
   if (!rl.ok) {
     return rateLimitResponse(rl.retryAfter);
@@ -77,11 +75,11 @@ export async function POST(context: APIContext): Promise<Response> {
   try {
     await env.DB
       .prepare('UPDATE users SET hashtags_json = ?1 WHERE id = ?2')
-      .bind(JSON.stringify(tags), session.user.id)
+      .bind(JSON.stringify(tags), auth.user.id)
       .run();
   } catch (err) {
     log('error', 'settings.update.failed', {
-      user_id: session.user.id,
+      user_id: auth.user.id,
       op: 'tags-write',
       error_code: 'internal_error',
       detail: String(err).slice(0, 500),
@@ -99,26 +97,24 @@ export async function POST(context: APIContext): Promise<Response> {
       const stmts = discovering.map((tag) =>
         env.DB.prepare(
           'INSERT OR IGNORE INTO pending_discoveries (user_id, tag, added_at) VALUES (?1, ?2, ?3)',
-        ).bind(session.user.id, tag, nowSec),
+        ).bind(auth.user.id, tag, nowSec),
       );
       await env.DB.batch(stmts);
       log('info', 'discovery.queued', {
-        user_id: session.user.id,
+        user_id: auth.user.id,
         tags: discovering,
       });
     }
   } catch (err) {
     log('error', 'discovery.queued', {
-      user_id: session.user.id,
+      user_id: auth.user.id,
       error_code: 'discovery_enqueue_failed',
       detail: String(err).slice(0, 500),
     });
   }
 
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(
     JSON.stringify({ ok: true, tags, discovering }),
     { status: 200, headers },

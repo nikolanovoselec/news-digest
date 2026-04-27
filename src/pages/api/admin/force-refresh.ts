@@ -109,7 +109,7 @@ export async function POST(context: APIContext): Promise<Response> {
     const { run_id, reused } = await kickCoordinator(env);
     return applyRefreshCookie(
       redirectToSettings(appOrigin, run_id, reused),
-      adminAuth.refreshCookie,
+      adminAuth,
     );
   } catch (err) {
     log('error', 'digest.generation', {
@@ -162,12 +162,12 @@ export async function GET(context: APIContext): Promise<Response> {
             headers: { 'Content-Type': 'application/json; charset=utf-8' },
           },
         ),
-        adminAuth.refreshCookie,
+        adminAuth,
       );
     }
     return applyRefreshCookie(
       redirectToSettings(appOrigin, run_id, reused),
-      adminAuth.refreshCookie,
+      adminAuth,
     );
   } catch (err) {
     log('error', 'digest.generation', {

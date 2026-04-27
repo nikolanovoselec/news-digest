@@ -42,7 +42,7 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
-import { loadSession } from '~/middleware/auth';
+import { requireSession } from '~/middleware/auth';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { parseJsonStringArray } from '~/lib/json-string-array';
@@ -115,10 +115,8 @@ export async function POST(context: APIContext): Promise<Response> {
 
   // Re-load session to get the user's hashtags_json (the admin gate
   // already verified the session, but it doesn't return the full user).
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    return errorResponse('unauthorized');
-  }
+  const auth = await requireSession(context.request, env);
+  if (!auth.ok) return auth.response;
 
   // Body parsing — branch on Content-Type. Both branches produce the
   // same `tag` string for the downstream flow; the only difference is
@@ -152,12 +150,12 @@ export async function POST(context: APIContext): Promise<Response> {
   // Only retry tags the user has actually saved — otherwise anyone
   // with a session could queue arbitrary LLM calls for arbitrary
   // strings (cost blast radius).
-  const userTags = userHashtagSet(session.user.hashtags_json);
+  const userTags = userHashtagSet(auth.user.hashtags_json);
   if (!userTags.has(tag)) {
     return errorResponse('unknown_tag');
   }
 
-  const userId = session.user.id;
+  const userId = auth.user.id;
   const nowSec = Math.floor(Date.now() / 1000);
 
   try {
@@ -191,18 +189,14 @@ export async function POST(context: APIContext): Promise<Response> {
     const headers = new Headers({
       Location: `/settings?rediscover=ok&tag=${encodeURIComponent(tag)}`,
     });
-    if (session.refreshCookie !== null) {
-      headers.append('Set-Cookie', session.refreshCookie);
-    }
+    for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
     return new Response(null, { status: 303, headers });
   }
 
   // If the middleware silent-refresh issued a near-expiry re-issue of
   // the session cookie, pass it through so the client stays logged in.
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
 
   return new Response(JSON.stringify({ ok: true }), {
     status: 200,

@@ -18,7 +18,7 @@ import type { APIContext } from 'astro';
 import Base from '~/layouts/Base.astro';
 import DigestCard from '~/components/DigestCard.astro';
 import TagStrip from '~/components/TagStrip.astro';
-import { loadSession } from '~/middleware/auth';
+import { loadSessionForPage } from '~/middleware/auth';
 import { requireSettingsComplete } from '~/middleware/settings-gate';
 import { loadTodayPayload } from '~/pages/api/digest/today';
 import { localDateInTz, DEFAULT_TZ, isValidTz } from '~/lib/tz';
@@ -29,16 +29,12 @@ if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
   return new Response('Application not configured', { status: 500 });
 }
 
-const session = await loadSession(Astro.request, env.DB, env.OAUTH_JWT_SECRET);
-if (session === null) {
-  return Astro.redirect('/', 303);
-}
-// CF-010 — silent-refresh: attach the re-issued session cookie when
-// loadSession says it's near expiry so plain page navigation extends
-// the session per REQ-AUTH-002 AC 4.
-if (session.refreshCookie !== null) {
-  Astro.response.headers.append('Set-Cookie', session.refreshCookie);
-}
+// CF-010 — silent-refresh: loadSessionForPage attaches the re-issued
+// session cookie to Astro.response when loadSession says it's near
+// expiry (REQ-AUTH-002 AC 4). It also clears dead refresh cookies on
+// the unauthenticated branch (REQ-AUTH-008 AC 4) before we redirect.
+const session = await loadSessionForPage(Astro.request, env, Astro.response.headers);
+if (session.user === null) return Astro.redirect('/', 303);
 Astro.locals.user = session.user;
 
 const gated = requireSettingsComplete({
@@ -47,9 +43,7 @@ const gated = requireSettingsComplete({
 } as unknown as APIContext);
 if (gated !== null) {
   // The gate may emit a redirect; preserve the silent-refresh cookie.
-  if (session.refreshCookie !== null) {
-    gated.headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of session.cookiesToSet) gated.headers.append('Set-Cookie', c);
   return gated;
 }
 

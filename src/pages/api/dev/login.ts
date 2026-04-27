@@ -27,6 +27,10 @@ import { signSession } from '~/lib/session-jwt';
 import { buildSessionCookie } from '~/middleware/auth';
 import { E2E_USER_ID } from '~/lib/system-user';
 import { timingSafeEqualHmac } from '~/lib/crypto';
+import {
+  buildRefreshCookie,
+  issueRefreshToken,
+} from '~/lib/refresh-tokens';
 
 interface BypassEnv {
   DEV_BYPASS_TOKEN?: string;
@@ -87,9 +91,23 @@ export async function POST(context: APIContext): Promise<Response> {
     env.OAUTH_JWT_SECRET,
   );
 
+  // Issue a refresh-token row too so e2e tests can exercise the
+  // long-lived session contract (REQ-AUTH-008). Failures here are
+  // non-fatal — the access JWT alone is enough for a single e2e run.
+  let refreshValue: string | null = null;
+  try {
+    const issued = await issueRefreshToken(env.DB, userId, context.request);
+    refreshValue = issued.value;
+  } catch {
+    refreshValue = null;
+  }
+
   const headers = new Headers();
   headers.set('Content-Type', 'application/json');
   headers.append('Set-Cookie', buildSessionCookie(jwt));
+  if (refreshValue !== null) {
+    headers.append('Set-Cookie', buildRefreshCookie(refreshValue));
+  }
   return new Response(
     JSON.stringify({ ok: true, user_id: userId }),
     { status: 200, headers },

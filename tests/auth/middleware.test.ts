@@ -1,6 +1,9 @@
-// Tests for src/middleware/auth.ts — REQ-AUTH-002 (session validation,
-// session_version check, auto-refresh when <5 min remain — threshold
-// lowered from 15 → 5 min in CF-010).
+// Tests for src/middleware/auth.ts — REQ-AUTH-002, REQ-AUTH-008.
+//
+// Covers the access-JWT-only path: valid JWT → user, no cookie churn.
+// Refresh-token flow tests live in tests/auth/refresh-tokens.test.ts —
+// those need a real D1 because the middleware writes to the
+// `refresh_tokens` table on rotation.
 
 import { describe, it, expect, vi } from 'vitest';
 import {
@@ -8,7 +11,9 @@ import {
   buildSessionCookie,
   buildClearSessionCookie,
   loadSession,
+  loadSessionForPage,
   applyRefreshCookie,
+  requireSession,
   SESSION_COOKIE_NAME,
 } from '~/middleware/auth';
 import { signSession } from '~/lib/session-jwt';
@@ -31,8 +36,8 @@ function setCookiesOf(res: Response): string[] {
 const SECRET = 'test-secret-for-hmac-sha256-signing-minimum-length';
 
 /** Construct a fake D1 whose first() returns {@link row}, recording the
- * bound parameters. Designed for loadSession which binds exactly one
- * user id. */
+ * bound parameters. Designed for the access-JWT-only path of
+ * loadSession — the refresh-token branch needs a real DB. */
 function makeDb(row: unknown): {
   db: D1Database;
   bindSpy: ReturnType<typeof vi.fn>;
@@ -83,9 +88,9 @@ describe('readCookie', () => {
 });
 
 describe('buildSessionCookie', () => {
-  it('REQ-AUTH-002: uses __Host- prefix, HttpOnly, Secure, SameSite=Lax, Path=/, 1h Max-Age', () => {
+  it('REQ-AUTH-002: uses __Host- prefix, HttpOnly, Secure, SameSite=Lax, Path=/, 5min Max-Age', () => {
     const c = buildSessionCookie('the-jwt');
-    expect(c).toBe(`__Host-news_digest_session=the-jwt; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600`);
+    expect(c).toBe(`__Host-news_digest_session=the-jwt; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=300`);
   });
 });
 
@@ -101,22 +106,27 @@ describe('buildClearSessionCookie', () => {
   });
 });
 
-describe('loadSession', () => {
-  it('REQ-AUTH-002: returns null when no session cookie is present', async () => {
+describe('loadSession — access-JWT path', () => {
+  it('REQ-AUTH-002: returns user=null with no cookies when no session cookie is present', async () => {
     const { db } = makeDb(null);
     const req = new Request('https://example.com/');
-    expect(await loadSession(req, db, SECRET)).toBeNull();
+    const result = await loadSession(req, db, SECRET);
+    expect(result.user).toBeNull();
+    expect(result.cookiesToSet).toEqual([]);
   });
 
-  it('REQ-AUTH-002: returns null when the JWT is invalid', async () => {
+  it('REQ-AUTH-002: returns user=null and clears the bad session cookie when the JWT is invalid', async () => {
     const { db } = makeDb(null);
     const req = new Request('https://example.com/', {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=not.a.jwt` },
     });
-    expect(await loadSession(req, db, SECRET)).toBeNull();
+    const result = await loadSession(req, db, SECRET);
+    expect(result.user).toBeNull();
+    // Bad access JWT with no refresh cookie → clear both dead cookies.
+    expect(result.cookiesToSet.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true);
   });
 
-  it('REQ-AUTH-002: returns null when the user row does not exist', async () => {
+  it('REQ-AUTH-002: returns user=null when the user row does not exist', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       SECRET,
@@ -125,10 +135,11 @@ describe('loadSession', () => {
     const req = new Request('https://example.com/', {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
     });
-    expect(await loadSession(req, db, SECRET)).toBeNull();
+    const result = await loadSession(req, db, SECRET);
+    expect(result.user).toBeNull();
   });
 
-  it('REQ-AUTH-002: returns null when session_version mismatches (instant revocation)', async () => {
+  it('REQ-AUTH-002: returns user=null when session_version mismatches (instant revocation)', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       SECRET,
@@ -138,72 +149,32 @@ describe('loadSession', () => {
     const req = new Request('https://example.com/', {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
     });
-    expect(await loadSession(req, db, SECRET)).toBeNull();
+    const result = await loadSession(req, db, SECRET);
+    expect(result.user).toBeNull();
   });
 
-  it('REQ-AUTH-002: returns the user on a valid session with no refresh needed', async () => {
+  it('REQ-AUTH-002: returns the user with empty cookiesToSet on a valid access JWT', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       SECRET,
-      3600, // fresh 1h token — more than 15 min remaining, no refresh
+      300, // fresh 5-min token
     );
     const { db, bindSpy } = makeDb(baseRow(1));
     const req = new Request('https://example.com/', {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
     });
     const result = await loadSession(req, db, SECRET);
-    expect(result).not.toBeNull();
-    expect(result!.user.id).toBe('12345');
-    expect(result!.user.email).toBe('alice@example.com');
-    expect(result!.user.gh_login).toBe('alice');
-    expect(result!.user.session_version).toBe(1);
-    expect(result!.refreshCookie).toBeNull();
+    expect(result.user).not.toBeNull();
+    expect(result.user!.id).toBe('12345');
+    expect(result.user!.email).toBe('alice@example.com');
+    expect(result.user!.gh_login).toBe('alice');
+    expect(result.user!.session_version).toBe(1);
+    // The access-JWT path does NOT touch the refresh cookie — empty array.
+    expect(result.cookiesToSet).toEqual([]);
     expect(bindSpy).toHaveBeenCalledWith('12345');
   });
 
-  it('REQ-AUTH-002: issues a refresh cookie when <5 min remain on the token (CF-010)', async () => {
-    // 2-minute TTL -> shouldRefreshJWT returns true under the new
-    // 5-minute threshold (CF-010 lowered from 15 → 5 min).
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      SECRET,
-      2 * 60,
-    );
-    const { db } = makeDb(baseRow(1));
-    const req = new Request('https://example.com/', {
-      headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
-    });
-    const result = await loadSession(req, db, SECRET);
-    expect(result).not.toBeNull();
-    expect(result!.refreshCookie).not.toBeNull();
-    expect(result!.refreshCookie!).toContain('__Host-news_digest_session=');
-    expect(result!.refreshCookie!).toContain('Max-Age=3600');
-  });
-
-  it('REQ-AUTH-002: refresh cookie carries the CURRENT session_version, not the JWT claim', async () => {
-    // Token has sv=1, but the row's sv also equals 1 (otherwise we'd
-    // return null above). The refresh must mint with the row's sv so
-    // future requests remain consistent with the server source of truth.
-    const token = await signSession(
-      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
-      SECRET,
-      2 * 60, // CF-010 — 2 min triggers refresh under 5-min threshold
-    );
-    const { db } = makeDb(baseRow(1));
-    const req = new Request('https://example.com/', {
-      headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
-    });
-    const result = await loadSession(req, db, SECRET);
-    expect(result).not.toBeNull();
-    // Extract the JWT from the Set-Cookie header and verify its payload.
-    const match = result!.refreshCookie!.match(/^__Host-news_digest_session=([^;]+);/);
-    expect(match).not.toBeNull();
-    const newToken = match![1]!;
-    // The new token is distinct from the old (fresh iat/exp).
-    expect(newToken).not.toBe(token);
-  });
-
-  it('REQ-AUTH-002: returns null when the D1 query throws', async () => {
+  it('REQ-AUTH-008: returns user=null when the D1 user query throws', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       SECRET,
@@ -215,12 +186,19 @@ describe('loadSession', () => {
     const req = new Request('https://example.com/', {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
     });
-    expect(await loadSession(req, db, SECRET)).toBeNull();
+    const result = await loadSession(req, db, SECRET);
+    expect(result.user).toBeNull();
   });
 });
 
 describe('applyRefreshCookie', () => {
-  it('REQ-AUTH-002: returns the original response when refreshCookie is null', () => {
+  it('REQ-AUTH-002: returns the original response when no cookies to set', () => {
+    const original = new Response('ok', { status: 200 });
+    const out = applyRefreshCookie(original, { cookiesToSet: [] });
+    expect(out).toBe(original);
+  });
+
+  it('REQ-AUTH-002: returns the original response when null is passed', () => {
     const original = new Response('ok', { status: 200 });
     const out = applyRefreshCookie(original, null);
     expect(out).toBe(original);
@@ -231,13 +209,121 @@ describe('applyRefreshCookie', () => {
       status: 200,
       headers: { 'X-Custom': 'yes', 'Set-Cookie': 'other=1' },
     });
-    const refreshCookie = `__Host-news_digest_session=new-jwt; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600`;
-    const out = applyRefreshCookie(original, refreshCookie);
+    const accessCookie = `__Host-news_digest_session=new-jwt; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=300`;
+    const refreshCookie = `__Host-news_digest_refresh=abc123; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`;
+    const out = applyRefreshCookie(original, {
+      cookiesToSet: [accessCookie, refreshCookie],
+    });
     expect(out).not.toBe(original);
     expect(await out.text()).toBe('ok');
     expect(out.headers.get('X-Custom')).toBe('yes');
     const joined = setCookiesOf(out).join('\n');
     expect(joined).toContain('other=1');
     expect(joined).toContain('__Host-news_digest_session=new-jwt');
+    expect(joined).toContain('__Host-news_digest_refresh=abc123');
+  });
+
+});
+
+/** Build a stub `AuthEnv` whose DB returns {@link row} for `loadUserById`.
+ *  KV is a mock that records puts/gets so tests can inspect rate-limit
+ *  bucket usage. */
+function makeEnv(row: unknown): {
+  env: { DB: D1Database; OAUTH_JWT_SECRET: string; KV: KVNamespace };
+  kvGet: ReturnType<typeof vi.fn>;
+} {
+  const { db } = makeDb(row);
+  const kvGet = vi.fn().mockResolvedValue(null);
+  const kvPut = vi.fn().mockResolvedValue(undefined);
+  const kv = { get: kvGet, put: kvPut } as unknown as KVNamespace;
+  return {
+    env: { DB: db, OAUTH_JWT_SECRET: SECRET, KV: kv },
+    kvGet,
+  };
+}
+
+describe('requireSession — REQ-AUTH-001 / REQ-AUTH-002', () => {
+  it('REQ-AUTH-002: returns ok=true with cookiesToSet=[] on a valid access JWT', async () => {
+    const token = await signSession(
+      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
+      SECRET,
+      300,
+    );
+    const { env } = makeEnv(baseRow(1));
+    const req = new Request('https://example.com/', {
+      headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
+    });
+    const result = await requireSession(req, env);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.user.id).toBe('12345');
+    expect(result.cookiesToSet).toEqual([]);
+  });
+
+  it('REQ-AUTH-002: default failure response is errorResponse("unauthorized") with cookies cleared', async () => {
+    const { env } = makeEnv(null);
+    // Bad JWT but no refresh cookie — `unauthenticated(true)` clears.
+    const req = new Request('https://example.com/', {
+      headers: { Cookie: `${SESSION_COOKIE_NAME}=not.a.jwt` },
+    });
+    const result = await requireSession(req, env);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.response.status).toBe(401);
+    const cookies = setCookiesOf(result.response);
+    // Both cookies are cleared (Max-Age=0).
+    expect(cookies.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true);
+  });
+
+  it('REQ-AUTH-002: invokes the custom unauthorized callback (for redirect-on-fail routes)', async () => {
+    const { env } = makeEnv(null);
+    const req = new Request('https://example.com/');
+    const customResp = new Response(null, {
+      status: 303,
+      headers: { Location: '/' },
+    });
+    const result = await requireSession(req, env, () => customResp);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.response.status).toBe(303);
+    expect(result.response.headers.get('Location')).toBe('/');
+  });
+});
+
+describe('loadSessionForPage — REQ-AUTH-002 / REQ-AUTH-008', () => {
+  it('REQ-AUTH-002: appends rotation cookies to the responseHeaders argument', async () => {
+    const token = await signSession(
+      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
+      SECRET,
+      300,
+    );
+    const { env } = makeEnv(baseRow(1));
+    const req = new Request('https://example.com/', {
+      headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
+    });
+    const responseHeaders = new Headers();
+    const result = await loadSessionForPage(req, env, responseHeaders);
+    expect(result.user).not.toBeNull();
+    // Valid access JWT → no cookie churn → headers unchanged.
+    expect(responseHeaders.get('Set-Cookie')).toBeNull();
+    expect(result.cookiesToSet).toEqual([]);
+  });
+
+  it('REQ-AUTH-008: returns user=null AND attaches clear-cookie strings on a stale JWT with no refresh cookie', async () => {
+    const { env } = makeEnv(null);
+    const req = new Request('https://example.com/', {
+      headers: { Cookie: `${SESSION_COOKIE_NAME}=not.a.jwt` },
+    });
+    const responseHeaders = new Headers();
+    const result = await loadSessionForPage(req, env, responseHeaders);
+    expect(result.user).toBeNull();
+    // Both Set-Cookie strings are now on the page response headers.
+    const h = responseHeaders as Headers & { getSetCookie?: () => string[] };
+    const cookies = typeof h.getSetCookie === 'function' ? h.getSetCookie() : [];
+    expect(cookies.length).toBeGreaterThan(0);
+    expect(cookies.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true);
+    // Returned array mirrors the headers so callers can paint a separate
+    // gated-redirect Response if they need to.
+    expect(result.cookiesToSet.length).toBe(cookies.length);
   });
 });
