@@ -75,7 +75,6 @@ jobs:
           RESEND_FROM: ${{ secrets.RESEND_FROM }}
           APP_URL: ${{ secrets.APP_URL }}
           DEV_BYPASS_TOKEN: ${{ secrets.DEV_BYPASS_TOKEN }}
-          DEV_BYPASS_USER_ID: ${{ secrets.DEV_BYPASS_USER_ID }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}
         run: |
@@ -158,15 +157,6 @@ jobs:
             TMP=$(mktemp)
             printf '%s' "$DEV_BYPASS_TOKEN" > "$TMP"
             npx --yes wrangler secret put DEV_BYPASS_TOKEN < "$TMP"
-            rm "$TMP"
-          fi
-
-          # Optional: DEV_BYPASS_USER_ID overrides which user id /api/dev/login
-          # mints a session for (defaults to first non-system user when unset).
-          if [ -n "${DEV_BYPASS_USER_ID:-}" ]; then
-            TMP=$(mktemp)
-            printf '%s' "$DEV_BYPASS_USER_ID" > "$TMP"
-            npx --yes wrangler secret put DEV_BYPASS_USER_ID < "$TMP"
             rm "$TMP"
           fi
 

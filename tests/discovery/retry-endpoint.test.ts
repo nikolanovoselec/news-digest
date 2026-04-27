@@ -355,12 +355,18 @@ describe('POST /api/admin/discovery/retry', () => {
     expect(res.status).toBe(403);
   });
 
-  it('REQ-DISC-004: form-encoded POST without a session returns 401', async () => {
+  it('REQ-DISC-004: form-encoded POST without a session redirects to /settings (no raw JSON)', async () => {
+    // After CF-001, the admin gate fails Layer 2 (loadSession returns
+    // null) and the form-encoded branch wraps the denial in a 303 to
+    // /settings rather than surfacing raw JSON to a browser.
     const { db } = makeDb(baseRow('["ikea"]'));
     const { kv } = makeKv();
     const req = await retryFormRequest({ origin: APP_ORIGIN, tag: 'ikea' });
     const res = await POST(makeContext(req, envWith(db, kv)) as never);
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toBe(
+      `${APP_ORIGIN}/settings?rediscover=denied`,
+    );
   });
 
   it('REQ-DISC-004: form-encoded POST URL-encodes the tag in the redirect location', async () => {

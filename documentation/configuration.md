@@ -23,7 +23,7 @@ Stored via `wrangler secret put <name>`. Never committed to git.
 | `ADMIN_EMAIL` | Operator email that gates `/api/admin/*` ([REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8). Required in production; when unset, every admin endpoint returns HTTP 403. Match is case-insensitive against `users.email`. |
 | `CF_ACCESS_AUD` | Optional Cloudflare Access audience tag. When set, `/api/admin/*` additionally validates that the `aud` claim of the `Cf-Access-Jwt-Assertion` header matches. When unset, only header presence is required (the JWT signature is trusted because Cloudflare Access already verified it before forwarding). |
 | `DEV_BYPASS_TOKEN` | Optional Bearer token that gates `/api/dev/login` and `/api/dev/trigger-scrape` for local + e2e flows. When unset, those endpoints return HTTP 404. Set only on dev/staging deployments, never production. |
-| `DEV_BYPASS_USER_ID` | Optional override for the user id minted by `/api/dev/login`. When unset, the endpoint defaults to the first non-system user row by `created_at`. |
+| `DEV_BYPASS_USER_ID` | Optional override for the user id minted by `/api/dev/login`. When unset, the endpoint defaults to the synthetic `__e2e__` row from `migrations/0006_e2e_user.sql` so e2e tests never mutate the operator's account. Set this manually (via `wrangler secret put`) only for unusual cases like impersonating a specific staging account. The deploy workflow does not propagate this — there is no fork-onboarding scenario where an operator would know the right value. |
 
 ## GitHub Actions Secrets (CI deploy only)
 

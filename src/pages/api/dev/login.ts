@@ -1,28 +1,31 @@
 // DEV-ONLY auth bypass. Gated by the `DEV_BYPASS_TOKEN` Worker secret —
 // if unset, the endpoint returns 404 and is effectively disabled.
 //
-// Purpose: scripts/e2e-test.sh can acquire a session for the project
-// owner without driving GitHub OAuth, so a full API + page smoke run
-// can execute from a headless shell after every deploy.
+// Purpose: scripts/e2e-test.sh can acquire a session for the synthetic
+// `__e2e__` user (provisioned by migrations/0006_e2e_user.sql) without
+// driving GitHub OAuth, so a full API + page smoke run can execute from
+// a headless shell after every deploy without touching the operator's
+// real account.
 //
 // Security model:
 //   - The bypass token lives as a Worker secret, unreachable from the
 //     browser and absent from the bundle. Only callers who possess it
 //     can mint a session.
-//   - The minted session is for the SAME user that would normally exist
-//     (the owner), so the blast radius equals "owner is logged in
-//     somewhere else". No privilege escalation is possible beyond what
-//     the owner already has.
+//   - The minted session targets the synthetic `__e2e__` row by default
+//     so e2e mutations (tag writes, stars, scrape triggers) stay
+//     sandboxed. `DEV_BYPASS_USER_ID` lets an operator override this
+//     for unusual cases (e.g. impersonating a specific account on
+//     staging) but the default is always the sandbox row.
 //   - Removing the secret (`npx wrangler secret delete DEV_BYPASS_TOKEN`)
 //     disables the endpoint instantly without requiring a redeploy.
 //   - The endpoint never accepts a user id from the caller — the target
-//     user is derived server-side from `DEV_BYPASS_USER_ID` (or the
-//     first row in `users` if that secret is unset).
+//     user is derived server-side from `DEV_BYPASS_USER_ID` (when set)
+//     or the synthetic `__e2e__` row (when unset).
 
 import type { APIContext } from 'astro';
 import { signSession } from '~/lib/session-jwt';
 import { buildSessionCookie } from '~/middleware/auth';
-import { SYSTEM_USER_ID } from '~/lib/system-user';
+import { E2E_USER_ID } from '~/lib/system-user';
 import { timingSafeEqualHmac } from '~/lib/crypto';
 
 interface BypassEnv {
@@ -54,20 +57,14 @@ export async function POST(context: APIContext): Promise<Response> {
     return new Response(null, { status: 404 });
   }
 
-  // Target user: explicit override via DEV_BYPASS_USER_ID, otherwise the
-  // first user row. Caller cannot influence selection.
-  // Exclude the SYSTEM_USER_ID sentinel row (REQ-DISC-003) — it carries
-  // no digest config and is not a signable identity.
+  // Target user: default to the synthetic `__e2e__` row provisioned by
+  // migrations/0006_e2e_user.sql so e2e mutations never leak into the
+  // operator's real account. `DEV_BYPASS_USER_ID` overrides this for
+  // unusual cases (impersonating a specific account on staging). The
+  // caller never influences selection — the value is server-side only.
   let userId = env.DEV_BYPASS_USER_ID;
   if (typeof userId !== 'string' || userId === '') {
-    const row = await env.DB
-      .prepare('SELECT id FROM users WHERE id != ?1 ORDER BY created_at ASC LIMIT 1')
-      .bind(SYSTEM_USER_ID)
-      .first<{ id: string }>();
-    if (row === null) {
-      return new Response('no users in db', { status: 404 });
-    }
-    userId = row.id;
+    userId = E2E_USER_ID;
   }
 
   // SessionClaims requires email + ghl (verifySession → isSessionClaims
