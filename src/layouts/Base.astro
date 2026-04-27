@@ -420,6 +420,50 @@ const initialTheme = cookieTheme ?? 'light';
             }
           });
       }
+
+      // When returning to /history from a detail page, the day the user
+      // had open is stored in sessionStorage but is opened only on
+      // astro:page-load — which fires AFTER the View-Transition snapshot
+      // is captured. By that point the snapshot of the new document
+      // shows every <details> collapsed, so the matching `card-{slug}`
+      // element inside the saved day is unrendered, the browser cannot
+      // pair source/target snapshots, and the morph animation is
+      // skipped entirely on back-nav.
+      //
+      // Pre-open the saved day inside ev.newDocument so the card is
+      // present in the snapshot. The on-page restore script still runs
+      // afterwards and is idempotent (det.open = true on an already-
+      // open <details> is a no-op).
+      function preOpenHistoryDayInIncomingDocument(e: Event): void {
+        const ev = e as BeforeSwapEvent;
+        const path = ev.to?.pathname ?? '';
+        if (path !== '/history') return;
+        if (ev.to.searchParams.has('date')) return; // deeplink wins
+        let raw: string | null = null;
+        try {
+          raw = sessionStorage.getItem('history:last-day-state');
+        } catch {
+          return;
+        }
+        if (raw === null || raw === '') return;
+        let parsed: { date?: unknown } = {};
+        try {
+          parsed = JSON.parse(raw) as { date?: unknown };
+        } catch {
+          return;
+        }
+        const date = parsed.date;
+        if (typeof date !== 'string' || date === '') return;
+        const doc = ev.newDocument;
+        if (doc === undefined) return;
+        const day = doc.querySelector<HTMLElement>(
+          `[data-history-day][data-date="${CSS.escape(date)}"]`,
+        );
+        if (day === null) return;
+        const det = day.querySelector<HTMLDetailsElement>('.history__details');
+        if (det === null) return;
+        det.open = true;
+      }
       if (document.documentElement.dataset['scrollRestoreBound'] !== '1') {
         document.documentElement.dataset['scrollRestoreBound'] = '1';
         // Override Astro ClientRouter's scroll-to-top so our per-path
@@ -428,7 +472,20 @@ const initialTheme = cookieTheme ?? 'light';
           window.history.scrollRestoration = 'manual';
         }
         document.addEventListener('astro:before-swap', preFilterIncomingDocument);
+        document.addEventListener('astro:before-swap', preOpenHistoryDayInIncomingDocument);
         document.addEventListener('astro:before-swap', saveScroll);
+        // Force the site header opaque during a view transition so the
+        // body-root cross-fade ghost (old + new content overlapping at
+        // 50% opacity mid-transition) does not "swim" through the
+        // header's translucent backdrop-blur backplate. The snapshot of
+        // the new header is captured AFTER astro:before-preparation
+        // fires, so toggling the class then is in time.
+        document.addEventListener('astro:before-preparation', () => {
+          document.documentElement.dataset['vtActive'] = '1';
+        });
+        document.addEventListener('astro:after-swap', () => {
+          delete document.documentElement.dataset['vtActive'];
+        });
         window.addEventListener('pagehide', saveScroll);
         document.addEventListener('astro:page-load', restoreScroll);
         // bfcache restore on iOS Safari: `astro:page-load` does NOT
@@ -469,6 +526,21 @@ const initialTheme = cookieTheme ?? 'light';
            the named transition the browser captures the header as a
            stable layer on top of the body morph. */
         view-transition-name: site-header;
+      }
+      /* Issue #93 follow-up — the named view-transition group is not
+         enough on its own. The browser captures the header's PAINTED
+         pixels at snapshot time, which includes the backdrop-blur of
+         whatever content was beneath the header in the old vs new
+         pages. Cross-fading those two snapshots produces a visible
+         "swim" of the underlying article text through the header.
+         While a transition is active, force the header fully opaque
+         and disable the blur so old/new snapshots are pixel-identical
+         apart from the chrome (wordmark + nav buttons). The flag is
+         toggled by astro:before-preparation / astro:after-swap. */
+      [data-vt-active] .site-header {
+        background-color: var(--bg);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
       }
 
       .site-header__brand {

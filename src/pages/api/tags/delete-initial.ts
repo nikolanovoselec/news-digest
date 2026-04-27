@@ -27,7 +27,7 @@ import {
   rateLimitResponse,
   RATE_LIMIT_RULES,
 } from '~/lib/rate-limit';
-import { loadSession } from '~/middleware/auth';
+import { requireSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
 export async function POST(context: APIContext): Promise<Response> {
@@ -42,19 +42,16 @@ export async function POST(context: APIContext): Promise<Response> {
     return originResult.response;
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    return new Response(null, {
-      status: 303,
-      headers: { Location: '/' },
-    });
-  }
+  const auth = await requireSession(context.request, env, () =>
+    new Response(null, { status: 303, headers: { Location: '/' } }),
+  );
+  if (!auth.ok) return auth.response;
 
   // CF-028: per-user rate-limit on tag-list mutations.
   const rl = await enforceRateLimit(
     env,
     RATE_LIMIT_RULES.TAGS_MUTATION,
-    `user:${session.user.id}`,
+    `user:${auth.user.id}`,
   );
   if (!rl.ok) {
     return rateLimitResponse(rl.retryAfter);
@@ -63,11 +60,11 @@ export async function POST(context: APIContext): Promise<Response> {
   try {
     await env.DB
       .prepare('UPDATE users SET hashtags_json = ?1 WHERE id = ?2')
-      .bind('[]', session.user.id)
+      .bind('[]', auth.user.id)
       .run();
   } catch (err) {
     log('error', 'settings.update.failed', {
-      user_id: session.user.id,
+      user_id: auth.user.id,
       op: 'tags-delete-all',
       error_code: 'internal_error',
       detail: String(err).slice(0, 500),
@@ -76,8 +73,6 @@ export async function POST(context: APIContext): Promise<Response> {
   }
 
   const headers = new Headers({ Location: '/digest' });
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(null, { status: 303, headers });
 }

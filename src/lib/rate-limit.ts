@@ -5,7 +5,11 @@
 // WAF can throttle at the zone level, but a misconfigured rule (or a
 // `*.workers.dev` URL bypassing the zone entirely) leaves auth + write
 // endpoints fully exposed. This helper adds a Worker-side window-counter
-// rate limit that fails closed on KV errors.
+// rate limit. Each rule chooses its KV-failure mode independently
+// (`failClosed`): fail open for routes where a broken counter must not
+// lock users out (auth_login, auth_callback) and fail closed for
+// security-critical routes where KV outage must not bypass the limit
+// (auth_refresh — a stolen cookie should not benefit from KV downtime).
 //
 // Scheme:
 //   - One KV key per (route_class, identity, time_window).
@@ -31,6 +35,14 @@ export interface RateLimitRule {
   limit: number;
   /** Window length in seconds. */
   windowSec: number;
+  /**
+   * On KV error, return `{ ok: false }` (deny the request) instead of
+   * the default `{ ok: true }` (permit). Defaults to false (fail open)
+   * because most rate-limited paths exist to absorb noisy clients, not
+   * to keep them out at all costs. Set to true on security-critical
+   * routes where a KV outage must not bypass the limit.
+   */
+  failClosed?: boolean;
 }
 
 /** Result of a rate-limit check. */
@@ -40,10 +52,11 @@ export type RateLimitResult =
 
 /**
  * Check + increment the counter for {@link rule} keyed by {@link identity}.
- * On KV failure the helper logs and fails OPEN (returns ok=true) — a
- * broken counter must not lock users out of auth flows. Reverse this
- * to fail-closed only if the rate limiter becomes a critical safety
- * gate (e.g., billing-coupled endpoints).
+ * On KV failure the helper logs `rate.limit.kv_error` and either fails
+ * OPEN (default) or fails CLOSED (when {@link RateLimitRule.failClosed}
+ * is true). Failing open keeps users from being locked out by KV
+ * outages; failing closed is the right call for routes where KV
+ * downtime must not bypass the limit.
  */
 export async function enforceRateLimit(
   env: { KV: KVNamespace },
@@ -59,12 +72,19 @@ export async function enforceRateLimit(
     const raw = await env.KV.get(key, 'text');
     current = raw === null ? 0 : Math.max(0, Number.parseInt(raw, 10) || 0);
   } catch (err) {
-    log('warn', 'rate.limit.exceeded', {
+    const failClosed = rule.failClosed === true;
+    log('warn', 'rate.limit.kv_error', {
       route_class: rule.routeClass,
       identity,
+      kv_op: 'get',
       kv_error: String(err).slice(0, 200),
-      decision: 'fail_open',
+      decision: failClosed ? 'fail_closed' : 'fail_open',
     });
+    if (failClosed) {
+      // Use the full window length as Retry-After so the client backs
+      // off for at least one full window before retrying.
+      return { ok: false, retryAfter: rule.windowSec };
+    }
     return { ok: true };
   }
 
@@ -86,10 +106,24 @@ export async function enforceRateLimit(
       // even if KV write propagation runs slow.
       expirationTtl: rule.windowSec * 2,
     });
-  } catch {
-    // Increment failure is non-fatal — fall through and permit the
-    // request. The next caller's read may miss this increment but
-    // the absolute ceiling stays bounded.
+  } catch (err) {
+    // For fail-closed rules, KV.put failure must NOT silently let the
+    // request through — otherwise a sustained KV write outage means
+    // the counter never ticks up, every read returns the previous
+    // value, and `failClosed: true` is effectively bypassed.
+    if (rule.failClosed === true) {
+      log('warn', 'rate.limit.kv_error', {
+        route_class: rule.routeClass,
+        identity,
+        kv_op: 'put',
+        kv_error: String(err).slice(0, 200),
+        decision: 'fail_closed',
+      });
+      return { ok: false, retryAfter: rule.windowSec };
+    }
+    // For fail-open rules, swallow the error — the next caller's
+    // read may miss this increment but the absolute ceiling stays
+    // bounded by the surrounding window.
   }
   return { ok: true };
 }
@@ -140,6 +174,42 @@ export const RATE_LIMIT_RULES = {
   TAGS_MUTATION: {
     routeClass: 'tags_mutation',
     limit: 30,
+    windowSec: 60,
+  },
+  // REQ-AUTH-008 — refresh-token rotation. Two-tier rate-limit:
+  // AUTH_REFRESH_IP runs BEFORE the DB lookup to bound random-cookie
+  // spam without authenticating the caller. The previous 10/min was
+  // too tight for legitimate flows: a corporate NAT or CGNAT pool can
+  // share an IP across dozens of users, and a single user with 5+
+  // tabs can fan out >10 inline-refresh requests in parallel after
+  // the 5-min access JWT expires. 60/min/IP is generous for both
+  // shapes while still catching attacker-grade volumes (≥1 req/sec).
+  AUTH_REFRESH_IP: {
+    routeClass: 'auth_refresh_ip',
+    limit: 60,
+    windowSec: 60,
+    // A stolen refresh cookie must not benefit from a KV outage —
+    // fail closed so the limiter denies during KV downtime rather
+    // than waving every request through unbounded.
+    failClosed: true,
+  },
+  // AUTH_REFRESH_USER runs AFTER findRefreshToken returns a valid
+  // row, keyed by user_id. Catches the "stolen cookie distributed
+  // across many IPs" attacker that defeats the per-IP limit. 10/min
+  // per user is far more than any browser needs (one refresh per
+  // 5-min access-JWT expiry, plus a small concurrent burst).
+  AUTH_REFRESH_USER: {
+    routeClass: 'auth_refresh_user',
+    limit: 10,
+    windowSec: 60,
+    failClosed: true,
+  },
+  // REQ-AUTH-002 — bound logout calls per IP. Practical blast radius
+  // is small (logout requires a live cookie), but a low ceiling
+  // prevents loop-incrementing session_version under attack.
+  AUTH_LOGOUT: {
+    routeClass: 'auth_logout',
+    limit: 5,
     windowSec: 60,
   },
 } as const satisfies Record<string, RateLimitRule>;

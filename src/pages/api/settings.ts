@@ -36,7 +36,7 @@ import {
 } from '~/lib/rate-limit';
 import { parseHashtags as parseHashtagsJson } from '~/lib/hashtags';
 import { isValidTz } from '~/lib/tz';
-import { loadSession } from '~/middleware/auth';
+import { requireSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
 /**
@@ -152,21 +152,19 @@ export async function GET(context: APIContext): Promise<Response> {
     return errorResponse('app_not_configured');
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    return errorResponse('unauthorized');
-  }
+  const auth = await requireSession(context.request, env);
+  if (!auth.ok) return auth.response;
 
   let row: UserSettingsRow | null;
   try {
     row = await env.DB.prepare(
       'SELECT hashtags_json, digest_hour, digest_minute, tz, model_id, email_enabled FROM users WHERE id = ?1',
     )
-      .bind(session.user.id)
+      .bind(auth.user.id)
       .first<UserSettingsRow>();
   } catch (err) {
     log('error', 'settings.update.failed', {
-      user_id: session.user.id,
+      user_id: auth.user.id,
       op: 'read',
       error_code: 'internal_error',
       detail: String(err).slice(0, 500),
@@ -182,9 +180,7 @@ export async function GET(context: APIContext): Promise<Response> {
   const firstRun = row.hashtags_json === null || row.digest_hour === null;
 
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
 
   return new Response(
     JSON.stringify({
@@ -212,10 +208,8 @@ export async function PUT(context: APIContext): Promise<Response> {
     return originResult.response;
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    return errorResponse('unauthorized');
-  }
+  const auth = await requireSession(context.request, env);
+  if (!auth.ok) return auth.response;
 
   // CF-028: PUT /api/settings is a parallel write path for hashtags
   // alongside POST /api/tags{,/restore,/delete-initial}. Rate-limit
@@ -224,7 +218,7 @@ export async function PUT(context: APIContext): Promise<Response> {
   const rl = await enforceRateLimit(
     env,
     RATE_LIMIT_RULES.TAGS_MUTATION,
-    `user:${session.user.id}`,
+    `user:${auth.user.id}`,
   );
   if (!rl.ok) {
     return rateLimitResponse(rl.retryAfter);
@@ -293,18 +287,18 @@ export async function PUT(context: APIContext): Promise<Response> {
       await env.DB.prepare(
         'UPDATE users SET hashtags_json = ?1, digest_hour = ?2, digest_minute = ?3, tz = ?4, model_id = ?5, email_enabled = ?6 WHERE id = ?7',
       )
-        .bind(hashtagsJson, digestHour, digestMinute, tz, modelId, emailEnabledInt, session.user.id)
+        .bind(hashtagsJson, digestHour, digestMinute, tz, modelId, emailEnabledInt, auth.user.id)
         .run();
     } else {
       await env.DB.prepare(
         'UPDATE users SET digest_hour = ?1, digest_minute = ?2, tz = ?3, model_id = ?4, email_enabled = ?5 WHERE id = ?6',
       )
-        .bind(digestHour, digestMinute, tz, modelId, emailEnabledInt, session.user.id)
+        .bind(digestHour, digestMinute, tz, modelId, emailEnabledInt, auth.user.id)
         .run();
     }
   } catch (err) {
     log('error', 'settings.update.failed', {
-      user_id: session.user.id,
+      user_id: auth.user.id,
       op: 'write',
       error_code: 'internal_error',
       detail: String(err).slice(0, 500),
@@ -323,17 +317,17 @@ export async function PUT(context: APIContext): Promise<Response> {
       const stmts = discovering.map((tag) =>
         env.DB.prepare(
           'INSERT OR IGNORE INTO pending_discoveries (user_id, tag, added_at) VALUES (?1, ?2, ?3)',
-        ).bind(session.user.id, tag, nowSec),
+        ).bind(auth.user.id, tag, nowSec),
       );
       await env.DB.batch(stmts);
       log('info', 'discovery.queued', {
-        user_id: session.user.id,
+        user_id: auth.user.id,
         tags: discovering,
       });
     }
   } catch (err) {
     log('error', 'discovery.queued', {
-      user_id: session.user.id,
+      user_id: auth.user.id,
       error_code: 'discovery_enqueue_failed',
       detail: String(err).slice(0, 500),
     });
@@ -342,9 +336,7 @@ export async function PUT(context: APIContext): Promise<Response> {
   }
 
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(
     JSON.stringify({ ok: true, discovering }),
     { status: 200, headers },
@@ -388,13 +380,13 @@ export async function POST(context: APIContext): Promise<Response> {
     return fail('forbidden_origin');
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    // Unauthenticated users can't see /settings, so the redirect target
-    // would itself bounce to /. That's the right answer: send them
-    // somewhere they can re-authenticate, not to a JSON blob.
-    return new Response(null, { status: 303, headers: { Location: '/' } });
-  }
+  // Unauthenticated users can't see /settings, so the redirect target
+  // would itself bounce to /. That's the right answer: send them
+  // somewhere they can re-authenticate, not to a JSON blob.
+  const auth = await requireSession(context.request, env, () =>
+    new Response(null, { status: 303, headers: { Location: '/' } }),
+  );
+  if (!auth.ok) return auth.response;
 
   let form: FormData;
   try {
@@ -433,11 +425,11 @@ export async function POST(context: APIContext): Promise<Response> {
     await env.DB.prepare(
       'UPDATE users SET digest_hour = ?1, digest_minute = ?2, tz = ?3, model_id = ?4, email_enabled = ?5 WHERE id = ?6',
     )
-      .bind(digestHour, digestMinute, tz, modelId, emailEnabledInt, session.user.id)
+      .bind(digestHour, digestMinute, tz, modelId, emailEnabledInt, auth.user.id)
       .run();
   } catch (err) {
     log('error', 'settings.update.failed', {
-      user_id: session.user.id,
+      user_id: auth.user.id,
       op: 'write',
       error_code: 'internal_error',
       detail: String(err).slice(0, 500),
@@ -446,8 +438,6 @@ export async function POST(context: APIContext): Promise<Response> {
   }
 
   const headers = new Headers({ Location: '/settings?saved=ok' });
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(null, { status: 303, headers });
 }

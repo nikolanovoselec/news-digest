@@ -14,7 +14,7 @@ import Base from '~/layouts/Base.astro';
 import ModelSelect from '~/components/ModelSelect.astro';
 import InstallPrompt from '~/components/InstallPrompt.astro';
 import StatsWidget from '~/components/StatsWidget.astro';
-import { loadSession } from '~/middleware/auth';
+import { loadSessionForPage } from '~/middleware/auth';
 import { requireSettingsComplete } from '~/middleware/settings-gate';
 import { DEFAULT_TZ } from '~/lib/tz';
 import { DEFAULT_MODEL_ID } from '~/lib/models';
@@ -34,18 +34,15 @@ if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
 
 // Load the authenticated user into locals — the settings-gate helper
 // reads from `Astro.locals.user`.
-const session = await loadSession(
+// CF-010 — silent-refresh: loadSessionForPage attaches near-expiry
+// re-issued cookies and clear-cookie directives onto
+// Astro.response.headers (REQ-AUTH-002 AC 4 / REQ-AUTH-008 AC 4).
+const session = await loadSessionForPage(
   Astro.request,
-  env.DB,
-  env.OAUTH_JWT_SECRET,
+  env,
+  Astro.response.headers,
 );
-if (session === null) {
-  return Astro.redirect('/', 303);
-}
-// CF-010 — silent-refresh: attach near-expiry re-issued cookie.
-if (session.refreshCookie !== null) {
-  Astro.response.headers.append('Set-Cookie', session.refreshCookie);
-}
+if (session.user === null) return Astro.redirect('/', 303);
 Astro.locals.user = session.user;
 
 // Admin gate for the operator-only settings sections (force refresh,
@@ -68,9 +65,7 @@ const gated = requireSettingsComplete({
   locals: Astro.locals,
 } as unknown as APIContext);
 if (gated !== null) {
-  if (session.refreshCookie !== null) {
-    gated.headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of session.cookiesToSet) gated.headers.append('Set-Cookie', c);
   return gated;
 }
 

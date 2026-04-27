@@ -27,16 +27,16 @@
 //   that didn't actually traverse Access.
 
 import type { APIContext } from 'astro';
-import { loadSession } from '~/middleware/auth';
+import { applyRefreshCookie, loadSession } from '~/middleware/auth';
 import { log } from '~/lib/log';
 import { base64UrlDecode } from '~/lib/crypto';
 
-/** Successful admin auth result. The `refreshCookie` is forwarded to the
- *  caller so they can attach it to their outgoing response — admin routes
- *  participate in silent-refresh just like every other authenticated
- *  endpoint. */
+/** Successful admin auth result. `cookiesToSet` is forwarded to the
+ *  caller so they can attach the access + refresh cookies to their
+ *  outgoing response — admin routes participate in the access/refresh
+ *  flow just like every other authenticated endpoint. */
 export type AdminAuthResult =
-  | { ok: true; userId: string; email: string; refreshCookie: string | null }
+  | { ok: true; userId: string; email: string; cookiesToSet: string[] }
   | { ok: false; response: Response };
 
 interface AccessJwtClaims {
@@ -113,14 +113,19 @@ export async function requireAdminSession(
     context.request,
     env.DB,
     env.OAUTH_JWT_SECRET,
+    env.KV,
   );
-  if (session === null) {
+  if (session.user === null) {
     log('warn', 'admin.auth.denied', { reason: 'no_session' });
     return {
       ok: false,
-      response: new Response('Unauthorized', { status: 401 }),
+      response: applyRefreshCookie(
+        new Response('Unauthorized', { status: 401 }),
+        session,
+      ),
     };
   }
+  const sessionUser = session.user;
 
   // Layer 3: ADMIN_EMAIL match. Configured email is required; a deploy
   // that forgot to set it locks /api/admin/* down rather than opening
@@ -128,30 +133,36 @@ export async function requireAdminSession(
   if (typeof env.ADMIN_EMAIL !== 'string' || env.ADMIN_EMAIL === '') {
     log('warn', 'admin.auth.denied', {
       reason: 'admin_email_not_configured',
-      user_id: session.user.id,
+      user_id: sessionUser.id,
     });
     return {
       ok: false,
-      response: new Response('Forbidden', { status: 403 }),
+      response: applyRefreshCookie(
+        new Response('Forbidden', { status: 403 }),
+        session,
+      ),
     };
   }
   if (
-    session.user.email.toLowerCase() !== env.ADMIN_EMAIL.toLowerCase()
+    sessionUser.email.toLowerCase() !== env.ADMIN_EMAIL.toLowerCase()
   ) {
     log('warn', 'admin.auth.denied', {
       reason: 'not_admin',
-      user_id: session.user.id,
+      user_id: sessionUser.id,
     });
     return {
       ok: false,
-      response: new Response('Forbidden', { status: 403 }),
+      response: applyRefreshCookie(
+        new Response('Forbidden', { status: 403 }),
+        session,
+      ),
     };
   }
 
   return {
     ok: true,
-    userId: session.user.id,
-    email: session.user.email,
-    refreshCookie: session.refreshCookie,
+    userId: sessionUser.id,
+    email: sessionUser.email,
+    cookiesToSet: session.cookiesToSet,
   };
 }

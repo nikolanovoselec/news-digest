@@ -6,6 +6,12 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-27
 
+- REQ-AUTH-001 AC 9 refined: the rate-limit fail-mode is now per-rule — sign-in and OAuth-callback rules continue to fail open so a backing-store outage cannot lock legitimate users out, while the refresh-token rule fails closed so a stolen refresh cookie cannot use a backing-store outage to bypass the limit. The inline middleware refresh path also shares the same refresh-rate-limit bucket as the explicit endpoint, closing the pivot from authenticated GET routes.
+
+- REQ-AUTH-008 AC 4 refined and REQ-AUTH-002 AC 5 added: refresh-token reuse detection now applies a 30-second grace window so two parallel refreshes from the same client (a common pattern when several tabs wake up together) no longer get mistaken for a stolen-token replay and lock the user out, while a true replay outside that window still triggers full session revocation across every device. A separate explicit-refresh endpoint is documented for clients that need a guaranteed fresh access JWT before a state-changing request, with cookies cleared cleanly on every failure path so a half-cleared session cannot persist. REQ-AUTH-008 AC 2 also clarifies that the persisted row identifier is independent of the cookie secret, so a leaked database dump cannot be replayed against the live system.
+
+- REQ-AUTH-002 rewritten and new REQ-AUTH-008 added: sign-in now uses an access + refresh token model — a 5-minute access cookie plus a 30-day refresh cookie, rotated on every refresh and bound to the signing-in device's User-Agent + country fingerprint. Closing the tab and coming back a month later no longer logs the user out, and a stolen-then-rotated refresh token is detected as theft and forces re-login across every device the user has open.
+
 - REQ-PIPE-005 retention window and REQ-HIST-001 history window both extended from 7 to 14 days, and a new REQ-HIST-001 AC makes the relationship explicit so the two windows are kept in lockstep — the dashboard, /history page, and tag-railing counts now show twice the lookback before retention sweeps unstarred articles. Starred articles continue to survive indefinitely, unchanged.
 
 - REQ-PIPE-006 AC 7 added: the per-tick token, cost, articles-ingested, and articles-deduplicated counters now advance exactly once per chunk regardless of how many times the queue redelivers that chunk's message, so a flaky tick can no longer inflate the stats widget or history page with retry traffic that was never real LLM work.
@@ -17,6 +23,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 - REQ-PIPE-006 AC 6 added and REQ-PIPE-008 AC 9 added: the history page's per-tick duration no longer drifts forward when the queue redelivers the closing message of a scrape, and a transient queue hiccup at the moment a tick closes can no longer strand the run without its cross-chunk dedup pass — the next redelivery picks up the handoff so the dedup eventually runs and the LLM is never billed twice for the same tick.
 
 - REQ-AUTH-002 AC 4 silent-refresh threshold updated from "less than 15 minutes" to "less than 5 minutes", and now extends across plain page navigation, not just XHR API calls — so users actively reading the dashboard no longer hard-expire after 60 minutes mid-session.
+
+- REQ-OPS-005 added covering the operator force-refresh endpoint that was previously undocumented in the spec — operators can manually trigger a scrape tick from `/settings`, the request reuses any in-flight run started in the last two minutes to absorb double-clicks, and the response is content-negotiated so browsers redirect to `/settings` while operator scripts get JSON.
 
 - REQ-AUTH-001 hardens admin endpoints: `/api/admin/*` now requires Cloudflare Access *and* a valid Worker session *and* an `ADMIN_EMAIL` match, instead of trusting Access alone. Per-route application-layer rate limiting is also added on `/api/auth/*` so a misconfigured WAF rule cannot be abused for abuse-of-OAuth flows.
 

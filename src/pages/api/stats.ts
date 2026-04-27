@@ -27,7 +27,7 @@
 
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
-import { loadSession } from '~/middleware/auth';
+import { requireSession } from '~/middleware/auth';
 import { parseHashtags } from '~/lib/hashtags';
 
 interface CountRow {
@@ -44,13 +44,11 @@ export async function GET(context: APIContext): Promise<Response> {
     return errorResponse('app_not_configured');
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    return errorResponse('unauthorized');
-  }
+  const auth = await requireSession(context.request, env);
+  if (!auth.ok) return auth.response;
 
-  const userId = session.user.id;
-  const userTags = parseHashtags(session.user.hashtags_json);
+  const userId = auth.user.id;
+  const userTags = parseHashtags(auth.user.hashtags_json);
 
   try {
     // Build the articles_total query dynamically so an empty tag set
@@ -121,9 +119,7 @@ export async function GET(context: APIContext): Promise<Response> {
     };
 
     const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-    if (session.refreshCookie !== null) {
-      headers.append('Set-Cookie', session.refreshCookie);
-    }
+    for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
     return new Response(JSON.stringify(body), { status: 200, headers });
   } catch {
     return errorResponse('internal_error');

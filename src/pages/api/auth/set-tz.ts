@@ -16,7 +16,7 @@ import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
 import { isValidTz } from '~/lib/tz';
-import { loadSession } from '~/middleware/auth';
+import { requireSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
 interface SetTzBody {
@@ -35,10 +35,8 @@ export async function POST(context: APIContext): Promise<Response> {
     return originResult.response;
   }
 
-  const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
-  if (session === null) {
-    return errorResponse('unauthorized');
-  }
+  const auth = await requireSession(context.request, env);
+  if (!auth.ok) return auth.response;
 
   let body: SetTzBody;
   try {
@@ -54,11 +52,11 @@ export async function POST(context: APIContext): Promise<Response> {
 
   try {
     await env.DB.prepare('UPDATE users SET tz = ?1 WHERE id = ?2')
-      .bind(tz, session.user.id)
+      .bind(tz, auth.user.id)
       .run();
   } catch (err) {
     log('error', 'auth.set_tz.failed', {
-      user_id: session.user.id,
+      user_id: auth.user.id,
       error_code: 'internal_error',
       detail: String(err).slice(0, 500),
     });
@@ -68,8 +66,6 @@ export async function POST(context: APIContext): Promise<Response> {
   const headers = new Headers({ 'Content-Type': 'application/json' });
   // Attach the refresh cookie if the session was near-expiry — POST
   // still extends the session like any other authenticated request.
-  if (session.refreshCookie !== null) {
-    headers.append('Set-Cookie', session.refreshCookie);
-  }
+  for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
   return new Response(JSON.stringify({ ok: true, tz }), { status: 200, headers });
 }

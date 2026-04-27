@@ -53,7 +53,7 @@ The result: 55+ written requirements across 10 product domains (authentication, 
 | DB / Cache / Queues | [D1](https://developers.cloudflare.com/d1/) · [KV](https://developers.cloudflare.com/kv/) · [Queues](https://developers.cloudflare.com/queues/) |
 | LLM | [Workers AI](https://developers.cloudflare.com/workers-ai/): `gpt-oss-120b` primary, `gpt-oss-20b` fallback |
 | Email | [Resend](https://resend.com) |
-| Auth | GitHub OAuth + Google OIDC + HMAC-SHA256 JWT |
+| Auth | GitHub OAuth + Google OIDC. 5-min HMAC-SHA256 access JWT + 30-day device-bound refresh token (rotated, reuse-detected) |
 
 ## Deploy your own
 
@@ -65,7 +65,7 @@ Three steps. The Deploy workflow handles D1, KV, queues, migrations, and secret 
 
    - `CLOUDFLARE_API_TOKEN`: see [token scopes](#api-token-scopes) below
    - `CLOUDFLARE_ACCOUNT_ID`: find it on any zone overview in the Cloudflare dashboard
-   - `OAUTH_JWT_SECRET`: HMAC key for session cookies. Generate: `openssl rand -base64 32`. If you use the word "password" here, you get what you deserve.
+   - `OAUTH_JWT_SECRET`: HMAC key for the 5-minute access token JWT. Generate: `openssl rand -base64 32`. If you use the word "password" here, you get what you deserve. (The 30-day refresh token is opaque and stored in D1, not signed — this secret only signs the short-lived access half.)
    - `APP_URL`: canonical origin (your `*.workers.dev` URL or custom domain)
 
 3. **Run the Deploy workflow.** `Actions` > `Deploy` > `Run workflow` > Branch: `main` > **Run workflow**. Takes ~2 minutes. Future pushes to `main` deploy automatically. When you break it, see `wrangler rollback` above.

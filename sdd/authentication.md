@@ -1,6 +1,6 @@
 # Authentication
 
-Federated sign-in via GitHub or Google — no passwords, no email verification flow, no local credential store. Each provider is independently configurable so a deployment can enable either or both; at least one must be configured for the app to function. Stateless HMAC-SHA256 JWT sessions with revocation. CSRF defense via Origin check. Account deletion with cascade.
+Federated sign-in via GitHub or Google — no passwords, no email verification flow, no local credential store. Each provider is independently configurable so a deployment can enable either or both; at least one must be configured for the app to function. Sessions are split into a 5-minute HMAC-SHA256 access JWT and a 30-day device-bound refresh token (rotated on every refresh, reuse-detected) so closing the tab for weeks does not log the user out. CSRF defense via Origin check. Account deletion with cascade.
 
 ---
 
@@ -19,7 +19,7 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 6. New accounts are also seeded with a default scheduled-digest time of 08:00, a default UTC timezone that the reading surface overwrites with the browser's actual IANA zone on first load, and the email-notification preference enabled. As a result, successful sign-in for a brand-new account lands the user directly on the reading surface with real articles visible — there is no forced onboarding detour through the settings form.
 7. Cross-provider sign-in by the same verified email lands in a single account per REQ-AUTH-007 (was previously per-provider isolation).
 8. Operator endpoints under `/api/admin/*` enforce three independent layers before any side effect: (a) Cloudflare Access — the `Cf-Access-Jwt-Assertion` header must be present on every request and, when an Access audience tag is configured, must validate against it; (b) a valid Worker session — the requester must hold a non-stale session cookie; (c) admin email match — the session user's email must equal the configured operator email. A request that fails any layer is rejected at the first failing layer with no observable side effect on the application.
-9. Application-layer rate limits apply to every `/api/auth/*` route and every authenticated mutation route, keyed by IP for unauthenticated paths and by user id for authenticated mutation paths. Exhausted limits return HTTP 429 with a `Retry-After` header; the limiter fails open on the storage layer so a backing-store outage cannot lock users out of sign-in.
+9. Application-layer rate limits apply to every `/api/auth/*` route and every authenticated mutation route, keyed by IP for unauthenticated paths and by user id for authenticated mutation paths. Exhausted limits return HTTP 429 with a `Retry-After` header. The storage-layer failure mode is per-rule: sign-in and OAuth-callback rules fail open so a backing-store outage cannot lock users out of sign-in, while the refresh-token rule fails closed so a stolen refresh cookie cannot benefit from a backing-store outage to bypass the limit. The same refresh-rate-limit bucket also gates the inline middleware refresh path so an attacker cannot pivot to authenticated GET routes to bypass the explicit refresh endpoint's limit.
 
 **Constraints:** CON-AUTH-001
 **Priority:** P0
@@ -29,21 +29,22 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 
 ---
 
-### REQ-AUTH-002: Session cookie and instant revocation
+### REQ-AUTH-002: Access token + refresh token, instant revocation
 
-**Intent:** Keep users signed in between visits without requiring them to re-authenticate, while allowing instant invalidation of every outstanding session on logout or account deletion.
+**Intent:** Keep users signed in for an extended period — at least 30 days of inactivity — without requiring them to re-authenticate, while allowing instant invalidation of every outstanding session on logout or account deletion. Sessions feel like every consumer-grade webapp: closing the tab and coming back next month does not log the user out.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. The session is a stateless HMAC-SHA256 JWT stored in an `__Host-` prefixed cookie with `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, and a 1-hour TTL.
-2. The JWT includes a `session_version` claim that matches the user's current `session_version` integer; mismatched JWTs are rejected even if still cryptographically valid.
-3. Logout increments the user's `session_version`, immediately invalidating every JWT previously issued to that user.
-4. A response middleware auto-refreshes the JWT on any request where less than 5 minutes remain on the current token. Both API routes and Astro page routes attach the re-issued cookie so plain navigation extends the session, not just XHR API calls.
+1. Two cookies make up an authenticated session: a short-lived **access cookie** (HMAC-SHA256 JWT, 5-minute TTL, `__Host-` prefix, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`) and a long-lived **refresh cookie** (opaque random 32-byte value, 30-day TTL, same cookie attributes). Both are issued at OAuth completion.
+2. Every authenticated request first verifies the access JWT, including its `session_version` claim against the current row's `session_version`. Mismatched or expired access JWTs are rejected even if still cryptographically valid; the request then falls through to the refresh-token flow.
+3. Logout increments the user's `session_version` (immediately invalidating every access JWT previously issued to that user) and revokes the active refresh-token row (immediately invalidating the long-lived cookie). Both cookies are cleared on the response.
+4. When the access JWT is missing or expired but the refresh cookie is valid, middleware mints a new access JWT and rotates the refresh-token row inline on the same request. Both API routes and Astro page routes attach the re-issued cookies so plain navigation extends the session, not just XHR API calls. The user never sees a login prompt as a result of access-token expiry alone.
+5. An explicit refresh endpoint is provided for the case where a long-running tab needs a fresh access JWT before issuing a state-changing request that middleware cannot safely auto-refresh on the same call. The endpoint always force-rotates the refresh-token row when invoked with a valid refresh cookie — calling it does not depend on whether the access JWT is still live, and it returns a new access JWT plus rotated refresh cookie regardless of remaining lifetime. On a successful concurrent-rotation collision (the same client's parallel call won the race), the endpoint returns a fresh access JWT without re-rotating, per the grace-window tolerance in REQ-AUTH-008 AC 4. On any failure path, both the access and refresh cookies are cleared on the response so a half-cleared session cannot persist.
 
 **Constraints:** CON-AUTH-001, CON-SEC-001
 **Priority:** P0
-**Dependencies:** REQ-AUTH-001
+**Dependencies:** REQ-AUTH-001, REQ-AUTH-008
 **Verification:** Automated test
 **Status:** Implemented
 
@@ -125,4 +126,25 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 **Priority:** P1
 **Dependencies:** REQ-AUTH-001
 **Verification:** Integration test
+**Status:** Implemented
+
+---
+
+### REQ-AUTH-008: Refresh-token rotation, device binding, reuse detection
+
+**Intent:** The 30-day refresh cookie is a high-value secret — anyone holding it can mint access tokens for the user. Bind it to the device that signed in, rotate it on every refresh so a stolen value is single-use, and detect reuse so a stolen-then-rotated token surfaces as theft rather than continuing to work alongside the legitimate session.
+
+**Applies To:** User
+
+**Acceptance Criteria:**
+1. Every refresh-token row records a **device fingerprint** at issuance — a hash of the requesting device's User-Agent and country. The fingerprint is computed at OAuth completion and stored alongside the row; subsequent refresh attempts that present a cookie value matching the row but whose User-Agent or country produce a different fingerprint are rejected without rotating, and the user is forced through OAuth on this device. (Mobile networks rotate IPs across the same country during normal use; binding to country preserves day-to-day mobile sessions while still catching cross-country VPN exfiltration.)
+2. Every successful refresh **rotates** the refresh-token row: the existing row is marked revoked with the current timestamp, a new row is inserted with `parent_id` linking back to the old row, and a new opaque cookie value is issued. The old cookie value is single-use — presenting it a second time is treated as reuse per AC 4. The persisted row is identified by an internal random row identifier that is independent of the cookie secret, so a leaked database dump cannot be replayed against the live system.
+3. Logout revokes only the active refresh-token row, not every refresh-token row for the user. Logging out on one device does not sign the user out of other devices they are intentionally still using.
+4. **Reuse detection with concurrent-rotation tolerance** — if a refresh cookie whose row already has `revoked_at` set is presented, the system applies a short grace window (30 seconds from revocation) before deciding the request is theft. Within the grace window, the presentation is treated as a benign concurrent-rotation collision (two parallel requests from the same client both raced to refresh, the loser is replaying the cookie that was rotated under it); a fresh access JWT is served off the surviving rotated row without rotating again, and the client's stale cookie is good for the rest of the window. Outside the grace window, the system cannot distinguish "rightful owner replaying an old cookie" from "attacker using a stolen-then-rotated cookie" and treats it as theft: every refresh-token row for the affected user is revoked AND `users.session_version` is incremented (which kills every in-flight access JWT), forcing the user through OAuth on every device.
+5. Expired and old-revoked refresh-token rows are pruned by the daily retention sweep. Revoked rows are kept for at least 7 days after revocation so the reuse-detection branch above can see the `revoked_at` timestamp before the row is deleted.
+
+**Constraints:** CON-AUTH-001, CON-SEC-001
+**Priority:** P0
+**Dependencies:** REQ-AUTH-002
+**Verification:** Automated test
 **Status:** Implemented

@@ -11,8 +11,13 @@
 import { base64UrlEncode, base64UrlDecode } from '~/lib/crypto';
 import { requireStrongJwtSecret } from '~/lib/jwt-secret';
 
-const DEFAULT_TTL_SECONDS = 3600; // 1 hour — REQ-AUTH-002 AC 1
-const REFRESH_THRESHOLD_SECONDS = 5 * 60; // 5 minutes — REQ-AUTH-002 AC 4 (CF-010)
+/** Access-token TTL. 5 minutes — REQ-AUTH-002 AC 1.
+ *  The access JWT is the short-lived half of the access/refresh pair;
+ *  long-term presence is provided by the 30-day refresh token (see
+ *  `~/lib/refresh-tokens`). Five minutes keeps the blast-radius of a
+ *  stolen access cookie tiny while the refresh cookie does the heavy
+ *  lifting of "stay signed in for a month". */
+const DEFAULT_TTL_SECONDS = 5 * 60;
 
 const HEADER_B64 = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
   .replace(/=/g, '')
@@ -150,13 +155,10 @@ function isSessionClaims(value: unknown): value is SessionClaims {
   );
 }
 
-/**
- * True when the session has less than 5 minutes remaining but is not yet
- * expired. Callers use this to trigger silent re-issue on active requests
- * (REQ-AUTH-002 AC 4). Threshold lowered from 15 → 5 min in CF-010 to
- * make the spec AC line up with shipped behaviour.
- */
-export function shouldRefreshJWT(claims: SessionClaims, now?: number): boolean {
-  const currentSec = now ?? Math.floor(Date.now() / 1000);
-  return claims.exp > currentSec && claims.exp - currentSec < REFRESH_THRESHOLD_SECONDS;
-}
+// Note: the access-token sliding-refresh helper (`shouldRefreshJWT`)
+// has been removed. Sliding refresh on the access token by itself was
+// only useful when the access token WAS the long-lived secret. With
+// the new model, the refresh token (~/lib/refresh-tokens) is the
+// long-lived half and the access JWT just gets re-minted on every
+// refresh-token rotation, so there's no sliding-refresh decision to
+// make on the access token in isolation.

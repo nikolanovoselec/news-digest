@@ -31,6 +31,7 @@
 // all passes are emitted as structured log lines for observability.
 
 import { log } from '~/lib/log';
+import { purgeOldRefreshTokens } from '~/lib/refresh-tokens';
 
 /** Retention window. Articles whose `published_at` is older than this
  * many seconds before `now` are eligible for deletion when no user has
@@ -57,6 +58,7 @@ export async function runCleanup(env: Env): Promise<{
   articlesDeleted: number;
   orphanTagsDeleted: number;
   stuckTagsPruned: number;
+  refreshTokensPurged: number;
 }> {
   const articlesDeleted = await runArticleRetention(env);
   // Stuck-tag prune runs BEFORE the orphan sweep so the same run
@@ -64,7 +66,26 @@ export async function runCleanup(env: Env): Promise<{
   // unowned — keeps the daily cron self-cleaning.
   const stuckTagsPruned = await runStuckTagPrune(env);
   const orphanTagsDeleted = await runOrphanTagSweep(env);
-  return { articlesDeleted, orphanTagsDeleted, stuckTagsPruned };
+  const refreshTokensPurged = await runRefreshTokenPurge(env);
+  return { articlesDeleted, orphanTagsDeleted, stuckTagsPruned, refreshTokensPurged };
+}
+
+/** REQ-AUTH-008 — drop expired refresh-token rows + revoked rows older
+ *  than the 7-day grace window. The grace window matters: reuse-detection
+ *  in the middleware checks `revoked_at` to distinguish theft from
+ *  legitimate replay; pruning a revoked row before that check would mask
+ *  a real attack as "unknown cookie". */
+async function runRefreshTokenPurge(env: Env): Promise<number> {
+  try {
+    const purged = await purgeOldRefreshTokens(env.DB);
+    log('info', 'auth.refresh.purge_completed', { purged });
+    return purged;
+  } catch (err) {
+    log('error', 'auth.refresh.purge_failed', {
+      detail: String(err).slice(0, 500),
+    });
+    return 0;
+  }
 }
 
 /** REQ-PIPE-005 — delete articles older than 14 days unless starred. */
