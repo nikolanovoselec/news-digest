@@ -193,11 +193,15 @@ Returns up to 29 articles from the global pool filtered by the session user's ac
 
 Reads one `scrape_runs` row (most recent by `started_at DESC`) plus one KV key (`scrape_run:{id}:chunks_remaining`). No LLM cost.
 
+The KV `chunks_remaining` value is a **display mirror only** — it is decremented by chunk consumers for the live progress display, not the authoritative completion gate. The completion gate moved to D1 (`scrape_chunk_completions`, migration 0007) and the finalize lock to `scrape_runs.finalize_enqueued` (migration 0008) to eliminate the TOCTOU race window. When debugging a stuck run, inspect the D1 tables — the KV counter can lag without indicating a real stall.
+
+Both the `running: false` and `running: true` responses carry a `Set-Cookie` refresh when the session is within 5 minutes of expiry, matching the behaviour of page-route handlers. This prevents repeated polling during a long scrape run from inadvertently expiring a user's session.
+
 **Callers:**
 - `/digest` — swaps the "Next update in Xm" countdown for "Update in progress" while `running=true`.
 - `/settings` Force Refresh section — polls every 5s after form submission to show live `articles_ingested` and `chunks_remaining`.
 
-**Implements:** [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress)
+**Implements:** [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress), [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-session-cookie-and-instant-revocation)
 
 ---
 

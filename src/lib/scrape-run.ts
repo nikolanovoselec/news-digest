@@ -110,6 +110,11 @@ export async function addChunkStats(
  * Close out a run by stamping `finished_at=now` and flipping `status`
  * to either `ready` (all chunks completed) or `failed` (a chunk hit its
  * retry ceiling or the coordinator aborted).
+ *
+ * The `WHERE status = 'running'` guard prevents a late-arriving failed
+ * chunk (its retries exhausted after the run already reached 'ready'
+ * via the COUNT(*) gate) from flapping the dashboard back to 'failed'.
+ * Once a run leaves 'running' the status is final.
  */
 export async function finishRun(
   db: D1Database,
@@ -127,7 +132,7 @@ export async function finishRun(
       `UPDATE scrape_runs
          SET status = ?2,
              finished_at = COALESCE(finished_at, ?3)
-       WHERE id = ?1`,
+       WHERE id = ?1 AND status = 'running'`,
     )
     .bind(runId, status, now)
     .run();

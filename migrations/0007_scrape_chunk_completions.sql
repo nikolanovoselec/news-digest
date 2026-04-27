@@ -17,9 +17,12 @@
 -- "completed so far" total without depending on a separate counter
 -- that other writers might race.
 --
--- A row's lifetime is bounded to the scrape run it belongs to. The
--- daily retention sweep (REQ-PIPE-005) cleans up rows for runs that
--- have aged out, so the table never grows unbounded.
+-- A row's lifetime is bounded to the scrape run it belongs to.
+-- NOTE: cleanup of stale `scrape_chunk_completions` rows for aged-out
+-- runs is not yet wired into `runCleanup` (src/queue/cleanup.ts) and is
+-- tracked as a follow-up. Growth is monotonic but bounded:
+-- ~6 runs/day × ~10 chunks/run ≈ 22k rows/year per deployment, so the
+-- table size is operationally manageable until the sweep lands.
 
 CREATE TABLE scrape_chunk_completions (
   scrape_run_id TEXT NOT NULL,

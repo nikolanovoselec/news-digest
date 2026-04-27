@@ -70,7 +70,7 @@ export function buildClearSessionCookie(): string {
  * cookie, bad signature, expired, user deleted, session_version
  * mismatch). Never throws — bad input means no user.
  *
- * On near-expiry (less than 15 minutes remain) the returned object
+ * On near-expiry (less than 5 minutes remain) the returned object
  * includes a `refreshCookie` string that the caller MUST attach to the
  * outgoing response as a `Set-Cookie` header. This is how REQ-AUTH-002
  * AC 4 silent-refresh is implemented: the middleware doesn't own the
@@ -106,7 +106,7 @@ export async function loadSession(
   if (row === null) return null;
   if (row.session_version !== claims.sv) return null;
 
-  // AC 4 — re-issue when less than 15 minutes remain on the active
+  // AC 4 — re-issue when less than 5 minutes remain on the active
   // token. We sign a fresh JWT with the SAME sv (the row sv we just
   // loaded is authoritative) so a logout in flight still wins.
   let refreshCookie: string | null = null;
