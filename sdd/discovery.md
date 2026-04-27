@@ -75,7 +75,7 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 1. The settings page renders a single "Discover missing sources" button whenever at least one of the user's tags is "stuck" — defined as: not covered by any curated source AND either has no successful discovery cache yet, has an unparseable cache entry, or has an explicitly-empty cached feed list. Tags covered by a curated source are never flagged as stuck (curated feeds always deliver). Transient cache-read errors fall back to "not stuck" so a flaky read does not light up every tag at once. The Stuck tags section is absent entirely when no tag is stuck.
 2. The re-discover endpoint(s) validate that every tag they are asked to re-queue is in the authenticated user's saved tag list; any unknown tag is refused. This prevents anyone with a session from triggering arbitrary LLM calls for strings they do not control.
 3. A valid re-discover request clears each affected tag's cached feeds and per-tag discovery-failure counter, then enqueues a fresh discovery pass for each so the next discovery cron repopulates them.
-4. Two transports are supported: a single-tag JSON API for scripted callers (returns an API-shaped response) and a bulk-by-default native HTML form submission from the settings page (returns the operator to the settings page with a visible confirmation noting how many tags were re-queued).
+4. Two transports are supported: a single-tag JSON API for scripted callers (returns an API-shaped response) and a bulk-by-default native HTML form submission from the settings page (returns the operator to the settings page with a visible confirmation noting how many tags were re-queued). The bulk endpoint accepts both POST (the form submission) and GET (the request shape Cloudflare Access uses when it bounces a click through SSO and lands the operator back at the original URL); browsers always land on the settings page with a confirmation banner, never on a raw 404.
 5. The routes are additionally gated by Cloudflare Access at the zone level so only the admin account can reach them in production; other authenticated users never see a reachable endpoint even if the settings button were to be forged into their page.
 
 **Constraints:** None
@@ -101,5 +101,25 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 **Constraints:** CON-SEC-002, CON-LLM-001
 **Priority:** P0
 **Dependencies:** REQ-DISC-001
+**Verification:** Automated test
+**Status:** Implemented
+
+---
+
+### REQ-DISC-006: Stuck-tag retention
+
+**Intent:** A tag that consistently produces no working sources is dropped from the user's interests automatically so the settings page never grows a permanent list of dead tags the user has to clean up by hand.
+
+**Applies To:** User
+
+**Acceptance Criteria:**
+1. The settings page lists the actual hashtag names that currently have no working feeds (not just a count), so the user can see at a glance which tags are stuck.
+2. A tag whose discovered-source cache has remained in the empty state for more than 7 days is removed from every user's interests automatically by the daily retention pass. Its discovered-source cache and per-tag failure counter are cleared in the same pass.
+3. Removal does not block other passes: a transient failure of the prune step still lets article retention and orphan-tag cleanup complete.
+4. The 7-day window resets the moment discovery succeeds: a tag whose feeds come back online before the cutoff stays in the user's interests with no further action.
+
+**Constraints:** None
+**Priority:** P2
+**Dependencies:** REQ-DISC-001, REQ-DISC-003, REQ-DISC-004
 **Verification:** Automated test
 **Status:** Implemented

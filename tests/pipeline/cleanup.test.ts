@@ -446,3 +446,102 @@ function wrapDbToThrowOn(
   });
   return { ...baseEnv, DB: wrappedDb as D1Database };
 }
+
+// REQ-DISC-006 — stuck-tag prune. Tags whose `sources:{tag}` cache has
+// been in the empty-feeds state for more than 7 days are removed from
+// every user's hashtags_json by the daily retention pass.
+
+async function seedEmptySources(tag: string, discoveredAtMs: number): Promise<void> {
+  await env.KV.put(
+    `sources:${tag}`,
+    JSON.stringify({ feeds: [], discovered_at: discoveredAtMs }),
+  );
+}
+
+async function getUserHashtags(userId: string): Promise<string[]> {
+  const row = await env.DB
+    .prepare('SELECT hashtags_json FROM users WHERE id = ?1')
+    .bind(userId)
+    .first<{ hashtags_json: string | null }>();
+  if (row === null || row.hashtags_json === null || row.hashtags_json === '') return [];
+  return JSON.parse(row.hashtags_json) as string[];
+}
+
+describe('cleanup cron — REQ-DISC-006 stuck-tag prune', () => {
+  beforeEach(async () => {
+    await env.DB.exec('DELETE FROM article_reads');
+    await env.DB.exec('DELETE FROM article_stars');
+    await env.DB.exec('DELETE FROM article_tags');
+    await env.DB.exec('DELETE FROM article_sources');
+    await env.DB.exec('DELETE FROM articles');
+    await env.DB.exec('DELETE FROM scrape_runs');
+    await env.DB.exec('DELETE FROM users');
+    await insertUser(env.DB, USER_ID);
+    await clearKvPrefix('sources:');
+    await clearKvPrefix('discovery_failures:');
+  });
+
+  it('REQ-DISC-006: tag with empty feeds older than 7 days is removed from hashtags_json', async () => {
+    await setUserHashtags(env.DB, USER_ID, ['ai', 'eldenring']);
+    await seedEmptySources('eldenring', Date.now() - 8 * 86400 * 1000);
+
+    const result = await runCleanup(env);
+
+    expect(result.stuckTagsPruned).toBe(1);
+    expect(await getUserHashtags(USER_ID)).toEqual(['ai']);
+  });
+
+  it('REQ-DISC-006: tag with empty feeds NEWER than 7 days is preserved', async () => {
+    await setUserHashtags(env.DB, USER_ID, ['ai', 'eldenring']);
+    await seedEmptySources('eldenring', Date.now() - 3 * 86400 * 1000);
+
+    const result = await runCleanup(env);
+
+    expect(result.stuckTagsPruned).toBe(0);
+    expect(await getUserHashtags(USER_ID)).toEqual(['ai', 'eldenring']);
+  });
+
+  it('REQ-DISC-006: tag with non-empty feeds is never pruned even at any age', async () => {
+    await setUserHashtags(env.DB, USER_ID, ['ai', 'eldenring']);
+    // Old, but feeds non-empty — discovery succeeded.
+    await env.KV.put(
+      'sources:eldenring',
+      JSON.stringify({
+        feeds: [{ name: 'EldenRing News', url: 'https://example.com/feed', kind: 'rss' }],
+        discovered_at: Date.now() - 30 * 86400 * 1000,
+      }),
+    );
+
+    const result = await runCleanup(env);
+
+    expect(result.stuckTagsPruned).toBe(0);
+    expect(await getUserHashtags(USER_ID)).toEqual(['ai', 'eldenring']);
+  });
+
+  it('REQ-DISC-006: pruning a tag from one user does not affect another user who still owns it', async () => {
+    const SECOND_USER = 'cleanup-test-user-2';
+    await insertUser(env.DB, SECOND_USER);
+    await setUserHashtags(env.DB, USER_ID, ['ai', 'eldenring']);
+    await setUserHashtags(env.DB, SECOND_USER, ['eldenring']);
+    await seedEmptySources('eldenring', Date.now() - 10 * 86400 * 1000);
+
+    const result = await runCleanup(env);
+
+    // Pruned from BOTH users (the tag is genuinely dead — every owner loses it).
+    expect(result.stuckTagsPruned).toBe(2);
+    expect(await getUserHashtags(USER_ID)).toEqual(['ai']);
+    expect(await getUserHashtags(SECOND_USER)).toEqual([]);
+  });
+
+  it('REQ-DISC-006: orphan sweep on the same run mops up the now-unowned sources:{tag} cache', async () => {
+    await setUserHashtags(env.DB, USER_ID, ['ai', 'eldenring']);
+    await seedEmptySources('eldenring', Date.now() - 8 * 86400 * 1000);
+    // Sanity: the entry exists before runCleanup.
+    expect(await env.KV.get('sources:eldenring')).not.toBeNull();
+
+    await runCleanup(env);
+
+    // After prune+sweep, the cache is gone.
+    expect(await env.KV.get('sources:eldenring')).toBeNull();
+  });
+});

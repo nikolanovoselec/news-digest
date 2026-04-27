@@ -1,8 +1,9 @@
 // Implements REQ-PIPE-005
 // Implements REQ-PIPE-007
+// Implements REQ-DISC-006
 //
 // Daily retention cleanup. The `0 3 * * *` cron in `src/worker.ts` calls
-// `runCleanup(env)` once per day. Two independent passes:
+// `runCleanup(env)` once per day. Three independent passes:
 //
 //   1. Article retention (REQ-PIPE-005): articles older than 7 days are
 //      deleted unless at least one user has starred them. Child rows in
@@ -17,9 +18,17 @@
 //      user removed (or an account deleted) keeps incurring scrape
 //      fetches and LLM-summarisation cost on every tick forever.
 //
+//   3. Stuck-tag prune (REQ-DISC-006): tags whose `sources:{tag}` cache
+//      has been in the empty-feeds state for more than 7 days are
+//      removed from every user's `hashtags_json`. The orphan sweep
+//      then mops up the now-unowned `sources:` entry on the same run.
+//      Without this pass, a tag that produced one bad LLM lookup sits
+//      in the user's interests list indefinitely with a permanent
+//      "Stuck tag" warning on /settings.
+//
 // Each pass runs inside its own try/catch so a failure in one half
-// never blocks the other (REQ-PIPE-007 AC 5). Deletion counts for
-// both passes are emitted as structured log lines for observability.
+// never blocks the others (REQ-PIPE-007 AC 5). Deletion counts for
+// all passes are emitted as structured log lines for observability.
 
 import { log } from '~/lib/log';
 
@@ -27,6 +36,12 @@ import { log } from '~/lib/log';
  * many seconds before `now` are eligible for deletion when no user has
  * starred them. */
 const RETENTION_SECONDS = 7 * 86400;
+
+/** Stuck-tag prune window. A tag whose `sources:{tag}` cache has been
+ * in the empty-feeds state (feeds: []) for more than this many seconds
+ * is removed from every user's `hashtags_json` so the settings page
+ * stops surfacing a permanent "Stuck tag" warning for it. */
+const STUCK_TAG_TTL_SECONDS = 7 * 86400;
 
 /**
  * Run one retention-cleanup pass. Idempotent — a second immediate call
@@ -40,10 +55,15 @@ const RETENTION_SECONDS = 7 * 86400;
 export async function runCleanup(env: Env): Promise<{
   articlesDeleted: number;
   orphanTagsDeleted: number;
+  stuckTagsPruned: number;
 }> {
   const articlesDeleted = await runArticleRetention(env);
+  // Stuck-tag prune runs BEFORE the orphan sweep so the same run
+  // mops up the `sources:{tag}` cache entries the prune leaves
+  // unowned — keeps the daily cron self-cleaning.
+  const stuckTagsPruned = await runStuckTagPrune(env);
   const orphanTagsDeleted = await runOrphanTagSweep(env);
-  return { articlesDeleted, orphanTagsDeleted };
+  return { articlesDeleted, orphanTagsDeleted, stuckTagsPruned };
 }
 
 /** REQ-PIPE-005 — delete articles older than 7 days unless starred. */
@@ -151,6 +171,130 @@ async function runOrphanTagSweep(env: Env): Promise<number> {
 
 interface UserHashtagsRow {
   hashtags_json: string | null;
+}
+
+interface UserHashtagsRowWithId {
+  id: string;
+  hashtags_json: string | null;
+}
+
+/** Parsed `sources:{tag}` cache shape — duplicates the type in
+ *  `src/lib/discovery.ts` rather than importing it because cleanup
+ *  consumes only two fields and importing across queue/lib boundaries
+ *  drags in unnecessary surface. */
+interface SourcesCacheValueShape {
+  feeds: unknown;
+  discovered_at: number;
+}
+
+/** REQ-DISC-006 — find tags whose `sources:{tag}` KV entry has been
+ *  empty-feeds for longer than {@link STUCK_TAG_TTL_SECONDS} and remove
+ *  them from every user's `hashtags_json`. The unowned `sources:` entry
+ *  is left for the subsequent orphan-tag sweep to clear in the same
+ *  cron run. Returns the number of (user, tag) prunes applied. */
+async function runStuckTagPrune(env: Env): Promise<number> {
+  const cutoffMs = Date.now() - STUCK_TAG_TTL_SECONDS * 1000;
+  try {
+    const stuckTooLong = new Set<string>();
+
+    let cursor: string | undefined;
+    do {
+      const page: KVNamespaceListResult<unknown> = await env.KV.list({
+        prefix: 'sources:',
+        ...(cursor !== undefined ? { cursor } : {}),
+      });
+      for (const key of page.keys) {
+        const tag = key.name.startsWith('sources:')
+          ? key.name.slice('sources:'.length)
+          : '';
+        if (tag === '') continue;
+        const raw = await env.KV.get(key.name);
+        if (raw === null) continue;
+        let parsed: SourcesCacheValueShape | null;
+        try {
+          parsed = JSON.parse(raw) as SourcesCacheValueShape;
+        } catch {
+          continue;
+        }
+        if (parsed === null || typeof parsed !== 'object') continue;
+        if (!Array.isArray(parsed.feeds) || parsed.feeds.length !== 0) continue;
+        if (typeof parsed.discovered_at !== 'number') continue;
+        if (parsed.discovered_at > cutoffMs) continue;
+        stuckTooLong.add(tag);
+      }
+      cursor = page.list_complete ? undefined : page.cursor;
+    } while (cursor !== undefined);
+
+    if (stuckTooLong.size === 0) {
+      log('info', 'discovery.completed', {
+        status: 'stuck_tag_prune_completed',
+        pruned: 0,
+        cutoff_ms: cutoffMs,
+      });
+      return 0;
+    }
+
+    // Find every user whose hashtags_json contains at least one of
+    // these tags. The `__system__` sentinel row is filtered out by
+    // hashtags_json being NULL.
+    const userRows = await env.DB
+      .prepare(
+        "SELECT id, hashtags_json FROM users WHERE hashtags_json IS NOT NULL AND hashtags_json != ''",
+      )
+      .all<UserHashtagsRowWithId>();
+
+    const updateStmt = env.DB.prepare(
+      'UPDATE users SET hashtags_json = ?1 WHERE id = ?2',
+    );
+    const updates = [];
+    let prunedTotal = 0;
+    for (const row of userRows.results ?? []) {
+      const raw = row.hashtags_json;
+      if (raw === null || raw === '') continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(parsed)) continue;
+      const kept: string[] = [];
+      let removed = 0;
+      for (const entry of parsed) {
+        if (typeof entry !== 'string') continue;
+        const stripped = entry.startsWith('#') ? entry.slice(1) : entry;
+        const normalized = stripped.toLowerCase();
+        if (normalized !== '' && stuckTooLong.has(normalized)) {
+          removed += 1;
+          continue;
+        }
+        kept.push(entry);
+      }
+      if (removed === 0) continue;
+      updates.push(updateStmt.bind(JSON.stringify(kept), row.id));
+      prunedTotal += removed;
+    }
+
+    if (updates.length > 0) {
+      await env.DB.batch(updates);
+    }
+
+    log('info', 'discovery.completed', {
+      status: 'stuck_tag_prune_completed',
+      pruned: prunedTotal,
+      tags_evicted: stuckTooLong.size,
+      users_touched: updates.length,
+      cutoff_ms: cutoffMs,
+    });
+
+    return prunedTotal;
+  } catch (err) {
+    log('error', 'discovery.completed', {
+      status: 'stuck_tag_prune_failed',
+      detail: String(err).slice(0, 500),
+    });
+    return 0;
+  }
 }
 
 /** Load the union of every tag in every user's hashtags_json. The

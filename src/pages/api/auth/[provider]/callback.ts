@@ -1,4 +1,4 @@
-// Implements REQ-AUTH-001, REQ-AUTH-002, REQ-AUTH-004
+// Implements REQ-AUTH-001, REQ-AUTH-002, REQ-AUTH-004, REQ-AUTH-006
 //
 // GET /api/auth/<provider>/callback — finish the OAuth/OIDC code flow
 // for any configured provider. The dynamic `[provider]` segment maps
@@ -323,22 +323,82 @@ export async function GET(context: APIContext): Promise<Response> {
     return errorRedirect(origin, 'no_verified_email', headers, 303, provider.name);
   }
 
-  // 5. Upsert users row keyed by the canonical id form.
-  const userId = userIdFor(provider, profile.providerUserId);
+  // 5. Resolve user_id via auth_links (REQ-AUTH-006). Three paths:
+  //    A. (provider, sub) already linked → reuse the linked user_id;
+  //       this is the steady-state login for any user.
+  //    B. Not linked, but a `users` row with the same verified email
+  //       exists (e.g. signed up via GitHub, now signing in via Google
+  //       with the same email) → link the new (provider, sub) to that
+  //       existing user_id. Prevents the duplicate-account bug where
+  //       the daily digest goes out twice.
+  //    C. Neither lookup matches → create a fresh users row keyed by
+  //       the canonical `<provider>:<sub>` (or bare numeric for GitHub
+  //       legacy) AND insert the matching auth_links row in tandem.
+  //
+  // The legacy `userIdFor(provider, sub)` shape is used only for the
+  // path-C fresh-user case. Existing users keep whatever id they were
+  // first issued — auth_links carries every (provider, sub) → user_id
+  // mapping so the id format is no longer load-bearing.
+  const fallbackUserId = userIdFor(provider, profile.providerUserId);
   const displayName = profile.displayName;
   const nowSec = Math.floor(Date.now() / 1000);
 
+  interface AuthLinkRow {
+    user_id: string;
+  }
+  interface UserByEmailRow {
+    id: string;
+  }
+
+  let userId: string;
   let row: ExistingUserRow | null;
   try {
-    row = await env.DB.prepare(
-      'SELECT id, tz, session_version, digest_hour, hashtags_json FROM users WHERE id = ?1',
-    )
+    const linked = await env.DB
+      .prepare('SELECT user_id FROM auth_links WHERE provider = ?1 AND provider_sub = ?2')
+      .bind(provider.name, profile.providerUserId)
+      .first<AuthLinkRow>();
+
+    if (linked !== null) {
+      // Path A: link known. Use the user_id it points at.
+      userId = linked.user_id;
+    } else {
+      // Path B: no link yet. Check whether another provider already
+      // claimed this email — if so, attach the new alias rather than
+      // forking a new user.
+      const byEmail = await env.DB
+        .prepare("SELECT id FROM users WHERE email = ?1 AND id != '__system__' ORDER BY created_at ASC LIMIT 1")
+        .bind(profile.email)
+        .first<UserByEmailRow>();
+
+      if (byEmail !== null) {
+        userId = byEmail.id;
+        await env.DB
+          .prepare(
+            'INSERT OR IGNORE INTO auth_links (provider, provider_sub, user_id, linked_at) VALUES (?1, ?2, ?3, ?4)',
+          )
+          .bind(provider.name, profile.providerUserId, userId, nowSec)
+          .run();
+        log('info', 'auth.login', {
+          provider: provider.name,
+          user_id: userId,
+          status: 'linked_to_existing_email',
+        });
+      } else {
+        // Path C: brand-new user.
+        userId = fallbackUserId;
+      }
+    }
+
+    row = await env.DB
+      .prepare(
+        'SELECT id, tz, session_version, digest_hour, hashtags_json FROM users WHERE id = ?1',
+      )
       .bind(userId)
       .first<ExistingUserRow>();
   } catch (err) {
     log('error', 'auth.callback.failed', {
       provider: provider.name,
-      user_id: userId,
+      user_id: fallbackUserId,
       error_code: 'oauth_error',
       detail: String(err).slice(0, 500),
     });
@@ -366,6 +426,13 @@ export async function GET(context: APIContext): Promise<Response> {
         'INSERT INTO users (id, email, gh_login, tz, digest_hour, digest_minute, email_enabled, session_version, created_at, hashtags_json) VALUES (?1, ?2, ?3, ?4, 8, 0, 1, 1, ?5, ?6)',
       )
         .bind(userId, profile.email, displayName, '', nowSec, defaultHashtagsJson)
+        .run();
+      // Pair the new users row with its first auth_links alias so
+      // subsequent logins resolve via path A.
+      await env.DB.prepare(
+        'INSERT OR IGNORE INTO auth_links (provider, provider_sub, user_id, linked_at) VALUES (?1, ?2, ?3, ?4)',
+      )
+        .bind(provider.name, profile.providerUserId, userId, nowSec)
         .run();
       sessionVersion = 1;
       firstRun = true;

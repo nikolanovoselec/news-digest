@@ -104,3 +104,23 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 **Dependencies:** REQ-AUTH-001
 **Verification:** Integration test
 **Status:** Implemented
+
+---
+
+### REQ-AUTH-006: Cross-provider account dedup
+
+**Intent:** A person who signs in via two providers with the same verified email lands in one account, not two — the daily digest goes out once and starred articles, read marks, and interests are shared across both sign-in paths.
+
+**Applies To:** User
+
+**Acceptance Criteria:**
+1. The first time a user signs in via any provider, a new account is created and the (provider, provider identifier) pair is recorded so subsequent sign-ins via the same provider land in the same account.
+2. When a sign-in arrives via a provider not yet linked to any account but with a verified email that matches an existing account, the new (provider, identifier) pair is linked to that existing account instead of creating a duplicate row. The user signs in to the same account regardless of which provider they pick.
+3. The daily digest is sent once per real person — duplicate-email accounts that pre-date this requirement are merged in a single one-time pass; their stars, read marks, and pending discoveries re-point to the surviving account so no user-visible state is lost.
+4. Removing one sign-in path (revoking access at the OAuth provider) does not delete the account or other linked sign-in paths — the account remains reachable via the other provider.
+
+**Constraints:** CON-AUTH-001
+**Priority:** P1
+**Dependencies:** REQ-AUTH-001
+**Verification:** Integration test
+**Status:** Implemented

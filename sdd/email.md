@@ -14,13 +14,14 @@ Resend-backed notification sent after every successful digest — whether genera
 1. At most one email per user is sent per day, gated so the same user never receives a second notification on the same local date.
 2. The email fires at the user's configured local digest time, independent of the global scrape cadence.
 3. The subject reads "{N} new articles · {top tags}" when N>0 (top three tag slugs by descending article count, comma-joined); otherwise reads exactly "Your news digest is ready".
-4. The body lists up to five unread articles (excluding articles the recipient has previously opened), each as title plus source name plus a direct link to the article detail page.
+4. The body lists up to five unread articles (excluding articles the recipient has previously opened), each as a clickable title that links to the article detail page on the dashboard. No adjacent source-name label is rendered next to the headline — the article-detail page surfaces alternate sources instead.
 5. The body shows a tally of articles ingested since the recipient's local midnight, listing each tag with its article count; the line is omitted entirely when no articles have been ingested in that window.
 6. The body shows the current send time and tomorrow's send time, both formatted in the recipient's timezone.
-7. The body footer contains a "Manage notifications" link to the settings page.
-8. The signature "Gray Matter" is a hyperlink to https://graymatter.ch.
-9. Users who turn off `email_enabled` in settings receive no email.
-10. When the recipient has zero unread articles, the body still sends with the static fallback subject plus the tag tally, local-time line, and footer (no headline block) — preserving the once-per-day signal.
+7. The body contains a "Manage notifications" link to the settings page above the brand footer.
+8. The brand footer reads "Built with Codeflare © 2026 Gray Matter GmbH" and matches the in-app site footer (uppercase, tracked, muted), with both "Codeflare" and "Gray Matter GmbH" rendered as hyperlinks.
+9. The From header reads "News Digest <noreply@graymatter.ch>" (display name "News Digest" plus the configured sender address) so inbox lists show the brand instead of the bare email.
+10. Users who turn off `email_enabled` in settings receive no email.
+11. When the recipient has zero unread articles, the body still sends with the static fallback subject plus the tag tally, local-time line, and footer (no headline block) — preserving the once-per-day signal.
 
 **Constraints:** None
 **Priority:** P1

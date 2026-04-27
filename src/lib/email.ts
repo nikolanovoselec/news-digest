@@ -40,9 +40,27 @@
 import { log } from '~/lib/log';
 import type { Headline, TagTally } from '~/lib/email-data';
 
-/** External Gray Matter site that the email signature links to.
+/** External Gray Matter site that the email footer links to.
  *  Hardcoded — this is a brand link, not configurable per-deployment. */
 const GRAY_MATTER_URL = 'https://graymatter.ch';
+
+/** External Codeflare site that the email footer links to.
+ *  Hardcoded — same brand-link rationale as GRAY_MATTER_URL. */
+const CODEFLARE_URL = 'https://codeflare.ch';
+
+/** Display name prepended to RESEND_FROM so recipients see
+ *  `News Digest <noreply@graymatter.ch>` in the From header instead
+ *  of the bare address. The address itself is read from env.RESEND_FROM
+ *  so a fork can rebrand without code changes; if the env value already
+ *  uses the display-name format (contains `<`), it is passed through
+ *  verbatim instead of being double-wrapped. */
+const SENDER_DISPLAY_NAME = 'News Digest';
+
+/** Wrap a bare email address in display-name format. Returns the input
+ *  unchanged when it already contains a `<` (already wrapped). */
+function withSenderDisplayName(rawFrom: string): string {
+  return rawFrom.includes('<') ? rawFrom : `${SENDER_DISPLAY_NAME} <${rawFrom}>`;
+}
 
 /** Resend REST endpoint — identical across environments. */
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
@@ -153,19 +171,22 @@ export function renderDigestReadyEmail(params: DigestReadyEmailParams): Rendered
       ` · ${tagTally.map((t) => `#${t.tag} (${t.count})`).join(' ')}`;
 
   // ---------- Plain-text body ----------
+  // Em-dashes are intentionally absent here — Outlook/Gmail web clients
+  // render them inconsistently and they read awkwardly in plain-text
+  // forwards. Source-name suffixes are dropped from the title line so
+  // the only clickable element per article is the article-detail URL,
+  // which is what the HTML version also enforces (no auto-linkified
+  // `cs.AI`-style spans next to the headline).
   const textLines: string[] = [];
   if (headlines.length === 0) {
     textLines.push('Your news digest is ready.');
   } else {
-    textLines.push(`Your news digest is ready — ${headlines.length} new ${articleNoun} to read.`);
+    textLines.push(`Your news digest is ready. ${headlines.length} new ${articleNoun} to read.`);
   }
   textLines.push('');
   if (headlines.length > 0) {
     for (const h of headlines) {
-      const sourceSuffix = h.source_name !== null && h.source_name !== ''
-        ? ` (${h.source_name})`
-        : '';
-      textLines.push(`- ${h.title}${sourceSuffix}`);
+      textLines.push(`- ${h.title}`);
       textLines.push(`  ${appUrl}/digest/${h.id}/${h.slug}`);
     }
     textLines.push('');
@@ -179,23 +200,26 @@ export function renderDigestReadyEmail(params: DigestReadyEmailParams): Rendered
   textLines.push(`View your dashboard: ${appUrl}/digest`);
   textLines.push(`Manage notifications: ${settingsUrl}`);
   textLines.push('');
-  textLines.push(`— Gray Matter (${GRAY_MATTER_URL})`);
+  textLines.push(`Built with Codeflare (${CODEFLARE_URL}) © 2026 Gray Matter GmbH (${GRAY_MATTER_URL})`);
   textLines.push('');
   const text = textLines.join('\n');
 
   // ---------- HTML body ----------
+  // The headline link is the ONLY clickable element per row — no
+  // adjacent source-name span. Outlook + Gmail aggressively
+  // auto-linkify any text that pattern-matches a hostname (e.g.
+  // `cs.AI`), turning a non-link source label into a fake link to
+  // `https://cs.AI/`. Dropping the span removes that surface entirely
+  // and lets the article-detail page show the alt-source list instead.
   const headlineRows = headlines.length === 0
     ? ''
-    : `<tr><td style="padding-bottom:8px;">
+    : `<tr><td style="padding-bottom:12px;">
         <table role="presentation" width="100%" style="border-collapse:collapse;">
           ${headlines.map((h) => {
             const safeTitle = escapeHtml(h.title);
-            const safeSource = h.source_name !== null && h.source_name !== ''
-              ? `<span style="color:#888; font-size:13px;"> · ${escapeHtml(h.source_name)}</span>`
-              : '';
             const href = `${safeAppUrlAttr}/digest/${escapeHtml(h.id)}/${escapeHtml(h.slug)}`;
-            return `<tr><td style="padding:6px 0; border-bottom:1px solid #eee;">
-              <a href="${href}" style="color:#111; text-decoration:none; font-weight:600;">${safeTitle}</a>${safeSource}
+            return `<tr><td style="padding:14px 0; border-bottom:1px solid #ececef;">
+              <a href="${href}" style="color:#111; text-decoration:none; font-weight:600; font-size:17px; line-height:1.35;">${safeTitle}</a>
             </td></tr>`;
           }).join('')}
         </table>
@@ -203,31 +227,35 @@ export function renderDigestReadyEmail(params: DigestReadyEmailParams): Rendered
 
   const tallyRow = tallyLine === null
     ? ''
-    : `<tr><td style="padding:12px 0; font-size:13px; color:#555;">
+    : `<tr><td style="padding:14px 0; font-size:13px; color:#555; line-height:1.6;">
         Since midnight: ${totalSinceMidnight} ${totalSinceMidnight === 1 ? 'article' : 'articles'} ·
         ${tagTally.map((t) => `<span style="color:#0066ff;">#${escapeHtml(t.tag)}</span> (${t.count})`).join(' &nbsp; ')}
       </td></tr>`;
 
-  const sentRow = `<tr><td style="padding:8px 0 24px; font-size:12px; color:#888;">
+  const sentRow = `<tr><td style="padding:8px 0 28px; font-size:12px; color:#888;">
         ${escapeHtml(sentLine)}
       </td></tr>`;
 
-  const ctaRow = `<tr><td style="padding-bottom:24px;">
+  const ctaRow = `<tr><td style="padding-bottom:28px;">
         <a href="${safeAppUrlAttr}/digest" style="display:inline-block; padding:14px 28px; background:#0066ff; color:#fff; text-decoration:none; font-weight:600; border-radius:6px;">View your dashboard →</a>
       </td></tr>`;
 
-  const footerRow = `<tr><td style="padding:24px 0 8px; border-top:1px solid #eee; font-size:12px; color:#888;">
+  const manageRow = `<tr><td style="padding:24px 0 8px; border-top:1px solid #ececef; font-size:12px; color:#888;">
         <a href="${safeSettingsUrlAttr}" style="color:#888;">Manage notifications →</a>
       </td></tr>`;
 
-  const signatureRow = `<tr><td style="padding-top:8px; font-size:13px; color:#888;">
-        <a href="${escapeHtml(GRAY_MATTER_URL)}" style="color:#888; text-decoration:none;">— Gray Matter</a>
+  // Footer mirrors the in-app site footer: same copy, same hierarchy
+  // (Codeflare attribution + Gray Matter copyright), both names linked.
+  // Uppercase + tracked letter-spacing matches the webapp footer style
+  // so the email reads as part of the same brand surface.
+  const footerRow = `<tr><td style="padding:14px 0 8px; font-size:11px; font-weight:600; color:#888; letter-spacing:0.12em; text-transform:uppercase;">
+        Built with <a href="${escapeHtml(CODEFLARE_URL)}" style="color:#888; text-decoration:none;">Codeflare</a> &copy; 2026 <a href="${escapeHtml(GRAY_MATTER_URL)}" style="color:#888; text-decoration:none;">Gray Matter GmbH</a>
       </td></tr>`;
 
   const greetingRow = headlines.length === 0
-    ? `<tr><td style="padding-bottom:24px; font-size:18px; line-height:1.5;">Your news digest is ready.</td></tr>`
-    : `<tr><td style="padding-bottom:16px; font-size:18px; line-height:1.5;">
-         Your news digest is ready — ${headlines.length} new ${articleNoun} to read.
+    ? `<tr><td style="padding-bottom:24px; font-size:20px; line-height:1.4; font-weight:500;">Your news digest is ready.</td></tr>`
+    : `<tr><td style="padding-bottom:20px; font-size:20px; line-height:1.4; font-weight:500;">
+         Your news digest is ready. ${headlines.length} new ${articleNoun} to read.
        </td></tr>`;
 
   const html = `<!doctype html>
@@ -240,8 +268,8 @@ export function renderDigestReadyEmail(params: DigestReadyEmailParams): Rendered
       ${tallyRow}
       ${ctaRow}
       ${sentRow}
+      ${manageRow}
       ${footerRow}
-      ${signatureRow}
     </table>
   </body>
 </html>`;
@@ -307,7 +335,7 @@ export async function sendEmail(
   }
 
   const payload = {
-    from: env.RESEND_FROM,
+    from: withSenderDisplayName(env.RESEND_FROM),
     to: [params.to],
     subject: params.subject,
     html: params.html,

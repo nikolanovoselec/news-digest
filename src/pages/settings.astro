@@ -1,5 +1,5 @@
 ---
-// Implements REQ-SET-001, REQ-SET-002, REQ-SET-003, REQ-SET-004, REQ-SET-005, REQ-SET-006, REQ-SET-007, REQ-DISC-004
+// Implements REQ-SET-001, REQ-SET-002, REQ-SET-003, REQ-SET-004, REQ-SET-005, REQ-SET-006, REQ-SET-007, REQ-DISC-004, REQ-DISC-006
 //
 // Unified onboarding + edit form. The `first_run` query param swaps the
 // hero copy and the primary CTA label; the form fields are identical in
@@ -406,8 +406,13 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
         <fieldset class="settings__section settings__section--standalone">
           <legend class="settings__legend">Stuck tags</legend>
           <p class="settings__hint">
-            {emptyFeedTags.length === 1 ? '1 tag has' : `${emptyFeedTags.length} tags have`} no working feeds right now. One click re-runs LLM discovery for all of them.
+            {emptyFeedTags.length === 1 ? '1 tag has' : `${emptyFeedTags.length} tags have`} no working feeds right now. One click re-runs LLM discovery for all of them. Stuck tags are removed from your list automatically after 7 days of empty results.
           </p>
+          <ul class="settings__stuck-tag-list" aria-label="Tags with no working feeds">
+            {emptyFeedTags.map((tag) => (
+              <li class="settings__stuck-tag-chip">#{tag}</li>
+            ))}
+          </ul>
           {rediscoverConfirmed && (
             <p class="settings__status" data-rediscover-status>
               {rediscoverConfirmedCount === 0
@@ -996,6 +1001,26 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
+  }
+
+  .settings__stuck-tag-list {
+    list-style: none;
+    margin: 0.75rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .settings__stuck-tag-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    background-color: color-mix(in oklab, var(--text-muted) 12%, transparent);
+    color: var(--text);
+    font-size: var(--text-sm);
+    font-weight: 500;
   }
 
   .settings__custom {

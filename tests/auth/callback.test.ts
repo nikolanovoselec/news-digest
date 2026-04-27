@@ -35,17 +35,46 @@ function fullEnv(db: D1Database): Partial<Env> {
 }
 
 /**
- * Build a D1 stub whose `SELECT ... FROM users WHERE id = ?1` returns
- * {@link existingRow} (or null), and which records INSERT/UPDATE calls.
+ * Build a D1 stub for the OAuth callback flow. The callback issues
+ * three SELECTs in sequence: (1) auth_links lookup by (provider, sub),
+ * (2) users lookup by email, (3) users-by-id lookup for the final
+ * row. Each query has a different response shape, so the stub
+ * inspects the SQL prefix.
+ *
+ *  - `auth_links` lookup: returns { user_id } when authLinkUserId set
+ *  - email lookup: returns { id } when userByEmailId set
+ *  - users-by-id lookup: returns existingRow when set
+ *  Unmatched SELECTs return null.
  */
-function makeDb(existingRow: Record<string, unknown> | null): {
+function makeDb(
+  existingRow: Record<string, unknown> | null,
+  options: {
+    authLinkUserId?: string | null;
+    userByEmailId?: string | null;
+  } = {},
+): {
   db: D1Database;
   runCalls: { sql: string; params: unknown[] }[];
 } {
   const runCalls: { sql: string; params: unknown[] }[] = [];
   const prepareSpy = vi.fn().mockImplementation((sql: string) => ({
     bind: (...params: unknown[]) => ({
-      first: vi.fn().mockResolvedValue(sql.startsWith('SELECT') ? existingRow : null),
+      first: vi.fn().mockImplementation(async () => {
+        if (sql.includes('FROM auth_links')) {
+          return options.authLinkUserId !== undefined && options.authLinkUserId !== null
+            ? { user_id: options.authLinkUserId }
+            : null;
+        }
+        if (sql.startsWith('SELECT id FROM users WHERE email')) {
+          return options.userByEmailId !== undefined && options.userByEmailId !== null
+            ? { id: options.userByEmailId }
+            : null;
+        }
+        if (sql.startsWith('SELECT id, tz, session_version')) {
+          return existingRow;
+        }
+        return sql.startsWith('SELECT') ? existingRow : null;
+      }),
       run: vi.fn().mockImplementation(async () => {
         runCalls.push({ sql, params });
         return { success: true, meta: { changes: 1 } };

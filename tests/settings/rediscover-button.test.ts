@@ -59,4 +59,21 @@ describe('settings.astro Discover-missing-sources button — REQ-DISC-004', () =
     // Spec-reviewer greps for the annotation to link code → REQ.
     expect(settingsPage).toContain('REQ-DISC-004');
   });
+
+  it('REQ-DISC-006: stuck-tag list renders the actual hashtag names (not just a count)', () => {
+    // The user must see WHICH tags are stuck — not just "1 tag has no
+    // working feeds". The page renders each emptyFeedTag as a chip in
+    // a labelled list.
+    expect(settingsPage).toContain('settings__stuck-tag-list');
+    expect(settingsPage).toContain('settings__stuck-tag-chip');
+    expect(settingsPage).toMatch(/emptyFeedTags\.map\(\(tag\)/);
+    // The chip text starts with `#` so the user sees `#eldenring` not
+    // bare `eldenring`.
+    expect(settingsPage).toContain('#{tag}');
+  });
+
+  it('REQ-DISC-006: card explains the 7-day auto-removal so the user knows what happens next', () => {
+    expect(settingsPage).toMatch(/7 days/);
+    expect(settingsPage).toMatch(/automatic|automatically/);
+  });
 });

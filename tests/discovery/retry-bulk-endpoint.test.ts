@@ -16,7 +16,7 @@
 // here — the worker code never runs against a real Access JWT in tests.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { POST } from '~/pages/api/admin/discovery/retry-bulk';
+import { POST, GET } from '~/pages/api/admin/discovery/retry-bulk';
 import { SESSION_COOKIE_NAME } from '~/middleware/auth';
 import { signSession } from '~/lib/session-jwt';
 
@@ -314,5 +314,73 @@ describe('POST /api/admin/discovery/retry-bulk — REQ-DISC-004', () => {
     expect(res.status).toBe(303);
     expect(res.headers.get('Location')).toBe('/settings?rediscover=ok&count=0');
     expect(bindings).toHaveLength(0);
+  });
+});
+
+// REQ-DISC-004 AC 4 — GET handler exists for the Cloudflare Access
+// post-auth callback path, where Access intercepts the form's POST,
+// bounces through SSO, and returns the user as a GET to the original
+// URL. Without GET handling the user lands on a 404. Browsers always
+// see a 303 redirect to /settings; scripts that opt into JSON via the
+// Accept header get a JSON body instead.
+
+async function bulkGetRequest(options: {
+  cookie?: string | null;
+  accept?: string | null;
+}): Promise<Request> {
+  const headers = new Headers();
+  if (options.cookie !== null && options.cookie !== undefined) {
+    headers.set('Cookie', options.cookie);
+  }
+  if (options.accept !== null && options.accept !== undefined) {
+    headers.set('Accept', options.accept);
+  }
+  return new Request(`${APP_URL}/api/admin/discovery/retry-bulk`, {
+    method: 'GET',
+    headers,
+  });
+}
+
+describe('GET /api/admin/discovery/retry-bulk — REQ-DISC-004 AC 4 (Access post-auth callback)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('REQ-DISC-004: GET browser path 303-redirects to /settings with count=N (no 404)', async () => {
+    const cookie = await validSessionCookie();
+    const { db } = makeDb(userWith('["ai", "go"]'));
+    const { kv } = makeKv({
+      'sources:ai': JSON.stringify({
+        feeds: [{ name: 'A', url: 'https://a.example/rss', kind: 'rss' }],
+        discovered_at: Date.now(),
+      }),
+      'sources:go': JSON.stringify({ feeds: [], discovered_at: Date.now() }),
+    });
+    const req = await bulkGetRequest({ cookie });
+    const res = await GET(makeContext(req, envWith(db, kv)) as never);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/settings?rediscover=ok&count=1`);
+  });
+
+  it('REQ-DISC-004: GET with Accept: application/json returns a JSON body', async () => {
+    const cookie = await validSessionCookie();
+    const { db } = makeDb(userWith('["go"]'));
+    const { kv } = makeKv({
+      'sources:go': JSON.stringify({ feeds: [], discovered_at: Date.now() }),
+    });
+    const req = await bulkGetRequest({ cookie, accept: 'application/json' });
+    const res = await GET(makeContext(req, envWith(db, kv)) as never);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toContain('application/json');
+    const body = await res.json();
+    expect(body).toEqual({ ok: true, count: 1 });
+  });
+
+  it('REQ-DISC-004: GET without a session returns 401 (Access JWT alone is not enough)', async () => {
+    const { db } = makeDb(userWith('["go"]'));
+    const { kv } = makeKv();
+    const req = await bulkGetRequest({});
+    const res = await GET(makeContext(req, envWith(db, kv)) as never);
+    expect(res.status).toBe(401);
   });
 });

@@ -12,20 +12,20 @@
       <path d="M20,11H4V8H20M20,15H13V13H20M20,19H13V17H20M11,19H4V13H11M20.33,4.67L18.67,3L17,4.67L15.33,3L13.67,4.67L12,3L10.33,4.67L8.67,3L7,4.67L5.33,3L3.67,4.67L2,3V19A2,2 0 0,0 4,21H20A2,2 0 0,0 22,19V3L20.33,4.67Z"/>
     </svg>
   </g>
-  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
     <text x="280" y="260" font-size="112" font-weight="700" letter-spacing="-4">
       <tspan fill="#7a7a80">news</tspan><tspan fill="#111111">digest</tspan>
     </text>
-    <text x="280" y="340" font-size="34" font-weight="500" fill="#111111" letter-spacing="-0.5">
+    <text x="280" y="340" font-size="36" font-weight="500" fill="#111111" letter-spacing="-0.5">
       Where we're going, we don't need cookie banners.
     </text>
-    <text x="280" y="390" font-size="34" font-weight="400" fill="#4a4a50" letter-spacing="-0.5">
+    <text x="280" y="390" font-size="36" font-weight="500" fill="#111111" letter-spacing="-0.5">
       Tech news, like it's 1995.
     </text>
   </g>
   <line x1="96" y1="530" x2="1104" y2="530" stroke="#e4e4e7" stroke-width="1"/>
-  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
     <text x="96" y="580" font-size="22" font-weight="600" fill="#111111" letter-spacing="4">NEWS.GRAYMATTER.CH</text>
-    <text x="1104" y="580" text-anchor="end" font-size="18" font-weight="500" fill="#7a7a80" letter-spacing="2">GRAY MATTER GMBH</text>
+    <text x="1104" y="580" text-anchor="end" font-size="22" font-weight="600" fill="#7a7a80" letter-spacing="4">GRAY MATTER GMBH</text>
   </g>
 </svg>

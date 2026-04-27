@@ -140,26 +140,30 @@ describe('renderDigestReadyEmail headlines — REQ-MAIL-001 AC 4', () => {
     expect(html).toContain('href="https://news-digest.example.com/digest/a-3/openziti-10-released"');
   });
 
-  it('REQ-MAIL-001 AC 4: each headline shows its source name', () => {
+  it('REQ-MAIL-001 AC 4: source-name labels are NOT rendered next to headlines (Outlook auto-linkifies them)', () => {
     const { html } = renderDigestReadyEmail(makeParams());
-    expect(html).toContain('Cloudflare Blog');
-    expect(html).toContain('OpenZiti Blog');
+    // The source name appears nowhere in the body — neither inside an
+    // anchor (which would render as a link) nor in a plain span next
+    // to it (which Outlook would auto-linkify).
+    expect(html).not.toContain('Cloudflare Blog');
+    expect(html).not.toContain('OpenZiti Blog');
+    expect(html).not.toContain('· Cloudflare Blog');
   });
 
-  it('REQ-MAIL-001 AC 4: html escapes title and source name', () => {
+  it('REQ-MAIL-001 AC 4: html escapes article titles', () => {
     const evilHeadlines: Headline[] = [
       { id: 'evil-1', title: 'Evil <script>alert(1)</script> title', source_name: 'A & B "Newsroom"', slug: 'evil', primary_source_url: 'https://x' },
     ];
     const { html } = renderDigestReadyEmail(makeParams({ headlines: evilHeadlines, tagTally: [] }));
     expect(html).not.toContain('<script>alert(1)</script> title');
     expect(html).toContain('Evil &lt;script&gt;alert(1)&lt;/script&gt; title');
-    expect(html).toContain('A &amp; B &quot;Newsroom&quot;');
   });
 
-  it('REQ-MAIL-001 AC 4: text body lists each headline once with title and source', () => {
+  it('REQ-MAIL-001 AC 4: text body lists each headline once with title and link only (no source label)', () => {
     const { text } = renderDigestReadyEmail(makeParams());
-    expect(text).toContain('- Cloudflare ships D1 GA (Cloudflare Blog)');
-    expect(text).toContain('- MCP servers explode in 2026 (Hacker News)');
+    expect(text).toContain('- Cloudflare ships D1 GA');
+    expect(text).not.toContain('(Cloudflare Blog)');
+    expect(text).not.toContain('(Hacker News)');
     // Each headline URL appears exactly once as a "  https://..." line.
     expect(text.split('https://news-digest.example.com/digest/a-1/cloudflare-ships-d1-ga').length - 1).toBe(1);
   });
@@ -257,17 +261,34 @@ describe('renderDigestReadyEmail footer — REQ-MAIL-001 AC 7', () => {
   });
 });
 
-// ---------- Signature (AC 8) ----------
+// ---------- Brand footer (AC 8) ----------
 
-describe('renderDigestReadyEmail signature — REQ-MAIL-001 AC 8', () => {
-  it('REQ-MAIL-001 AC 8: signature "Gray Matter" is a hyperlink to https://graymatter.ch', () => {
+describe('renderDigestReadyEmail brand footer — REQ-MAIL-001 AC 8', () => {
+  it('REQ-MAIL-001 AC 8: html footer mirrors the in-app site footer with both names linked', () => {
     const { html } = renderDigestReadyEmail(makeParams());
-    expect(html).toMatch(/<a href="https:\/\/graymatter\.ch"[^>]*>— Gray Matter<\/a>/);
+    expect(html).toContain('Built with');
+    expect(html).toMatch(/<a href="https:\/\/codeflare\.ch"[^>]*>Codeflare<\/a>/);
+    expect(html).toMatch(/<a href="https:\/\/graymatter\.ch"[^>]*>Gray Matter GmbH<\/a>/);
+    expect(html).toContain('&copy; 2026');
+    // The old "— Gray Matter" signature must not survive the refactor.
+    expect(html).not.toContain('— Gray Matter');
   });
 
-  it('REQ-MAIL-001 AC 8: text signature includes the graymatter.ch URL', () => {
+  it('REQ-MAIL-001 AC 8: text footer carries both URLs', () => {
     const { text } = renderDigestReadyEmail(makeParams());
-    expect(text).toContain('— Gray Matter (https://graymatter.ch)');
+    expect(text).toContain('Built with Codeflare (https://codeflare.ch)');
+    expect(text).toContain('Gray Matter GmbH (https://graymatter.ch)');
+    expect(text).not.toContain('— Gray Matter');
+  });
+});
+
+// ---------- No em-dashes (AC 8 / typography polish) ----------
+
+describe('renderDigestReadyEmail typography — REQ-MAIL-001', () => {
+  it('REQ-MAIL-001: no em-dashes in greeting, body, or footer', () => {
+    const { html, text } = renderDigestReadyEmail(makeParams());
+    expect(html).not.toMatch(/—/);
+    expect(text).not.toMatch(/—/);
   });
 });
 
@@ -289,10 +310,11 @@ describe('renderDigestReadyEmail zero-unread fallback — REQ-MAIL-001 AC 10', (
     expect(html).toContain('Sent 08:00 Europe/Zurich');
   });
 
-  it('REQ-MAIL-001 AC 10: zero-headline body still has the footer + signature', () => {
+  it('REQ-MAIL-001 AC 11: zero-headline body still has the manage-notifications link and the brand footer', () => {
     const { html } = renderDigestReadyEmail(makeParams({ headlines: [] }));
     expect(html).toContain('Manage notifications');
     expect(html).toContain('href="https://graymatter.ch"');
+    expect(html).toContain('href="https://codeflare.ch"');
   });
 });
 

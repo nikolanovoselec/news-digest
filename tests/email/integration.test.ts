@@ -101,7 +101,7 @@ describe('sendEmail payload — REQ-MAIL-001', () => {
     expect(headers.get('Content-Type')).toBe('application/json');
   });
 
-  it('REQ-MAIL-001: payload.from equals env.RESEND_FROM', async () => {
+  it('REQ-MAIL-001 AC 9: payload.from passes through env.RESEND_FROM verbatim when it already carries a display name', async () => {
     const cap = captureSingleFetch();
     await sendEmail(
       makeEnv({ RESEND_FROM: 'News Digest <digest@example.com>' }),
@@ -109,6 +109,16 @@ describe('sendEmail payload — REQ-MAIL-001', () => {
     );
     const call = cap.get();
     expect(call.body.from).toBe('News Digest <digest@example.com>');
+  });
+
+  it('REQ-MAIL-001 AC 9: payload.from wraps a bare RESEND_FROM email with the brand display name', async () => {
+    const cap = captureSingleFetch();
+    await sendEmail(
+      makeEnv({ RESEND_FROM: 'noreply@graymatter.ch' }),
+      makeParams(),
+    );
+    const call = cap.get();
+    expect(call.body.from).toBe('News Digest <noreply@graymatter.ch>');
   });
 
   it('REQ-MAIL-001: payload.to is an array containing the recipient', async () => {

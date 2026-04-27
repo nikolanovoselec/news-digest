@@ -30,15 +30,47 @@ function googleEnv(db: D1Database): Partial<Env> {
   };
 }
 
-/** D1 stub that returns existingRow on SELECT and records writes. */
-function makeDb(existingRow: Record<string, unknown> | null): {
+/** D1 stub for the OAuth callback flow. The callback now issues three
+ *  SELECTs in sequence: (1) auth_links lookup by (provider, sub),
+ *  (2) users lookup by email, (3) users-by-id lookup for the final
+ *  user row. Each query needs its own response shape, so the stub
+ *  inspects the SQL prefix instead of returning the same row everywhere.
+ *
+ *  - `auth_links` lookup: returns { user_id } when authLinkUserId is set
+ *  - email lookup: returns { id } when userByEmailId is set
+ *  - users-by-id lookup: returns existingRow when set
+ *  Unmatched SELECTs return null. */
+function makeDb(
+  existingRow: Record<string, unknown> | null,
+  options: {
+    authLinkUserId?: string | null;
+    userByEmailId?: string | null;
+  } = {},
+): {
   db: D1Database;
   runCalls: { sql: string; params: unknown[] }[];
 } {
   const runCalls: { sql: string; params: unknown[] }[] = [];
   const prepareSpy = vi.fn().mockImplementation((sql: string) => ({
     bind: (...params: unknown[]) => ({
-      first: vi.fn().mockResolvedValue(sql.startsWith('SELECT') ? existingRow : null),
+      first: vi.fn().mockImplementation(async () => {
+        if (sql.includes('FROM auth_links')) {
+          return options.authLinkUserId !== undefined && options.authLinkUserId !== null
+            ? { user_id: options.authLinkUserId }
+            : null;
+        }
+        if (sql.startsWith('SELECT id FROM users WHERE email')) {
+          return options.userByEmailId !== undefined && options.userByEmailId !== null
+            ? { id: options.userByEmailId }
+            : null;
+        }
+        if (sql.startsWith('SELECT id, tz, session_version')) {
+          return existingRow;
+        }
+        // Other SELECTs (e.g. session middleware lookups) — fall back
+        // to the legacy shape so existing tests keep working.
+        return sql.startsWith('SELECT') ? existingRow : null;
+      }),
       run: vi.fn().mockImplementation(async () => {
         runCalls.push({ sql, params });
         return { success: true, meta: { changes: 1 } };
@@ -305,6 +337,72 @@ describe('GET /api/auth/google/callback — REQ-AUTH-001', () => {
     expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/digest`);
     const insert = runCalls.find((c) => c.sql.startsWith('INSERT INTO users'));
     expect(insert!.params[0]).toBe('google:987654321');
+  });
+
+  it('REQ-AUTH-006: cross-provider dedup — Google sign-in with email matching a GitHub user reuses the existing account', async () => {
+    // The user previously registered via GitHub; a `users` row exists
+    // keyed `12345`. They now sign in via Google (sub=987654321) with
+    // the same verified email. No (google, 987654321) auth_link exists
+    // yet, but the email lookup matches the GitHub user — so we link
+    // the new (google, 987654321) → 12345 instead of creating a fresh
+    // users row.
+    const { db, runCalls } = makeDb(
+      { id: '12345', tz: 'UTC', session_version: 1, digest_hour: 8, hashtags_json: '[]' },
+      { userByEmailId: '12345' },
+    );
+    mockGoogleFetch({});
+    const req = callbackRequest({ state: 'match', code: 'gcode' }, 'match');
+    const res = await GET(makeContext(req, googleEnv(db)) as never);
+    expect(res.status).toBe(303);
+    // No new users row inserted — the email match short-circuited
+    // path C and we re-used the GitHub user.
+    const inserts = runCalls.filter((c) => c.sql.startsWith('INSERT INTO users'));
+    expect(inserts).toHaveLength(0);
+    // A new auth_links row was inserted, mapping (google, 987654321) → 12345.
+    const linkInsert = runCalls.find((c) => c.sql.includes('INSERT OR IGNORE INTO auth_links'));
+    expect(linkInsert).toBeDefined();
+    expect(linkInsert!.params).toEqual(['google', '987654321', '12345', expect.any(Number)]);
+    // The session JWT subject is the existing GitHub user_id, not 'google:987654321'.
+    const sessionCookie = setCookiesOf(res).find((c) => c.startsWith(`${SESSION_COOKIE_NAME}=`));
+    expect(sessionCookie).toBeDefined();
+    const token = sessionCookie!.split(';')[0]!.split('=')[1]!;
+    const payload = await verifySession(token, JWT_SECRET);
+    expect(payload!.sub).toBe('12345');
+  });
+
+  it('REQ-AUTH-006: known auth_link short-circuits straight to the linked user_id (no email lookup, no INSERT)', async () => {
+    // A subsequent Google login by an already-linked user.
+    const { db, runCalls } = makeDb(
+      { id: '12345', tz: 'UTC', session_version: 1, digest_hour: 8, hashtags_json: '["ai"]' },
+      { authLinkUserId: '12345' },
+    );
+    mockGoogleFetch({});
+    const req = callbackRequest({ state: 'match', code: 'gcode' }, 'match');
+    const res = await GET(makeContext(req, googleEnv(db)) as never);
+    expect(res.status).toBe(303);
+    // No INSERT INTO users (existing row), no NEW auth_links INSERT
+    // (the link already existed). Only an UPDATE users to refresh
+    // email + display name.
+    const userInserts = runCalls.filter((c) => c.sql.startsWith('INSERT INTO users'));
+    const linkInserts = runCalls.filter((c) => c.sql.includes('INSERT OR IGNORE INTO auth_links'));
+    expect(userInserts).toHaveLength(0);
+    expect(linkInserts).toHaveLength(0);
+  });
+
+  it('REQ-AUTH-006: brand-new user (no link, no email match) creates users row AND auth_links row in tandem', async () => {
+    // First-ever sign-in for this user via any provider.
+    const { db, runCalls } = makeDb(null);
+    mockGoogleFetch({});
+    const req = callbackRequest({ state: 'match', code: 'gcode' }, 'match');
+    const res = await GET(makeContext(req, googleEnv(db)) as never);
+    expect(res.status).toBe(303);
+    const userInsert = runCalls.find((c) => c.sql.startsWith('INSERT INTO users'));
+    const linkInsert = runCalls.find((c) => c.sql.includes('INSERT OR IGNORE INTO auth_links'));
+    expect(userInsert).toBeDefined();
+    expect(linkInsert).toBeDefined();
+    // Both rows reference the same user_id (the canonical google:<sub> form).
+    expect(userInsert!.params[0]).toBe('google:987654321');
+    expect(linkInsert!.params).toEqual(['google', '987654321', 'google:987654321', expect.any(Number)]);
   });
 
   it('REQ-AUTH-001: state cookie is the google-scoped one (cross-provider cookie does not satisfy the gate)', async () => {
