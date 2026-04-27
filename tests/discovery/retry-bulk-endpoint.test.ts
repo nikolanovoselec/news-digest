@@ -376,10 +376,22 @@ describe('GET /api/admin/discovery/retry-bulk — REQ-DISC-004 AC 4 (Access post
     expect(body).toEqual({ ok: true, count: 1 });
   });
 
-  it('REQ-DISC-004: GET without a session returns 401 (Access JWT alone is not enough)', async () => {
+  it('REQ-DISC-004: GET browser path without a session redirects to /settings (no raw JSON)', async () => {
+    // Without a session, browsers must NEVER see a JSON 401 — that
+    // looks like a 404 to a user who just clicked through Cloudflare
+    // Access SSO. The handler redirects to /settings instead.
     const { db } = makeDb(userWith('["go"]'));
     const { kv } = makeKv();
     const req = await bulkGetRequest({});
+    const res = await GET(makeContext(req, envWith(db, kv)) as never);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toBe(`${APP_ORIGIN}/settings?rediscover=error`);
+  });
+
+  it('REQ-DISC-004: GET with Accept: application/json without a session returns 401 (scripted callers opt in)', async () => {
+    const { db } = makeDb(userWith('["go"]'));
+    const { kv } = makeKv();
+    const req = await bulkGetRequest({ accept: 'application/json' });
     const res = await GET(makeContext(req, envWith(db, kv)) as never);
     expect(res.status).toBe(401);
   });
