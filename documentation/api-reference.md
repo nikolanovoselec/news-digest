@@ -388,7 +388,7 @@ Scripts and `curl` callers must send `Accept: application/json` to receive the J
 
 **Error response (both methods):** `500 "Failed to dispatch coordinator"` when the D1 INSERT or queue send throws.
 
-**Implements:** [REQ-OPS-004](../sdd/observability.md#req-ops-004-crawler-policy-and-public-surface-discoverability) (operator tooling surface), [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+**Implements:** [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint), [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
 
 ---
 
