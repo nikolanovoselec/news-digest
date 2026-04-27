@@ -41,6 +41,10 @@ const session = await loadSession(
 if (session === null) {
   return Astro.redirect('/', 303);
 }
+// CF-010 — silent-refresh: attach near-expiry re-issued cookie.
+if (session.refreshCookie !== null) {
+  Astro.response.headers.append('Set-Cookie', session.refreshCookie);
+}
 Astro.locals.user = session.user;
 
 // Enforce the settings-incomplete / already-complete redirect rules.
@@ -51,6 +55,9 @@ const gated = requireSettingsComplete({
   locals: Astro.locals,
 } as unknown as APIContext);
 if (gated !== null) {
+  if (session.refreshCookie !== null) {
+    gated.headers.append('Set-Cookie', session.refreshCookie);
+  }
   return gated;
 }
 

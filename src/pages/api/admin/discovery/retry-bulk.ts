@@ -1,10 +1,14 @@
 // Implements REQ-DISC-004
+// Implements REQ-AUTH-001
 //
 // POST /api/admin/discovery/retry-bulk — re-queue every "stuck" tag in one
 // shot. A tag is stuck when its `sources:{tag}` KV entry has an empty
 // `feeds` array (REQ-DISC-001 exhaustion path or REQ-DISC-003 self-
 // healing eviction). Brand-new tags (no entry yet) are NOT stuck and
 // are not queued.
+//
+// Three-layer admin gate (CF-001) replaces the previous loadSession-only
+// auth: Cloudflare Access header + session + ADMIN_EMAIL match.
 //
 // Always native form-submission shaped: this endpoint exists for the
 // "Discover missing sources" button on /settings. Scripted callers
@@ -34,6 +38,7 @@ import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
 import { loadSession } from '~/middleware/auth';
+import { requireAdminSession } from '~/middleware/admin-auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
 /** Parse the user's stored hashtags_json (a JSON array of strings,
@@ -153,10 +158,14 @@ export async function POST(context: APIContext): Promise<Response> {
   }
   const appOrigin = originOf(env.APP_URL);
 
-  // Origin check first — same defense-in-depth as the per-tag endpoint.
+  // Three-layer admin gate (CF-001).
+  const adminAuth = await requireAdminSession(context);
+  if (!adminAuth.ok) return adminAuth.response;
+
+  // Origin check still runs for defence-in-depth.
   const originResult = checkOrigin(context.request, appOrigin);
   if (!originResult.ok) {
-    return originResult.response!;
+    return originResult.response;
   }
 
   const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
@@ -196,14 +205,20 @@ export async function GET(context: APIContext): Promise<Response> {
 
   const wantsJson = (context.request.headers.get('Accept') ?? '').includes('application/json');
 
+  // Three-layer admin gate (CF-001). Browsers landing here without
+  // admin clearance get redirected to /settings rather than seeing raw
+  // JSON — same UX guarantee the previous comment block relied on.
+  const adminAuth = await requireAdminSession(context);
+  if (!adminAuth.ok) {
+    if (wantsJson) return adminAuth.response;
+    return new Response(null, {
+      status: 303,
+      headers: { Location: `${appOrigin}/settings?rediscover=denied` },
+    });
+  }
+
   const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
   if (session === null) {
-    // Browsers landing here without a valid session (cookie expired,
-    // session_version bumped, etc.) must NOT see raw JSON — that
-    // contradicts the comment block above and looks like a 404 to a
-    // user who just clicked through Cloudflare Access. Redirect to
-    // /settings instead and only emit JSON to scripted callers that
-    // explicitly opted in.
     if (wantsJson) {
       return errorResponse('unauthorized');
     }

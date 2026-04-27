@@ -32,6 +32,12 @@ const session = await loadSession(Astro.request, env.DB, env.OAUTH_JWT_SECRET);
 if (session === null) {
   return Astro.redirect('/', 303);
 }
+// CF-010 — silent-refresh: attach the re-issued session cookie when
+// loadSession says it's near expiry so plain page navigation extends
+// the session per REQ-AUTH-002 AC 4.
+if (session.refreshCookie !== null) {
+  Astro.response.headers.append('Set-Cookie', session.refreshCookie);
+}
 Astro.locals.user = session.user;
 
 const gated = requireSettingsComplete({
@@ -39,6 +45,10 @@ const gated = requireSettingsComplete({
   locals: Astro.locals,
 } as unknown as APIContext);
 if (gated !== null) {
+  // The gate may emit a redirect; preserve the silent-refresh cookie.
+  if (session.refreshCookie !== null) {
+    gated.headers.append('Set-Cookie', session.refreshCookie);
+  }
   return gated;
 }
 
@@ -470,10 +480,23 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     remove.setAttribute('role', 'button');
     remove.setAttribute('tabindex', '-1');
     remove.setAttribute('aria-label', `Remove ${tag} from your hashtags`);
-    remove.innerHTML =
-      '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
-      '<path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/>' +
-      '</svg>';
+    // CF-032 — build SVG via DOM API instead of innerHTML. Inputs are
+    // constants today, but the DOM-construction pattern is what we
+    // want every contributor to reach for.
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('width', '12');
+    svg.setAttribute('height', '12');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'currentColor');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute(
+      'd',
+      'M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z',
+    );
+    svg.appendChild(path);
+    remove.appendChild(svg);
     slot.appendChild(remove);
     chip.appendChild(slot);
 

@@ -20,6 +20,10 @@ Stored via `wrangler secret put <name>`. Never committed to git.
 | `RESEND_API_KEY` | Resend API key for digest-ready emails (starts with `re_`); optional — when unset the runtime short-circuits silently and no email is sent |
 | `RESEND_FROM` | Sender address for emails, e.g., `digest@example.com` or `News Digest <digest@example.com>`; domain must be verified in Resend. A bare address (no `<`) is automatically wrapped in `News Digest <address>` display-name format before sending so recipients see a friendly name in their inbox regardless of the stored format. |
 | `APP_URL` | Canonical origin, e.g., `https://digest.example.com`; used in email CTA links, OAuth redirect URI construction, and as the reference value for the Origin CSRF check ([REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)) |
+| `ADMIN_EMAIL` | Operator email that gates `/api/admin/*` ([REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8). Required in production; when unset, every admin endpoint returns HTTP 403. Match is case-insensitive against `users.email`. |
+| `CF_ACCESS_AUD` | Optional Cloudflare Access audience tag. When set, `/api/admin/*` additionally validates that the `aud` claim of the `Cf-Access-Jwt-Assertion` header matches. When unset, only header presence is required (the JWT signature is trusted because Cloudflare Access already verified it before forwarding). |
+| `DEV_BYPASS_TOKEN` | Optional Bearer token that gates `/api/dev/login` and `/api/dev/trigger-scrape` for local + e2e flows. When unset, those endpoints return HTTP 404. Set only on dev/staging deployments, never production. |
+| `DEV_BYPASS_USER_ID` | Optional override for the user id minted by `/api/dev/login`. When unset, the endpoint defaults to the first non-system user row by `created_at`. |
 
 ## GitHub Actions Secrets (CI deploy only)
 

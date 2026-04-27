@@ -1,8 +1,15 @@
 // Implements REQ-DISC-004
+// Implements REQ-AUTH-001
 //
 // POST /api/admin/discovery/retry — force a fresh LLM-assisted discovery for
 // a tag whose existing `sources:{tag}` entry is empty (or to retry a
 // stubborn tag).
+//
+// Three-layer admin gate (CF-001) replaces the previous loadSession-only
+// auth: requires Cloudflare Access header + valid session + ADMIN_EMAIL
+// match. Beyond the gate, the user's `hashtags_json` is still checked so
+// admins can only retry tags they themselves saved (no arbitrary LLM
+// blast-radius).
 //
 // The endpoint accepts two body formats:
 //   - application/json — body `{"tag":"<tag>"}`; response `{ok: true}`
@@ -36,6 +43,7 @@ import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
 import { loadSession } from '~/middleware/auth';
+import { requireAdminSession } from '~/middleware/admin-auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
 interface RetryBody {
@@ -92,14 +100,28 @@ export async function POST(context: APIContext): Promise<Response> {
   const appOrigin = originOf(env.APP_URL);
   const wantsFormRedirect = isFormEncoded(context.request);
 
-  // Origin check first — the session cookie cannot be presented by a
-  // cross-site attacker because SameSite=Lax, but the Origin header is
-  // a hardened defense-in-depth layer (REQ-AUTH-003).
-  const originResult = checkOrigin(context.request, appOrigin);
-  if (!originResult.ok) {
-    return originResult.response!;
+  // Three-layer admin gate (CF-001).
+  const adminAuth = await requireAdminSession(context);
+  if (!adminAuth.ok) {
+    if (wantsFormRedirect) {
+      return new Response(null, {
+        status: 303,
+        headers: { Location: `${appOrigin}/settings?rediscover=denied` },
+      });
+    }
+    return adminAuth.response;
   }
 
+  // Origin check still runs for defence-in-depth — admin auth doesn't
+  // protect against a logged-in admin's browser being weaponised by
+  // another origin's JS.
+  const originResult = checkOrigin(context.request, appOrigin);
+  if (!originResult.ok) {
+    return originResult.response;
+  }
+
+  // Re-load session to get the user's hashtags_json (the admin gate
+  // already verified the session, but it doesn't return the full user).
   const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
   if (session === null) {
     return errorResponse('unauthorized');

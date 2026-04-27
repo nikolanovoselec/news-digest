@@ -57,7 +57,7 @@ async function authorize(
 
   const originResult = checkOrigin(context.request, appOrigin);
   if (!originResult.ok) {
-    return { kind: 'reject', response: originResult.response! };
+    return { kind: 'reject', response: originResult.response };
   }
 
   const session = await loadSession(

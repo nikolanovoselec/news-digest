@@ -77,6 +77,9 @@ function envWith(db: D1Database, kv: KVNamespace): Partial<Env> {
     OAUTH_JWT_SECRET: JWT_SECRET,
     DB: db,
     KV: kv,
+    // CF-001 — retry now requires admin gate. Tests use the
+    // session-row email as the admin email.
+    ADMIN_EMAIL: 'alice@example.com',
   };
 }
 
@@ -84,6 +87,9 @@ async function retryRequest(options: {
   origin?: string | null;
   cookie?: string | null;
   body?: unknown;
+  /** Cf-Access-Jwt-Assertion override; defaults to a placeholder so
+   *  tests that don't care about the admin gate still pass. */
+  accessJwt?: string | null;
 }): Promise<Request> {
   const headers = new Headers({ 'Content-Type': 'application/json' });
   if (options.origin !== null && options.origin !== undefined) {
@@ -91,6 +97,10 @@ async function retryRequest(options: {
   }
   if (options.cookie !== null && options.cookie !== undefined) {
     headers.set('Cookie', options.cookie);
+  }
+  const access = options.accessJwt === undefined ? 'placeholder.jwt.sig' : options.accessJwt;
+  if (access !== null) {
+    headers.set('Cf-Access-Jwt-Assertion', access);
   }
   const init: RequestInit = { method: 'POST', headers };
   if (options.body !== undefined) {

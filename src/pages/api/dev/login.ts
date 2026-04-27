@@ -23,20 +23,15 @@ import type { APIContext } from 'astro';
 import { signSession } from '~/lib/session-jwt';
 import { buildSessionCookie } from '~/middleware/auth';
 import { SYSTEM_USER_ID } from '~/lib/system-user';
+import { timingSafeEqualHmac } from '~/lib/crypto';
 
 interface BypassEnv {
   DEV_BYPASS_TOKEN?: string;
   DEV_BYPASS_USER_ID?: string;
 }
 
-async function timingSafeEqual(a: string, b: string): Promise<boolean> {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
-}
+// `timingSafeEqualHmac` is imported from `~/lib/crypto` (CF-005 — was
+// open-coded as a JS XOR loop here and in dev/trigger-scrape.ts).
 
 export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env as typeof context.locals.runtime.env &
@@ -52,7 +47,10 @@ export async function POST(context: APIContext): Promise<Response> {
 
   const auth = context.request.headers.get('Authorization') ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(auth);
-  if (match === null || !(await timingSafeEqual(match[1] ?? '', bypass))) {
+  if (
+    match === null ||
+    !(await timingSafeEqualHmac(match[1] ?? '', bypass, env.OAUTH_JWT_SECRET))
+  ) {
     return new Response(null, { status: 404 });
   }
 

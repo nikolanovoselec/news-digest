@@ -123,7 +123,7 @@ describe('session-jwt', () => {
   });
 
   describe('shouldRefreshJWT', () => {
-    it('REQ-AUTH-002: returns true when less than 15 minutes remain', () => {
+    it('REQ-AUTH-002: returns true when less than 5 minutes remain (CF-010)', () => {
       const now = 1_000_000;
       const claims: SessionClaims = {
         sub: '1',
@@ -131,12 +131,12 @@ describe('session-jwt', () => {
         ghl: 'a',
         sv: 1,
         iat: now - 3000,
-        exp: now + 10 * 60, // 10 minutes remaining
+        exp: now + 2 * 60, // 2 minutes remaining — well under 5-min threshold
       };
       expect(shouldRefreshJWT(claims, now)).toBe(true);
     });
 
-    it('REQ-AUTH-002: returns false when more than 15 minutes remain', () => {
+    it('REQ-AUTH-002: returns false when more than 5 minutes remain (CF-010)', () => {
       const now = 1_000_000;
       const claims: SessionClaims = {
         sub: '1',
@@ -170,7 +170,7 @@ describe('session-jwt', () => {
         ghl: 'a',
         sv: 1,
         iat: nowSec - 3000,
-        exp: nowSec + 5 * 60,
+        exp: nowSec + 2 * 60, // 2 minutes — within 5-min threshold (CF-010)
       };
       const far: SessionClaims = {
         sub: '1',

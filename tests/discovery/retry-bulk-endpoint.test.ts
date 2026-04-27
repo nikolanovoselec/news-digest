@@ -131,6 +131,8 @@ function envWith(db: D1Database, kv: KVNamespace): Partial<Env> {
     OAUTH_JWT_SECRET: JWT_SECRET,
     DB: db,
     KV: kv,
+    // CF-001 — retry-bulk now requires admin gate.
+    ADMIN_EMAIL: 'alice@example.com',
   };
 }
 
@@ -153,6 +155,7 @@ async function validSessionCookie(): Promise<string> {
 async function bulkRequest(options: {
   origin?: string | null;
   cookie?: string | null;
+  accessJwt?: string | null;
 }): Promise<Request> {
   const headers = new Headers({
     'Content-Type': 'application/x-www-form-urlencoded',
@@ -162,6 +165,11 @@ async function bulkRequest(options: {
   }
   if (options.cookie !== null && options.cookie !== undefined) {
     headers.set('Cookie', options.cookie);
+  }
+  // CF-001 — admin gate requires this header. Default to a placeholder.
+  const access = options.accessJwt === undefined ? 'placeholder.jwt.sig' : options.accessJwt;
+  if (access !== null) {
+    headers.set('Cf-Access-Jwt-Assertion', access);
   }
   return new Request(`${APP_URL}/api/admin/discovery/retry-bulk`, {
     method: 'POST',

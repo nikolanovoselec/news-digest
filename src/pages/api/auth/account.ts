@@ -65,7 +65,7 @@ async function deleteAccountCore(
 
   const originResult = checkOrigin(context.request, appOrigin);
   if (!originResult.ok) {
-    return { ok: false, response: originResult.response! };
+    return { ok: false, response: originResult.response };
   }
 
   const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);

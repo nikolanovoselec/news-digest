@@ -38,4 +38,21 @@ interface Env {
   RESEND_API_KEY: string;
   RESEND_FROM: string;
   APP_URL: string;
+
+  // Admin gate (REQ-AUTH-001 / CF-001) — operator email that, when matched
+  // against the session user's email, unlocks `/api/admin/*`. Required for
+  // production; dev environments may leave it unset (admin routes 401).
+  ADMIN_EMAIL: string;
+
+  // Cloudflare Access audience tag (REQ-AUTH-001 / CF-001) — when set,
+  // admin routes verify the `aud` claim of the `Cf-Access-Jwt-Assertion`
+  // header against this value. When unset, only the header presence is
+  // required.
+  CF_ACCESS_AUD?: string;
+
+  // Optional dev bypass token (REQ-AUTH-001 / CF-064) — Bearer token gating
+  // `/api/dev/login` for local + e2e flows. When unset, the dev login
+  // endpoint returns 404.
+  DEV_BYPASS_TOKEN?: string;
+  DEV_BYPASS_USER_ID?: string;
 }

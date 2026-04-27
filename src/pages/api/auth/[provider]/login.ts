@@ -26,6 +26,8 @@ import {
   type ProviderConfig,
   type ProviderName,
 } from '~/lib/oauth-providers';
+import { base64UrlEncode } from '~/lib/crypto';
+import { enforceRateLimit, rateLimitResponse, clientIp, RATE_LIMIT_RULES } from '~/lib/rate-limit';
 
 /** Build the state-cookie name for a given provider. Per-provider
  *  scoping (vs a single shared `oauth_state` cookie) lets a user open
@@ -52,13 +54,8 @@ export function generateOAuthState(): string {
   return base64UrlEncode(bytes);
 }
 
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]!);
-  }
-  return btoa(binary).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-}
+// `base64UrlEncode` is imported from `~/lib/crypto` (CF-005 — was
+// duplicated here and in `session-jwt.ts`).
 
 /**
  * Build the `Set-Cookie` header value for the short-lived OAuth state
@@ -143,6 +140,14 @@ async function startOAuth(context: APIContext): Promise<Response> {
   ) {
     return errorResponse('oauth_not_configured');
   }
+
+  // CF-028 — application-layer rate limit on OAuth login initiation.
+  const rateResult = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.AUTH_LOGIN,
+    `ip:${clientIp(context.request)}`,
+  );
+  if (!rateResult.ok) return rateLimitResponse(rateResult.retryAfter);
 
   const origin = originOf(appUrl);
   const state = generateOAuthState();

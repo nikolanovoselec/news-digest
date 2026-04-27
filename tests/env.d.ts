@@ -22,6 +22,10 @@ declare namespace Cloudflare {
     RESEND_API_KEY: string;
     RESEND_FROM: string;
     APP_URL: string;
+    ADMIN_EMAIL: string;
+    CF_ACCESS_AUD?: string;
+    DEV_BYPASS_TOKEN?: string;
+    DEV_BYPASS_USER_ID?: string;
 
     // Test-only: migrations list injected by @cloudflare/vitest-pool-workers
     // when `[[d1_databases]].migrations_dir` is set in wrangler.test.toml.

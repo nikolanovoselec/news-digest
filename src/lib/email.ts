@@ -284,6 +284,10 @@ export interface SendEmailParams {
   subject: string;
   text: string;
   html: string;
+  /** Stable identifier (typically `users.id`) to attach to log lines
+   *  instead of the raw recipient email. CF-003 — keeps PII out of
+   *  Cloudflare Logs while preserving operational debuggability. */
+  logRecipientId?: string;
 }
 
 /** Outcome of a send attempt. Never throws — callers branch on `sent`.
@@ -327,7 +331,7 @@ export async function sendEmail(
     env.RESEND_FROM === ''
   ) {
     log('info', 'email.send.failed', {
-      to: params.to,
+      user_id: params.logRecipientId ?? null,
       status: null,
       error: 'resend_not_configured',
     });
@@ -356,9 +360,9 @@ export async function sendEmail(
     });
   } catch (err) {
     log('error', 'email.send.failed', {
-      to: params.to,
+      user_id: params.logRecipientId ?? null,
       status: null,
-      error: err instanceof Error ? err.message : String(err),
+      error: (err instanceof Error ? err.message : String(err)).slice(0, 200),
     });
     return { sent: false, error_code: 'resend_error' };
   }
@@ -366,12 +370,12 @@ export async function sendEmail(
   if (!response.ok) {
     let resendDetail = '';
     try {
-      resendDetail = (await response.text()).slice(0, 500);
+      resendDetail = (await response.text()).slice(0, 200);
     } catch {
       /* body read failure — non-fatal */
     }
     log('error', 'email.send.failed', {
-      to: params.to,
+      user_id: params.logRecipientId ?? null,
       status: response.status,
       resend_detail: resendDetail,
     });

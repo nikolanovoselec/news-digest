@@ -13,10 +13,11 @@ import { errorResponse } from '~/lib/errors';
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
-export interface OriginCheckResult {
-  ok: boolean;
-  response?: Response;
-}
+/** Discriminated union (CF-013) — when ok is false, `response` is
+ *  guaranteed present so callers no longer need a non-null assertion. */
+export type OriginCheckResult =
+  | { ok: true }
+  | { ok: false; response: Response };
 
 /**
  * Verify the Origin header on a state-changing request.

@@ -1,5 +1,6 @@
 // Tests for src/middleware/auth.ts — REQ-AUTH-002 (session validation,
-// session_version check, auto-refresh when <15 min remain).
+// session_version check, auto-refresh when <5 min remain — threshold
+// lowered from 15 → 5 min in CF-010).
 
 import { describe, it, expect, vi } from 'vitest';
 import {
@@ -160,12 +161,13 @@ describe('loadSession', () => {
     expect(bindSpy).toHaveBeenCalledWith('12345');
   });
 
-  it('REQ-AUTH-002: issues a refresh cookie when <15 min remain on the token', async () => {
-    // 10-minute TTL -> shouldRefreshJWT returns true.
+  it('REQ-AUTH-002: issues a refresh cookie when <5 min remain on the token (CF-010)', async () => {
+    // 2-minute TTL -> shouldRefreshJWT returns true under the new
+    // 5-minute threshold (CF-010 lowered from 15 → 5 min).
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       SECRET,
-      10 * 60,
+      2 * 60,
     );
     const { db } = makeDb(baseRow(1));
     const req = new Request('https://example.com/', {
@@ -185,7 +187,7 @@ describe('loadSession', () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       SECRET,
-      10 * 60,
+      2 * 60, // CF-010 — 2 min triggers refresh under 5-min threshold
     );
     const { db } = makeDb(baseRow(1));
     const req = new Request('https://example.com/', {

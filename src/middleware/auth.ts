@@ -3,7 +3,8 @@
 // Session validation middleware for Astro routes. Reads the
 // `__Host-news_digest_session` cookie, verifies the JWT via
 // src/lib/session-jwt, checks `sv` against users.session_version, and
-// auto-refreshes the cookie when less than 15 minutes remain (AC 4).
+// auto-refreshes the cookie when less than 5 minutes remain (AC 4 —
+// threshold lowered from 15 → 5 min in CF-010).
 //
 // The middleware is intentionally framework-agnostic: it operates on
 // Request/Response and mutates a generic locals bag (`{ user?: ... }`).
@@ -11,6 +12,7 @@
 // can call the exported helpers directly.
 
 import { signSession, verifySession, shouldRefreshJWT } from '~/lib/session-jwt';
+import { readCookie as readCookieCanonical } from '~/lib/crypto';
 import type { AuthenticatedUser } from '~/lib/types';
 
 export const SESSION_COOKIE_NAME = '__Host-news_digest_session';
@@ -38,20 +40,12 @@ interface UserRow {
 /**
  * Parse a single cookie value out of a Cookie header string. Returns
  * null when the cookie is absent. Case-sensitive per RFC 6265.
+ *
+ * Re-exported from `~/lib/crypto` (CF-005). New code should import the
+ * canonical version directly; this re-export preserves callers that
+ * already imported `readCookie` from this module.
  */
-export function readCookie(cookieHeader: string | null, name: string): string | null {
-  if (cookieHeader === null || cookieHeader === '') return null;
-  const pairs = cookieHeader.split(';');
-  for (const pair of pairs) {
-    const idx = pair.indexOf('=');
-    if (idx < 0) continue;
-    const k = pair.slice(0, idx).trim();
-    if (k === name) {
-      return pair.slice(idx + 1).trim();
-    }
-  }
-  return null;
-}
+export const readCookie = readCookieCanonical;
 
 /**
  * Build the `Set-Cookie` string for a signed session JWT.

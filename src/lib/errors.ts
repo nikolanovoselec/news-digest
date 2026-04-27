@@ -93,8 +93,10 @@ export const USER_FACING_MESSAGES: Record<ErrorCode, string> = {
   oauth_not_configured: 'Sign-in is not configured. Please contact the site administrator.',
   app_not_configured: 'The application is not configured. Please contact the site administrator.',
 
-  // Account deletion
-  confirmation_required: 'Missing or invalid confirmation. Send {"confirm":"DELETE"}.',
+  // Account deletion. CF-039 — user-facing copy only; API contract
+  // (the literal `{"confirm":"DELETE"}` body shape) is documented in
+  // documentation/api-reference.md, not surfaced to end-users.
+  confirmation_required: 'Account deletion was not confirmed. Use the delete button on the settings page and follow the prompt.',
 
   // Settings validation
   invalid_hashtags: 'One or more of the provided hashtags is not in a valid format.',

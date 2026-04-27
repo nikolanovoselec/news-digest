@@ -22,19 +22,14 @@ import { generateUlid } from '~/lib/ulid';
 import { startRun } from '~/lib/scrape-run';
 import { DEFAULT_MODEL_ID } from '~/lib/models';
 import { log } from '~/lib/log';
+import { timingSafeEqualHmac } from '~/lib/crypto';
 
 interface DevEnv {
   DEV_BYPASS_TOKEN?: string;
 }
 
-async function timingSafeEqual(a: string, b: string): Promise<boolean> {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
-}
+// `timingSafeEqualHmac` from ~/lib/crypto replaces the previously
+// open-coded JS XOR loop (CF-005).
 
 export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env as typeof context.locals.runtime.env &
@@ -45,9 +40,16 @@ export async function POST(context: APIContext): Promise<Response> {
     return new Response(null, { status: 404 });
   }
 
+  if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
+    return new Response(null, { status: 404 });
+  }
+
   const auth = context.request.headers.get('Authorization') ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(auth);
-  if (match === null || !(await timingSafeEqual(match[1] ?? '', bypass))) {
+  if (
+    match === null ||
+    !(await timingSafeEqualHmac(match[1] ?? '', bypass, env.OAUTH_JWT_SECRET))
+  ) {
     return new Response(null, { status: 404 });
   }
 

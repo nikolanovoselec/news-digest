@@ -28,6 +28,7 @@ import { errorResponse } from '~/lib/errors';
 import { loadSession } from '~/middleware/auth';
 import { slugify } from '~/lib/slug';
 import { parseHashtags } from '~/lib/hashtags';
+import { log } from '~/lib/log';
 
 /** Raw row shape for the global-pool article query. */
 interface ArticleRow {
@@ -130,7 +131,14 @@ export async function loadTodayPayload(
           WHERE status = 'ready' ORDER BY started_at DESC LIMIT 1`,
       )
       .first<ScrapeRunRow>();
-  } catch {
+  } catch (err) {
+    // CF-035 — a silent fallback to null hides D1 anomalies that
+    // operationally matter (the dashboard countdown stops working).
+    log('error', 'digest.today.query_failed', {
+      user_id: userId,
+      query: 'last_scrape_run',
+      detail: String(err).slice(0, 200),
+    });
     lastRun = null;
   }
 
@@ -178,7 +186,15 @@ export async function loadTodayPayload(
       .bind(userId, ...userTags)
       .all<ArticleRow>();
     rows = result.results ?? [];
-  } catch {
+  } catch (err) {
+    // CF-035 — log before falling through to empty rows so an operator
+    // can correlate "user reports empty dashboard" with a D1 error.
+    log('error', 'digest.today.query_failed', {
+      user_id: userId,
+      query: 'articles',
+      tag_count: userTags.length,
+      detail: String(err).slice(0, 200),
+    });
     rows = [];
   }
 

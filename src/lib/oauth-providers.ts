@@ -191,11 +191,21 @@ interface GoogleIdTokenClaims {
   iss?: string;
   aud?: string | string[];
   exp?: number;
+  /** Not-before — OIDC Core 5.1; reject when set and in the future. */
+  nbf?: number;
+  /** Authorized Party — OIDC Core 5.1; required when `aud` is array
+   *  with length > 1, must equal the configured client id. */
+  azp?: string;
   email?: string;
   email_verified?: boolean;
   name?: string;
   given_name?: string;
 }
+
+/** Maximum forward clock skew tolerated for `nbf` and similar
+ *  timestamp claims. 60 seconds is the OIDC implementer's-guide
+ *  norm and absorbs typical NTP drift. */
+const OIDC_CLOCK_SKEW_SECONDS = 60;
 
 /** Acceptable `iss` values for a Google-issued id_token. Google's spec
  *  permits both forms; clients must accept either. */
@@ -253,8 +263,8 @@ async function fetchGoogleProfile(args: {
     throw new Error('google_missing_sub');
   }
 
-  // OIDC Core 3.1.3.7 — iss/aud/exp validation. Only enforced when
-  // claims came from an id_token; the userinfo fallback path has
+  // OIDC Core 3.1.3.7 — iss/aud/exp/nbf/azp validation. Only enforced
+  // when claims came from an id_token; the userinfo fallback path has
   // already proven the token was Google's by binding to its TLS
   // endpoint and bearer-token-authenticated session.
   if (fromIdToken) {
@@ -264,15 +274,33 @@ async function fetchGoogleProfile(args: {
     ) {
       throw new Error('google_bad_iss');
     }
+    const audIsArray = Array.isArray(claims.aud);
     const audMatches =
       typeof claims.aud === 'string'
         ? claims.aud === args.clientId
-        : Array.isArray(claims.aud) && claims.aud.includes(args.clientId);
+        : audIsArray && (claims.aud as string[]).includes(args.clientId);
     if (!audMatches) {
       throw new Error('google_bad_aud');
     }
-    if (typeof claims.exp !== 'number' || claims.exp <= Math.floor(Date.now() / 1000)) {
+    // OIDC Core 5.1 — `azp` is REQUIRED when `aud` is an array with
+    // more than one value. The Authorized Party MUST equal our
+    // configured clientId. Defends against a token issued for one
+    // client being accepted by a different client (CF-030).
+    const multiAud = audIsArray && (claims.aud as string[]).length > 1;
+    if (multiAud && claims.azp !== args.clientId) {
+      throw new Error('google_bad_azp');
+    }
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (typeof claims.exp !== 'number' || claims.exp <= nowSec) {
       throw new Error('google_expired_id_token');
+    }
+    // OIDC Core 5.1 — `nbf` is OPTIONAL but must be respected when
+    // present. Reject tokens that are not yet valid (CF-030).
+    if (
+      typeof claims.nbf === 'number' &&
+      claims.nbf > nowSec + OIDC_CLOCK_SKEW_SECONDS
+    ) {
+      throw new Error('google_not_yet_valid');
     }
   }
 

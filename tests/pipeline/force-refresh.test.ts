@@ -1,7 +1,9 @@
 // Tests for /api/admin/force-refresh — operator-only manual coordinator kick.
 //
 // Coverage:
-//   - POST rejects missing/foreign Origin (CSRF defence-in-depth)
+//   - CF-001 admin gate: missing Cf-Access-Jwt-Assertion → 401, missing
+//     session → 401, non-admin email → 403.
+//   - POST rejects missing/foreign Origin (REQ-AUTH-003 CSRF defence)
 //   - POST happy path: startRun + SCRAPE_COORDINATOR.send, 303 redirect
 //   - GET happy path: same backend work, JSON response
 //   - Concurrency guard: if a status='running' row exists within
@@ -11,9 +13,54 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { POST, GET } from '~/pages/api/admin/force-refresh';
+import { signSession } from '~/lib/session-jwt';
+import { SESSION_COOKIE_NAME } from '~/middleware/auth';
 
 const APP_URL = 'https://news-digest.example.com';
 const APP_ORIGIN = 'https://news-digest.example.com';
+const ADMIN_EMAIL = 'admin@example.com';
+const SECRET = 'test-secret-for-hmac-sha256-signing-minimum-length';
+const ACCESS_JWT = 'header.payload.signature';
+
+interface AdminSessionFixture {
+  /** Cookie JWT for the request. Null = no cookie sent. */
+  cookieJwt?: string | null;
+  /** Access JWT header value. Null = header omitted entirely. */
+  accessJwt?: string | null;
+  /** User row returned by loadSession's user lookup. Null = row not found. */
+  userRow?: {
+    id: string;
+    email: string;
+    gh_login: string;
+    tz: string;
+    digest_hour: number | null;
+    digest_minute: number;
+    hashtags_json: string | null;
+    model_id: string | null;
+    email_enabled: number;
+    session_version: number;
+  } | null;
+}
+
+const ADMIN_USER_ROW = {
+  id: 'admin-user-id',
+  email: ADMIN_EMAIL,
+  gh_login: 'admin',
+  tz: 'UTC',
+  digest_hour: 8,
+  digest_minute: 0,
+  hashtags_json: null,
+  model_id: null,
+  email_enabled: 1,
+  session_version: 1,
+};
+
+async function adminCookieJwt(): Promise<string> {
+  return signSession(
+    { sub: ADMIN_USER_ROW.id, email: ADMIN_EMAIL, ghl: 'admin', sv: 1 },
+    SECRET,
+  );
+}
 
 interface PreparedStmt {
   sql: string;
@@ -29,7 +76,7 @@ interface DbFixture {
   calls: Array<{ sql: string; params: unknown[]; verb: 'first' | 'run' }>;
 }
 
-function makeDb(fixture: DbFixture): D1Database {
+function makeDb(fixture: DbFixture, userRow: AdminSessionFixture['userRow'] = ADMIN_USER_ROW): D1Database {
   const prepare = vi.fn().mockImplementation((sql: string) => {
     const bound: unknown[] = [];
     const stmt: PreparedStmt = {
@@ -39,6 +86,9 @@ function makeDb(fixture: DbFixture): D1Database {
         fixture.calls.push({ sql, params: [...bound], verb: 'first' });
         if (sql.includes('FROM scrape_runs')) {
           return fixture.recentRun ?? null;
+        }
+        if (sql.includes('FROM users')) {
+          return userRow ?? null;
         }
         return null;
       }),
@@ -77,6 +127,8 @@ function makeEnv(db: D1Database, queue: Queue<unknown>): Partial<Env> {
     APP_URL,
     DB: db,
     SCRAPE_COORDINATOR: queue as unknown as Env['SCRAPE_COORDINATOR'],
+    ADMIN_EMAIL,
+    OAUTH_JWT_SECRET: SECRET,
   };
 }
 
@@ -89,27 +141,88 @@ function makeContext(request: Request, env: Partial<Env>): unknown {
   };
 }
 
-function refreshRequest(
+async function refreshRequest(
   verb: 'POST' | 'GET',
-  options: { origin?: string | null; accept?: string } = {},
-): Request {
+  options: {
+    origin?: string | null;
+    accept?: string;
+    /** Override the Cf-Access-Jwt-Assertion. null = no header. */
+    accessJwt?: string | null;
+    /** Override the session cookie. null = no cookie. */
+    cookieJwt?: string | null;
+  } = {},
+): Promise<Request> {
   const headers = new Headers({ 'Content-Type': 'application/json' });
   if (options.origin != null) {
     headers.set('Origin', options.origin);
   }
-  // GET path content-negotiates: Accept: application/json returns JSON;
-  // browsers (no/text-html Accept) get a 303 to /settings. Tests assert
-  // the JSON shape, so they opt in via the header.
   headers.set('Accept', options.accept ?? 'application/json');
+  // CF-001 — admin auth headers default to "valid admin" so existing
+  // tests pass; explicit null in the option drops them.
+  const access = options.accessJwt === undefined ? ACCESS_JWT : options.accessJwt;
+  if (access !== null) {
+    headers.set('Cf-Access-Jwt-Assertion', access);
+  }
+  const cookie =
+    options.cookieJwt === undefined
+      ? await adminCookieJwt()
+      : options.cookieJwt;
+  if (cookie !== null) {
+    headers.set('Cookie', `${SESSION_COOKIE_NAME}=${cookie}`);
+  }
   return new Request(`${APP_URL}/api/admin/force-refresh`, { method: verb, headers });
 }
+
+describe('admin-auth gate (CF-001)', () => {
+  it('CF-001: returns 401 when Cf-Access-Jwt-Assertion is missing', async () => {
+    const fixture: DbFixture = { calls: [] };
+    const db = makeDb(fixture);
+    const queue = makeQueue({ sent: [] });
+    const req = await refreshRequest('POST', {
+      origin: APP_ORIGIN,
+      accessJwt: null,
+    });
+    const res = await POST(makeContext(req, makeEnv(db, queue)) as never);
+    expect(res.status).toBe(401);
+  });
+
+  it('CF-001: returns 401 when the session cookie is missing', async () => {
+    const fixture: DbFixture = { calls: [] };
+    const db = makeDb(fixture);
+    const queue = makeQueue({ sent: [] });
+    const req = await refreshRequest('POST', {
+      origin: APP_ORIGIN,
+      cookieJwt: null,
+    });
+    const res = await POST(makeContext(req, makeEnv(db, queue)) as never);
+    expect(res.status).toBe(401);
+  });
+
+  it('CF-001: returns 403 when the session email does NOT match ADMIN_EMAIL', async () => {
+    const fixture: DbFixture = { calls: [] };
+    // Inject a row with a different email — Layer 3 fails.
+    const db = makeDb(fixture, { ...ADMIN_USER_ROW, email: 'not-admin@example.com' });
+    const queue = makeQueue({ sent: [] });
+    // Sign the JWT with the same non-admin email so verifySession succeeds.
+    const jwt = await signSession(
+      { sub: ADMIN_USER_ROW.id, email: 'not-admin@example.com', ghl: 'admin', sv: 1 },
+      SECRET,
+    );
+    const req = await refreshRequest('POST', {
+      origin: APP_ORIGIN,
+      cookieJwt: jwt,
+    });
+    const res = await POST(makeContext(req, makeEnv(db, queue)) as never);
+    expect(res.status).toBe(403);
+  });
+});
 
 describe('POST /api/admin/force-refresh', () => {
   it('rejects POST with missing Origin (REQ-AUTH-003 CSRF defence)', async () => {
     const calls: DbFixture['calls'] = [];
     const db = makeDb({ calls });
     const queue = makeQueue({ sent: [] });
-    const req = refreshRequest('POST', { origin: null });
+    const req = await refreshRequest('POST', { origin: null });
     const res = await POST(makeContext(req, makeEnv(db, queue)) as never);
     expect(res.status).toBe(403);
   });
@@ -118,7 +231,7 @@ describe('POST /api/admin/force-refresh', () => {
     const calls: DbFixture['calls'] = [];
     const db = makeDb({ calls });
     const queue = makeQueue({ sent: [] });
-    const req = refreshRequest('POST', { origin: 'https://evil.example.com' });
+    const req = await refreshRequest('POST', { origin: 'https://evil.example.com' });
     const res = await POST(makeContext(req, makeEnv(db, queue)) as never);
     expect(res.status).toBe(403);
   });
@@ -128,7 +241,7 @@ describe('POST /api/admin/force-refresh', () => {
     const db = makeDb(fixture);
     const qsent: unknown[] = [];
     const queue = makeQueue({ sent: qsent });
-    const req = refreshRequest('POST', { origin: APP_ORIGIN });
+    const req = await refreshRequest('POST', { origin: APP_ORIGIN });
     const res = await POST(makeContext(req, makeEnv(db, queue)) as never);
 
     expect(res.status).toBe(303);
@@ -163,7 +276,7 @@ describe('POST /api/admin/force-refresh', () => {
     const db = makeDb(fixture);
     const qsent: unknown[] = [];
     const queue = makeQueue({ sent: qsent });
-    const req = refreshRequest('POST', { origin: APP_ORIGIN });
+    const req = await refreshRequest('POST', { origin: APP_ORIGIN });
     const res = await POST(makeContext(req, makeEnv(db, queue)) as never);
 
     expect(res.status).toBe(303);
@@ -186,7 +299,7 @@ describe('GET /api/admin/force-refresh', () => {
     const db = makeDb(fixture);
     const qsent: unknown[] = [];
     const queue = makeQueue({ sent: qsent });
-    const req = refreshRequest('GET');
+    const req = await refreshRequest('GET');
     const res = await GET(makeContext(req, makeEnv(db, queue)) as never);
 
     expect(res.status).toBe(200);
@@ -210,7 +323,7 @@ describe('GET /api/admin/force-refresh', () => {
     const db = makeDb(fixture);
     const qsent: unknown[] = [];
     const queue = makeQueue({ sent: qsent });
-    const req = refreshRequest('GET');
+    const req = await refreshRequest('GET');
     const res = await GET(makeContext(req, makeEnv(db, queue)) as never);
 
     expect(res.status).toBe(200);
@@ -235,7 +348,7 @@ describe('GET /api/admin/force-refresh', () => {
     const fixture: DbFixture = { calls: [] };
     const db = makeDb(fixture);
     const queue = makeQueue({ sent: [] });
-    const req = refreshRequest('GET', { origin: null });
+    const req = await refreshRequest('GET', { origin: null });
     const res = await GET(makeContext(req, makeEnv(db, queue)) as never);
     expect(res.status).toBe(200);
   });
@@ -247,7 +360,7 @@ describe('reuse-window SQL contract', () => {
     const fixture: DbFixture = { calls: [] };
     const db = makeDb(fixture);
     const queue = makeQueue({ sent: [] });
-    const req = refreshRequest('GET');
+    const req = await refreshRequest('GET');
     await GET(makeContext(req, makeEnv(db, queue)) as never);
 
     const recent = fixture.calls.find(

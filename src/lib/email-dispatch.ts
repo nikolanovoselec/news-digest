@@ -74,6 +74,19 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
   // per-tz query binds integer hour/minute bounds SQLite can index
   // against. Users without email_enabled=1 are filtered here so the
   // downstream per-tz query is the only one that needs the predicate.
+  // CF-057 — guard: dispatchDailyEmails depends on env.APP_URL to
+  // render the dashboard link in the email body. Missing APP_URL would
+  // produce broken links AND a renderer crash; log once and exit
+  // cleanly rather than emitting a malformed digest.
+  if (typeof env.APP_URL !== 'string' || env.APP_URL === '') {
+    log('error', 'email.send.failed', {
+      user_id: null,
+      status: null,
+      error: 'app_url_not_configured',
+    });
+    return;
+  }
+
   let tzRows: TzRow[];
   try {
     const res = await env.DB.prepare(
@@ -82,7 +95,7 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
     tzRows = res.results ?? [];
   } catch (err) {
     log('error', 'email.send.failed', {
-      to: null,
+      user_id: null,
       status: null,
       error: `tz_probe_failed: ${String(err).slice(0, 200)}`,
     });
@@ -113,7 +126,7 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
       users = res.results ?? [];
     } catch (err) {
       log('error', 'email.send.failed', {
-        to: null,
+        user_id: null,
         status: null,
         error: `user_scan_failed: ${String(err).slice(0, 200)}`,
       });
@@ -152,7 +165,7 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
           headlines = hSettled.value;
         } else {
           log('error', 'email.dispatch.degraded', {
-            to: user.email,
+            user_id: user.id,
             error: `headlines_fetch_failed: ${String(hSettled.reason).slice(0, 200)}`,
           });
         }
@@ -161,7 +174,7 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
           totalSinceMidnight = tSettled.value.totalArticles;
         } else {
           log('error', 'email.dispatch.degraded', {
-            to: user.email,
+            user_id: user.id,
             error: `tally_fetch_failed: ${String(tSettled.reason).slice(0, 200)}`,
           });
         }
@@ -181,6 +194,7 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
           subject,
           text,
           html,
+          logRecipientId: user.id,
         });
 
         if (!result.sent) {
@@ -199,9 +213,9 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
         // UPDATE is wrapped here so a D1 hiccup on one row doesn't
         // abort the loop for subsequent users.
         log('error', 'email.send.failed', {
-          to: user.email,
+          user_id: user.id,
           status: null,
-          error: err instanceof Error ? err.message : String(err),
+          error: (err instanceof Error ? err.message : String(err)).slice(0, 200),
         });
       }
     }

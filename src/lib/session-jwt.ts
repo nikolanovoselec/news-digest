@@ -8,8 +8,11 @@
 // previously issued to that user (REQ-AUTH-002 AC 3). Pattern adopted from
 // the codeflare repo's src/lib/session-jwt.ts.
 
+import { base64UrlEncode, base64UrlDecode } from '~/lib/crypto';
+import { requireStrongJwtSecret } from '~/lib/jwt-secret';
+
 const DEFAULT_TTL_SECONDS = 3600; // 1 hour — REQ-AUTH-002 AC 1
-const REFRESH_THRESHOLD_SECONDS = 15 * 60; // 15 minutes — REQ-AUTH-002 AC 4
+const REFRESH_THRESHOLD_SECONDS = 5 * 60; // 5 minutes — REQ-AUTH-002 AC 4 (CF-010)
 
 const HEADER_B64 = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
   .replace(/=/g, '')
@@ -31,6 +34,10 @@ export interface SessionClaims {
 }
 
 async function getHmacKey(secret: string): Promise<CryptoKey> {
+  // Reject configured secrets that fall below the minimum entropy
+  // (CF-029). Throws on first call after a misconfigured deploy;
+  // subsequent calls re-throw without re-logging.
+  requireStrongJwtSecret(secret);
   if (cachedKey && cachedKeySecret === secret) return cachedKey;
   const key = await crypto.subtle.importKey(
     'raw',
@@ -42,27 +49,6 @@ async function getHmacKey(secret: string): Promise<CryptoKey> {
   cachedKey = key;
   cachedKeySecret = secret;
   return key;
-}
-
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]!);
-  }
-  return btoa(binary).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-}
-
-function base64UrlDecode(input: string): Uint8Array {
-  let b64 = input.replace(/-/g, '+').replace(/_/g, '/');
-  const pad = b64.length % 4;
-  if (pad === 2) b64 += '==';
-  else if (pad === 3) b64 += '=';
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
 }
 
 /**
@@ -165,9 +151,10 @@ function isSessionClaims(value: unknown): value is SessionClaims {
 }
 
 /**
- * True when the session has less than 15 minutes remaining but is not yet
+ * True when the session has less than 5 minutes remaining but is not yet
  * expired. Callers use this to trigger silent re-issue on active requests
- * (REQ-AUTH-002 AC 4).
+ * (REQ-AUTH-002 AC 4). Threshold lowered from 15 → 5 min in CF-010 to
+ * make the spec AC line up with shipped behaviour.
  */
 export function shouldRefreshJWT(claims: SessionClaims, now?: number): boolean {
   const currentSec = now ?? Math.floor(Date.now() / 1000);

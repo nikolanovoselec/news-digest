@@ -22,18 +22,10 @@ import { log } from '~/lib/log';
 import { verifySession } from '~/lib/session-jwt';
 import { SESSION_COOKIE_NAME, buildClearSessionCookie } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
+import { readCookie } from '~/lib/crypto';
 
-function readCookie(cookieHeader: string | null, name: string): string | null {
-  if (cookieHeader === null || cookieHeader === '') return null;
-  for (const pair of cookieHeader.split(';')) {
-    const idx = pair.indexOf('=');
-    if (idx < 0) continue;
-    if (pair.slice(0, idx).trim() === name) {
-      return pair.slice(idx + 1).trim();
-    }
-  }
-  return null;
-}
+// `readCookie` is imported from `~/lib/crypto` (CF-005 — was duplicated
+// here, in `auth/[provider]/callback.ts`, and in `middleware/auth.ts`).
 
 export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env;
@@ -44,7 +36,7 @@ export async function POST(context: APIContext): Promise<Response> {
 
   const originResult = checkOrigin(context.request, appOrigin);
   if (!originResult.ok) {
-    return originResult.response!;
+    return originResult.response;
   }
 
   // Identify the user from the JWT (by subject) — we don't rely on

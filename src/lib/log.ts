@@ -37,7 +37,12 @@ export type LogEvent =
   | 'discovery.completed'
   | 'discovery.queued'
   | 'settings.update.failed'
-  | 'article.star.failed';
+  | 'article.star.failed'
+  | 'admin.auth.denied'
+  | 'rate.limit.exceeded'
+  | 'jwt.secret.weak'
+  | 'digest.today.query_failed'
+  | 'starred.query_failed';
 
 /** Shape of every emitted log line. */
 export interface LogRecord {

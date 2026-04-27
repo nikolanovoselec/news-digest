@@ -18,6 +18,8 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 5. New-account creation seeds the user's hashtag list with the 20-entry system default covering the project owner's actual reading topics across cloud platforms, AI/LLM, security, identity, and infrastructure. Every default tag is guaranteed to have at least one curated source so the first digest has meaningful input before the user touches the strip.
 6. New accounts are also seeded with a default scheduled-digest time of 08:00, a default UTC timezone that the reading surface overwrites with the browser's actual IANA zone on first load, and the email-notification preference enabled. As a result, successful sign-in for a brand-new account lands the user directly on the reading surface with real articles visible — there is no forced onboarding detour through the settings form.
 7. Cross-provider sign-in by the same verified email lands in a single account per REQ-AUTH-007 (was previously per-provider isolation).
+8. Operator endpoints under `/api/admin/*` enforce three independent layers before any side effect: (a) Cloudflare Access — the `Cf-Access-Jwt-Assertion` header must be present on every request and, when an Access audience tag is configured, must validate against it; (b) a valid Worker session — the requester must hold a non-stale session cookie; (c) admin email match — the session user's email must equal the configured operator email. A request that fails any layer is rejected at the first failing layer with no observable side effect on the application.
+9. Application-layer rate limits apply to every `/api/auth/*` route and every authenticated mutation route, keyed by IP for unauthenticated paths and by user id for authenticated mutation paths. Exhausted limits return HTTP 429 with a `Retry-After` header; the limiter fails open on the storage layer so a backing-store outage cannot lock users out of sign-in.
 
 **Constraints:** CON-AUTH-001
 **Priority:** P0
@@ -37,7 +39,7 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 1. The session is a stateless HMAC-SHA256 JWT stored in an `__Host-` prefixed cookie with `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, and a 1-hour TTL.
 2. The JWT includes a `session_version` claim that matches the user's current `session_version` integer; mismatched JWTs are rejected even if still cryptographically valid.
 3. Logout increments the user's `session_version`, immediately invalidating every JWT previously issued to that user.
-4. A response middleware auto-refreshes the JWT on any request where less than 15 minutes remain on the current token.
+4. A response middleware auto-refreshes the JWT on any request where less than 5 minutes remain on the current token. Both API routes and Astro page routes attach the re-issued cookie so plain navigation extends the session, not just XHR API calls.
 
 **Constraints:** CON-AUTH-001, CON-SEC-001
 **Priority:** P0

@@ -1,5 +1,6 @@
 // Implements REQ-PIPE-001
 // Implements REQ-OPS-004
+// Implements REQ-AUTH-001
 //
 // Operator-only manual kick of the global-feed coordinator (every-4-hours cron).
 // Path: POST /api/admin/force-refresh + GET /api/admin/force-refresh.
@@ -9,11 +10,11 @@
 // and sends a single SCRAPE_COORDINATOR queue message — the exact
 // same work the `0 * * * *` cron does.
 //
-// Access control: this endpoint sits under `/api/admin/*` which is
-// gated at the zone level by Cloudflare Access (single wildcard rule
-// covers every admin endpoint). Worker-side defence-in-depth still
-// enforces an Origin check on POST (REQ-AUTH-003 pattern) to block
-// cross-site CSRF even from a logged-in browser.
+// Access control (CF-001 — three layers):
+//   1. Cloudflare Access at the zone level (with optional aud check).
+//   2. Worker-side session via loadSession.
+//   3. Session user email matches env.ADMIN_EMAIL.
+// Plus the existing Origin check on POST for CSRF defence-in-depth.
 
 import type { APIContext } from 'astro';
 import { log } from '~/lib/log';
@@ -21,6 +22,8 @@ import { generateUlid } from '~/lib/ulid';
 import { startRun } from '~/lib/scrape-run';
 import { DEFAULT_MODEL_ID } from '~/lib/models';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
+import { requireAdminSession } from '~/middleware/admin-auth';
+import { applyRefreshCookie } from '~/middleware/auth';
 
 /** Concurrency window: if a scrape_runs row with status='running' was
  * started within this many seconds, reuse it instead of kicking a
@@ -96,12 +99,18 @@ export async function POST(context: APIContext): Promise<Response> {
   }
   const appOrigin = originOf(env.APP_URL);
 
+  const adminAuth = await requireAdminSession(context);
+  if (!adminAuth.ok) return adminAuth.response;
+
   const originResult = checkOrigin(context.request, appOrigin);
-  if (!originResult.ok) return originResult.response!;
+  if (!originResult.ok) return originResult.response;
 
   try {
     const { run_id, reused } = await kickCoordinator(env);
-    return redirectToSettings(appOrigin, run_id, reused);
+    return applyRefreshCookie(
+      redirectToSettings(appOrigin, run_id, reused),
+      adminAuth.refreshCookie,
+    );
   } catch (err) {
     log('error', 'digest.generation', {
       status: 'force_refresh_failed',
@@ -119,25 +128,37 @@ export async function GET(context: APIContext): Promise<Response> {
   //      should never see raw JSON; redirect them back to /settings.
   //   2. Scripts/curl that explicitly want JSON — they opt in by
   //      sending `Accept: application/json`.
-  // Cloudflare Access is the sole authn gate (no Origin check needed).
+  // Three-layer admin auth (CF-001) gates both paths. No Origin check
+  // because GET is idempotent in spec — but the underlying coordinator
+  // dispatch is not, so we still require admin auth.
   const env = context.locals.runtime.env;
   if (typeof env.APP_URL !== 'string' || env.APP_URL === '') {
     return new Response('Application not configured', { status: 500 });
   }
   const appOrigin = originOf(env.APP_URL);
   const wantsJson = (context.request.headers.get('Accept') ?? '').includes('application/json');
+
+  const adminAuth = await requireAdminSession(context);
+  if (!adminAuth.ok) return adminAuth.response;
+
   try {
     const { run_id, reused } = await kickCoordinator(env);
     if (wantsJson) {
-      return new Response(
-        JSON.stringify({ ok: true, scrape_run_id: run_id, reused }, null, 2),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json; charset=utf-8' },
-        },
+      return applyRefreshCookie(
+        new Response(
+          JSON.stringify({ ok: true, scrape_run_id: run_id, reused }, null, 2),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          },
+        ),
+        adminAuth.refreshCookie,
       );
     }
-    return redirectToSettings(appOrigin, run_id, reused);
+    return applyRefreshCookie(
+      redirectToSettings(appOrigin, run_id, reused),
+      adminAuth.refreshCookie,
+    );
   } catch (err) {
     log('error', 'digest.generation', {
       status: 'force_refresh_failed',

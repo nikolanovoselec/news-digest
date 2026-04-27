@@ -42,6 +42,8 @@ import {
   oauthStateCookieName,
   buildClearOAuthStateCookie,
 } from './login';
+import { readCookie, timingSafeEqualHmac } from '~/lib/crypto';
+import { enforceRateLimit, rateLimitResponse, clientIp, RATE_LIMIT_RULES } from '~/lib/rate-limit';
 
 interface TokenResponse {
   access_token?: string;
@@ -59,18 +61,8 @@ interface ExistingUserRow {
   hashtags_json: string | null;
 }
 
-/** Read a cookie value from a Cookie header; returns null when absent. */
-function readCookie(cookieHeader: string | null, name: string): string | null {
-  if (cookieHeader === null || cookieHeader === '') return null;
-  for (const pair of cookieHeader.split(';')) {
-    const idx = pair.indexOf('=');
-    if (idx < 0) continue;
-    if (pair.slice(0, idx).trim() === name) {
-      return pair.slice(idx + 1).trim();
-    }
-  }
-  return null;
-}
+// `readCookie` is imported from `~/lib/crypto` (CF-005 — was duplicated
+// here, in `auth/logout.ts`, and in `middleware/auth.ts`).
 
 /** Build an HTTP 303 redirect to `/?error=<code>` on the landing page. */
 function errorRedirect(
@@ -116,18 +108,10 @@ function htmlAttrEscape(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
-/**
- * Constant-time string comparison for the OAuth state match. Opaque
- * base64url values, byte-by-byte equality over equal-length arrays.
- */
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
-}
+// `timingSafeEqualHmac` is imported from `~/lib/crypto` (CF-005 —
+// previously open-coded here as a JS XOR loop, with two more
+// duplicates in dev/login.ts and dev/trigger-scrape.ts). The HMAC
+// pattern is constant-time by Web Crypto spec.
 
 /**
  * Exchange an authorization code for the provider's token response.
@@ -213,6 +197,16 @@ export async function GET(context: APIContext): Promise<Response> {
   const stateCookieName = oauthStateCookieName(provider.name);
   const clearState = buildClearOAuthStateCookie(provider.name);
 
+  // CF-028 — application-layer rate limit on the OAuth callback so a
+  // misconfigured Access rule or `*.workers.dev` exposure cannot be
+  // abused as a free OAuth token-exchange call.
+  const rateResult = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.AUTH_CALLBACK,
+    `ip:${clientIp(context.request)}`,
+  );
+  if (!rateResult.ok) return rateLimitResponse(rateResult.retryAfter);
+
   // 1. Provider-returned error (user clicked "Cancel", etc.).
   const providerError = url.searchParams.get('error');
   if (providerError !== null && providerError !== '') {
@@ -226,13 +220,13 @@ export async function GET(context: APIContext): Promise<Response> {
   const queryState = url.searchParams.get('state');
   const cookieHeader = context.request.headers.get('Cookie');
   const cookieState = readCookie(cookieHeader, stateCookieName);
-  if (
-    queryState === null ||
-    queryState === '' ||
-    cookieState === null ||
-    cookieState === '' ||
-    !timingSafeEqual(queryState, cookieState)
-  ) {
+  const statesMatch =
+    queryState !== null &&
+    queryState !== '' &&
+    cookieState !== null &&
+    cookieState !== '' &&
+    (await timingSafeEqualHmac(queryState, cookieState, env.OAUTH_JWT_SECRET));
+  if (!statesMatch) {
     log('warn', 'auth.callback.invalid_state', {
       provider: provider.name,
       query_state_present: queryState !== null && queryState !== '',
@@ -244,10 +238,7 @@ export async function GET(context: APIContext): Promise<Response> {
             .map((p) => p.split('=')[0]?.trim() ?? '')
             .filter((n) => n !== '')
         : [],
-      states_match:
-        queryState !== null &&
-        cookieState !== null &&
-        timingSafeEqual(queryState, cookieState),
+      states_match: false,
     });
     const headers = new Headers();
     headers.append('Set-Cookie', clearState);

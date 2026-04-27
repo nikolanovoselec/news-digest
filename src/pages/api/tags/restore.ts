@@ -26,7 +26,7 @@ export async function POST(context: APIContext): Promise<Response> {
 
   const originResult = checkOrigin(context.request, appOrigin);
   if (!originResult.ok) {
-    return originResult.response!;
+    return originResult.response;
   }
 
   const session = await loadSession(context.request, env.DB, env.OAUTH_JWT_SECRET);
