@@ -356,8 +356,14 @@ export async function GET(context: APIContext): Promise<Response> {
       // Path B: no link yet. Check whether another provider already
       // claimed this email — if so, attach the new alias rather than
       // forking a new user.
+      // Exclude both sentinel rows: __system__ (REQ-DISC-003 self-healing
+      // queue) and __e2e__ (the synthetic e2e-test sandbox). A real OAuth
+      // user whose verified email collides with either sentinel must
+      // never be merged into a sandbox row.
       const byEmail = await env.DB
-        .prepare("SELECT id FROM users WHERE email = ?1 AND id != '__system__' ORDER BY created_at ASC LIMIT 1")
+        .prepare(
+          "SELECT id FROM users WHERE email = ?1 AND id NOT IN ('__system__', '__e2e__') ORDER BY created_at ASC LIMIT 1",
+        )
         .bind(profile.email)
         .first<UserByEmailRow>();
 

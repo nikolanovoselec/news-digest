@@ -160,6 +160,17 @@ jobs:
             rm "$TMP"
           fi
 
+          # Wipe any pre-existing DEV_BYPASS_USER_ID secret. Forks that
+          # deployed before migration 0006 may have set this to the
+          # operator's real user id, which would defeat the synthetic-
+          # __e2e__ sandbox. The secret is intentionally not managed by
+          # the workflow anymore — `/api/dev/login` falls back to the
+          # __e2e__ row when this is unset, which is what every fork
+          # should run with. The delete is idempotent (silenced on
+          # not-found) so subsequent deploys are no-ops.
+          npx --yes wrangler secret delete DEV_BYPASS_USER_ID --force 2>/dev/null \
+            || echo "DEV_BYPASS_USER_ID not set on Worker — nothing to clear"
+
           # Optional: ADMIN_EMAIL gates /api/admin/* (REQ-AUTH-001 AC 8).
           # When unset every admin endpoint returns 403 — fork-friendly
           # default that locks down the surface until an operator opts in.

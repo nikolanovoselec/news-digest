@@ -16,11 +16,11 @@
 -- email is set to a non-deliverable @invalid.local address (RFC 2606)
 -- so a misqueued outbound email would bounce rather than spam a real
 -- recipient. email_enabled = 0 so the daily-digest dispatcher skips
--- this row outright. digest_minute is set to 480 (08:00) — a valid
--- value so the settings gate (REQ-SET-006) does not bounce the
--- session. created_at is stamped at migration time, which precedes
--- any OAuth sign-up, so the existing dev-login fallback (ORDER BY
--- created_at ASC) lands on this row deterministically.
+-- this row outright. digest_hour = 8 — a non-null value so the
+-- settings gate (REQ-SET-006) does not bounce the session (the gate
+-- only checks digest_hour IS NULL). created_at is stamped at
+-- migration time, which precedes any OAuth sign-up, so the row is
+-- the deterministic landing target for `/api/dev/login`.
 
 INSERT OR IGNORE INTO users (
   id,
