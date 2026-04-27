@@ -42,7 +42,19 @@ export type LogEvent =
   | 'rate.limit.exceeded'
   | 'jwt.secret.weak'
   | 'digest.today.query_failed'
-  | 'starred.query_failed';
+  | 'starred.query_failed'
+  // REQ-AUTH-002, REQ-AUTH-008 — refresh-token flow telemetry.
+  | 'auth.refresh.rotated'
+  | 'auth.refresh.rotate_failed'
+  | 'auth.refresh.expired'
+  | 'auth.refresh.fingerprint_mismatch'
+  | 'auth.refresh.grace_fingerprint_mismatch'
+  | 'auth.refresh.concurrent_collision'
+  | 'auth.refresh.concurrent_lost_race'
+  | 'auth.refresh.reuse_detected'
+  | 'auth.refresh.purge_completed'
+  | 'auth.refresh.purge_failed'
+  | 'auth.logout.refresh_revoke_failed';
 
 /** Shape of every emitted log line. */
 export interface LogRecord {

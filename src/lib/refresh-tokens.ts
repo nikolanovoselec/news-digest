@@ -91,7 +91,17 @@ export async function sha256Hex(input: string): Promise<string> {
 /** Build the device fingerprint hash from request headers.
  *  UA || NUL || Country, then SHA-256. Null-byte separator prevents
  *  collisions where one field's tail matches another field's head
- *  (e.g., UA "foo CH" + empty country vs. UA "foo" + country "CH"). */
+ *  (e.g., UA "foo CH" + empty country vs. UA "foo" + country "CH").
+ *
+ *  TRUST ASSUMPTION: `Cf-IPCountry` is injected by the Cloudflare
+ *  edge and cannot be forged by clients on production traffic. If
+ *  this Worker is ever moved off pure Cloudflare ingress (e.g.,
+ *  fronted by another proxy that forwards request headers verbatim),
+ *  the country header MUST be stripped at the new boundary or the
+ *  device-binding becomes meaningless. Local `wrangler dev` traffic
+ *  has no Cf-IPCountry header — fingerprint falls back to UA-only,
+ *  intentional for dev UX.
+ */
 export async function deviceFingerprint(request: Request): Promise<string> {
   const ua = request.headers.get('User-Agent') ?? '';
   const country = request.headers.get('Cf-IPCountry') ?? '';

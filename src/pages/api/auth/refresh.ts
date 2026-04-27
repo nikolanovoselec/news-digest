@@ -42,6 +42,12 @@ import {
 } from '~/lib/refresh-tokens';
 import { readCookie } from '~/lib/crypto';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+  clientIp,
+  RATE_LIMIT_RULES,
+} from '~/lib/rate-limit';
 import { log } from '~/lib/log';
 
 interface UserMinRow {
@@ -77,6 +83,17 @@ export async function POST(context: APIContext): Promise<Response> {
   if (!originResult.ok) {
     return originResult.response;
   }
+
+  // REQ-AUTH-008 — application-layer rate limit. An attacker holding
+  // a valid refresh cookie could otherwise hammer this endpoint to
+  // mint unlimited 5-minute access JWTs. Keyed by IP because the
+  // user_id may not be available yet (we haven't validated the cookie).
+  const rateResult = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.AUTH_REFRESH,
+    `ip:${clientIp(context.request)}`,
+  );
+  if (!rateResult.ok) return rateLimitResponse(rateResult.retryAfter);
 
   const refreshValue = readCookie(
     context.request.headers.get('Cookie'),

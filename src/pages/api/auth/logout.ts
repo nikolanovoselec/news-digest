@@ -24,6 +24,12 @@ import { SESSION_COOKIE_NAME, buildClearSessionCookie } from '~/middleware/auth'
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { readCookie } from '~/lib/crypto';
 import {
+  enforceRateLimit,
+  rateLimitResponse,
+  clientIp,
+  RATE_LIMIT_RULES,
+} from '~/lib/rate-limit';
+import {
   REFRESH_TOKEN_COOKIE_NAME,
   buildClearRefreshCookie,
   findRefreshToken,
@@ -44,6 +50,16 @@ export async function POST(context: APIContext): Promise<Response> {
   if (!originResult.ok) {
     return originResult.response;
   }
+
+  // REQ-AUTH-002 — bound logout calls per IP. Practical blast radius
+  // is small (logout requires a live cookie), but a low ceiling
+  // prevents loop-incrementing session_version under attack.
+  const rateResult = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.AUTH_LOGOUT,
+    `ip:${clientIp(context.request)}`,
+  );
+  if (!rateResult.ok) return rateLimitResponse(rateResult.retryAfter);
 
   // Identify the user from the JWT (by subject) — we don't rely on
   // auth middleware here because logout must succeed even if the row's

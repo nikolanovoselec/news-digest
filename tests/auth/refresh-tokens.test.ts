@@ -294,9 +294,15 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
     const result = await loadSession(replayReq, env.DB, SECRET);
     expect(result).toBeNull();
 
-    // Theft branch fired — global wipe.
+    // Theft branch fired — global wipe + session_version bump (both
+    // halves of revokeAllForUser must run).
     const otherRow = await findRefreshToken(env.DB, otherValue);
     expect(otherRow!.revoked_at).not.toBeNull();
+    const sv = await env.DB
+      .prepare('SELECT session_version FROM users WHERE id = ?1')
+      .bind(USER_ID)
+      .first<{ session_version: number }>();
+    expect(sv!.session_version).toBeGreaterThan(1);
   });
 
   it('REQ-AUTH-008: concurrent-rotation collision within grace window serves access JWT only, no theft fallout', async () => {

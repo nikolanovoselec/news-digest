@@ -55,3 +55,11 @@ CREATE INDEX idx_refresh_tokens_hash
 
 CREATE INDEX idx_refresh_tokens_cleanup
   ON refresh_tokens(expires_at, revoked_at);
+
+-- `findUnrevokedChild(parent_id)` is hit on every grace-window
+-- collision. In normal operation each parent has at most one child
+-- (linear rotation chain), but indexing the lookup keeps it O(log n)
+-- regardless of how the chain grows.
+CREATE INDEX idx_refresh_tokens_parent
+  ON refresh_tokens(parent_id)
+  WHERE parent_id IS NOT NULL;

@@ -142,4 +142,22 @@ export const RATE_LIMIT_RULES = {
     limit: 30,
     windowSec: 60,
   },
+  // REQ-AUTH-008 — explicit /api/auth/refresh force-rotates a refresh
+  // token on every call. An attacker holding a valid refresh cookie
+  // could otherwise hammer this endpoint to mint unlimited 5-minute
+  // access JWTs. 10/min/IP is generous for any browser; legitimate
+  // clients call this at most once per access-token expiry (~12/hr).
+  AUTH_REFRESH: {
+    routeClass: 'auth_refresh',
+    limit: 10,
+    windowSec: 60,
+  },
+  // REQ-AUTH-002 — bound logout calls per IP. Practical blast radius
+  // is small (logout requires a live cookie), but a low ceiling
+  // prevents loop-incrementing session_version under attack.
+  AUTH_LOGOUT: {
+    routeClass: 'auth_logout',
+    limit: 5,
+    windowSec: 60,
+  },
 } as const satisfies Record<string, RateLimitRule>;
