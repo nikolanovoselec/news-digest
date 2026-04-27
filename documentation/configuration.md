@@ -18,7 +18,7 @@ Stored via `wrangler secret put <name>`. Never committed to git.
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth 2.0 client secret. Required when `GOOGLE_OAUTH_CLIENT_ID` is set. |
 | `OAUTH_JWT_SECRET` | 32+ character random string used to HMAC-sign session JWTs (provider-agnostic — required regardless of which providers are enabled) |
 | `RESEND_API_KEY` | Resend API key for digest-ready emails (starts with `re_`); optional — when unset the runtime short-circuits silently and no email is sent |
-| `RESEND_FROM` | Sender address for emails, e.g., `News Digest <digest@example.com>`; domain must be verified in Resend |
+| `RESEND_FROM` | Sender address for emails, e.g., `digest@example.com` or `News Digest <digest@example.com>`; domain must be verified in Resend. A bare address (no `<`) is automatically wrapped in `News Digest <address>` display-name format before sending so recipients see a friendly name in their inbox regardless of the stored format. |
 | `APP_URL` | Canonical origin, e.g., `https://digest.example.com`; used in email CTA links, OAuth redirect URI construction, and as the reference value for the Origin CSRF check ([REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)) |
 
 ## GitHub Actions Secrets (CI deploy only)

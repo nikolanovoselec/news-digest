@@ -45,11 +45,18 @@ Initiates the OAuth/OIDC authorization-code flow for a configured provider. The 
 
 ### GET /api/auth/{provider}/callback
 
-Handles the provider's OAuth redirect. Validates the per-provider `state` cookie, exchanges the code for an access token (and id_token when the provider issues one), extracts a stable provider-specific user identifier plus a verified primary email, creates or looks up the user keyed by `userIdFor(provider, sub)` (GitHub: bare numeric for legacy compatibility; Google: `google:<sub>`). Sets the session cookie and redirects to `/digest` for all users.
+Handles the provider's OAuth redirect. Validates the per-provider `state` cookie, exchanges the code for an access token (and id_token when the provider issues one), extracts a stable provider-specific user identifier plus a verified primary email.
+
+Resolves `user_id` via the three-path `auth_links` lookup (implements [REQ-AUTH-007](../sdd/authentication.md#req-auth-007-cross-provider-account-dedup)):
+- **Path A** — `(provider, provider_sub)` found in `auth_links` → reuse the linked `user_id`. Steady-state login for any returning user.
+- **Path B** — no `auth_links` row yet, but a `users` row with the same verified email exists → insert a new `auth_links` alias pointing at that `user_id`. Prevents duplicate accounts when the same person signs in via a second provider.
+- **Path C** — neither lookup matches → create a new `users` row keyed by `userIdFor(provider, sub)` (GitHub: bare numeric for legacy compatibility; Google: `google:<sub>`) and insert the first `auth_links` row in tandem.
+
+Sets the session cookie and redirects to `/digest` for all users.
 
 New accounts are inserted with complete onboarding defaults at the moment of first login — 20 seeded hashtags (`DEFAULT_HASHTAGS`), `digest_hour=8`, `digest_minute=0`, and `email_enabled=1`. The browser auto-corrects timezone on first `/digest` load via a client-side POST to `/api/auth/set-tz`. No `/settings` detour is required for new users.
 
-**Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-004](../sdd/authentication.md#req-auth-004-oauth-error-surfacing)
+**Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-004](../sdd/authentication.md#req-auth-004-oauth-error-surfacing), [REQ-AUTH-007](../sdd/authentication.md#req-auth-007-cross-provider-account-dedup)
 
 **Error responses:**
 - `access_denied`, `no_verified_email`, `oauth_error` — 3xx redirect to `/?error={code}&provider={name}`. The provider name lets the landing page surface a precise message ("Google did not return a verified email" instead of guessing).
@@ -218,15 +225,27 @@ The endpoint is additionally gated by Cloudflare Access at the zone level — se
 
 **Implements:** [REQ-DISC-004](../sdd/discovery.md#req-disc-004-manual-re-discover)
 
-### POST /api/admin/discovery/retry-bulk
+### POST /api/admin/discovery/retry-bulk (also GET)
 
 Re-queues every "stuck" tag for the session user in one shot. A tag is stuck when its `sources:{tag}` KV entry has an explicitly empty `feeds` array (REQ-DISC-001 exhaustion path or REQ-DISC-003 self-healing eviction). Brand-new tags (no entry yet) are not queued — they are still discovering, not stuck. Backs the **Discover missing sources** button on `/settings`.
 
 The endpoint is additionally gated by Cloudflare Access at the zone level — see [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Only the configured admin email can reach it in production regardless of session state.
 
+**POST — canonical form submit path:**
+
 **Content-type: application/x-www-form-urlencoded** (no body fields required)
 
 **Response:** `303` redirect to `/settings?rediscover=ok&count=<N>` where `<N>` is the number of tags re-queued (`0` is a valid no-op success). Error responses: `401 unauthorized` | `403 forbidden_origin` | `500 internal_error`.
+
+**GET — Cloudflare Access post-auth callback path:**
+
+When Cloudflare Access intercepts the form's POST, bounces the user through SSO, and returns them via a GET to the original URL, this handler ensures they land on `/settings` with the correct outcome banner rather than seeing a 404. Clients that send `Accept: application/json` receive a JSON response instead of a redirect (for scripted callers).
+
+**Response (browser, no `Accept: application/json`):** `303` redirect to `/settings?rediscover=ok&count=<N>` on success; `303` redirect to `/settings?rediscover=error` on session or internal error.
+
+**Response (`Accept: application/json`):** `200 { ok: true, count: N }` on success | `401 unauthorized` | `500 { ok: false, error: "internal_error" }`.
+
+No `Origin` check on GET — Cloudflare Access is the sole authentication gate for this path.
 
 **Implements:** [REQ-DISC-004](../sdd/discovery.md#req-disc-004-manual-re-discover)
 
