@@ -126,6 +126,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 3. The history page reads its per-day aggregates and per-tick expansions from the same aggregation, not from article rows.
 4. Status transitions running → ready on success, or running → failed when the run aborts.
 5. A lightweight status endpoint reports whether a scrape is currently running; while running it returns the run identifier, start time, chunks completed, total chunks, and articles ingested so far. The reading surface uses this endpoint to replace its "Next update in Xm" countdown with an "Update in progress — X/Y chunks" indicator, and the settings surface shows the same progress alongside its manual-refresh control. Both indicators hide themselves automatically when the run finishes.
+6. The recorded finish time reflects when the run actually completed, not when the queue happened to redeliver the closing message. A redelivered last-chunk message that re-enters the closing path leaves the existing finish time intact, so the per-tick duration shown on the history page does not drift forward across retries.
 
 **Constraints:** CON-DATA-001
 **Priority:** P1
@@ -171,6 +172,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 6. The pass caps its LLM input at the 250 most recent articles by ingestion time; ticks that produced more skip dedup on the tail. This ceiling is documented as a known limitation.
 7. Token and cost counters from the finalize call fold into the scrape tick's totals via the same per-chunk stats helper; the deduped-article counter increments by the number of losers deleted.
 8. A finalize that exhausts its queue retry budget logs a structured error and leaves the tick's articles in their un-merged state. The tick's status is not flipped from ready to failed — the articles are real and visible; only the cross-chunk merge is missing.
+9. The "exactly one finalize pass" guarantee in AC 1 holds across both directions of failure: concurrent or redelivered last-chunk consumers never enqueue a second finalize (so the LLM is not billed twice for the same tick), and a transient failure when the closing consumer hands the finalize off to its queue does not strand the run with zero finalize passes — the next redelivery of the closing message re-acquires the gate and re-attempts the handoff so the cross-chunk dedup eventually runs.
 
 **Constraints:** CON-LLM-001
 **Priority:** P1
