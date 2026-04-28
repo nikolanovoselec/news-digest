@@ -361,6 +361,14 @@ const initialTheme = cookieTheme ?? 'light';
         min-height: 44px;
         color: var(--text);
         text-decoration: none;
+        /* Tell mobile browsers this is a single-tap target, not a
+           potential double-tap-to-zoom. Without this, iOS/mobile
+           Safari applies a ~350ms delay on the first tap to wait
+           for a second tap — making the scroll-to-top feel like it
+           "needs 4-5 taps to fire". `manipulation` keeps pinch-zoom
+           and panning, just disables the double-tap delay. */
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
       }
 
       /* Logomark: the MDI `newspaper` icon. Same glyph used for the

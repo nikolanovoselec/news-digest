@@ -310,12 +310,12 @@ if (document.documentElement.dataset.scrollRestoreBound !== '1') {
   document.addEventListener('astro:after-swap', () => {
     delete document.documentElement.dataset.vtActive;
   });
-  // Wipe view-transition-name from every card on the live DOM so the
-  // next navigation starts from the no-name baseline. The promotion
-  // handlers re-add a single name on the card actually morphing.
-  document.addEventListener('astro:after-swap', () => {
-    clearAllVtNames(document);
-  });
+  // Do NOT clearAllVtNames here. View Transitions API captures the
+  // NEW snapshot AFTER the update callback resolves, and
+  // astro:after-swap fires WHILE the callback is still running.
+  // Wiping the name here strips it from the matching card BEFORE the
+  // snapshot is taken and the morph pair fails to form. Cleanup
+  // happens at the next click via promoteSourceCardForOutgoingMorph.
   window.addEventListener('pagehide', saveScroll);
   document.addEventListener('astro:page-load', restoreScroll);
   window.addEventListener('pageshow', (e) => {

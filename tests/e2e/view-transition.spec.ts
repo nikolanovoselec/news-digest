@@ -94,18 +94,24 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     expect(namedAtPrep, 'exactly one card promoted at before-preparation').toBe(1);
   });
 
-  test('backward nav: settled /digest carries zero lingering view-transition-names', async ({
+  test('backward nav: settled /digest carries exactly one named card (the morph target)', async ({
     page,
   }) => {
-    // Mid-swap observation is racy — `clearAllVtNames` (registered
-    // before any external listener via the page-effects bootstrap)
-    // can fire before a once-listener attached after page-load and
-    // leaves the captured count at -1. The CONTRACT we care about is
-    // the END STATE: after the back-nav settles, no card carries a
-    // leftover `view-transition-name`. If a regression skipped the
-    // cleanup, a name would persist on the live DOM and the next
-    // navigation would drag it into the snapshot — exactly the
-    // O(N) bookkeeping the perf refactor eliminated.
+    // The View Transitions API captures the NEW snapshot AFTER the
+    // update callback resolves. Cleanup CANNOT happen on
+    // astro:after-swap (which fires inside the callback) — it would
+    // strip the `view-transition-name` from the matching card BEFORE
+    // the new snapshot is taken, breaking the pair and silently
+    // degrading to a root cross-fade. The contract is therefore that
+    // ONE name persists on the live DOM after a successful back-nav
+    // (the matching card the morph just paired with), and cleanup is
+    // deferred to the next forward click via the
+    // `promoteSourceCardForOutgoingMorph` clearAllVtNames pass.
+    //
+    // A regression that EITHER (a) re-adds clearAllVtNames on
+    // astro:after-swap (lingering would be 0, morph fails) OR (b) fails
+    // to set the name in promoteIncomingCardForReturnMorph (lingering
+    // would be 0, morph fails) — both manifest as lingering=0 here.
     await page.goto('/digest', { waitUntil: 'networkidle' });
     const firstCard = page.locator('[data-digest-card]').first();
     const firstSlug = await firstCard.getAttribute('data-vt-slug');
@@ -117,19 +123,27 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     await page.waitForURL(/\/digest\/?$/);
     await page.waitForLoadState('networkidle');
 
-    const lingering = await page.evaluate(() => {
+    const namedSlugs = await page.evaluate(() => {
       return Array.from(
-        document.querySelectorAll<HTMLAnchorElement>(
-          '[data-digest-card] a.digest-card__link',
+        document.querySelectorAll<HTMLElement>(
+          '[data-digest-card][data-vt-slug]',
         ),
-      ).filter((el) => el.style.viewTransitionName !== '').length;
+      )
+        .filter((card) => {
+          const link = card.querySelector<HTMLAnchorElement>(
+            'a.digest-card__link',
+          );
+          return link !== null && link.style.viewTransitionName !== '';
+        })
+        .map((c) => c.dataset['vtSlug'] ?? '');
     });
-    expect(lingering).toBe(0);
+    expect(namedSlugs).toHaveLength(1);
+    expect(namedSlugs[0]).toBe(firstSlug);
   });
 });
 
 test.describe('REQ-HIST-001 history return-morph (live)', () => {
-  test('back from article → /history settles in under 2s and clears all names', async ({
+  test('back from article → /history settles in under 2s and the morph card retains its name', async ({
     page,
   }) => {
     await page.goto('/history', { waitUntil: 'networkidle' });
@@ -140,6 +154,8 @@ test.describe('REQ-HIST-001 history return-morph (live)', () => {
     // than assert — empty /history is a separate failure mode.
     const cardCount = await firstCard.count();
     test.skip(cardCount === 0, '/history has no articles to morph');
+
+    const expectedSlug = await firstCard.getAttribute('data-vt-slug');
 
     // Open the day so the card is in layout (mirrors what the user
     // does manually before clicking a card).
@@ -160,15 +176,25 @@ test.describe('REQ-HIST-001 history return-morph (live)', () => {
     const elapsed = Date.now() - start;
     expect(elapsed, 'detail → /history return settles in <2s').toBeLessThan(2000);
 
-    // After settle, every card should be name-less again.
-    const lingering = await page.evaluate(() => {
+    // The matching card should retain its `view-transition-name` after
+    // settle — clearing on astro:after-swap would strip it before the
+    // new snapshot is captured and the morph would fail to pair.
+    const namedSlugs = await page.evaluate(() => {
       return Array.from(
-        document.querySelectorAll<HTMLAnchorElement>(
-          '[data-digest-card] a.digest-card__link',
+        document.querySelectorAll<HTMLElement>(
+          '[data-digest-card][data-vt-slug]',
         ),
-      ).filter((el) => el.style.viewTransitionName !== '').length;
+      )
+        .filter((card) => {
+          const link = card.querySelector<HTMLAnchorElement>(
+            'a.digest-card__link',
+          );
+          return link !== null && link.style.viewTransitionName !== '';
+        })
+        .map((c) => c.dataset['vtSlug'] ?? '');
     });
-    expect(lingering).toBe(0);
+    expect(namedSlugs).toHaveLength(1);
+    expect(namedSlugs[0]).toBe(expectedSlug);
   });
 });
 

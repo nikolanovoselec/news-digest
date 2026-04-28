@@ -262,11 +262,16 @@ function preOpenHistoryDayInIncomingDocument(e: Event): void {
 // name on them is silently dropped and the morph degrades to root
 // cross-fade).
 //
-// Cleanup runs on `astro:after-swap`: remove `view-transition-name`
-// from every card on the live DOM so the next navigation starts from
-// the no-name baseline. Any remaining name would re-introduce the
-// O(N) bookkeeping the moment a card with a leftover name happens to
-// be in viewport on the next click.
+// Cleanup runs at the START of the NEXT navigation, NOT on
+// `astro:after-swap`. View Transitions API captures the NEW snapshot
+// AFTER the update callback resolves — and `astro:after-swap` fires
+// WHILE that callback is still running. Wiping the name in
+// `astro:after-swap` therefore strips it from the matching card
+// BEFORE the snapshot is taken, breaking the pair. Instead,
+// `promoteSourceCardForOutgoingMorph` calls `clearAllVtNames(document)`
+// at the very start of every forward click — at that point the
+// previous transition has long since finished and the leftover name
+// can be safely wiped.
 
 const ARTICLE_DETAIL_PATH_RE = /^\/digest\/[^/]+\/([^/]+)\/?$/;
 
@@ -465,13 +470,14 @@ if (document.documentElement.dataset['scrollRestoreBound'] !== '1') {
   document.addEventListener('astro:after-swap', () => {
     delete document.documentElement.dataset['vtActive'];
   });
-  // Wipe view-transition-name from the live DOM so the next
-  // navigation captures zero named card-groups by default — the
-  // promotion handlers above re-add a single name on the card the
-  // user is actually morphing to/from.
-  document.addEventListener('astro:after-swap', () => {
-    clearAllVtNames(document);
-  });
+  // NOTE: do NOT clearAllVtNames here. The View Transitions API
+  // captures the NEW snapshot AFTER the update callback resolves, and
+  // astro:after-swap fires WHILE the callback is still running. Wiping
+  // `view-transition-name` here removes it from the matching card
+  // BEFORE the snapshot is taken — the pair fails to form and the
+  // morph silently degrades to a root cross-fade. Cleanup happens at
+  // the next click via `promoteSourceCardForOutgoingMorph`'s
+  // `clearAllVtNames(document)` before promoting the new source card.
   window.addEventListener('pagehide', saveScroll);
   document.addEventListener('astro:page-load', restoreScroll);
   // bfcache restore on iOS Safari: `astro:page-load` does NOT fire
