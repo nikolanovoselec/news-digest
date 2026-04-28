@@ -15,9 +15,12 @@ export const DEFAULT_TZ = 'UTC';
 
 /**
  * Locale tag to use with `Intl.DateTimeFormat` so the rendered time
- * follows the timezone's regional convention (24h vs 12h). Mirrors the
- * client-side `timeLangForTz` heuristic in settings.astro: America/* zones
- * use `en-US` (12h with AM/PM), everything else uses `en-GB` (24h).
+ * follows the timezone's regional convention (24h vs 12h): America/*
+ * zones use `en-US` (12h with AM/PM), everything else uses `en-GB`
+ * (24h). Used for SERVER-rendered times only — the /settings time
+ * picker uses two <select>s instead, since the native <input type="time">
+ * UI ignores locale hints and falls back to the OS-level locale on
+ * Chromium and Safari (the "08:00 AM in Zagreb" bug).
  *
  * `Intl.DateTimeFormat` derives 24h-vs-12h from the locale, NOT the
  * `timeZone` option, so callers that want a 24h display in a Zurich tz

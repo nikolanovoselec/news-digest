@@ -150,9 +150,20 @@ Native-form transport path for account deletion. Accepts a `application/x-www-fo
 
 Native form-encoded fallback for the same settings update. Used when the JS fetch handler does not bind (Samsung Browser, in-app webviews, JS disabled). The `/settings` form declares `method="post" action="/api/settings"`.
 
-**Request:** `application/x-www-form-urlencoded` — same fields as PUT.
+**Request:** `application/x-www-form-urlencoded`
 
-**Response:** `303` redirect to `/settings` on success. On validation failure, redirects to `/settings?error=<code>` where `<code>` is one of `invalid_hashtags`, `invalid_time`, `invalid_email_enabled`; the settings page renders an inline error message next to the Save button from the query param; the param is stripped from the URL after display so a refresh does not re-show stale text.
+| Field | Type | Notes |
+|---|---|---|
+| `hour` | string (`"00"`–`"23"`) | Zero-padded hour from the hour `<select>`. Takes precedence over `time` when non-empty. |
+| `minute` | string (`"00"`, `"05"`, …, `"55"`) | Zero-padded minute from the minute `<select>`. Takes precedence over `time` when non-empty. |
+| `time` | string (`HH:MM`) | Legacy single-field fallback for in-flight pages that have not yet received the updated markup. Used only when `hour`/`minute` are absent or empty. |
+| `tz` | string | IANA timezone (e.g. `Europe/Zagreb`). |
+| `model_id` | string | Validated against `MODELS`; ignored when `REQ-SET-004` is deprecated. |
+| `email_enabled` | string (`"on"`) | Present when the toggle is checked; absent when unchecked (standard HTML checkbox behaviour). |
+
+The `/settings` page renders the schedule picker as two `<select>` elements (`name="hour"` and `name="minute"`) rather than `<input type="time">`. Native time inputs render in 12h on Chromium and Safari whenever the OS locale is `en-US`, ignoring the `lang` attribute — a user in `Europe/Zagreb` on an en-US device saw "08:00 AM". `<select>` options are literal strings, so 24h text always displays 24h regardless of browser or device locale. Implements [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone) AC 1.
+
+**Response:** `303` redirect to `/settings?saved=ok` on success. On validation failure, redirects to `/settings?error=<code>` where `<code>` is one of `invalid_hashtags`, `invalid_time`, `invalid_email_enabled`; the settings page renders an inline error message next to the Save button from the query param; the param is stripped from the URL after display so a refresh does not re-show stale text.
 
 **Implements:** [REQ-SET-001](../sdd/settings.md#req-set-001-unified-first-run-and-edit-flow), [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation), [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone), [REQ-SET-005](../sdd/settings.md#req-set-005-email-notification-preference)
 

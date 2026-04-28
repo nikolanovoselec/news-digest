@@ -77,8 +77,42 @@ const isFirstRun =
 
 const digestHour = user.digest_hour ?? 8;
 const digestMinute = user.digest_minute;
-const timeValue = `${String(digestHour).padStart(2, '0')}:${String(digestMinute).padStart(2, '0')}`;
 const tzValue = user.tz === '' ? DEFAULT_TZ : user.tz;
+
+// Hour/minute options for the two-select time picker. We render the
+// schedule as `<select>`s rather than `<input type="time">` because the
+// native time-input UI ignores the `lang` attribute on Chromium and
+// Safari and falls back to the OS-level locale — a Europe/Zagreb user
+// on an en-US device saw "08:00 AM" with no way to override. `<select>`
+// option labels are literal strings, so we fully control what the user
+// sees.
+//
+// The server renders 24-hour labels (00, 01, …, 23) for every user;
+// the client-side init then re-labels the options to 12-hour AM/PM
+// when the BROWSER's resolved locale prefers 12-hour
+// (`Intl.DateTimeFormat().resolvedOptions().hourCycle === 'h11' | 'h12'`).
+// This auto-detects format from the user's actual browser/OS settings
+// (en-US → AM/PM, en-GB → 24h, hr-HR → 24h, ja-JP → 24h, …) without
+// any country-by-country hardcoding. The submitted form value is the
+// canonical 0-23 integer regardless of label format.
+const HOUR_OPTIONS: string[] = Array.from({ length: 24 }, (_, i) =>
+  String(i).padStart(2, '0'),
+);
+// 5-minute resolution matches the email cron (`*/5 * * * *`); finer
+// granularity does not deliver any earlier and just clutters the picker.
+const MINUTE_STEP_OPTIONS: string[] = Array.from({ length: 12 }, (_, i) =>
+  String(i * 5).padStart(2, '0'),
+);
+// Preserve any non-step minute already stored against the user (legacy
+// rows from before this picker landed) by adding it as an extra option;
+// otherwise the saved value would silently snap to the closest 5-min
+// slot on next save without the user knowing.
+const storedMinuteStr = String(digestMinute).padStart(2, '0');
+const minuteOptions: string[] = MINUTE_STEP_OPTIONS.includes(storedMinuteStr)
+  ? MINUTE_STEP_OPTIONS
+  : [...MINUTE_STEP_OPTIONS, storedMinuteStr].sort((a, b) => Number(a) - Number(b));
+const hourValue = String(digestHour).padStart(2, '0');
+const minuteValue = storedMinuteStr;
 
 // REQ-SET-007 AC 5 — manual tz picker. Render the full IANA inventory
 // server-side so the picker is complete before client JS runs. The
@@ -110,18 +144,6 @@ const tzOptions: string[] = canonicalTzList.includes(tzValue)
   : [tzValue, ...canonicalTzList].sort((a, b) => a.localeCompare(b));
 const currentModelId = user.model_id ?? DEFAULT_MODEL_ID;
 const emailEnabled = user.email_enabled === 1;
-
-// Locale hint for the native <input type="time"> — browsers honor the
-// `lang` attribute when picking 12h vs 24h display. Most of the world
-// uses 24h; the US (America/*) is the main 12h holdout. The selected
-// IANA zone determines the hint, which the JS handler keeps in sync
-// when the tz dropdown changes. The submitted value is always
-// canonical "HH:MM" 24h regardless of the display format, so the
-// server contract is unchanged.
-function timeLangForTz(tz: string): string {
-  return tz.startsWith('America/') ? 'en-US' : 'en-GB';
-}
-const timeInputLang = timeLangForTz(tzValue);
 
 // REQ-SET-004 — ModelSelect is hidden while the global pipeline runs on
 // a single default model. The stored `model_id` preference is still
@@ -267,18 +289,43 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           schedule, model, and delivery only. */}
       <fieldset class="settings__section">
         <legend class="settings__legend">Notifications</legend>
-        <label class="settings__field">
-          <span class="settings__field-label">Daily digest time</span>
-          <input
-            type="time"
-            name="time"
-            data-time-input
-            value={timeValue}
-            lang={timeInputLang}
-            required
-            class="settings__time-input"
-          />
-        </label>
+        {/* Two <select>s instead of <input type="time"> — native time
+            inputs render in 12h on Chromium/Safari whenever the OS
+            locale is en-US, ignoring `lang="en-GB"` and CSS hints,
+            so a user in Europe/Zagreb on an en-US device saw
+            "08:00 AM". <select> options are literal text, so 24h
+            text always renders 24h. Hour 00-23, minute in 5-min
+            steps to match the cron cadence. */}
+        <fieldset class="settings__field settings__field--time">
+          <legend class="settings__field-label">
+            Daily digest time
+          </legend>
+          <div class="settings__time-picker" data-time-picker>
+            <select
+              name="hour"
+              data-hour-select
+              required
+              class="settings__time-select settings__time-select--hour"
+              aria-label="Daily digest time, hour"
+            >
+              {HOUR_OPTIONS.map((h) => (
+                <option value={h} selected={h === hourValue}>{h}</option>
+              ))}
+            </select>
+            <span class="settings__time-sep" aria-hidden="true">:</span>
+            <select
+              name="minute"
+              data-minute-select
+              required
+              class="settings__time-select settings__time-select--minute"
+              aria-label="Daily digest time, minute"
+            >
+              {minuteOptions.map((m) => (
+                <option value={m} selected={m === minuteValue}>{m}</option>
+              ))}
+            </select>
+          </div>
+        </fieldset>
         <label class="settings__tz" data-tz-block>
           {/* Implements REQ-SET-007 AC 5 — manual tz picker. The
               <select> renders the full IANA inventory server-side and
@@ -594,7 +641,8 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     status: HTMLElement,
     submitButton: HTMLButtonElement,
   ): Promise<void> {
-    const timeInput = form.querySelector('[data-time-input]') as HTMLInputElement | null;
+    const hourSelect = form.querySelector('[data-hour-select]') as HTMLSelectElement | null;
+    const minuteSelect = form.querySelector('[data-minute-select]') as HTMLSelectElement | null;
     const tzSelect = form.querySelector('[data-tz-select]') as HTMLSelectElement | null;
     const emailToggle = form.querySelector('[data-email-toggle]') as HTMLInputElement | null;
     // CRITICAL — model_id field is rendered as <select> when showModelSelect=true
@@ -607,10 +655,8 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       '[name="model_id"]',
     ) as HTMLSelectElement | HTMLInputElement | null;
 
-    const timeValue = timeInput?.value ?? '';
-    const [hourStr, minuteStr] = timeValue.split(':');
-    const digestHour = Number.parseInt(hourStr ?? '', 10);
-    const digestMinute = Number.parseInt(minuteStr ?? '', 10);
+    const digestHour = Number.parseInt(hourSelect?.value ?? '', 10);
+    const digestMinute = Number.parseInt(minuteSelect?.value ?? '', 10);
     // TZ comes from the manual <select> (REQ-SET-007 AC 5). The picker
     // is server-rendered with the stored value, then upgraded to the
     // browser-detected zone by wireTzPicker on load — so .value is
@@ -791,6 +837,71 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
   }
   document.addEventListener('astro:before-swap', teardownScrapeProgress);
 
+  /**
+   * Implements REQ-SET-003 AC 1.
+   *
+   * Auto-detect the browser's preferred hour cycle and re-label the
+   * hour-picker options to AM/PM when the user is in a 12-hour locale
+   * (en-US, en-CA, en-AU, en-PH, …). The server renders 24-hour
+   * labels for everyone — this swaps them client-side based on
+   * `Intl.DateTimeFormat().resolvedOptions().hourCycle`. en-US → 12h,
+   * en-GB / hr-HR / ja-JP → 24h. No country-by-country hardcoding.
+   *
+   * `h11` (Japanese 0-11 cycle, where midnight is "0 AM" / 午前0時)
+   * is left as 24h: the conventional "12 AM" mapping we use for `h12`
+   * would be linguistically wrong for `h11`, and Japanese digital
+   * clocks default to 24h anyway. So `h11` users see the canonical
+   * 24h picker rather than a culturally-inappropriate AM/PM blend.
+   *
+   * Idempotent: runs again on every `astro:page-load` SPA navigation,
+   * but each run reads option values 0..23 and overwrites textContent
+   * the same way — no accumulation, no dataset guard needed.
+   *
+   * Submitted form value is unchanged (canonical 0-23 integer).
+   */
+  function relabelHoursIfTwelveHourLocale(): void {
+    let hourCycle: string | undefined;
+    try {
+      hourCycle = new Intl.DateTimeFormat([], { hour: 'numeric' })
+        .resolvedOptions().hourCycle;
+    } catch {
+      return; // Non-Intl runtime (extremely rare). Leave 24h labels.
+    }
+    // Only re-label for the conventional US-style 12-hour cycle. `h11`
+    // semantically maps midnight → "0 AM" not "12 AM", and the runtime
+    // returns it primarily for ja-JP where 24h is already the digital
+    // norm — so we leave those users with the 24h labels.
+    if (hourCycle !== 'h12') return;
+    // Cast pattern matches the rest of this file — the generic on
+    // querySelector trips Astro's TypeScript checker because the
+    // overloaded lib.dom signature for SVGSVGElement narrowing makes
+    // <HTMLSelectElement> overlap-incompatible with the Element
+    // base constraint. Untyped query + cast to the narrower type is
+    // the lane the file already uses (see tzSelect, hourSelect, etc.).
+    const hourSelect = document.querySelector(
+      '[data-hour-select]',
+    ) as HTMLSelectElement | null;
+    if (hourSelect === null) return;
+    const options = hourSelect.options;
+    for (let i = 0; i < options.length; i++) {
+      const opt = options.item(i);
+      if (opt === null) continue;
+      const h = Number.parseInt(opt.value, 10);
+      if (!Number.isFinite(h) || h < 0 || h > 23) continue;
+      // 0 → "12 AM", 1..11 → "1 AM".."11 AM", 12 → "12 PM",
+      // 13..23 → "1 PM".."11 PM". 'h11' and 'h12' both render the
+      // same conventional labels here; the difference is which one
+      // the runtime would pick for plain numeric output, not which
+      // labels users expect to read.
+      let label: string;
+      if (h === 0) label = '12 AM';
+      else if (h < 12) label = `${h} AM`;
+      else if (h === 12) label = '12 PM';
+      else label = `${h - 12} PM`;
+      opt.textContent = label;
+    }
+  }
+
   function init(): void {
     // Restore + delete forms live OUTSIDE the main settings form (they
     // were hoisted to fix a nested-<form> bug). Wire them first so they
@@ -798,6 +909,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     wireRestoreForm();
     wireDeleteForm();
     wireScrapeProgress();
+    relabelHoursIfTwelveHourLocale();
 
     const form = document.querySelector<HTMLFormElement>('[data-settings-form]');
     if (form === null) return;
@@ -807,20 +919,6 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     const status = form.querySelector<HTMLElement>('[data-settings-status]');
     const submit = form.querySelector<HTMLButtonElement>('[data-settings-submit]');
     const tzSelect = form.querySelector('[data-tz-select]') as HTMLSelectElement | null;
-    const timeInput = form.querySelector('[data-time-input]') as HTMLInputElement | null;
-
-    // Keep <input type="time"> lang in sync with the selected tz so a
-    // user switching from Europe/Zurich to America/Los_Angeles flips
-    // the picker from 24h to 12h immediately, without a reload.
-    // Mirrors `timeLangForTz` in the frontmatter.
-    function timeLangForTz(tz: string): string {
-      return tz.startsWith('America/') ? 'en-US' : 'en-GB';
-    }
-    if (tzSelect !== null && timeInput !== null) {
-      tzSelect.addEventListener('change', () => {
-        timeInput.lang = timeLangForTz(tzSelect.value);
-      });
-    }
 
     // Surface the native-POST round-trip outcome inline next to the
     // Save button (instead of a top-of-page banner). The /api/settings
@@ -1124,19 +1222,47 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     gap: 0.35rem;
   }
 
+  /* The Daily-digest-time control uses <fieldset><legend> for proper
+     screen-reader grouping (two <select>s share a single visible
+     label). Strip the default UA chrome so it visually matches the
+     surrounding labelled fields. */
+  fieldset.settings__field {
+    border: 0;
+    padding: 0;
+    margin: 0;
+  }
+  fieldset.settings__field > legend.settings__field-label {
+    padding: 0;
+    margin-bottom: 0.35rem;
+  }
+
   .settings__field-label {
     font-size: var(--text-sm);
     color: var(--text-muted);
   }
 
-  .settings__time-input {
+  .settings__time-picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: max-content;
+  }
+
+  .settings__time-select {
     min-height: 44px;
-    padding: 0.5rem 0.75rem;
+    padding: 0.5rem 0.6rem;
     background-color: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: 0.375rem;
-    width: max-content;
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .settings__time-sep {
+    color: var(--text-muted);
+    font-weight: 600;
+    user-select: none;
   }
 
   .settings__tz {

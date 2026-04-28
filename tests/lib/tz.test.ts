@@ -31,11 +31,12 @@ describe('DEFAULT_TZ', () => {
 });
 
 describe('localeForTz', () => {
-  // Pins the heuristic that drives 24h-vs-12h selection for both
-  // server-rendered ingestion times (digest detail page) and the
-  // <input type="time"> widget on /settings. A regression that
-  // flips this to always-en-US would silently re-introduce the
-  // 12h-on-Europe/Zurich bug fixed in PR6.
+  // Pins the heuristic that drives 24h-vs-12h selection for the
+  // server-rendered ingestion time on the digest detail page. A
+  // regression that flips this to always-en-US would silently
+  // re-introduce the 12h-on-Europe/Zurich bug fixed in PR6.
+  // (The /settings time picker no longer relies on this — see
+  // settings.astro for why two <select>s replaced <input type="time">.)
   it('REQ-SET-003: America/* zones use en-US (12h)', () => {
     expect(localeForTz('America/Los_Angeles')).toBe('en-US');
     expect(localeForTz('America/New_York')).toBe('en-US');

@@ -3,7 +3,7 @@
 // discovery for tags missing from KV.
 
 import { describe, it, expect, vi } from 'vitest';
-import { GET, PUT, MAX_HASHTAGS } from '~/pages/api/settings';
+import { GET, POST, PUT, MAX_HASHTAGS } from '~/pages/api/settings';
 import { SESSION_COOKIE_NAME } from '~/middleware/auth';
 import { signSession } from '~/lib/session-jwt';
 
@@ -619,5 +619,156 @@ describe('PUT /api/settings', () => {
     const res = await PUT(makeContext(req, env(db, kv)) as never);
     expect(res.status).toBe(429);
     expect(res.headers.get('Retry-After')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Native form-POST handler — REQ-SET-003. The settings page submits two
+// <select> fields named `hour` and `minute` (replacing `<input type="time">`
+// because the native time-input UI ignores `lang` and falls back to the
+// device locale, breaking 24h display for en-US devices).
+// ---------------------------------------------------------------------------
+
+async function formPostRequest(
+  fields: Record<string, string>,
+  opts: AuthedRequestOpts = {},
+): Promise<Request> {
+  const headers = new Headers({
+    'Content-Type': 'application/x-www-form-urlencoded',
+  });
+  if (typeof opts.origin === 'string') {
+    headers.set('Origin', opts.origin);
+  } else if (!('origin' in opts) || opts.origin === undefined) {
+    headers.set('Origin', APP_ORIGIN);
+  }
+  if (opts.token !== null) {
+    const token =
+      opts.token ??
+      (await signSession(
+        { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
+        JWT_SECRET,
+      ));
+    headers.set('Cookie', `${SESSION_COOKIE_NAME}=${token}`);
+  }
+  const body = new URLSearchParams(fields).toString();
+  return new Request(`${APP_URL}/api/settings`, {
+    method: 'POST',
+    headers,
+    body,
+  });
+}
+
+describe('POST /api/settings (form-encoded fallback)', () => {
+  it('REQ-SET-003: accepts hour + minute as separate <select> fields, persists 24h hour', async () => {
+    const { db, runCalls } = makeDb(baseRow());
+    const { kv } = makeKv(['ai', 'llm']);
+    const req = await formPostRequest({
+      hour: '14',
+      minute: '30',
+      tz: 'Europe/Zagreb',
+      model_id: VALID_MODEL_ID,
+      email_enabled: 'on',
+    });
+    const res = await POST(makeContext(req, env(db, kv)) as never);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toBe('/settings?saved=ok');
+
+    const update = runCalls.find((c) => c.sql.startsWith('UPDATE users'));
+    expect(update).toBeDefined();
+    // POST handler binding order: digest_hour, digest_minute, tz,
+    // model_id, email_enabled, id.
+    expect(update!.params[0]).toBe(14);
+    expect(update!.params[1]).toBe(30);
+    expect(update!.params[2]).toBe('Europe/Zagreb');
+  });
+
+  it('REQ-SET-003: zero-padded `01` and `05` are parsed as hour=1, minute=5', async () => {
+    const { db, runCalls } = makeDb(baseRow());
+    const { kv } = makeKv(['ai', 'llm']);
+    const req = await formPostRequest({
+      hour: '01',
+      minute: '05',
+      tz: 'Europe/Zagreb',
+      model_id: VALID_MODEL_ID,
+      email_enabled: 'on',
+    });
+    const res = await POST(makeContext(req, env(db, kv)) as never);
+    expect(res.status).toBe(303);
+    const update = runCalls.find((c) => c.sql.startsWith('UPDATE users'));
+    expect(update!.params[0]).toBe(1);
+    expect(update!.params[1]).toBe(5);
+  });
+
+  it('REQ-SET-003: hour+minute take precedence over legacy `time` when both are present', async () => {
+    // The fresh UI submits hour+minute; if a stale page is mid-roll
+    // and somehow ends up with both shapes, the fresh selects must
+    // win. A regression that flipped the order would silently snap
+    // saved times back to whatever the stale `time` field held.
+    const { db, runCalls } = makeDb(baseRow());
+    const { kv } = makeKv(['ai', 'llm']);
+    const req = await formPostRequest({
+      hour: '14',
+      minute: '30',
+      time: '07:00',
+      tz: 'Europe/Zagreb',
+      model_id: VALID_MODEL_ID,
+    });
+    const res = await POST(makeContext(req, env(db, kv)) as never);
+    expect(res.status).toBe(303);
+    const update = runCalls.find((c) => c.sql.startsWith('UPDATE users'));
+    expect(update!.params[0]).toBe(14);
+    expect(update!.params[1]).toBe(30);
+  });
+
+  it('REQ-SET-003: empty-string hour+minute fall through to legacy `time` (M2)', async () => {
+    // A stale page that submits both shapes with the new fields
+    // empty (e.g. JS-disabled with stale markup) must NOT error
+    // out — the legacy `time` parse is the right answer in that
+    // case. Without this guard the user sees `invalid_time` for a
+    // perfectly valid request.
+    const { db, runCalls } = makeDb(baseRow());
+    const { kv } = makeKv(['ai', 'llm']);
+    const req = await formPostRequest({
+      hour: '',
+      minute: '',
+      time: '07:45',
+      tz: 'Europe/Zagreb',
+      model_id: VALID_MODEL_ID,
+    });
+    const res = await POST(makeContext(req, env(db, kv)) as never);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toBe('/settings?saved=ok');
+    const update = runCalls.find((c) => c.sql.startsWith('UPDATE users'));
+    expect(update!.params[0]).toBe(7);
+    expect(update!.params[1]).toBe(45);
+  });
+
+  it('REQ-SET-003: legacy `time=HH:MM` still works (back-compat for in-flight pages)', async () => {
+    const { db, runCalls } = makeDb(baseRow());
+    const { kv } = makeKv(['ai', 'llm']);
+    const req = await formPostRequest({
+      time: '07:45',
+      tz: 'Europe/Zagreb',
+      model_id: VALID_MODEL_ID,
+    });
+    const res = await POST(makeContext(req, env(db, kv)) as never);
+    expect(res.status).toBe(303);
+    const update = runCalls.find((c) => c.sql.startsWith('UPDATE users'));
+    expect(update!.params[0]).toBe(7);
+    expect(update!.params[1]).toBe(45);
+  });
+
+  it('REQ-SET-003: out-of-range hour redirects with invalid_time', async () => {
+    const { db } = makeDb(baseRow());
+    const { kv } = makeKv(['ai', 'llm']);
+    const req = await formPostRequest({
+      hour: '24',
+      minute: '00',
+      tz: 'Europe/Zagreb',
+      model_id: VALID_MODEL_ID,
+    });
+    const res = await POST(makeContext(req, env(db, kv)) as never);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toContain('error=invalid_time');
   });
 });

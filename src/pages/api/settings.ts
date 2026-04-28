@@ -395,17 +395,38 @@ export async function POST(context: APIContext): Promise<Response> {
     return fail('bad_request');
   }
 
-  // The form's `time` field is a single HH:MM string; split it into
-  // the hour/minute integers the validation block below expects.
+  // The form sends `hour` and `minute` as separate fields (two
+  // <select>s on the page — see settings.astro for why we don't use
+  // <input type="time">). We also accept the legacy single `time`
+  // HH:MM string for back-compat with any stale page in flight when
+  // this deploys.
+  //
+  // Precedence: when both shapes are present, `hour`+`minute` wins —
+  // the fresh UI submits both because the form posts every field, and
+  // a stale `<input name="time">` cannot exist in the same payload as
+  // the new selects unless the page is mid-roll. Treat empty strings
+  // as "field absent" so a stale page that submits `hour=""&time="07:45"`
+  // still falls through to the legacy parse and saves the right value.
+  const hourRaw = form.get('hour');
+  const minuteRaw = form.get('minute');
   const timeRaw = form.get('time');
   const tzRaw = form.get('tz');
   const modelIdRaw = form.get('model_id');
   // Native HTML form checkboxes only appear in the FormData when checked.
   const emailEnabled = form.get('email_enabled') !== null;
-  const [hourStr, minuteStr] =
-    typeof timeRaw === 'string' ? timeRaw.split(':') : ['', ''];
-  const digestHour = Number.parseInt(hourStr ?? '', 10);
-  const digestMinute = Number.parseInt(minuteStr ?? '', 10);
+  const hasFreshFields =
+    typeof hourRaw === 'string' && hourRaw !== '' &&
+    typeof minuteRaw === 'string' && minuteRaw !== '';
+  let hourStr = '';
+  let minuteStr = '';
+  if (hasFreshFields) {
+    hourStr = hourRaw as string;
+    minuteStr = minuteRaw as string;
+  } else if (typeof timeRaw === 'string') {
+    [hourStr = '', minuteStr = ''] = timeRaw.split(':');
+  }
+  const digestHour = Number.parseInt(hourStr, 10);
+  const digestMinute = Number.parseInt(minuteStr, 10);
 
   if (!isIntegerInRange(digestHour, 0, 23) || !isIntegerInRange(digestMinute, 0, 59)) {
     return fail('invalid_time');
