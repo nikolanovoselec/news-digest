@@ -248,9 +248,15 @@ describe('Base.astro / page-effects.ts — view-transition wiring (REQ-DES-003 /
       /promoteSourceCardForOutgoingMorph[\s\S]{0,400}clearAllVtNames\(document\)/,
     );
     // Regression guard: must NOT register clearAllVtNames as an
-    // astro:after-swap listener.
+    // astro:after-swap listener. Match the actual addEventListener
+    // call shape so a NOTE-style comment that mentions both terms
+    // (the explanation block above the listener) doesn't false-
+    // positive.
     expect(effectsSource).not.toMatch(
-      /astro:after-swap[\s\S]{0,200}clearAllVtNames/,
+      /addEventListener\(\s*['"]astro:after-swap['"][^)]*\)\s*\{[^}]*clearAllVtNames/,
+    );
+    expect(effectsSource).not.toMatch(
+      /addEventListener\(\s*['"]astro:after-swap['"]\s*,\s*\(?\)?\s*=>\s*\{?\s*clearAllVtNames/,
     );
   });
 
