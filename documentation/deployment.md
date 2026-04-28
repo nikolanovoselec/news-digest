@@ -75,7 +75,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 
 **Required secret:** `DEV_BYPASS_TOKEN` (must match the Worker secret on the target deployment).
 
-**Sandbox:** Mutations are scoped to the synthetic `__e2e__` user. Implements [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view), [REQ-HIST-001](../sdd/history.md#req-hist-001-history-page-and-day-grouping).
+**Sandbox:** Mutations are scoped to the synthetic `__e2e__` user. Implements [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view), [REQ-HIST-001](../sdd/history.md#req-hist-001-day-grouped-article-history).
 
 > **Fork-friendly:** set `APP_URL` to any hostname whose apex is a zone in the same Cloudflare account. The deploy binds it automatically.
 
