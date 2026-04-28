@@ -16,6 +16,7 @@ The app is installable on iOS, Android, and desktop via a standards web manifest
 3. Apple meta tags in the root layout set `apple-mobile-web-app-capable=yes`, `apple-mobile-web-app-status-bar-style=black-translucent`, `apple-mobile-web-app-title`, and `apple-touch-icon` (180×180 PNG).
 4. iOS Safari users (detected via user agent with `!navigator.standalone`) see a one-time instructional note: "Tap the share icon, then Add to Home Screen."
 5. Android and desktop Chrome users see an "Install app" button in `/settings`; click triggers the `beforeinstallprompt` event's prompt.
+6. When the app is launched as an installed PWA (display-mode standalone), a brand-canvas splash holds the screen for ~2.4 seconds before the dashboard becomes visible, so the cold-launch transition reads as a deliberate app boot rather than an instant flash. The splash plays once per launched session — subsequent in-app navigations during the same session reveal the destination immediately. Reduced-motion users get a near-instant fade so they still see the brand canvas without the lingering dwell. Users in a regular browser tab never see the splash.
 
 **Constraints:** None
 **Priority:** P1
