@@ -139,7 +139,7 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 | Path | Role | Implements |
 |---|---|---|
 | `index.astro` | Public landing page; redirects authenticated users to `/digest` | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) |
-| `digest.astro` | `/digest` overview grid filtered by user hashtags | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) |
+| `digest.astro` | `/digest` overview grid filtered by user hashtags; empty-state when no matching articles | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-READ-005](../sdd/reading.md#req-read-005-empty-dashboard-state) |
 | `digest/[id]/[slug].astro` | Article detail view with shared-element morph and read tracking | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view), [REQ-READ-003](../sdd/reading.md#req-read-003-read-tracking) |
 | `history.astro` | `/history` — day-grouped paginated history with tag filtering | [REQ-HIST-001](../sdd/history.md#req-hist-001-day-grouped-article-history) |
 | `starred.astro` | `/starred` — user's starred articles | [REQ-STAR-002](../sdd/reading.md#req-star-002-starred-articles-page) |
