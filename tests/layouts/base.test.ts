@@ -166,6 +166,14 @@ describe('Base.astro / page-effects.ts — view-transition wiring (REQ-DES-003 /
     expect(effectsSource).toMatch(
       /window\.scrollTo\(\s*\{\s*top:\s*0/,
     );
+    // The click listener must use capture phase + stopPropagation so
+    // it wins the race against Astro ClientRouter's bubble-phase
+    // delegate. Without this the same-page /digest click triggers a
+    // redundant fetch+swap that beats scrollTo to the punch.
+    expect(effectsSource).toMatch(
+      /addEventListener\(\s*['"]click['"][\s\S]{0,1500}true\s*,?\s*\)/,
+    );
+    expect(effectsSource).toMatch(/e\.stopPropagation\(\)/);
   });
 
   it('::view-transition-group(site-header) carries an explicit z-index so morphing cards never paint over the header', () => {

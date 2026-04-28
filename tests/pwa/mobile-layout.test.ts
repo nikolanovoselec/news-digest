@@ -132,6 +132,20 @@ describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
     expect(effectsSource).toMatch(/metaKey|ctrlKey|shiftKey|altKey/);
     expect(effectsSource).toMatch(/window\.scrollTo\(\s*\{\s*top:\s*0/);
   });
+
+  it('REQ-PWA-003 AC 4: brand-link click delegate runs in capture phase + stopPropagation so it wins the race with Astro ClientRouter', () => {
+    // Astro ClientRouter binds a bubble-phase document click delegate
+    // for view-transition navigation. A bubble-phase brand-link
+    // listener never reaches scrollTo because ClientRouter's fetch +
+    // swap has already started. Capture phase fires first; stop-
+    // Propagation ensures ClientRouter's bubble-phase listener never
+    // fires for the intercepted click. Required for Samsung Internet
+    // standalone shortcut behaviour where this race was most visible.
+    expect(effectsSource).toMatch(
+      /addEventListener\(\s*['"]click['"][\s\S]{0,1500}true\s*,?\s*\)/,
+    );
+    expect(effectsSource).toMatch(/e\.stopPropagation\(\)/);
+  });
 });
 
 describe('tap / focus styling — REQ-PWA-003 AC 5', () => {
