@@ -58,7 +58,24 @@ The deploy job:
 
 `scripts/e2e-test.sh` is manual only (`bash scripts/e2e-test.sh --force-prod`) and not part of CI deploy — running it triggers a full LLM-cost scrape and mutates the owner's account.
 
-`Playwright E2E (live)` workflow (`.github/workflows/playwright-e2e.yml`) is `workflow_dispatch`-triggered. It exercises the live site in a real browser (view-transition snapshots, scroll restore, navigation correctness on `/digest` and `/history` back-nav — verifying the URL transitions cleanly and the originating card remains in the DOM) — the browser-side coverage curl-driven `e2e-test.sh` cannot reach. The morph-pair structural contract (no `clearAllVtNames` re-introduced into the `astro:after-swap` listener path) is pinned by static unit tests in `tests/layouts/base.test.ts` rather than the live e2e — Playwright cannot reliably observe the Astro lifecycle event timing from outside the browser context, and a static guard on the source code is the right layer for that regression class. The perf-comparability test (history back-nav ≤ 1.6× digest back-nav) is permanently skipped; `/history` is structurally slower than `/digest` due to opened day-groups carrying more cards, and this is accepted. Trigger from the Actions tab; optional `base_url` input targets a preview deploy. Requires repository secret `DEV_BYPASS_TOKEN` matching the Worker secret on the target deployment. Mutations are sandboxed to the synthetic `__e2e__` user (REQ-READ-002, REQ-HIST-001).
+### Playwright E2E (live)
+
+Manually-triggered browser-side coverage that complements the curl-driven `e2e-test.sh`. Workflow file: `.github/workflows/playwright-e2e.yml`.
+
+**What it covers:**
+- View-transition snapshots
+- Per-path scroll save / restore
+- Navigation correctness on `/digest` and `/history` back-nav (URL transitions cleanly, originating card remains in DOM)
+
+**What it does NOT cover:**
+- The morph-pair structural contract (no `clearAllVtNames` reintroduced into the `astro:after-swap` listener path) lives in `tests/layouts/base.test.ts` instead — Playwright cannot reliably observe Astro lifecycle event timing from outside the browser context, so a static source-grep is the right layer for that regression class.
+- The history-vs-digest perf-comparability test is permanently skipped (`/history` is structurally slower than `/digest` due to opened day-groups carrying more cards; accepted).
+
+**How to run:** Actions tab → `Playwright E2E (live)` → Run workflow. Optional `base_url` input targets a preview deploy.
+
+**Required secret:** `DEV_BYPASS_TOKEN` (must match the Worker secret on the target deployment).
+
+**Sandbox:** Mutations are scoped to the synthetic `__e2e__` user. Implements [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view), [REQ-HIST-001](../sdd/history.md#req-hist-001-history-page-and-day-grouping).
 
 > **Fork-friendly:** set `APP_URL` to any hostname whose apex is a zone in the same Cloudflare account. The deploy binds it automatically.
 
@@ -96,13 +113,13 @@ Every push to `develop` (and every PR targeting `main`) runs the following gates
 | Step | Command | What it enforces |
 |---|---|---|
 | Install | `npm install --no-fund --no-audit` | Dependency resolution |
-| Security audit (advisory-only) | `npm audit --omit=dev --audit-level=high` with `continue-on-error: true` | Surfaces HIGH+ advisories in runtime dep tree but does NOT fail the build. Worker runtime is workerd, not Node.js, so most advisories live in build tooling (`@astrojs/cloudflare`, `wrangler`, `miniflare`, `undici`) and don't reach the deployed bundle. Operators read the advisory list from CI logs and act via Dependabot PRs; failing the build on these would block legitimate work without improving production security. |
+| Security audit (advisory-only) | `npm audit --omit=dev --audit-level=high` with `continue-on-error: true` | Surfaces HIGH+ runtime-tree advisories; non-blocking — Dependabot is the enforcement path |
 | Lint | `npm run lint` | Oxlint rules |
 | REQ backlink coverage | `node scripts/check-req-backlinks.mjs` | Every `REQ-X-NNN` reference in `src/`, `tests/`, `documentation/`, and `migrations/` resolves to a header in `sdd/`. Fails the build if any reference points at a REQ ID that does not exist in the spec (CF-069). |
 | Dead code | `npm run knip` | No unused exports or files |
 | Unit + integration tests | `npx vitest run` | Vitest suite |
 
-Security advisories surfaced by the audit step are non-blocking — Dependabot opens PRs weekly for runtime dep upgrades, which is the project's enforcement path.
+**Why the audit step is advisory:** the Worker runtime is `workerd`, not Node.js, so most advisories live in build tooling (`@astrojs/cloudflare`, `wrangler`, `miniflare`, `undici`) and never reach the deployed bundle. Failing the build on these would block legitimate work without improving production security. Operators read the advisory list from CI logs and act via the weekly Dependabot PRs.
 
 When the REQ backlink gate fails, either the referenced REQ-ID needs to be added to `sdd/` (if it is a new requirement), or the stale reference in the source/doc file needs to be updated to point at the correct live REQ.
 

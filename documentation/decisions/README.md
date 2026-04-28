@@ -56,19 +56,21 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 ---
 
-### AD3: No server-side article-body fetching *(revised — decision reversed in global-feed rework)*
+### AD3: Server-side article-body fetching with SSRF guard
 
-**Decision (original, 2026-04-22):** The system never fetches article pages from the Worker. Summaries are produced from titles and snippets returned by the search APIs.
+**Decision (2026-04-27):** The chunk consumer fetches article HTML bodies for candidates whose feed snippet is below 400 characters. Fetches are SSRF-guarded, time-bounded, and size-capped; a failed fetch falls back to the feed snippet, never blocking a summary.
 
-**Context:** Workers running from Cloudflare datacenter IPs face a real SSRF surface if they resolve arbitrary URLs from external feeds. Reddit and many publishers also rate-limit or block Cloudflare IP ranges, so even if we wanted article bodies, we'd get inconsistent coverage.
+**Context:** Workers running from Cloudflare datacenter IPs face a real SSRF surface if they resolve arbitrary URLs from external feeds. Many publishers also rate-limit or block Cloudflare IP ranges. The original posture was therefore "no server-side fetch at all" — summaries from titles and feed snippets only.
+
+**Why the original posture was reversed:** under the global-feed pipeline (REQ-PIPE-001 AC 8) feed snippets are often too short to ground a useful summary, and the SSRF concern is mitigated by an explicit allowlist filter (`src/lib/ssrf.ts`), an 8-second timeout, and a 1.5 MB download cap. Readable plaintext is extracted and used as the prompt snippet when it is longer than the feed snippet. Fan-out is bounded-concurrency via `src/lib/concurrency.ts` (`mapConcurrent`, 20 workers).
 
 **Alternatives considered:**
-- Fetch article bodies for richer LLM context, with an SSRF filter.
+- Keep the no-fetch posture and accept thin summaries on short-snippet feeds.
 - Use a residential-IP scraping service.
 
-**Rationale (original):** Every headline from HN Algolia, Google News RSS, and Reddit includes a title and URL (and often a snippet). Workers AI can rank and summarize from this alone. Dropping the fetch eliminates SSRF entirely, removes Reddit/Google News blocking concerns for our own fetching, and keeps the pipeline fast and simple.
+**Rationale:** The SSRF guard and the size/time caps reduce the original risk to negligible. Richer prompt context measurably improved summary quality on short-snippet feeds.
 
-**Revision (2026-04-27 — global-feed rework, REQ-PIPE-001 AC 8):** This decision was reversed during the global-feed pipeline rework. The chunk consumer (`src/queue/scrape-chunk-consumer.ts`) now fetches article HTML bodies for candidates whose feed snippet is below 400 characters — SSRF-guarded via `src/lib/ssrf.ts`, 8-second timeout, 1.5 MB download cap. Readable plaintext is extracted by `src/lib/article-fetch.ts` and used as the prompt snippet when it is longer than the feed snippet; a failed fetch falls back to the feed snippet so it never blocks a summary. The SSRF filter from the original "Alternatives considered" mitigates the concern that prompted this ADR. Fan-out is bounded-concurrency via `src/lib/concurrency.ts` (`mapConcurrent`, 20 workers). Implements [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) AC 8.
+**History:** The original AD3 (2026-04-22) prohibited any server-side fetching; superseded by this entry on 2026-04-27 during the global-feed rework.
 
 **Related requirements:** [REQ-GEN-003](../../sdd/generation.md#req-gen-003-source-fan-out-with-caching), [REQ-GEN-004](../../sdd/generation.md#req-gen-004-url-canonicalization-and-dedupe), [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
 
@@ -84,11 +86,9 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 - Store markdown, render client-side with `marked` + DOMPurify.
 - Store markdown, render server-side with sanitize-html.
 
-**Rationale:** Plaintext + `textContent` makes XSS impossible by construction. One less dependency, one less configuration surface, zero sanitizer updates to track. Detail paragraphs are stored as a `string[]` and rendered via `textContent`, so the same invariant holds regardless of how many paragraphs the LLM returns.
+**Rationale:** Plaintext + `textContent` makes XSS impossible by construction. One less dependency, one less configuration surface, zero sanitizer updates to track. Detail paragraphs are stored as a `string[]` and rendered via `textContent`, so the same invariant holds regardless of how many paragraphs the LLM returns. The constraint survived the 2026-04-23 global-feed rework (which retired the per-user generation REQs REQ-GEN-002/006) and now applies via REQ-PIPE-002.
 
-**Related requirements:** [REQ-GEN-005](../../sdd/generation.md#req-gen-005-single-call-llm-summarization), [REQ-READ-002](../../sdd/reading.md#req-read-002-article-detail-view)
-
-> Note: REQ-GEN-005 (Single-call LLM summarization) describes the shape of the LLM prompt contract, which is still accurate. The per-user generation machinery described by REQ-GEN-002/006 was retired in the 2026-04-23 global-feed rework but the plaintext-only output constraint captured in this ADR remains in effect via REQ-PIPE-002.
+**Related requirements:** [REQ-GEN-005](../../sdd/generation.md#req-gen-005-single-call-llm-summarization), [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-READ-002](../../sdd/reading.md#req-read-002-article-detail-view)
 
 ---
 
@@ -112,7 +112,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Decision:** While a scrape run is in progress, the client polls `GET /api/scrape-status` every 5 seconds to drive the "Update in progress" indicator and the Force Refresh progress display on `/settings`.
 
-**Context:** Scrape runs take ~60 s end-to-end. Users mostly see finished articles on their next visit; real-time progress is a quality-of-life indicator for operators watching `/settings` after triggering a force-refresh. The per-user live-generation polling pattern (REQ-READ-004, deprecated 2026-04-23) is no longer applicable — the dashboard always renders from the populated pool.
+**Context:** Scrape runs take ~60 s end-to-end. Users mostly see finished articles on their next visit; real-time progress is a quality-of-life indicator for operators watching `/settings` after triggering a force-refresh. The per-user live-generation polling pattern (REQ-READ-004, deprecated 2026-04-23) is no longer applicable — the dashboard always renders from the article pool.
 
 **Alternatives considered:**
 - Server-Sent Events streaming phase updates — no clean transport between the Queue consumer and the SSE HTTP handler without adding Durable Objects.

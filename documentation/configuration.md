@@ -59,7 +59,7 @@ Declared in `wrangler.toml`:
 | `KV` | KV namespace | Edge cache for discovered sources, headlines, source health |
 | `SCRAPE_COORDINATOR` | Queue producer | Producer binding — one message per every-4-hours cron tick kicks the coordinator |
 | `SCRAPE_CHUNKS` | Queue producer | Producer binding — one message per ~100-candidate LLM chunk |
-| `SCRAPE_FINALIZE` | Queue producer | Producer binding — one message per scrape tick, enqueued by the last chunk consumer after the run is stamped `ready`; triggers the cross-chunk semantic dedup pass ([REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)) |
+| `SCRAPE_FINALIZE` | Queue producer | Producer binding — one message per scrape run, enqueued by the last chunk consumer after the run is stamped `ready`; triggers the finalize pass ([REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)) |
 | `AI` | Workers AI | LLM inference for chunk summarization, source discovery, and cross-chunk dedup finalize pass |
 | `ASSETS` | Fetcher (static assets) | Cloudflare static-asset binding for serving the Astro-built output; falls back to `new Response('news-digest')` in tests |
 
@@ -69,11 +69,15 @@ All three queue consumers run with `max_batch_size = 1` (one isolate per message
 
 Three triggers are declared in `wrangler.toml`:
 
-| Schedule | Purpose |
-|---|---|
-| `0 */4 * * *` | Every-4-hour global-feed coordinator — fires the scrape pipeline at 00/04/08/12/16/20 UTC ([REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)) |
-| `0 3 * * *` | Daily retention cleanup — removes articles older than 14 days ([REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup)); also purges expired and old-revoked refresh-token rows from the `refresh_tokens` table (7-day grace on revoked rows preserves reuse-detection history — [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection) AC 5) |
-| `*/5 * * * *` | Every-5-minute tick — single trigger whose handler runs two chores: (1) email dispatcher fan-out per user ([REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email)), and (2) pending-discovery drain (LLM source discovery for newly added tags). The discovery side runs purely as a worker queue + cron consumer with no per-user gating. |
+| Schedule | Purpose | REQ |
+|---|---|---|
+| `0 */4 * * *` | Global-feed coordinator (00/04/08/12/16/20 UTC) | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) |
+| `0 3 * * *` | Daily retention + refresh-token purge | [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection) |
+| `*/5 * * * *` | Email dispatcher + pending-discovery drain | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email) |
+
+**Daily 03:00 UTC tick:** removes articles older than 14 days (starred articles are exempt). Also purges expired and old-revoked rows from the `refresh_tokens` table; the 7-day grace on revoked rows preserves reuse-detection history per REQ-AUTH-008 AC 5.
+
+**Every-5-minute tick:** a single trigger whose handler runs two unrelated chores. (1) Per-user email dispatcher fan-out — sends digests to users in their local-day window. (2) Pending-discovery drain — runs LLM source discovery for newly added tags as a worker queue consumer with no per-user gating.
 
 ## KV Key Conventions
 
@@ -84,7 +88,7 @@ The `KV` namespace uses a structured key scheme. All keys are shared across all 
 | `sources:{tag}` | `{ feeds: [{ name, url, kind }], discovered_at }` | None (permanent until evicted) | LLM-discovered feed list for a tag — globally shared; written by the discovery cron, cleared by `POST /api/admin/discovery/retry` and by the coordinator's eviction pass when all feeds for a tag are removed; the daily cron also sweeps entries whose tag is no longer owned by any user ([REQ-PIPE-007](../sdd/generation.md#req-pipe-007-orphan-tag-source-cleanup)) |
 | `discovery_failures:{tag}` | per-tag failure counter (string integer) | — | Per-tag failure bookkeeping; cleared by `POST /api/admin/discovery/retry`; also swept by the daily orphan-tag cleanup when the tag is no longer owned by any user ([REQ-PIPE-007](../sdd/generation.md#req-pipe-007-orphan-tag-source-cleanup)) |
 | `source_health:{url}` | Consecutive failure count (UTF-8 integer string) | 7 days | Per-URL fetch-health counter; incremented on each failed fetch, deleted on success. When the count reaches 30 (`CONSECUTIVE_FETCH_FAILURE_LIMIT`) the coordinator evicts the URL from its `sources:{tag}` entry. Implements [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking). |
-| `headlines:{source}:{tag}` | Array of headline objects | 10 min (600 s) | Per-source/per-tag headline cache shared across all chunk invocations within a single scrape tick. Implements [REQ-GEN-003](../sdd/generation.md#req-gen-003-source-fan-out-with-caching). |
+| `headlines:{source}:{tag}` | Array of headline objects | 10 min (600 s) | Per-source/per-tag headline cache shared across all chunk invocations within a single scrape run. Implements [REQ-GEN-003](../sdd/generation.md#req-gen-003-source-fan-out-with-caching). |
 | `scrape_run:{id}:chunks_remaining` | Integer string | — | Derived mirror of chunk progress — written by the coordinator (total) and decremented by each chunk consumer for display purposes only. The authoritative completion gate moved to D1 (`scrape_chunk_completions` table, migration 0007) to eliminate the TOCTOU race window. This KV key is polled by `GET /api/scrape-status` for the in-flight progress display ([REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress)) and is **not** the completion signal. |
 | `ratelimit:{routeClass}:{identity}:{windowIndex}` | Integer string | Window size | Rate-limit counters. Rules: `auth_login` 10/60s IP, `auth_callback` 20/60s IP, `auth_refresh_ip` 60/60s IP (fail-closed), `auth_refresh_user` 30/60s user (fail-closed), `auth_logout` 5/60s IP, `article_star` 60/60s user, `tags_mutation` 30/60s user. The `auth_refresh_*` buckets are shared between `POST /api/auth/refresh` and the inline middleware refresh path. Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9. |
 

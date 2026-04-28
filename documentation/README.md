@@ -18,6 +18,20 @@ This is the implementation documentation. The product specification (what the sy
 
 ---
 
+## Glossary
+
+The codebase historically used several names for the same concepts. The canonical names are:
+
+| Canonical name | Aliases (do not use) | Definition |
+|---|---|---|
+| **article pool** | "global pool", "global article pool", "populated pool" | The set of summarised articles produced by the most recent global scrape; rendered identically to every user |
+| **scrape run** | "scrape tick", "tick", "cron tick" | One end-to-end execution of the global-feed pipeline: coordinator → chunks → finalize |
+| **chunk** | — | One LLM-summarisation message produced by the coordinator and processed by `scrape-chunk-consumer` |
+| **finalize pass** | "dedup pass" | The cross-chunk semantic-dedup phase that runs after the last chunk completes (REQ-PIPE-008) |
+| **update-in-progress indicator** | "in-flight progress display" | The `/digest` and `/settings` UI element that polls `GET /api/scrape-status` while a scrape run is active |
+
+When writing or reviewing documentation, use only the canonical names. The aliases column exists so readers searching the codebase or older docs can resolve old names to the current term.
+
 ## Related
 
 - [Product Specification](../sdd/README.md) — Requirements and design intent

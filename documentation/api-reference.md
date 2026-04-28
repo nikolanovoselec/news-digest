@@ -192,13 +192,13 @@ Native form-encoded fallback for the same settings update. Used when the JS fetc
 }
 ```
 
-Up to 29 articles from the global pool filtered by the user's active hashtags, ordered `ingested_at DESC, published_at DESC`. `next_scrape_at = last_scrape_run.started_at + 14400` (4-hour cron).
+Up to 29 articles from the article pool filtered by the user's active hashtags, ordered `ingested_at DESC, published_at DESC`. `next_scrape_at = last_scrape_run.started_at + 14400` (4-hour cron).
 
 **Implements:** [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) AC 5
 
 ### GET /api/digest/:id
 
-**Response:** Same article shape as `/today` for a single article by ID from the global article pool. Returns 404 if not found.
+**Response:** Same article shape as `/today` for a single article by ID from the article pool. Returns 404 if not found.
 
 **Implements:** [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view)
 
@@ -465,8 +465,8 @@ Implements [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-log
 | `auth.refresh.rotated` | Refresh-token row successfully rotated (inline middleware or explicit `/api/auth/refresh`) |
 | `auth.refresh.rotate_failed` | D1 batch in `rotateRefreshToken` threw |
 | `auth.refresh.expired` | Refresh cookie presented but the row is past its 30-day TTL |
-| `auth.refresh.fingerprint_drift` | Refresh cookie valid; UA or country has changed since issuance — logged as forensic metadata for future anomaly detection on the steady-state path. Request is NOT rejected (RFC 9700 / OWASP / Auth0 / Okta guidance: UA-based hard gates lock users out on every browser auto-update) |
-| `auth.refresh.grace_fingerprint_mismatch` | Refresh cookie's row was rotated within the past 30 s grace window AND the present fingerprint does not match — treated as theft (parallel browser requests do not legitimately drift UA across 30 s); `revokeAllForUser` fires |
+| `auth.refresh.fingerprint_drift` | Refresh cookie valid but UA or country changed since issuance — forensic metadata only, request is NOT rejected (see "Why fingerprint drift is logged but not enforced" below) |
+| `auth.refresh.grace_fingerprint_mismatch` | Refresh row was rotated within the past 30 s grace window AND fingerprint mismatches — treated as theft; `revokeAllForUser` fires |
 | `auth.refresh.concurrent_collision` | Refresh cookie's row is already revoked but within the 30 s grace window — served a fresh access JWT off the surviving child row without re-rotating |
 | `auth.refresh.concurrent_lost_race` | Same as above; no surviving child row found — treated as reuse |
 | `auth.refresh.reuse_detected` | Revoked refresh cookie presented outside the grace window — every refresh row for the user revoked + `session_version` bumped |
@@ -484,6 +484,12 @@ Implements [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-log
 | `article.star.failed` | D1 insert or delete in `POST/DELETE /api/articles/:id/star` threw |
 
 Raw exception messages appear only in the `detail` field of error-level records; they are never stored in D1 and never returned to clients (see [REQ-OPS-002](../sdd/observability.md#req-ops-002-sanitized-error-surfaces)).
+
+#### Why fingerprint drift is logged but not enforced
+
+A refresh-token row stores the user-agent and country at issuance. On every refresh, the present UA/country are compared with the stored values and a drift event is logged as forensic metadata. **The drift does not block the refresh.**
+
+UA strings change on every browser auto-update; country changes when a user moves between Wi-Fi and mobile networks. Hard-gating refresh on either would lock users out routinely. Industry guidance (RFC 9700, OWASP, Auth0, Okta) is consistent: log drift for anomaly detection, do not enforce it on the steady-state path. Reuse-detection (a revoked-then-replayed cookie) remains the enforcement signal.
 
 ---
 
