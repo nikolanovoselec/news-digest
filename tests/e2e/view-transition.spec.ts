@@ -94,15 +94,18 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     expect(namedAtPrep, 'exactly one card promoted at before-preparation').toBe(1);
   });
 
-  test('backward nav: at most one named element exists immediately after swap', async ({
+  test('backward nav: settled /digest carries zero lingering view-transition-names', async ({
     page,
   }) => {
-    // Looser-than-it-sounds invariant: `clearAllVtNames` (registered
-    // after the promotion handler in the same `astro:after-swap`
-    // listener block) may run before our test's once-listener fires,
-    // collapsing the count to 0. Either count proves the contract:
-    // at any post-swap observation point, at most one named card
-    // exists. The previous "exactly one" framing was racy.
+    // Mid-swap observation is racy — `clearAllVtNames` (registered
+    // before any external listener via the page-effects bootstrap)
+    // can fire before a once-listener attached after page-load and
+    // leaves the captured count at -1. The CONTRACT we care about is
+    // the END STATE: after the back-nav settles, no card carries a
+    // leftover `view-transition-name`. If a regression skipped the
+    // cleanup, a name would persist on the live DOM and the next
+    // navigation would drag it into the snapshot — exactly the
+    // O(N) bookkeeping the perf refactor eliminated.
     await page.goto('/digest', { waitUntil: 'networkidle' });
     const firstCard = page.locator('[data-digest-card]').first();
     const firstSlug = await firstCard.getAttribute('data-vt-slug');
@@ -110,33 +113,18 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     await firstCard.locator('a.digest-card__link').click();
     await page.waitForURL(/\/digest\/[^/]+\/[^/]+\/?$/);
 
-    await page.evaluate(() => {
-      (
-        window as unknown as { __vtNamedPostBack?: number }
-      ).__vtNamedPostBack = -1;
-      document.addEventListener(
-        'astro:after-swap',
-        () => {
-          (
-            window as unknown as { __vtNamedPostBack?: number }
-          ).__vtNamedPostBack = Array.from(
-            document.querySelectorAll<HTMLAnchorElement>(
-              '[data-digest-card] a.digest-card__link',
-            ),
-          ).filter((el) => el.style.viewTransitionName !== '').length;
-        },
-        { once: true },
-      );
-    });
-
     await page.locator('[data-article-back]').click();
     await page.waitForURL(/\/digest\/?$/);
+    await page.waitForLoadState('networkidle');
 
-    const namedPostBack = await page.evaluate(
-      () =>
-        (window as unknown as { __vtNamedPostBack?: number }).__vtNamedPostBack,
-    );
-    expect(namedPostBack === 0 || namedPostBack === 1).toBe(true);
+    const lingering = await page.evaluate(() => {
+      return Array.from(
+        document.querySelectorAll<HTMLAnchorElement>(
+          '[data-digest-card] a.digest-card__link',
+        ),
+      ).filter((el) => el.style.viewTransitionName !== '').length;
+    });
+    expect(lingering).toBe(0);
   });
 });
 
