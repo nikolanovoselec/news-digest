@@ -525,7 +525,8 @@ Implements [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-log
 | `auth.refresh.purge_completed` | Daily purge of expired/old-revoked refresh-token rows completed |
 | `auth.refresh.purge_failed` | Daily purge threw |
 | `email.send.failed` | Resend API call failed |
-| `email.dispatch.degraded` | Per-user D1 data-fetch failed during dispatch; static-fallback email still sent |
+| `email.dispatch.degraded` | Per-user D1 data-fetch failed during dispatch; user is treated as having zero headlines and the send is skipped (REQ-MAIL-001 AC 11) |
+| `email.dispatch.skipped_empty` | Recipient has zero unread headlines for the local day; send is skipped and `last_emailed_local_date` is not stamped, so the user is naturally retried tomorrow at their digest time (REQ-MAIL-001 AC 11) |
 | `email.dispatch.skipped_invalid_tz` | User row has an empty or unrecognised IANA timezone; row skipped, sibling buckets continue |
 | `discovery.completed` | Per-tag LLM discovery run finished |
 | `discovery.queued` | A new per-tag discovery job was inserted into `pending_discoveries` |

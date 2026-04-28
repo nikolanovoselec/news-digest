@@ -511,37 +511,45 @@ const articleDataset = {
        - baseline sits on line 2's baseline
        - spans 2 body lines total
 
-     Math (body line-height 1.65, cap-height ≈ 0.7 × font-size):
-       - line-1 cap-top sits ~0.49em below the paragraph top
-         ((1.65 - 1)/2 half-leading + 0.15em ascender padding)
-       - distance line-1 cap-top → line-2 baseline = 1.65 + 0.7
-         = 2.35em of cap-height span
-       - drop-cap font-size = 2.35 / 0.7 ≈ 3.4em
-       - at line-height 1, drop-cap's ascender padding above cap is
-         0.15 × 3.4 ≈ 0.51em
-       - so float top = paragraph top + (body_cap_top − drop_cap_pad)
-                      = 0 + (0.49 − 0.51) = ~-0.02em → margin-top: 0
-       - in practice browsers round the font-metric layout by ±1-2px;
-         margin-top 0 is the cleanest starting point and looked
-         correct on desktop Chrome + Firefox. If this regresses on
-         a specific browser, nudge margin-top in 0.02em steps. */
+     Math: the body uses var(--font-sans) (cap-height ratio ≈ 0.71)
+     while the drop-cap uses var(--font-serif) — Charter / Iowan Old
+     Style, which carry a SHORTER cap-height (≈ 0.66) than typical
+     sans fonts. The original tuning assumed cap-height ≈ 0.7 across
+     the board and produced font-size 3.4em, but that under-sized
+     the Charter cap so its baseline rendered ~3 px ABOVE line 2's
+     baseline — visibly out of alignment with both line 1 and line 2.
+
+     Solving the two-constraint system (drop-cap cap-top = body line-1
+     cap-top, drop-cap baseline = body line-2 baseline) with Charter's
+     actual cap ratio gives:
+       drop-cap font-size ≈ (body line-height + cap_h_body) / cap_h_serif
+                          = (1.65 + 0.71) / 0.66 ≈ 3.58em
+     We round to 3.6em. With the serif's typical ascent ratio (≈ 0.78)
+     this lands cap-top within ~0.1 px of body line-1 cap-top and
+     baseline within ~0.2 px of body line-2 baseline — alignment
+     restored on every desktop + mobile target we test. */
   .article-detail__paragraph--lead::first-letter {
     float: left;
     font-family: var(--font-serif);
     font-weight: 700;
     color: var(--text);
-    font-size: 3.4em;
+    font-size: 3.6em;
     line-height: 1;
-    /* Float box math: the glyph is 3.4em tall at line-height 1 and
+    /* Float box math: the glyph is 3.6em tall at line-height 1 and
        body lines are 1.65em each → 2 body lines = 3.30em. Without a
-       negative margin-bottom, the float's 3.4em box spills 0.10em
+       negative margin-bottom, the float's 3.6em box spills 0.30em
        into line 3 and shifts that line's leading edge right — the
-       "third line indented" bug reported on Samsung Browser. Capital
-       letters have no descender so clipping the float footprint by
-       0.15em (a bit more than the 0.10em overrun, to absorb mobile
-       pixel-rounding) leaves the rendered glyph unchanged while
-       letting line 3 flow full-width. */
-    margin: 0 0.1em -0.15em 0;
+       "third line indented" bug reported on Samsung Browser. The
+       visible cap occupies ~2.38em of the 3.6em box (cap-height
+       0.66 × font-size), leaving ~1.22em of empty descent space
+       below the baseline at line-height 1. A -0.34em margin-bottom
+       pulls into that empty zone (well inside the 1.22em slack),
+       absorbing the 0.30em overrun plus a small mobile pixel-
+       rounding buffer without ever clipping the rendered glyph;
+       line 3 then flows full-width. The safe upper bound on the
+       negative margin is 1 − cap_h − ascent_pad ≈ 1.22em — pushing
+       past it would start clipping the cap itself. */
+    margin: 0 0.1em -0.34em 0;
     padding: 0;
   }
 

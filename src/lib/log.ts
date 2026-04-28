@@ -34,6 +34,7 @@ export type LogEvent =
   | 'refresh.rejected'
   | 'email.send.failed'
   | 'email.dispatch.degraded'
+  | 'email.dispatch.skipped_empty'
   | 'email.dispatch.skipped_invalid_tz'
   | 'discovery.completed'
   | 'discovery.queued'

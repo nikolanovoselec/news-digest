@@ -25,9 +25,9 @@ News Digest hires the LLM. It remembers so you don't. This isn't enlightenment. 
 - **Two-stage dedupe** — within a chunk and across chunks. One Anthropic launch should not become six articles just because six sites found the publish button.
 - **Summaries that earn their word count**: 150–200 words, *what happened → how it works → why you care*.
 - **Hallucinations dropped on sight**: every LLM output has to point back to a real source, or it doesn't touch the database. Ask me how I learned that.
-- **Daily digest email** (optional): fresh headlines when there's news, a brief hello when there isn't. Once per day in your timezone — the cadence is the point.
+- **Daily digest email** (optional): when there's news, you get headlines; when there isn't, your inbox stays quiet. Once per day in your timezone, never zero-content. Push notifications were considered. Pushed back.
 - **Starred articles outlive the cron**: 14-day retention, unless you starred it. Your saved list is forever; your unread list was a lie anyway.
-- **Federated sign-in**: GitHub or Google. Wire up one, both, or neither — the app tells the truth either way. Same verified email across both providers now lands in one account (the daily digest goes out once, not twice), with a one-time backfill that re-points stars, read marks, and pending discoveries from the duplicates to the survivor.
+- **Federated sign-in**: GitHub or Google. Wire up one, both, or neither — the app tells the truth either way. A verified email shared across providers maps to a single account, so stars, read marks, pending discoveries, and the daily digest all live in one place no matter which button you signed in with.
 - **Looks like a real product when shared**: paste the URL into iMessage, WhatsApp, Slack, LinkedIn, or Discord — you get a brand card, not a naked URL. Surprisingly hard. Don't ask.
 - **One Worker, no servers**: Cloudflare D1 + KV + Queues + Workers AI. Ships in 30 seconds. Rollback is `wrangler rollback`, which I've used more times than I'd like to admit.
 
