@@ -318,9 +318,21 @@ const initialTheme = cookieTheme ?? 'light';
          compose, and skipping the cross-fade animation collapses
          the visual to a single steady-state header for the whole
          transition window — which is correct, because the chrome
-         is identical on every page and there is nothing to morph. */
+         is identical on every page and there is nothing to morph.
+         Z-order in the transition layer follows DOM order of named
+         groups: every digest card carries `transition:name=card-...`
+         and lives inside <main>, AFTER the site-header in the body.
+         The browser therefore paints each card group ABOVE the
+         site-header group while their positions interpolate between
+         the article-detail title (top of the page) and the card's
+         natural position in the digest list. Mid-flight the card
+         crosses the header zone and the user sees the card text
+         "popping through" the header for the duration of the morph.
+         An explicit z-index on the site-header group keeps the chrome
+         on top of every morphing card regardless of DOM order. */
       ::view-transition-group(site-header) {
         background-color: var(--bg);
+        z-index: 100;
       }
       ::view-transition-old(site-header) {
         animation: none;
