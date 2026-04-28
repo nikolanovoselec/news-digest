@@ -479,11 +479,24 @@ Implements [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-log
 | `discovery.completed` | Per-tag LLM discovery run finished |
 | `discovery.queued` | A new per-tag discovery job was inserted into `pending_discoveries` |
 | `settings.update.failed` | D1 update in `PUT /api/settings` threw |
-| `auth.refresh.rate_limited` | Inline middleware or explicit refresh path hit a refresh rate-limit bucket — request rejected with 429. `bucket` field is `"ip"` (pre-validation `auth_refresh_ip`, 60/min) or `"user"` (post-validation `auth_refresh_user`, 30/min). Buckets are shared with `POST /api/auth/refresh` |
-| `rate.limit.kv_error` | KV read/write in the rate-limit helper threw — emitted with `decision: "fail_open"` (most routes) or `decision: "fail_closed"` (`auth_refresh_ip`, `auth_refresh_user`); caller proceeds per the per-rule fail-mode. `kv_op` field is `"get"` (counter-read path) or `"put"` (counter-write path) on both error paths |
+| `auth.refresh.rate_limited` | Inline middleware or the explicit refresh path hit a refresh rate-limit bucket — request rejected with 429. See [Refresh rate-limit fail mode](#refresh-rate-limit-fail-mode) below for the `bucket` field values. |
+| `rate.limit.kv_error` | KV read/write in the rate-limit helper threw. The caller proceeds per the per-rule fail-mode; `decision` and `kv_op` field values are documented in [Refresh rate-limit fail mode](#refresh-rate-limit-fail-mode). |
 | `article.star.failed` | D1 insert or delete in `POST/DELETE /api/articles/:id/star` threw |
 
 Raw exception messages appear only in the `detail` field of error-level records; they are never stored in D1 and never returned to clients (see [REQ-OPS-002](../sdd/observability.md#req-ops-002-sanitized-error-surfaces)).
+
+#### Refresh rate-limit fail mode
+
+Refresh rate-limit logs (`auth.refresh.rate_limited`, `rate.limit.kv_error`) carry two extra fields:
+
+| Field | Values | Meaning |
+|---|---|---|
+| `bucket` | `"ip"` | Pre-validation `auth_refresh_ip` rule (60/min). |
+| `bucket` | `"user"` | Post-validation `auth_refresh_user` rule (30/min). |
+| `decision` | `"fail_open"` | KV outage on a route that fails open (most routes). The request proceeds. |
+| `decision` | `"fail_closed"` | KV outage on a refresh-token route. The request is rejected. |
+| `kv_op` | `"get"` | The error happened on the counter-read path. |
+| `kv_op` | `"put"` | The error happened on the counter-write path. |
 
 #### Why fingerprint drift is logged but not enforced
 

@@ -14,7 +14,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 |----|----------|----------|------|
 | AD1 | Custom federated OAuth/OIDC (GitHub, Google) + HMAC-SHA256 JWT, no third-party auth library | Security | 2026-04-22 |
 | AD2 | Cloudflare Queues for digest generation under thundering herd | Architecture | 2026-04-22 |
-| AD3 | Server-side article-body fetching with SSRF guard *(revised 2026-04-27)* | Security | 2026-04-27 |
+| AD3 | Server-side article-body fetching with SSRF guard | Security | 2026-04-27 |
 | AD4 | Plaintext-only LLM output; no markdown parser or HTML sanitizer | Security | 2026-04-22 |
 | AD5 | KV for caches, D1 for consistent state | Storage | 2026-04-22 |
 | AD6 | Polling instead of SSE or WebSockets for scrape-run progress | UI | 2026-04-22 |
@@ -52,27 +52,23 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** Queues give natural per-message isolation (each job in its own isolate, no shared memory), default 10-wide concurrency with built-in backpressure, and 3-retry semantics. Cron stays a tiny dispatcher. This is the primitive Cloudflare built exactly for this shape of problem.
 
-**Related requirements:** [REQ-GEN-001](../../sdd/generation.md#req-gen-001-scheduled-generation-via-cron-dispatcher), [REQ-GEN-002](../../sdd/generation.md#req-gen-002-manual-refresh-with-rate-limiting) *(Deprecated 2026-04-23 — superseded by REQ-PIPE-001)*
+**Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence). Original framing was for the per-user generation pipeline (REQ-GEN-001, REQ-GEN-002, both Deprecated 2026-04-23 in the global-feed rework); the queue mechanism survived the rework intact.
 
 ---
 
 ### AD3: Server-side article-body fetching with SSRF guard
 
-**Decision (2026-04-27):** The chunk consumer fetches article HTML bodies for candidates whose feed snippet is below 400 characters. Fetches are SSRF-guarded, time-bounded, and size-capped; a failed fetch falls back to the feed snippet, never blocking a summary.
+**Decision:** When a feed snippet is too thin to ground a useful summary, the chunk consumer fetches the article body directly. Each fetch is SSRF-guarded, time-bounded (8 s), and size-capped (1.5 MB); a failed fetch falls back to the snippet, never blocking a summary.
 
-**Context:** Workers running from Cloudflare datacenter IPs face a real SSRF surface if they resolve arbitrary URLs from external feeds. Many publishers also rate-limit or block Cloudflare IP ranges. The original posture was therefore "no server-side fetch at all" — summaries from titles and feed snippets only.
-
-**Why the original posture was reversed:** under the global-feed pipeline (REQ-PIPE-001 AC 8) feed snippets are often too short to ground a useful summary, and the SSRF concern is mitigated by an SSRF denylist filter in `src/lib/ssrf.ts` (HTTPS-only; rejects private, loopback, link-local, CGNAT, IPv6 ULA, and metadata-host destinations), an 8-second timeout, and a 1.5 MB download cap. Readable plaintext is extracted and used as the prompt snippet when it is longer than the feed snippet. Fan-out is bounded-concurrency via `src/lib/concurrency.ts` (`mapConcurrent`, 20 workers).
+**Rationale:** Workers running from Cloudflare datacenter IPs are an SSRF risk when resolving arbitrary URLs from external feeds, and many publishers rate-limit Cloudflare ranges — but feed snippets are often too short to summarise faithfully, and an SSRF denylist plus strict timeout and size caps reduce the original risk to negligible. Richer prompt context measurably improved summary quality on short-snippet feeds. Fan-out is bounded-concurrency at 20 workers.
 
 **Alternatives considered:**
 - Keep the no-fetch posture and accept thin summaries on short-snippet feeds.
 - Use a residential-IP scraping service.
 
-**Rationale:** The SSRF guard and the size/time caps reduce the original risk to negligible. Richer prompt context measurably improved summary quality on short-snippet feeds.
+**History:** AD3 originally (2026-04-22) prohibited any server-side fetching. Reversed on 2026-04-27 during the global-feed rework.
 
-**History:** The original AD3 (2026-04-22) prohibited any server-side fetching; superseded by this entry on 2026-04-27 during the global-feed rework.
-
-**Related requirements:** [REQ-GEN-003](../../sdd/generation.md#req-gen-003-source-fan-out-with-caching), [REQ-GEN-004](../../sdd/generation.md#req-gen-004-url-canonicalization-and-dedupe), [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+**Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) AC 8
 
 ---
 
@@ -128,7 +124,12 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Decision:** Move the "last chunk done" gate from a KV decrement (`scrape_run:{id}:chunks_remaining`) to a D1 `INSERT OR IGNORE` + `SELECT COUNT(*)` pattern on a dedicated `scrape_chunk_completions` table, with a follow-up conditional `UPDATE scrape_runs SET finalize_enqueued = 1 WHERE finalize_enqueued = 0` to gate the finalize handoff.
 
-**Context (CF-002):** The original KV implementation used a read-modify-write decrement: each chunk consumer read the counter, decremented it, and wrote it back. Under Cloudflare Queues' at-least-once delivery, two concurrent last-chunk consumers could both read the same value before either wrote, producing the same decremented target — both would see "zero remaining" and both would enqueue a second finalize pass and double-stamp the run as `ready`. A second race remained after the count check: both consumers could pass the count check and both call `SCRAPE_FINALIZE.send` before either set the KV gate. KV's eventual consistency made both races effectively undetectable via testing in non-adversarial conditions.
+**Context (CF-002):** The original KV implementation used a read-modify-write decrement: each chunk consumer read the counter, decremented it, and wrote it back. Under Cloudflare Queues' at-least-once delivery, this exposed two races:
+
+1. **Decrement race:** two concurrent last-chunk consumers read the same value before either wrote. Both saw "zero remaining", both enqueued a finalize pass, and both stamped the run as `ready`.
+2. **Send-gate race:** even if the count check held, both consumers could call `SCRAPE_FINALIZE.send` before either set the KV gate.
+
+KV's eventual consistency made both races effectively undetectable via testing in non-adversarial conditions.
 
 **Alternatives considered:**
 - Durable Object for serialized counter updates — correct, but adds a DO dependency to a pipeline that runs without one today.
