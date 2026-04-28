@@ -94,26 +94,37 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     expect(namedAtPrep, 'exactly one card promoted at before-preparation').toBe(1);
   });
 
-  test('backward nav: matching card is named at astro:after-swap (the morph pair-time)', async ({
+  test('backward nav: matching card is named in newDocument at astro:before-swap', async ({
     page,
   }) => {
-    // The View Transitions API captures the NEW snapshot AFTER the
-    // update callback resolves; `astro:after-swap` fires INSIDE that
-    // callback, before snapshot capture. So the named-count seen at
-    // after-swap is what determines whether the morph pair forms.
+    // We capture state at `astro:before-swap`, reading from
+    // `event.newDocument` (the parsed incoming /digest page). Why
+    // this event and not `astro:after-swap`:
     //
-    // We capture state at after-swap (not after settle): the post-
-    // settle DOM legitimately ends up with zero inline
-    // `view-transition-name` styles in production — the browser's
-    // own snapshot lifecycle and Astro's swap mechanics together
-    // strip the inline style by the time `networkidle` resolves, but
-    // the morph DID pair successfully (verified by the user manually,
-    // and pinned here at the exact moment the API needs it).
+    // - page-effects.js's `promoteIncomingCardForReturnMorph` is
+    //   itself an `astro:before-swap` listener that sets
+    //   `view-transition-name` on the matching card in the
+    //   newDocument. Our test listener registers AFTER that handler
+    //   (page-effects loads on the article-detail page; our listener
+    //   is added later via `page.evaluate`), so DOM event spec
+    //   ordering means promoteIncomingCardForReturnMorph runs first
+    //   and the name is set by the time our listener inspects.
+    // - Empirically, on the back-nav `astro:after-swap` does NOT
+    //   reliably dispatch (Received: -1 in CI). `astro:before-swap`
+    //   does (page-effects relies on it for swap-time work that we
+    //   can verify visually works on prod).
+    // - Reading from `event.newDocument` rather than the live DOM
+    //   pins the contract at the precise point where
+    //   promoteIncomingCardForReturnMorph commits the name — before
+    //   any swap mechanics could strip the inline style.
     //
     // The original regression — clearAllVtNames on astro:after-swap —
-    // would manifest as 0 named cards at this exact capture point,
-    // because the listener would run before our capture. This test
-    // catches that.
+    // would manifest as 0 named cards at the morph pair-time. Our
+    // capture is one event earlier than that hypothetical regression,
+    // but the contract it pins (the matching card carries the name
+    // BEFORE Astro hands the document to View Transitions) is the
+    // necessary precondition. If a future change moves the cleanup
+    // to before-swap (more disastrous), this test catches it directly.
     await page.goto('/digest', { waitUntil: 'networkidle' });
     const firstCard = page.locator('[data-digest-card]').first();
     const firstSlug = await firstCard.getAttribute('data-vt-slug');
@@ -121,28 +132,24 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     await firstCard.locator('a.digest-card__link').click();
     await page.waitForURL(/\/digest\/[^/]+\/[^/]+\/?$/);
 
-    // Install a one-shot capture on the article-detail page. The
-    // listener survives the SPA back-nav (Astro's ClientRouter swaps
-    // body, never replaces window/document), and fires once on the
-    // back-nav's after-swap. We also capture the named card's slug
-    // so a regression that names the WRONG card (e.g., always names
-    // index 0) gets caught — count alone wouldn't notice.
     await page.evaluate(() => {
-      type Win = { __vtNamedAtAfterSwap?: number; __vtNamedSlugAtAfterSwap?: string | null };
+      type Win = { __vtNamedAtBeforeSwap?: number; __vtNamedSlugAtBeforeSwap?: string | null };
       const w = window as unknown as Win;
-      w.__vtNamedAtAfterSwap = -1;
-      w.__vtNamedSlugAtAfterSwap = null;
+      w.__vtNamedAtBeforeSwap = -1;
+      w.__vtNamedSlugAtBeforeSwap = null;
       document.addEventListener(
-        'astro:after-swap',
-        () => {
+        'astro:before-swap',
+        (e) => {
+          const ev = e as Event & { newDocument?: Document };
+          const scope: Document | DocumentFragment = ev.newDocument ?? document;
           const named = Array.from(
-            document.querySelectorAll<HTMLAnchorElement>(
+            scope.querySelectorAll<HTMLAnchorElement>(
               '[data-digest-card] a.digest-card__link',
             ),
           ).filter((el) => el.style.viewTransitionName !== '');
-          w.__vtNamedAtAfterSwap = named.length;
+          w.__vtNamedAtBeforeSwap = named.length;
           const card = named[0]?.closest('[data-digest-card]') as HTMLElement | null;
-          w.__vtNamedSlugAtAfterSwap = card?.dataset['vtSlug'] ?? null;
+          w.__vtNamedSlugAtBeforeSwap = card?.dataset['vtSlug'] ?? null;
         },
         { once: true },
       );
@@ -153,13 +160,13 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     await page.waitForLoadState('networkidle');
 
     const captured = await page.evaluate(() => {
-      type Win = { __vtNamedAtAfterSwap?: number; __vtNamedSlugAtAfterSwap?: string | null };
+      type Win = { __vtNamedAtBeforeSwap?: number; __vtNamedSlugAtBeforeSwap?: string | null };
       const w = window as unknown as Win;
-      return { count: w.__vtNamedAtAfterSwap, slug: w.__vtNamedSlugAtAfterSwap };
+      return { count: w.__vtNamedAtBeforeSwap, slug: w.__vtNamedSlugAtBeforeSwap };
     });
     expect(
       captured.count,
-      'exactly one card carries view-transition-name at after-swap (morph pair-time)',
+      'exactly one card carries view-transition-name in newDocument at before-swap',
     ).toBe(1);
     expect(
       captured.slug,
@@ -169,21 +176,23 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
 });
 
 test.describe('REQ-HIST-001 history return-morph (live)', () => {
-  test('back from article → /history names the morph card at astro:after-swap', async ({
+  test('back from article → /history names the morph card in newDocument at astro:before-swap', async ({
     page,
   }) => {
-    // Same pair-time-capture pattern as the /digest backward-nav test.
-    // We do NOT assert post-settle named-cards on /history — the
-    // post-settle inline style is cleared by the same browser /
-    // Astro lifecycle that affects /digest. Pinning the regression
-    // means catching `clearAllVtNames` reintroduced into the
-    // after-swap path, which would zero out our capture.
+    // Same before-swap-newDocument capture pattern as the /digest
+    // backward-nav test. See that test's comment for the full
+    // rationale on event choice and ordering. The /history-specific
+    // wrinkle is that page-effects.js's
+    // `preOpenHistoryDayInIncomingDocument` runs FIRST on
+    // astro:before-swap and opens the matching <details> in the
+    // newDocument so promoteIncomingCardForReturnMorph (next handler)
+    // can find the matching card via findPromotableCard's
+    // not-inside-closed-details guard.
     //
-    // We also drop the <2s perf budget here. The user has accepted
-    // that /history is structurally slower than /digest (more cards
-    // in opened day-groups). The structural REQ-HIST-001 contract
-    // (the morph pair forms) is the only assertion that earns its
-    // keep on a live network.
+    // We dropped the <2s perf budget per user direction
+    // ("we leave it as is, enough trying to fix this"). The
+    // structural REQ-HIST-001 contract (morph pair forms) is the
+    // only live-network assertion that earns its keep here.
     await page.goto('/history', { waitUntil: 'networkidle' });
     const firstCard = page
       .locator('[data-history-day] [data-digest-card]')
@@ -204,21 +213,23 @@ test.describe('REQ-HIST-001 history return-morph (live)', () => {
     await page.waitForURL(/\/digest\/[^/]+\/[^/]+\/?$/);
 
     await page.evaluate(() => {
-      type Win = { __vtNamedAtAfterSwap?: number; __vtNamedSlugAtAfterSwap?: string | null };
+      type Win = { __vtNamedAtBeforeSwap?: number; __vtNamedSlugAtBeforeSwap?: string | null };
       const w = window as unknown as Win;
-      w.__vtNamedAtAfterSwap = -1;
-      w.__vtNamedSlugAtAfterSwap = null;
+      w.__vtNamedAtBeforeSwap = -1;
+      w.__vtNamedSlugAtBeforeSwap = null;
       document.addEventListener(
-        'astro:after-swap',
-        () => {
+        'astro:before-swap',
+        (e) => {
+          const ev = e as Event & { newDocument?: Document };
+          const scope: Document | DocumentFragment = ev.newDocument ?? document;
           const named = Array.from(
-            document.querySelectorAll<HTMLAnchorElement>(
+            scope.querySelectorAll<HTMLAnchorElement>(
               '[data-digest-card] a.digest-card__link',
             ),
           ).filter((el) => el.style.viewTransitionName !== '');
-          w.__vtNamedAtAfterSwap = named.length;
+          w.__vtNamedAtBeforeSwap = named.length;
           const card = named[0]?.closest('[data-digest-card]') as HTMLElement | null;
-          w.__vtNamedSlugAtAfterSwap = card?.dataset['vtSlug'] ?? null;
+          w.__vtNamedSlugAtBeforeSwap = card?.dataset['vtSlug'] ?? null;
         },
         { once: true },
       );
@@ -229,13 +240,13 @@ test.describe('REQ-HIST-001 history return-morph (live)', () => {
     await page.waitForLoadState('networkidle');
 
     const captured = await page.evaluate(() => {
-      type Win = { __vtNamedAtAfterSwap?: number; __vtNamedSlugAtAfterSwap?: string | null };
+      type Win = { __vtNamedAtBeforeSwap?: number; __vtNamedSlugAtBeforeSwap?: string | null };
       const w = window as unknown as Win;
-      return { count: w.__vtNamedAtAfterSwap, slug: w.__vtNamedSlugAtAfterSwap };
+      return { count: w.__vtNamedAtBeforeSwap, slug: w.__vtNamedSlugAtBeforeSwap };
     });
     expect(
       captured.count,
-      'exactly one card named at after-swap',
+      'exactly one card named in newDocument at before-swap',
     ).toBe(1);
     expect(
       captured.slug,
