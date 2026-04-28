@@ -68,11 +68,21 @@ describe('manifest.webmanifest', () => {
     expect(manifest.display).toBe('standalone');
   });
 
-  it('REQ-PWA-001: declares theme_color and background_color as hex strings', () => {
+  it('REQ-PWA-001: declares theme_color and background_color matching the dark-theme --bg token', () => {
+    // Manifest theme_color drives the Chrome PWA standalone-mode system
+    // status bar during navigation transitions and the splash screen
+    // background. The runtime <meta name="theme-color"> only overrides
+    // in steady-state, not during view-transition pauses, so the
+    // manifest value is what shows during a swap. Pinning both to the
+    // dark --bg (#0a0a0a) means dark-mode users (the common case for a
+    // news reader) never see a white flash mid-navigation. Light-mode
+    // users see a brief dark splash at cold launch only — acceptable
+    // load semantics. The runtime meta tag still tints the bar to the
+    // active theme in steady state.
     expect(manifest.theme_color).toMatch(/^#[0-9a-fA-F]{3,8}$/);
     expect(manifest.background_color).toMatch(/^#[0-9a-fA-F]{3,8}$/);
-    expect(manifest.theme_color).toBe('#ffffff');
-    expect(manifest.background_color).toBe('#ffffff');
+    expect(manifest.theme_color).toBe('#0a0a0a');
+    expect(manifest.background_color).toBe('#0a0a0a');
   });
 
   it('REQ-PWA-001: ships at least one any-purpose icon (SVG or 192+512 PNG) per AC 2', () => {
