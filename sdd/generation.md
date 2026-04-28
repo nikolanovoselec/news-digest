@@ -195,7 +195,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 ## Out of Scope
 
-The following REQs described the previous per-user digest generation pipeline. They are superseded by REQ-PIPE-001..006 in the 2026-04-23 global-feed rework and are preserved here verbatim for decision history.
+The following REQs described the previous per-user digest generation pipeline. They are superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework and are preserved here verbatim for decision history.
 
 ---
 
