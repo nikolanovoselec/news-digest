@@ -181,6 +181,31 @@ describe('Base.astro / page-effects.ts — view-transition wiring (REQ-DES-003 /
     expect(effectsSource).toMatch(/e\.stopPropagation\(\)/);
   });
 
+  it('brand-tap scroll-to-top cancels the in-flight scroll-restore tick (regression: 3 taps after back-nav)', () => {
+    // After back-nav from an article, restoreScroll() runs a
+    // requestAnimationFrame tick loop for 3 seconds that keeps
+    // calling `scrollTo(0, savedY)` to defeat layout-shift clamping.
+    // Without an explicit cancellation hook, the tick overrides the
+    // user's smooth scroll-to-top — they read it as "I have to tap
+    // the brand 3 times before it works" until the tick times out.
+    // The fix: scrollTopRespectingMotion dispatches a custom event
+    // that restoreScroll's teardown listener catches, AND clears the
+    // saved scroll position so the next page-load doesn't re-restore.
+    expect(effectsSource).toMatch(/pe:cancel-scroll-restore/);
+    // Restore loop must listen for the cancel event.
+    expect(effectsSource).toMatch(
+      /addEventListener\(\s*['"]pe:cancel-scroll-restore['"][\s\S]{0,80}teardown/,
+    );
+    // Brand-tap handler must dispatch the cancel event AND clear
+    // the saved scroll for the current path.
+    expect(effectsSource).toMatch(
+      /dispatchEvent\(\s*new Event\(\s*['"]pe:cancel-scroll-restore['"]/,
+    );
+    expect(effectsSource).toMatch(
+      /sessionStorage\.removeItem\([^)]*scroll:[^)]*window\.location\.pathname/,
+    );
+  });
+
   it('::view-transition-group(site-header) carries an explicit z-index so the promoted morphing card never paints over the header', () => {
     // Z-order in the view-transition layer follows DOM order of named
     // groups. `src/scripts/page-effects.ts` promotes a single card per

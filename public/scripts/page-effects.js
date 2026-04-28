@@ -73,6 +73,11 @@ function restoreScroll() {
     };
     window.addEventListener('wheel', teardown, { once: true, passive: true });
     window.addEventListener('touchmove', teardown, { once: true, passive: true });
+    // Brand-tap scroll-to-top dispatches this event to stop the
+    // restore loop fighting the user's request. Without it, the
+    // tick's per-frame `scrollTo(0, savedY)` overrides our smooth
+    // scroll-to-top for up to 3 seconds after a back-nav.
+    window.addEventListener('pe:cancel-scroll-restore', teardown, { once: true });
     if (typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(() => {
         if (cancelled) return;
@@ -239,6 +244,20 @@ function shouldInterceptBrandTap(target) {
 }
 
 function scrollTopRespectingMotion() {
+  // Cancel any in-flight scroll-restore tick that's still trying to
+  // pin the page at a saved Y. Without this, after a back-nav the
+  // restore loop's per-frame `scrollTo(0, savedY)` overrides our
+  // smooth scroll-to-top for up to 3 seconds — manifesting as
+  // "tap the brand 3 times before it works".
+  window.dispatchEvent(new Event('pe:cancel-scroll-restore'));
+  // Clear the saved scroll for this path so the next SPA navigation
+  // back to /digest won't re-trigger restore (the user just told us
+  // they want to be at the top).
+  try {
+    sessionStorage.removeItem(`scroll:${window.location.pathname}`);
+  } catch {
+    /* storage disabled */
+  }
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
 }
