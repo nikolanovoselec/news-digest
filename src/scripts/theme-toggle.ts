@@ -44,10 +44,11 @@ function applyMetaThemeColor(doc: Document, theme: Theme): void {
 
 // Hardcode the html element's background-color via the inline style
 // attribute so the document bg paints as a literal hex value, not via
-// var(--bg) lookup. Required for iOS PWA standalone mode where any
-// microsecond gap in CSS-variable resolution during an Astro
-// ClientRouter swap exposes the WKWebView's underlying default (white)
-// through the transparent status bar overlay.
+// var(--bg) lookup. Required for installed-PWA standalone mode (Android
+// Chrome and iOS Safari both observed) where any microsecond gap in
+// CSS-variable resolution during an Astro ClientRouter swap exposes the
+// underlying WebView default (white) through the transparent status-bar
+// overlay.
 function applyHtmlBgInlineStyle(doc: Document, theme: Theme): void {
   doc.documentElement.style.backgroundColor = BG_BY_THEME[theme];
 }

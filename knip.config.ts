@@ -10,7 +10,8 @@ const config: KnipConfig = {
     'src/middleware/index.ts',
     'src/worker.ts',
     'src/scripts/**/*.ts', // imported from .astro <script> tags which knip can't trace
-    'public/theme-init.js'
+    'public/theme-init.js',
+    'scripts/*.mjs' // build/CI helpers invoked from package.json scripts
   ],
   project: ['src/**/*.{ts,astro}'],
   ignoreDependencies: [
