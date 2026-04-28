@@ -528,3 +528,155 @@ describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
     ).toHaveLength(0);
   });
 });
+
+/* --------------------------------------------------------------------- */
+/* dispatchDailyEmails — REQ-MAIL-002 AC 3 cross-bucket isolation        */
+/* --------------------------------------------------------------------- */
+
+describe('dispatchDailyEmails — REQ-MAIL-002 AC 3 tz-bucket isolation', () => {
+  // AC 3: a precondition error against one timezone bucket (e.g. an
+  // unrecognised IANA zone in a stored row) must never abort sibling
+  // buckets. The dispatcher defends in two layers: (1) the SQL filter
+  // `tz IS NOT NULL AND tz != ''` prevents empty rows from ever
+  // reaching localHourMinuteInTz, and (2) the runtime `isValidTz` guard
+  // catches deprecated/unknown IANA zones that slipped past SQL and
+  // emits a structured warn log so operators can find affected users.
+
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let logRecords: Record<string, unknown>[];
+
+  beforeEach(() => {
+    fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 'msg-mail-002' }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    logRecords = [];
+    // log() emits every level via console.log(JSON.stringify(...)). Capture
+    // the parsed records so individual events can be asserted without
+    // string-matching on the serialised line.
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      try {
+        const parsed = JSON.parse(String(line)) as Record<string, unknown>;
+        logRecords.push(parsed);
+      } catch {
+        /* non-JSON line — ignore */
+      }
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('REQ-MAIL-002 AC 3: distinct-tz probe carries the `tz IS NOT NULL AND tz != \'\'` filter', async () => {
+    // Pin the SQL predicate literally so a refactor that drops the
+    // filter is caught immediately. Without this filter, the SELECT
+    // would hand an empty-string tz to localHourMinuteInTz, which calls
+    // Intl.DateTimeFormat — that throws RangeError on '' and aborts
+    // the entire 5-minute cron tick, taking the daily email out for
+    // every user.
+    const { db } = makeDispatchDb([]);
+    const prepareSpy = vi.spyOn(db, 'prepare');
+    await dispatchDailyEmails(makeEnv({ DB: db }));
+
+    const sqls = prepareSpy.mock.calls.map((c) => c[0] as string);
+    const tzProbe = sqls.find((s) => s.includes('SELECT DISTINCT tz'));
+    expect(tzProbe).toBeDefined();
+    expect(tzProbe).toMatch(/tz\s+IS\s+NOT\s+NULL/i);
+    expect(tzProbe).toMatch(/tz\s*!=\s*''/);
+  });
+
+  it('REQ-MAIL-002 AC 3: an unrecognised IANA tz on one row is skipped with a warn log; sibling buckets continue', async () => {
+    // Bypass the SQL filter (legacy or manually-edited rows can carry
+    // a tz string that's syntactically non-empty but no longer
+    // recognised by the V8 ICU bundle, e.g. a since-deleted zone or a
+    // typo). The defence-in-depth `isValidTz` check inside the
+    // dispatcher must skip the bad bucket and continue iterating so a
+    // sibling user in a valid bucket still receives their email.
+    const now = Math.floor(Date.now() / 1000);
+    const today = localDateInTz(now, 'UTC');
+    const { hour, minute } = localHourMinuteInTz(now, 'UTC');
+    const validBucketStart = minute - (minute % 5);
+
+    // Stub D1 directly: distinct-tz probe returns BOTH zones, the
+    // per-user SELECT returns only the valid-tz user (the dispatcher
+    // never reaches per-user SELECT for the invalid tz because
+    // isValidTz short-circuits the loop iteration before SQL).
+    const prepareSpy = vi.fn().mockImplementation((sql: string) => {
+      const stmt = {
+        _params: [] as unknown[],
+        bind(...params: unknown[]) {
+          stmt._params = params;
+          return stmt;
+        },
+        all: vi.fn().mockImplementation(async () => {
+          if (sql.includes('SELECT DISTINCT tz')) {
+            return {
+              results: [
+                { tz: 'Mars/Olympus_Mons' },
+                { tz: 'UTC' },
+              ],
+            };
+          }
+          if (sql.startsWith('SELECT id, email, gh_login')) {
+            // Should only be called for the valid 'UTC' bucket.
+            const [tz] = stmt._params as [string];
+            if (tz !== 'UTC') return { results: [] };
+            return {
+              results: [
+                {
+                  id: 'user-mars-sibling',
+                  email: 'sibling@example.com',
+                  gh_login: 'sibling',
+                  tz: 'UTC',
+                  digest_hour: hour,
+                  digest_minute: validBucketStart,
+                  hashtags_json: '["cloudflare"]',
+                  last_emailed_local_date:
+                    today === '1970-01-01' ? null : '1970-01-01',
+                },
+              ],
+            };
+          }
+          if (sql.includes('AS source_name')) {
+            return {
+              results: [
+                {
+                  id: 'art-fixture',
+                  title: 'Sibling article',
+                  source_name: 'Sibling source',
+                  primary_source_url: 'https://example.com/sibling',
+                },
+              ],
+            };
+          }
+          return { results: [] };
+        }),
+        first: vi.fn().mockResolvedValue(null),
+        run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
+      };
+      return stmt;
+    });
+    const db = { prepare: prepareSpy } as unknown as D1Database;
+
+    await dispatchDailyEmails(makeEnv({ DB: db }));
+
+    // Sibling bucket survived: exactly one Resend POST fired for the
+    // valid UTC user, none for Mars.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0]?.[1] as RequestInit).body as string,
+    ) as { to: string[] };
+    expect(body.to).toEqual(['sibling@example.com']);
+
+    // Structured warn log identifies the offending tz so an operator
+    // can find affected users without a stack-trace search.
+    const skippedInvalid = logRecords.find(
+      (r) => r.event === 'email.dispatch.skipped_invalid_tz',
+    );
+    expect(skippedInvalid).toBeDefined();
+    expect(skippedInvalid?.level).toBe('warn');
+    expect(skippedInvalid?.tz).toBe('Mars/Olympus_Mons');
+  });
+});

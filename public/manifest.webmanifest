@@ -1,7 +1,7 @@
 {
   "id": "/",
   "name": "News Digest",
-  "short_name": "newsdigest",
+  "short_name": "News Digest",
   "description": "A daily, AI-curated digest of the news and sources you follow.",
   "start_url": "/digest",
   "scope": "/",

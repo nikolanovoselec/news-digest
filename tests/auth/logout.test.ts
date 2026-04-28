@@ -37,11 +37,30 @@ function makeDb(): {
   return { db, runCalls };
 }
 
-function env(db: D1Database): Partial<Env> {
+/** In-memory KV stub for the rate-limit helper. The store is exposed so
+ *  tests that exercise the limiter can pre-load a counter (or assert
+ *  what was written). */
+function makeKv(): { kv: KVNamespace; store: Map<string, string> } {
+  const store = new Map<string, string>();
+  const kv = {
+    get: vi.fn().mockImplementation(async (key: string) => store.get(key) ?? null),
+    put: vi.fn().mockImplementation(async (key: string, value: string) => {
+      store.set(key, value);
+    }),
+    delete: vi.fn().mockImplementation(async (key: string) => {
+      store.delete(key);
+    }),
+    list: vi.fn().mockResolvedValue({ keys: [], list_complete: true }),
+  } as unknown as KVNamespace;
+  return { kv, store };
+}
+
+function env(db: D1Database, kv?: KVNamespace): Partial<Env> {
   return {
     APP_URL,
     OAUTH_JWT_SECRET: JWT_SECRET,
     DB: db,
+    KV: kv ?? makeKv().kv,
   };
 }
 
@@ -154,5 +173,30 @@ describe('POST /api/auth/logout', () => {
     const res = await POST(makeContext(req, env(db)) as never);
     expect(runCalls.length).toBe(0);
     expect(res.status).toBe(303);
+  });
+
+  it('REQ-AUTH-001 AC 9 / REQ-AUTH-002: returns 429 with Retry-After when AUTH_LOGOUT bucket is exhausted', async () => {
+    // AC 9 — bound logout per IP. Practical blast radius is small
+    // (logout requires a live cookie), but a low ceiling prevents an
+    // attacker from loop-incrementing session_version on a known user.
+    // The 5/min/IP rule fires BEFORE any DB lookup, so we don't even
+    // need a valid session cookie to trigger it — pre-load the KV
+    // counter to the ceiling and assert the next call short-circuits.
+    const { db } = makeDb();
+    const { kv, store } = makeKv();
+    const ip = '203.0.113.42';
+    const nowSec = Math.floor(Date.now() / 1000);
+    const windowSec = 60;
+    const windowIndex = Math.floor(nowSec / windowSec);
+    store.set(`ratelimit:auth_logout:ip:${ip}:${windowIndex}`, '5');
+
+    const headers = new Headers({ Origin: APP_ORIGIN, 'CF-Connecting-IP': ip });
+    const req = new Request(`${APP_URL}/api/auth/logout`, {
+      method: 'POST',
+      headers,
+    });
+    const res = await POST(makeContext(req, env(db, kv)) as never);
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).not.toBeNull();
   });
 });

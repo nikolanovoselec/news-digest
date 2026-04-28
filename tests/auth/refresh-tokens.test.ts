@@ -439,4 +439,46 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
     expect(result.user).not.toBeNull();
     expect(result.cookiesToSet).toEqual([]);
   });
+
+  it('REQ-AUTH-008 AC 3: revokeRefreshToken touches only the active row — sibling refresh-tokens for the same user stay live', async () => {
+    // The multi-device invariant: logging out on one device must NOT
+    // sign the user out of other devices they are intentionally still
+    // using. The logout handler revokes only the active row (looked up
+    // by token_hash); every other unrevoked row for the same user
+    // keeps `revoked_at = NULL` and remains valid until its own
+    // device-side logout, expiry, or theft-detection.
+    const reqA = fakeRequest({ ua: 'Mozilla/5.0 (Mac)', country: 'CH' });
+    const reqB = fakeRequest({ ua: 'Mozilla/5.0 (iPhone)', country: 'CH' });
+    const { value: valueA, id: idA } = await issueRefreshToken(env.DB, USER_ID, reqA);
+    const { value: valueB, id: idB } = await issueRefreshToken(env.DB, USER_ID, reqB);
+    expect(idA).not.toBe(idB);
+
+    // Simulate the logout handler's behaviour: look up the row that
+    // matches the active cookie value, then revoke that single row.
+    const activeRow = await findRefreshToken(env.DB, valueA);
+    expect(activeRow).not.toBeNull();
+    await revokeRefreshToken(env.DB, activeRow!.id);
+
+    // Active row revoked.
+    const reloadedA = await findRefreshToken(env.DB, valueA);
+    expect(reloadedA!.revoked_at).not.toBeNull();
+    // Sibling row from the user's other device is untouched.
+    const reloadedB = await findRefreshToken(env.DB, valueB);
+    expect(reloadedB).not.toBeNull();
+    expect(reloadedB!.revoked_at).toBeNull();
+    expect(reloadedB!.id).toBe(idB);
+
+    // Defence-in-depth: the literal SQL behind revokeRefreshToken
+    // must scope its UPDATE by row id, not by user_id — otherwise a
+    // refactor that swapped the predicate would silently sign out
+    // every device on every logout. Verify by counting unrevoked rows
+    // for the user post-revoke.
+    const unrevokedCount = await env.DB
+      .prepare(
+        'SELECT COUNT(*) AS n FROM refresh_tokens WHERE user_id = ?1 AND revoked_at IS NULL',
+      )
+      .bind(USER_ID)
+      .first<{ n: number }>();
+    expect(unrevokedCount!.n).toBe(1);
+  });
 });

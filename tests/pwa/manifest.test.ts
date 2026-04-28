@@ -61,7 +61,7 @@ describe('manifest.webmanifest', () => {
 
   it('REQ-PWA-001: declares required string fields per AC 1', () => {
     expect(manifest.name).toBe('News Digest');
-    expect(manifest.short_name).toBe('newsdigest');
+    expect(manifest.short_name).toBe('News Digest');
     expect(typeof manifest.description).toBe('string');
     expect(manifest.description?.length).toBeGreaterThan(0);
     expect(manifest.start_url).toBe('/digest');
