@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import baseSource from '../../src/layouts/Base.astro?raw';
 import userMenuSource from '../../src/components/UserMenu.astro?raw';
 import headerThemeToggleSource from '../../src/components/HeaderThemeToggle.astro?raw';
+import effectsSource from '../../src/scripts/page-effects.ts?raw';
 // The cloudflare vitest pool can't raw-import .css, so the project
 // generates tests/fixtures/global-css.ts via `npm run fixtures` at
 // pretest time. Use that fixture instead of `?raw` on global.css.
@@ -102,18 +103,34 @@ describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
   });
 
   it('REQ-PWA-003: header brand link points at /digest (the app home) for authed users', () => {
-    // AC 4 — brand returns to the app home. The home is /digest,
-    // not /settings and not /. For unauthenticated users the brand
-    // still goes to / (served by middleware redirect), but the link
-    // target itself is the brand's href.
-    //
-    // Pattern: <a href="/" class="site-header__brand">. Clicking "/"
-    // hits the root which middleware routes to /digest when the
-    // session is valid. We assert the brand IS a link (not a span)
-    // and points at a resolvable target.
+    // AC 4 — brand returns to the app home. The href is now an
+    // expression: authenticated users get '/digest' directly (no
+    // root-redirect round-trip), unauthenticated users still get '/'
+    // (the marketing landing). The brand also carries data-brand-home
+    // so the page-effects.ts click delegate can intercept self-
+    // navigation on /digest and turn it into a scroll-to-top.
     expect(baseSource).toMatch(
-      /<a[^>]*href="\/"[^>]*class="[^"]*site-header__brand/,
+      /<a[\s\S]{0,300}href=\{Astro\.locals\.user\s*\?\s*['"]\/digest['"]\s*:\s*['"]\/['"]\}[\s\S]{0,200}site-header__brand/,
     );
+    expect(baseSource).toMatch(/data-brand-home/);
+  });
+
+  it('REQ-PWA-003 AC 4: brand-link click on /digest (no filter) scrolls to top instead of self-navigating; preserves filter-clear semantics on /digest?tags=...', () => {
+    // The page-effects click delegate must (1) intercept self-navigation
+    // when the URL is EXACTLY /digest with no query string, (2) bypass
+    // intercept when there are query params so /digest?tags=ai
+    // navigation to clean /digest still clears the filter, and (3)
+    // never preventDefault on modifier-clicks (cmd/ctrl/shift/alt) so
+    // "open in new tab" still works.
+    expect(effectsSource).toMatch(/closest[\s\S]{0,80}a\[data-brand-home\]/);
+    expect(effectsSource).toMatch(
+      /window\.location\.pathname\s*!==\s*['"]\/digest['"]/,
+    );
+    expect(effectsSource).toMatch(
+      /window\.location\.search\s*!==\s*['"]['"]/,
+    );
+    expect(effectsSource).toMatch(/metaKey|ctrlKey|shiftKey|altKey/);
+    expect(effectsSource).toMatch(/window\.scrollTo\(\s*\{\s*top:\s*0/);
   });
 });
 

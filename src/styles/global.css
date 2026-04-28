@@ -71,6 +71,36 @@ html {
   font-weight: 400;
 }
 
+/* Lock the browser's UA-default page background to the APP-selected
+ * theme, not the OS preference. Without this, every Astro page swap
+ * exposes a frame of white via three independent paths on iOS PWA
+ * mode (apple-mobile-web-app-status-bar-style: black-translucent —
+ * the status bar is transparent and shows whatever the page paints
+ * underneath):
+ *   1. Mid-swap, the html element briefly has no rendered children
+ *      and the UA falls back to its default page color. With
+ *      `color-scheme: light dark` the UA tracks the OS, not the app,
+ *      so a user in app-dark on a device-light shows white here.
+ *   2. The view-transition pseudo-tree's ::view-transition root has
+ *      a transparent default — any sub-pixel gap between snapshots
+ *      reveals the document beneath, which is the same UA-default
+ *      page color from (1).
+ *   3. The status-bar safe-area zone above the header sits on the
+ *      html element directly while the header's safe-top padding is
+ *      computed; for one frame on slow devices the padding-top has
+ *      not yet expanded and the html bg paints through.
+ * Pinning color-scheme to the app theme makes (1) and (3) match
+ * var(--bg); the explicit ::view-transition rule below closes (2). */
+html[data-theme='light'] {
+  color-scheme: light;
+}
+html[data-theme='dark'] {
+  color-scheme: dark;
+}
+::view-transition {
+  background-color: var(--bg);
+}
+
 /* Inputs use min 16px font-size to prevent iOS zoom-on-focus per REQ-DES-001 AC3. */
 input,
 textarea,

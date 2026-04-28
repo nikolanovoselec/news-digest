@@ -8,6 +8,10 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 - REQ-DES-002 AC 6 added and REQ-DES-003 AC 6 added: the mobile system status bar now follows the app's selected theme rather than the device's OS theme — a user in dark mode on a light-mode phone sees a dark status bar above the dark UI, repainted instantly on toggle and preserved across page navigations. The site header chrome also stays visually solid through every route transition, fixing the "black bar bleed" where outgoing body content briefly showed through the header band on detail-back navigation.
 
+- REQ-PWA-003 AC 4 extended: clicking the brand wordmark while already on the digest now scrolls the page to the top instead of triggering a self-navigation, so the wordmark doubles as a "back to top" affordance once the user has scrolled into the list.
+
+- REQ-PWA-003 AC 4 refined: the brand-as-back-to-top behaviour now only fires on the unfiltered `/digest` URL — clicking the brand on a filtered view (any query string, e.g. `?tags=...`) falls through to natural navigation so the filter clears, preserving the long-standing "click the wordmark to reset" affordance. Modifier-clicks (Cmd/Ctrl/Shift/Alt) and non-primary mouse buttons are also no longer intercepted, so "open the digest in a new tab" continues to work as expected.
+
 - REQ-MAIL-001 AC 11 reversed: the daily digest email now skips the send entirely on local days where the recipient has zero unread articles, instead of sending a bare "your digest is ready" notification with no headlines. An empty email is noise — silence is the better signal that filters are too narrow or there was no news worth waking the inbox for.
 
 - REQ-AUTH-008 AC 1 rewritten: refresh tokens are no longer logged out when the browser auto-updates its User-Agent string — fingerprint mismatches on the normal refresh path are now logged for review instead of force-revoking the session, while the 30-second concurrent-rotation grace branch still treats a fingerprint drift as theft. The per-user refresh rate limit also rose from 10/min to 30/min so multi-tab users stop hitting silent 401s when their access JWT expires.

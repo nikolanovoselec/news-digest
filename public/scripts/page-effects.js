@@ -1,4 +1,4 @@
-// Implements REQ-DES-002, REQ-DES-003, REQ-HIST-001, REQ-SET-007
+// Implements REQ-DES-002, REQ-DES-003, REQ-HIST-001, REQ-PWA-003, REQ-SET-007
 //
 // Layout-level client behaviour. Served as a static file from /public so
 // CSP `script-src 'self'` permits it (Astro 5 directRenderScript inlines
@@ -151,6 +151,39 @@ function preOpenHistoryDayInIncomingDocument(e) {
   if (det === null) return;
   det.open = true;
 }
+
+// Header brand link: scroll-to-top when already on /digest, otherwise
+// fall through to Astro ClientRouter's default navigation. The wordmark
+// has data-brand-home so the click delegate can target it without
+// coupling to the CSS class name.
+function bindBrandLinkScrollToTop() {
+  const root = document.documentElement;
+  if (root.dataset.brandLinkBound === '1') return;
+  root.dataset.brandLinkBound = '1';
+  document.addEventListener('click', (e) => {
+    // Let the browser handle modifier-clicks (open in new tab/window)
+    // and non-primary mouse buttons.
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (e instanceof MouseEvent && e.button !== 0) return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const link = target.closest('a[data-brand-home]');
+    if (link === null) return;
+    // Only intercept when the URL is EXACTLY /digest (no query string).
+    // On /digest?tags=ai the brand's href="/digest" should resolve via
+    // natural navigation so the tag filter clears — preserving the
+    // long-standing "click the brand to reset" affordance.
+    if (window.location.pathname !== '/digest') return;
+    if (window.location.search !== '') return;
+    e.preventDefault();
+    const reduced = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+    window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
+  });
+}
+
+bindBrandLinkScrollToTop();
 
 if (document.documentElement.dataset.scrollRestoreBound !== '1') {
   document.documentElement.dataset.scrollRestoreBound = '1';

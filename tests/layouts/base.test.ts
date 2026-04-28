@@ -133,13 +133,53 @@ describe('Base.astro / page-effects.ts — view-transition wiring (REQ-DES-003 /
     // state header — correct, because the chrome is identical on
     // every page and there is nothing to morph.
     expect(baseSource).toMatch(
-      /::view-transition-group\(site-header\)\s*\{[\s\S]{0,80}background-color:\s*var\(--bg\)/,
+      /::view-transition-group\(site-header\)\s*\{[\s\S]{0,200}background-color:\s*var\(--bg\)/,
     );
     expect(baseSource).toMatch(
       /::view-transition-old\(site-header\)\s*\{[\s\S]{0,80}animation:\s*none/,
     );
     expect(baseSource).toMatch(
       /::view-transition-new\(site-header\)\s*\{[\s\S]{0,80}animation:\s*none/,
+    );
+  });
+
+  it('site-header brand link is annotated with data-brand-home for the click-to-scroll-top delegate', () => {
+    // The wordmark anchor has href="/digest" (or "/" when signed-out)
+    // for SSR + no-JS fallback. The click delegate in page-effects.ts
+    // targets the data-brand-home attribute so refactoring the CSS
+    // class name doesn't break the binding.
+    expect(baseSource).toMatch(
+      /<a[\s\S]{0,200}site-header__brand[\s\S]{0,200}data-brand-home/,
+    );
+    expect(baseSource).toMatch(
+      /href=\{Astro\.locals\.user\s*\?\s*['"]\/digest['"]\s*:\s*['"]\/['"]/,
+    );
+  });
+
+  it('page-effects binds a click handler that intercepts data-brand-home anchors and scrolls to top when already on /digest', () => {
+    expect(effectsSource).toMatch(
+      /closest[\s\S]{0,80}a\[data-brand-home\]/,
+    );
+    expect(effectsSource).toMatch(
+      /window\.location\.pathname\s*!==\s*['"]\/digest['"]/,
+    );
+    expect(effectsSource).toMatch(
+      /window\.scrollTo\(\s*\{\s*top:\s*0/,
+    );
+  });
+
+  it('::view-transition-group(site-header) carries an explicit z-index so morphing cards never paint over the header', () => {
+    // Z-order in the view-transition layer follows DOM order of named
+    // groups by default. Every digest card has `transition:name=card-...`
+    // and lives inside <main>, AFTER the site-header in the body, so the
+    // browser paints each card group ABOVE the site-header group while
+    // its position interpolates between the article-detail title (top
+    // of the page) and the card's natural position in the digest list.
+    // Mid-flight the card crosses the header zone and the user sees the
+    // card text "popping through" the header. An explicit z-index on
+    // the header group keeps the chrome on top regardless of DOM order.
+    expect(baseSource).toMatch(
+      /::view-transition-group\(site-header\)\s*\{[\s\S]{0,200}z-index:\s*\d+/,
     );
   });
 

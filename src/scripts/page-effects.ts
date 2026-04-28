@@ -1,4 +1,4 @@
-// Implements REQ-DES-002, REQ-DES-003, REQ-HIST-001, REQ-SET-007
+// Implements REQ-DES-002, REQ-DES-003, REQ-HIST-001, REQ-PWA-003, REQ-SET-007
 //
 // Layout-level client behaviour for every page. EXTERNAL module —
 // the site's CSP is `script-src 'self'` and inlines page-level
@@ -238,6 +238,45 @@ function preOpenHistoryDayInIncomingDocument(e: Event): void {
   if (det === null) return;
   det.open = true;
 }
+
+// ---- header brand link: /digest, or scroll-to-top if already there
+
+// The "newsdigest" wordmark in the site header is a plain anchor for
+// authenticated users with href="/digest" (server-rendered fallback so
+// SSR + no-JS works). When the user IS already on /digest, navigating
+// to it again is a no-op that flashes a transition; intercept the
+// click and scroll to top instead so the wordmark behaves like a
+// classic "back to top" affordance. On any other page we fall through
+// to Astro ClientRouter's default link handling so the view-transition
+// to /digest plays normally.
+function bindBrandLinkScrollToTop(): void {
+  const root = document.documentElement;
+  if (root.dataset['brandLinkBound'] === '1') return;
+  root.dataset['brandLinkBound'] = '1';
+  document.addEventListener('click', (e) => {
+    // Let the browser handle modifier-clicks (open in new tab/window)
+    // and non-primary mouse buttons.
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (e instanceof MouseEvent && e.button !== 0) return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const link = target.closest<HTMLAnchorElement>('a[data-brand-home]');
+    if (link === null) return;
+    // Only intercept when the URL is EXACTLY /digest (no query string).
+    // On /digest?tags=ai the brand's href="/digest" should resolve via
+    // natural navigation so the tag filter clears — preserving the
+    // long-standing "click the brand to reset" affordance.
+    if (window.location.pathname !== '/digest') return;
+    if (window.location.search !== '') return;
+    e.preventDefault();
+    const reduced = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+    window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
+  });
+}
+
+bindBrandLinkScrollToTop();
 
 if (document.documentElement.dataset['scrollRestoreBound'] !== '1') {
   document.documentElement.dataset['scrollRestoreBound'] = '1';

@@ -115,3 +115,23 @@ describe('REQ-DES-001: Swiss-minimal visual language', () => {
     expect(globalCss).toMatch(/\.safe-x\s*\{[^}]*env\(safe-area-inset-left\)[\s\S]*env\(safe-area-inset-right\)/s);
   });
 });
+
+describe('REQ-DES-002: UA-default page bg locked to app theme (kills white-flash on PWA navigation)', () => {
+  it('html[data-theme=light] sets color-scheme: light so the browser UA defaults match the app', () => {
+    expect(globalCss).toMatch(
+      /html\[data-theme=['"]light['"]\]\s*\{[^}]*color-scheme\s*:\s*light/s,
+    );
+  });
+
+  it('html[data-theme=dark] sets color-scheme: dark so the iOS PWA status bar shows the app dark bg, not the OS default', () => {
+    expect(globalCss).toMatch(
+      /html\[data-theme=['"]dark['"]\]\s*\{[^}]*color-scheme\s*:\s*dark/s,
+    );
+  });
+
+  it('::view-transition root has a solid var(--bg) backdrop so any snapshot gap during navigation does not flash white', () => {
+    expect(globalCss).toMatch(
+      /::view-transition\s*\{[^}]*background-color\s*:\s*var\(--bg\)/s,
+    );
+  });
+});
