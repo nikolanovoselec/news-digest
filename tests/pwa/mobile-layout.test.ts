@@ -195,6 +195,31 @@ describe('tap / focus styling — REQ-PWA-003 AC 5', () => {
     expect(baseSource).toMatch(/\.site-header__brand\s*\{/);
     expect(baseSource).toMatch(/touch-action:\s*manipulation/);
   });
+
+  it('REQ-PWA-003 AC 4: .site-header__brand stretches to fill the left half of the header (flex: 1)', () => {
+    // Even with `touch-action: manipulation`, a narrow tap target
+    // surface is hard to hit reliably on mobile — the user reported
+    // that scroll-to-top still needed multiple taps because the icon
+    // + wordmark span maybe ~120px wide and people aim at the
+    // visual brand rather than its precise pixels. Stretching the
+    // anchor to `flex: 1 1 auto` makes the entire void area between
+    // the wordmark and the nav a hit zone for the same anchor —
+    // visually identical, dramatically larger touch surface. A
+    // future CSS reorder that drops the flex declaration would
+    // shrink the tap target back without changing the visual layout
+    // (because justify-content: space-between would still position
+    // the brand on the left), so the regression would be silent.
+    //
+    // The match scopes to the .site-header__brand rule body
+    // (everything between its opening `{` and the next `}`) so a
+    // `flex: 1 1 auto` on .site-main wouldn't satisfy it.
+    expect(baseSource).toMatch(
+      /\.site-header__brand\s*\{[^}]*flex:\s*1\s+1\s+auto/,
+    );
+    expect(baseSource).toMatch(
+      /\.site-header__brand\s*\{[^}]*min-width:\s*0/,
+    );
+  });
 });
 
 describe('header tap-target minimums — REQ-PWA-003 AC 6', () => {
