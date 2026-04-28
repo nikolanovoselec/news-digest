@@ -93,10 +93,19 @@ describe('renderDigestReadyEmail subject — REQ-MAIL-001 AC 3', () => {
       headlines: [single],
       tagTally: [{ tag: 'mcp', count: 1 }],
     }));
-    expect(html).toContain('1 new article to read');
-    expect(html).not.toContain('1 new articles to read');
-    expect(text).toContain('1 new article to read');
-    expect(text).not.toContain('1 new articles to read');
+    expect(html).toContain('Here are your 1 latest article.');
+    expect(html).not.toContain('Here are your 1 latest articles.');
+    expect(text).toContain('Here are your 1 latest article.');
+    expect(text).not.toContain('Here are your 1 latest articles.');
+  });
+
+  it('REQ-MAIL-001 AC 3: greeting reads "Here are your N latest articles" for N>1', () => {
+    const { html, text } = renderDigestReadyEmail(makeParams());
+    expect(html).toContain('Here are your 5 latest articles.');
+    expect(text).toContain('Here are your 5 latest articles.');
+    // The previous wording is gone.
+    expect(html).not.toContain('5 new articles to read');
+    expect(text).not.toContain('5 new articles to read');
   });
 });
 

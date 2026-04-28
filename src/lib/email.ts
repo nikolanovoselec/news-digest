@@ -181,7 +181,7 @@ export function renderDigestReadyEmail(params: DigestReadyEmailParams): Rendered
   if (headlines.length === 0) {
     textLines.push('Your news digest is ready.');
   } else {
-    textLines.push(`Your news digest is ready. ${headlines.length} new ${articleNoun} to read.`);
+    textLines.push(`Your news digest is ready. Here are your ${headlines.length} latest ${articleNoun}.`);
   }
   textLines.push('');
   if (headlines.length > 0) {
@@ -255,7 +255,7 @@ export function renderDigestReadyEmail(params: DigestReadyEmailParams): Rendered
   const greetingRow = headlines.length === 0
     ? `<tr><td style="padding-bottom:24px; font-size:20px; line-height:1.4; font-weight:500;">Your news digest is ready.</td></tr>`
     : `<tr><td style="padding-bottom:20px; font-size:20px; line-height:1.4; font-weight:500;">
-         Your news digest is ready. ${headlines.length} new ${articleNoun} to read.
+         Your news digest is ready. Here are your ${headlines.length} latest ${articleNoun}.
        </td></tr>`;
 
   const html = `<!doctype html>
