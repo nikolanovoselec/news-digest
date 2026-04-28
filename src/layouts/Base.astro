@@ -261,9 +261,12 @@ const initialTheme = cookieTheme ?? 'light';
         morph animation and the per-path scroll restore with it. */}
 
     <style>
-      /* Sticky header with a tasteful backdrop blur on scroll — no solid
-         rule across the page. The horizontal line is implied by a tight
-         wordmark on the left and the icon trio on the right. */
+      /* Sticky header. Originally a frosted-glass effect (88% bg +
+         backdrop-blur) but the translucency let scrolled article body
+         text leak visibly through the header on detail-back navigation
+         even after the view-transition completed. Solid bg eliminates
+         the bleed; the wordmark + icon-trio composition still reads
+         clearly against the page without needing a frosted layer. */
       .site-header {
         position: sticky;
         top: 0;
@@ -273,28 +276,18 @@ const initialTheme = cookieTheme ?? 'light';
         justify-content: space-between;
         gap: 16px;
         padding: 14px 20px;
-        background-color: color-mix(in oklab, var(--bg) 88%, transparent);
-        backdrop-filter: saturate(160%) blur(12px);
-        -webkit-backdrop-filter: saturate(160%) blur(12px);
+        background-color: var(--bg);
         /* Issue #93 — give the header its own view-transition group so
            it morphs independently from the page-body root snapshot.
            Without this, the body's old→new morph plays underneath the
-           translucent header and content bleeds through, producing the
-           "flicker behind newsdigest header" the user reported. With
-           the named transition the browser captures the header as a
-           stable layer on top of the body morph. */
+           header and content bleeds through during the cross-fade. */
         view-transition-name: site-header;
       }
-      /* Issue #93 follow-up — the named view-transition group is not
-         enough on its own. The browser captures the header's PAINTED
-         pixels at snapshot time, which includes the backdrop-blur of
-         whatever content was beneath the header in the old vs new
-         pages. Cross-fading those two snapshots produces a visible
-         "swim" of the underlying article text through the header.
-         While a transition is active, force the header fully opaque
-         and disable the blur so old/new snapshots are pixel-identical
-         apart from the chrome (wordmark + nav buttons). The flag is
-         toggled by astro:before-preparation / astro:after-swap. */
+      /* Belt-and-braces: the during-transition rule survives because
+         the named view-transition group can briefly desync from the
+         body snapshot on slow devices. Keeping the explicit opaque
+         override here means even if a future refactor reintroduces a
+         translucent base, the in-flight transition stays solid. */
       [data-vt-active] .site-header {
         background-color: var(--bg);
         backdrop-filter: none;

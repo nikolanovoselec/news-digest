@@ -84,6 +84,28 @@ describe('Base.astro / page-effects.ts — view-transition wiring (REQ-DES-003 /
     );
   });
 
+  it('site-header base style is fully opaque — no translucent bleed of scrolled content', () => {
+    // The user reported scrolled article body text bleeding through
+    // the header on detail-back nav even AFTER the view transition
+    // settled. The previous frosted-glass base (88% + backdrop-blur)
+    // looked tasteful but was the source of the bleed in steady
+    // state. Pin solid `var(--bg)` on the base rule so a regression
+    // that re-introduces transparency is caught immediately.
+    const headerRule = baseSource.match(/\.site-header\s*\{[\s\S]*?\}/);
+    expect(headerRule, 'expected a .site-header rule in Base.astro').not.toBeNull();
+    const block = headerRule?.[0] ?? '';
+    expect(block).toMatch(/background-color:\s*var\(--bg\)\s*;/);
+    // Translucent backgrounds (color-mix with transparent, rgba alpha
+    // < 1, hsla alpha < 1) all produce the bleed and must stay out.
+    expect(block).not.toMatch(/color-mix\([^)]*transparent/);
+    expect(block).not.toMatch(/rgba?\([^)]*,\s*0?\.[0-9]+\s*\)/);
+    expect(block).not.toMatch(/hsla?\([^)]*,\s*0?\.[0-9]+%?\s*\)/);
+    // backdrop-filter on an opaque bg has no visible effect; its
+    // presence is a code smell that the bg was meant to be
+    // translucent. Reject it on the base rule.
+    expect(block).not.toMatch(/backdrop-filter:/);
+  });
+
   it('synchronously restores scroll on astro:after-swap so view-transition snapshots include below-fold cards', () => {
     // Without an in-callback scroll restore, the View-Transition
     // snapshot of the new page is captured at scrollY=0. Any card
