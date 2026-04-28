@@ -85,7 +85,11 @@ const initialTheme = cookieTheme ?? 'light';
 ---
 
 <!doctype html>
-<html lang="en" data-theme={initialTheme}>
+<html
+  lang="en"
+  data-theme={initialTheme}
+  style={`background-color: ${initialTheme === 'dark' ? '#0a0a0a' : '#ffffff'};`}
+>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />

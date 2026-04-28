@@ -50,6 +50,7 @@ function makeMatchMedia(prefersDark: boolean): (q: string) => MediaQueryList {
 
 function makeDoc(): Document {
   const dataset: Record<string, string> = {};
+  const style: Record<string, string> = {};
   // Mock <meta name="theme-color"> so applyTheme's status-bar sync
   // path is exercisable without spinning up jsdom. The element only
   // needs the setAttribute hook to record the latest content.
@@ -62,7 +63,15 @@ function makeDoc(): Document {
   };
   const doc = {
     documentElement: {
-      dataset
+      dataset,
+      style: {
+        get backgroundColor(): string {
+          return style.backgroundColor ?? '';
+        },
+        set backgroundColor(v: string) {
+          style.backgroundColor = v;
+        },
+      },
     },
     querySelector: (sel: string) =>
       sel === 'meta[name="theme-color"]' ? meta : null,
@@ -142,6 +151,20 @@ describe('applyTheme', () => {
     expect(meta.getAttribute('content')).toBe('#0a0a0a');
     applyTheme(doc, 'light');
     expect(meta.getAttribute('content')).toBe('#ffffff');
+  });
+
+  it('REQ-DES-002: stamps html.style.backgroundColor with the literal hex so iOS PWA standalone mode does not flash the WKWebView default white through the transparent status bar', () => {
+    // CSS `html { background-color: var(--bg) }` requires the cascade
+    // to evaluate the custom property; a microsecond gap in that
+    // evaluation during Astro ClientRouter swap exposes the underlying
+    // WKWebView default (white) when running as an installed PWA. The
+    // inline style attribute paints a literal hex regardless of
+    // cascade state.
+    const doc = makeDoc();
+    applyTheme(doc, 'dark');
+    expect(doc.documentElement.style.backgroundColor).toBe('#0a0a0a');
+    applyTheme(doc, 'light');
+    expect(doc.documentElement.style.backgroundColor).toBe('#ffffff');
   });
 });
 

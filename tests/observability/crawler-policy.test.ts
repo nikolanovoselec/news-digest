@@ -199,12 +199,11 @@ describe('SEO metadata in Base.astro — REQ-OPS-004 AC 1', () => {
   });
 
   it('REQ-OPS-004: emits a single app-theme-aware theme-color meta tag persisted across navigation', () => {
-    // Replaces the prior dual prefers-color-scheme media-query metas:
-    // those tracked the OS theme, not the app-selected theme, so a
-    // user in dark mode whose device was in light mode saw a white
-    // iOS status bar above an otherwise-dark UI. The new tag carries
-    // the cookie-resolved theme on first paint and is re-stamped by
-    // theme-init.js + theme-toggle.ts on every change.
+    // The single meta tag carries the cookie-resolved theme on first
+    // paint and is re-stamped by theme-init.js and theme-toggle.ts on
+    // every change. transition:persist keeps the same DOM node alive
+    // across Astro view transitions so the content value is never torn
+    // down between pages.
     expect(baseSource).toMatch(
       /<meta[\s\S]{0,80}name="theme-color"[\s\S]{0,200}transition:persist/,
     );
@@ -215,6 +214,19 @@ describe('SEO metadata in Base.astro — REQ-OPS-004 AC 1', () => {
       /theme-color[\s\S]{0,120}media="\(prefers-color-scheme:/,
     );
     expect(baseSource).toMatch(/name="color-scheme"\s+content="light dark"/);
+  });
+
+  it('REQ-OPS-004: <html> carries an inline background-color style stamped from the cookie-resolved theme', () => {
+    // iOS PWA standalone mode renders inside WKWebView whose canvas
+    // default is white; with apple-mobile-web-app-status-bar-style:
+    // black-translucent the status bar is transparent and shows
+    // through to that canvas during any microsecond gap in CSS-
+    // variable resolution between an Astro ClientRouter swap. Pinning
+    // the html bg via a literal hex on the inline style attribute
+    // makes the document bg paint regardless of cascade state.
+    expect(baseSource).toMatch(
+      /<html[\s\S]{0,200}style=\{`background-color:\s*\$\{initialTheme\s*===\s*'dark'\s*\?\s*'#0a0a0a'\s*:\s*'#ffffff'\}/,
+    );
   });
 
   it('REQ-OPS-004: JSON-LD declares both a WebSite and an Organization node', () => {
