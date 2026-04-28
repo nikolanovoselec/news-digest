@@ -91,19 +91,34 @@ describe('Base.astro / page-effects.ts — view-transition wiring (REQ-DES-003 /
     // looked tasteful but was the source of the bleed in steady
     // state. Pin solid `var(--bg)` on the base rule so a regression
     // that re-introduces transparency is caught immediately.
-    const headerRule = baseSource.match(/\.site-header\s*\{[\s\S]*?\}/);
+    //
+    // The block extraction is anchored on the indentation Astro emits
+    // for the layout's <style> children (6 leading spaces, then '}'
+    // alone on a line). The earlier non-greedy form silently captured
+    // the wrong closing brace when nested at-rules were present.
+    const headerRule = baseSource.match(
+      /\n      \.site-header\s*\{([\s\S]*?)\n      \}/,
+    );
     expect(headerRule, 'expected a .site-header rule in Base.astro').not.toBeNull();
-    const block = headerRule?.[0] ?? '';
+    const block = headerRule?.[1] ?? '';
     expect(block).toMatch(/background-color:\s*var\(--bg\)\s*;/);
-    // Translucent backgrounds (color-mix with transparent, rgba alpha
-    // < 1, hsla alpha < 1) all produce the bleed and must stay out.
-    expect(block).not.toMatch(/color-mix\([^)]*transparent/);
-    expect(block).not.toMatch(/rgba?\([^)]*,\s*0?\.[0-9]+\s*\)/);
-    expect(block).not.toMatch(/hsla?\([^)]*,\s*0?\.[0-9]+%?\s*\)/);
+    // Translucent backgrounds (color-mix with transparent, rgba/hsla
+    // with alpha < 1 in either comma- or slash-separated form,
+    // decimal or percentage) all produce the bleed and must stay out.
+    // The previous `[^)]*transparent` form silently passed against
+    // the just-removed `color-mix(in oklab, var(--bg) 88%, transparent)`
+    // because `[^)]*` halted at the inner `)` of `var(--bg)` before
+    // reaching `transparent`. Use a non-anchored substring match.
+    expect(block).not.toMatch(/color-mix\b[\s\S]*?\btransparent\b[\s\S]*?\)/);
+    expect(block).not.toMatch(
+      /\b(?:rgba?|hsla?)\([^;]*(?:,\s*0?\.[0-9]+|\/\s*0?\.[0-9]+|\/\s*[0-9]{1,2}\s*%)\s*\)/,
+    );
     // backdrop-filter on an opaque bg has no visible effect; its
     // presence is a code smell that the bg was meant to be
-    // translucent. Reject it on the base rule.
-    expect(block).not.toMatch(/backdrop-filter:/);
+    // translucent. Reject both the standard and the -webkit-prefixed
+    // form on the base rule so a partial revert can't slip through
+    // on iOS Safari.
+    expect(block).not.toMatch(/(?:^|\s|;)(?:-webkit-)?backdrop-filter:/);
   });
 
   it('synchronously restores scroll on astro:after-swap so view-transition snapshots include below-fold cards', () => {
