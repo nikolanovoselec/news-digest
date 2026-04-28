@@ -15,3 +15,8 @@ public/icons/app-icon-*.png
 coverage/
 .vscode/
 .idea/
+
+# Playwright (live-site e2e suite — see playwright.config.ts)
+playwright-report/
+test-results/
+.playwright/

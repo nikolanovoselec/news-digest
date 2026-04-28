@@ -181,16 +181,16 @@ describe('Base.astro / page-effects.ts — view-transition wiring (REQ-DES-003 /
     expect(effectsSource).toMatch(/e\.stopPropagation\(\)/);
   });
 
-  it('::view-transition-group(site-header) carries an explicit z-index so morphing cards never paint over the header', () => {
+  it('::view-transition-group(site-header) carries an explicit z-index so the promoted morphing card never paints over the header', () => {
     // Z-order in the view-transition layer follows DOM order of named
-    // groups by default. Every digest card has `transition:name=card-...`
-    // and lives inside <main>, AFTER the site-header in the body, so the
-    // browser paints each card group ABOVE the site-header group while
-    // its position interpolates between the article-detail title (top
-    // of the page) and the card's natural position in the digest list.
-    // Mid-flight the card crosses the header zone and the user sees the
-    // card text "popping through" the header. An explicit z-index on
-    // the header group keeps the chrome on top regardless of DOM order.
+    // groups. `src/scripts/page-effects.ts` promotes a single card per
+    // navigation via `view-transition-name: card-{slug}` on the
+    // matching link — that link lives inside <main>, AFTER the site-
+    // header in body order, so the browser paints the card group ABOVE
+    // the site-header group while its position interpolates between
+    // the article-detail title and the card's natural list position.
+    // Without an explicit z-index on the header group the user would
+    // see card text popping through the header mid-morph.
     expect(baseSource).toMatch(
       /::view-transition-group\(site-header\)\s*\{[\s\S]{0,200}z-index:\s*\d+/,
     );

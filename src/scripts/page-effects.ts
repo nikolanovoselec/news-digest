@@ -1,4 +1,4 @@
-// Implements REQ-DES-002, REQ-DES-003, REQ-HIST-001, REQ-PWA-003, REQ-SET-007
+// Implements REQ-DES-002, REQ-DES-003, REQ-HIST-001, REQ-PWA-003, REQ-SET-007, REQ-READ-002
 //
 // Layout-level client behaviour for every page. EXTERNAL module —
 // the site's CSP is `script-src 'self'` and inlines page-level

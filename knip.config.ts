@@ -11,12 +11,15 @@ const config: KnipConfig = {
     'src/worker.ts',
     'src/scripts/**/*.ts', // imported from .astro <script> tags which knip can't trace
     'public/theme-init.js',
-    'scripts/*.mjs' // build/CI helpers invoked from package.json scripts
+    'scripts/*.mjs', // build/CI helpers invoked from package.json scripts
+    'tests/e2e/**/*.spec.ts', // Playwright suite — picked up by playwright.config.ts at runtime
+    'playwright.config.ts'
   ],
-  project: ['src/**/*.{ts,astro}'],
+  project: ['src/**/*.{ts,astro}', 'tests/e2e/**/*.ts'],
   ignoreDependencies: [
     'tailwindcss', // resolved transitively via @tailwindcss/vite plugin
-    'cloudflare' // `cloudflare:test` virtual module shipped by @cloudflare/vitest-pool-workers
+    'cloudflare', // `cloudflare:test` virtual module shipped by @cloudflare/vitest-pool-workers
+    '@playwright/test' // imported only from tests/e2e — Playwright config drives discovery
   ],
   ignoreExportsUsedInFile: true,
   ignore: []

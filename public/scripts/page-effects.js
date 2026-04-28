@@ -1,4 +1,4 @@
-// Implements REQ-DES-002, REQ-DES-003, REQ-HIST-001, REQ-PWA-003, REQ-SET-007
+// Implements REQ-DES-002, REQ-DES-003, REQ-HIST-001, REQ-PWA-003, REQ-SET-007, REQ-READ-002
 //
 // Layout-level client behaviour. Served as a static file from /public so
 // CSP `script-src 'self'` permits it (Astro 5 directRenderScript inlines

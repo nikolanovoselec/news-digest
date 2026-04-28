@@ -58,6 +58,8 @@ The deploy job:
 
 `scripts/e2e-test.sh` is manual only (`bash scripts/e2e-test.sh --force-prod`) and not part of CI deploy — running it triggers a full LLM-cost scrape and mutates the owner's account.
 
+`Playwright E2E (live)` workflow (`.github/workflows/playwright-e2e.yml`) is `workflow_dispatch`-triggered. It exercises the live site in a real browser (view-transition snapshots, scroll restore, the click-to-morph contract on `/digest` and `/history`) — the browser-side coverage curl-driven `e2e-test.sh` cannot reach. Trigger from the Actions tab; optional `base_url` input targets a preview deploy. Requires repository secret `DEV_BYPASS_TOKEN` matching the Worker secret on the target deployment. Mutations are sandboxed to the synthetic `__e2e__` user (REQ-READ-002, REQ-HIST-001).
+
 > **Fork-friendly:** set `APP_URL` to any hostname whose apex is a zone in the same Cloudflare account. The deploy binds it automatically.
 
 ### Environment-specific configuration
