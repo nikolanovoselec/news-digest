@@ -114,7 +114,7 @@ Every source file annotates the REQ-IDs it implements via `// Implements REQ-X-N
 | `paragraph-split.ts` | Normalise LLM-produced prose into a paragraph array for the article-detail view | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view) |
 | `curated-sources.ts` | Static registry of curated feeds | [REQ-PIPE-004](../sdd/generation.md#req-pipe-004-curated-source-registry-with-50-feeds-spanning-the-21-system-tags) |
 | `dedupe.ts` | Canonical-URL plus LLM-cluster dedup; first-source-wins | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-canonical-url--llm-cluster-dedupe-with-first-source-wins) |
-| `finalize-merge.ts` | Pure helpers for the cross-chunk dedup finalize pass | [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
+| `finalize-merge.ts` | Pure helpers for the finalize pass (cross-chunk semantic dedup) | [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
 | `scrape-run.ts` | `scrape_runs` lifecycle helpers (`running` → `ready` / `failed`) | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress) |
 | `ssrf.ts` | SSRF filter for LLM-suggested URLs | [REQ-DISC-005](../sdd/discovery.md#req-disc-005-discovery-prompt-injection-protection) |
 | `article-fetch.ts` | Body-text extraction from candidate article HTML | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) |
@@ -173,7 +173,7 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 | `src/worker.ts` | Cron + queue dispatch entry — three cron branches, four queue message types | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email) |
 | `src/queue/scrape-coordinator.ts` | Fan-out, freshness filter, eviction pass, chunk dispatch | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking) |
 | `src/queue/scrape-chunk-consumer.ts` | Per-chunk LLM call, dedup, atomic completion gate, finalize handoff | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
-| `src/queue/scrape-finalize-consumer.ts` | Cross-chunk semantic dedup pass over the tick's surviving articles | [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
+| `src/queue/scrape-finalize-consumer.ts` | Finalize pass (cross-chunk semantic dedup) over the scrape run's surviving articles | [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
 | `src/queue/cleanup.ts` | Daily 3-pass cleanup: retention, stuck-tag prune, orphan-tag KV sweep | [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-DISC-006](../sdd/discovery.md#req-disc-006-stuck-tag-retention), [REQ-PIPE-007](../sdd/generation.md#req-pipe-007-orphan-tag-source-cleanup) |
 | `migrations/0001_initial.sql` | Initial schema | (foundational) |
 | `migrations/0002_article_tags.sql` | Article tag columns | (schema) |

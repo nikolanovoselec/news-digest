@@ -426,7 +426,7 @@ Extended machine-readable agents policy (`public/llms-full.txt`). Superset of `l
 
 **Response:** `{ digests_generated: int, articles_read: int, articles_total: int, tokens_consumed: int, cost_usd: number }`
 
-Global counters (`digests_generated`, `tokens_consumed`, `cost_usd`) come from `scrape_runs` — one tick is one shared event. Per-user counters (`articles_total`, `articles_read`) are scoped to the user's currently-active tag list, so the ratio always describes "of articles you can see now, how many have you read" ([REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget) AC 3).
+Global counters (`digests_generated`, `tokens_consumed`, `cost_usd`) come from `scrape_runs` — one scrape run is one shared event. Per-user counters (`articles_total`, `articles_read`) are scoped to the user's currently-active tag list, so the ratio always describes "of articles you can see now, how many have you read" ([REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget) AC 3).
 
 **Implements:** [REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget)
 

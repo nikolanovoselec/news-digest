@@ -20,17 +20,17 @@ This is the implementation documentation. The product specification (what the sy
 
 ## Glossary
 
-The codebase historically used several names for the same concepts. The canonical names are:
+The codebase and the product spec (`sdd/`) use several names interchangeably for the same concepts. This table is a reading aid — both columns are valid in the wild, and the right column lists synonyms you'll hit while searching.
 
-| Canonical name | Aliases (do not use) | Definition |
+| Term used in this folder | Synonyms used elsewhere | Definition |
 |---|---|---|
-| **article pool** | "global pool", "global article pool", "populated pool" | The set of summarised articles produced by the most recent global scrape; rendered identically to every user |
-| **scrape run** | "scrape tick", "tick", "cron tick" | One end-to-end execution of the global-feed pipeline: coordinator → chunks → finalize |
+| **article pool** | "global pool", "global article pool", "shared article pool", "populated pool" | The set of summarised articles produced by the most recent global scrape; rendered identically to every user |
+| **scrape run** | "scrape tick", "tick" (in scrape-run contexts) | One end-to-end execution of the global-feed pipeline: coordinator → chunks → finalize |
 | **chunk** | — | One LLM-summarisation message produced by the coordinator and processed by `scrape-chunk-consumer` |
-| **finalize pass** | "dedup pass" | The cross-chunk semantic-dedup phase that runs after the last chunk completes (REQ-PIPE-008) |
+| **finalize pass** | "cross-chunk dedup pass", "dedup pass" | The cross-chunk semantic-dedup phase that runs after the last chunk completes (REQ-PIPE-008) |
 | **update-in-progress indicator** | "in-flight progress display" | The `/digest` and `/settings` UI element that polls `GET /api/scrape-status` while a scrape run is active |
 
-When writing or reviewing documentation, use only the canonical names. The aliases column exists so readers searching the codebase or older docs can resolve old names to the current term.
+New prose written in this folder should prefer the left column for consistency. "tick" remains the natural term for **cron firings** themselves (e.g., "the every-5-minute tick fires the email dispatcher") — the synonym only applies when "tick" is used to mean the scrape-run pipeline execution.
 
 ## Related
 

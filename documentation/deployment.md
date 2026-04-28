@@ -94,7 +94,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 | `KV` | KV namespace | `ai-news-digest-kv` (derived: `${WORKER_NAME}-kv` in `scripts/bootstrap-resources.sh`, where `WORKER_NAME = "ai-news-digest"` from `wrangler.toml`) | Caches (headlines, sources, health) |
 | `SCRAPE_COORDINATOR` | Queue | `scrape-coordinator` | Every-4-hours coordinator dispatch (00/04/08/12/16/20 UTC) |
 | `SCRAPE_CHUNKS` | Queue | `scrape-chunks` | LLM chunk jobs |
-| `SCRAPE_FINALIZE` | Queue | `scrape-finalize` | Cross-chunk semantic dedup pass; one message enqueued by the last chunk consumer per scrape run ([REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)) |
+| `SCRAPE_FINALIZE` | Queue | `scrape-finalize` | Finalize pass (cross-chunk semantic dedup); one message enqueued by the last chunk consumer per scrape run ([REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)) |
 | `AI` | Workers AI | (account-level) | LLM inference |
 
 ## Dependency Automation
