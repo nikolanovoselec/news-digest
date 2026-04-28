@@ -62,7 +62,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Context:** Workers running from Cloudflare datacenter IPs face a real SSRF surface if they resolve arbitrary URLs from external feeds. Many publishers also rate-limit or block Cloudflare IP ranges. The original posture was therefore "no server-side fetch at all" — summaries from titles and feed snippets only.
 
-**Why the original posture was reversed:** under the global-feed pipeline (REQ-PIPE-001 AC 8) feed snippets are often too short to ground a useful summary, and the SSRF concern is mitigated by an explicit allowlist filter (`src/lib/ssrf.ts`), an 8-second timeout, and a 1.5 MB download cap. Readable plaintext is extracted and used as the prompt snippet when it is longer than the feed snippet. Fan-out is bounded-concurrency via `src/lib/concurrency.ts` (`mapConcurrent`, 20 workers).
+**Why the original posture was reversed:** under the global-feed pipeline (REQ-PIPE-001 AC 8) feed snippets are often too short to ground a useful summary, and the SSRF concern is mitigated by an SSRF denylist filter in `src/lib/ssrf.ts` (HTTPS-only; rejects private, loopback, link-local, CGNAT, IPv6 ULA, and metadata-host destinations), an 8-second timeout, and a 1.5 MB download cap. Readable plaintext is extracted and used as the prompt snippet when it is longer than the feed snippet. Fan-out is bounded-concurrency via `src/lib/concurrency.ts` (`mapConcurrent`, 20 workers).
 
 **Alternatives considered:**
 - Keep the no-fetch posture and accept thin summaries on short-snippet feeds.
