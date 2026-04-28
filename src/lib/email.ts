@@ -181,7 +181,11 @@ export function renderDigestReadyEmail(params: DigestReadyEmailParams): Rendered
   if (headlines.length === 0) {
     textLines.push('Your news digest is ready.');
   } else {
-    textLines.push(`Your news digest is ready. Here are your ${headlines.length} latest ${articleNoun}.`);
+    textLines.push(
+      headlines.length === 1
+        ? 'Your news digest is ready. Here is your latest article.'
+        : `Your news digest is ready. Here are your ${headlines.length} latest articles.`,
+    );
   }
   textLines.push('');
   if (headlines.length > 0) {
@@ -252,10 +256,16 @@ export function renderDigestReadyEmail(params: DigestReadyEmailParams): Rendered
         Built with <a href="${escapeHtml(CODEFLARE_URL)}" style="color:#888; text-decoration:none;">Codeflare</a> &copy; 2026 <a href="${escapeHtml(GRAY_MATTER_URL)}" style="color:#888; text-decoration:none;">Gray Matter GmbH</a>
       </td></tr>`;
 
+  const greetingBodyText =
+    headlines.length === 0
+      ? 'Your news digest is ready.'
+      : headlines.length === 1
+        ? 'Your news digest is ready. Here is your latest article.'
+        : `Your news digest is ready. Here are your ${headlines.length} latest articles.`;
   const greetingRow = headlines.length === 0
-    ? `<tr><td style="padding-bottom:24px; font-size:20px; line-height:1.4; font-weight:500;">Your news digest is ready.</td></tr>`
+    ? `<tr><td style="padding-bottom:24px; font-size:20px; line-height:1.4; font-weight:500;">${greetingBodyText}</td></tr>`
     : `<tr><td style="padding-bottom:20px; font-size:20px; line-height:1.4; font-weight:500;">
-         Your news digest is ready. Here are your ${headlines.length} latest ${articleNoun}.
+         ${greetingBodyText}
        </td></tr>`;
 
   const html = `<!doctype html>
