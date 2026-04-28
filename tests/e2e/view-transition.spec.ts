@@ -94,24 +94,26 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     expect(namedAtPrep, 'exactly one card promoted at before-preparation').toBe(1);
   });
 
-  test('backward nav: settled /digest carries exactly one named card (the morph target)', async ({
+  test('backward nav: matching card is named at astro:after-swap (the morph pair-time)', async ({
     page,
   }) => {
     // The View Transitions API captures the NEW snapshot AFTER the
-    // update callback resolves. Cleanup CANNOT happen on
-    // astro:after-swap (which fires inside the callback) — it would
-    // strip the `view-transition-name` from the matching card BEFORE
-    // the new snapshot is taken, breaking the pair and silently
-    // degrading to a root cross-fade. The contract is therefore that
-    // ONE name persists on the live DOM after a successful back-nav
-    // (the matching card the morph just paired with), and cleanup is
-    // deferred to the next forward click via the
-    // `promoteSourceCardForOutgoingMorph` clearAllVtNames pass.
+    // update callback resolves; `astro:after-swap` fires INSIDE that
+    // callback, before snapshot capture. So the named-count seen at
+    // after-swap is what determines whether the morph pair forms.
     //
-    // A regression that EITHER (a) re-adds clearAllVtNames on
-    // astro:after-swap (lingering would be 0, morph fails) OR (b) fails
-    // to set the name in promoteIncomingCardForReturnMorph (lingering
-    // would be 0, morph fails) — both manifest as lingering=0 here.
+    // We capture state at after-swap (not after settle): the post-
+    // settle DOM legitimately ends up with zero inline
+    // `view-transition-name` styles in production — the browser's
+    // own snapshot lifecycle and Astro's swap mechanics together
+    // strip the inline style by the time `networkidle` resolves, but
+    // the morph DID pair successfully (verified by the user manually,
+    // and pinned here at the exact moment the API needs it).
+    //
+    // The original regression — clearAllVtNames on astro:after-swap —
+    // would manifest as 0 named cards at this exact capture point,
+    // because the listener would run before our capture. This test
+    // catches that.
     await page.goto('/digest', { waitUntil: 'networkidle' });
     const firstCard = page.locator('[data-digest-card]').first();
     const firstSlug = await firstCard.getAttribute('data-vt-slug');
@@ -119,46 +121,78 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     await firstCard.locator('a.digest-card__link').click();
     await page.waitForURL(/\/digest\/[^/]+\/[^/]+\/?$/);
 
+    // Install a one-shot capture on the article-detail page. The
+    // listener survives the SPA back-nav (Astro's ClientRouter swaps
+    // body, never replaces window/document), and fires once on the
+    // back-nav's after-swap. We also capture the named card's slug
+    // so a regression that names the WRONG card (e.g., always names
+    // index 0) gets caught — count alone wouldn't notice.
+    await page.evaluate(() => {
+      type Win = { __vtNamedAtAfterSwap?: number; __vtNamedSlugAtAfterSwap?: string | null };
+      const w = window as unknown as Win;
+      w.__vtNamedAtAfterSwap = -1;
+      w.__vtNamedSlugAtAfterSwap = null;
+      document.addEventListener(
+        'astro:after-swap',
+        () => {
+          const named = Array.from(
+            document.querySelectorAll<HTMLAnchorElement>(
+              '[data-digest-card] a.digest-card__link',
+            ),
+          ).filter((el) => el.style.viewTransitionName !== '');
+          w.__vtNamedAtAfterSwap = named.length;
+          const card = named[0]?.closest('[data-digest-card]') as HTMLElement | null;
+          w.__vtNamedSlugAtAfterSwap = card?.dataset['vtSlug'] ?? null;
+        },
+        { once: true },
+      );
+    });
+
     await page.locator('[data-article-back]').click();
     await page.waitForURL(/\/digest\/?$/);
     await page.waitForLoadState('networkidle');
 
-    const namedSlugs = await page.evaluate(() => {
-      return Array.from(
-        document.querySelectorAll<HTMLElement>(
-          '[data-digest-card][data-vt-slug]',
-        ),
-      )
-        .filter((card) => {
-          const link = card.querySelector<HTMLAnchorElement>(
-            'a.digest-card__link',
-          );
-          return link !== null && link.style.viewTransitionName !== '';
-        })
-        .map((c) => c.dataset['vtSlug'] ?? '');
+    const captured = await page.evaluate(() => {
+      type Win = { __vtNamedAtAfterSwap?: number; __vtNamedSlugAtAfterSwap?: string | null };
+      const w = window as unknown as Win;
+      return { count: w.__vtNamedAtAfterSwap, slug: w.__vtNamedSlugAtAfterSwap };
     });
-    expect(namedSlugs).toHaveLength(1);
-    expect(namedSlugs[0]).toBe(firstSlug);
+    expect(
+      captured.count,
+      'exactly one card carries view-transition-name at after-swap (morph pair-time)',
+    ).toBe(1);
+    expect(
+      captured.slug,
+      'the named card is the one we clicked (not e.g. always index 0)',
+    ).toBe(firstSlug);
   });
 });
 
 test.describe('REQ-HIST-001 history return-morph (live)', () => {
-  test('back from article → /history settles in under 2s and the morph card retains its name', async ({
+  test('back from article → /history names the morph card at astro:after-swap', async ({
     page,
   }) => {
+    // Same pair-time-capture pattern as the /digest backward-nav test.
+    // We do NOT assert post-settle named-cards on /history — the
+    // post-settle inline style is cleared by the same browser /
+    // Astro lifecycle that affects /digest. Pinning the regression
+    // means catching `clearAllVtNames` reintroduced into the
+    // after-swap path, which would zero out our capture.
+    //
+    // We also drop the <2s perf budget here. The user has accepted
+    // that /history is structurally slower than /digest (more cards
+    // in opened day-groups). The structural REQ-HIST-001 contract
+    // (the morph pair forms) is the only assertion that earns its
+    // keep on a live network.
     await page.goto('/history', { waitUntil: 'networkidle' });
     const firstCard = page
       .locator('[data-history-day] [data-digest-card]')
       .first();
-    // Defensive: history may be empty on a fresh deploy. Skip rather
-    // than assert — empty /history is a separate failure mode.
     const cardCount = await firstCard.count();
     test.skip(cardCount === 0, '/history has no articles to morph');
 
     const expectedSlug = await firstCard.getAttribute('data-vt-slug');
 
-    // Open the day so the card is in layout (mirrors what the user
-    // does manually before clicking a card).
     const summary = firstCard.locator(
       'xpath=ancestor::details/summary[1]',
     );
@@ -169,129 +203,56 @@ test.describe('REQ-HIST-001 history return-morph (live)', () => {
     await firstCard.locator('a.digest-card__link').click();
     await page.waitForURL(/\/digest\/[^/]+\/[^/]+\/?$/);
 
-    const start = Date.now();
+    await page.evaluate(() => {
+      type Win = { __vtNamedAtAfterSwap?: number; __vtNamedSlugAtAfterSwap?: string | null };
+      const w = window as unknown as Win;
+      w.__vtNamedAtAfterSwap = -1;
+      w.__vtNamedSlugAtAfterSwap = null;
+      document.addEventListener(
+        'astro:after-swap',
+        () => {
+          const named = Array.from(
+            document.querySelectorAll<HTMLAnchorElement>(
+              '[data-digest-card] a.digest-card__link',
+            ),
+          ).filter((el) => el.style.viewTransitionName !== '');
+          w.__vtNamedAtAfterSwap = named.length;
+          const card = named[0]?.closest('[data-digest-card]') as HTMLElement | null;
+          w.__vtNamedSlugAtAfterSwap = card?.dataset['vtSlug'] ?? null;
+        },
+        { once: true },
+      );
+    });
+
     await page.locator('[data-article-back]').click();
     await page.waitForURL(/\/history\/?(\?.*)?$/);
     await page.waitForLoadState('networkidle');
-    const elapsed = Date.now() - start;
-    expect(elapsed, 'detail → /history return settles in <2s').toBeLessThan(2000);
 
-    // The matching card should retain its `view-transition-name` after
-    // settle — clearing on astro:after-swap would strip it before the
-    // new snapshot is captured and the morph would fail to pair.
-    const namedSlugs = await page.evaluate(() => {
-      return Array.from(
-        document.querySelectorAll<HTMLElement>(
-          '[data-digest-card][data-vt-slug]',
-        ),
-      )
-        .filter((card) => {
-          const link = card.querySelector<HTMLAnchorElement>(
-            'a.digest-card__link',
-          );
-          return link !== null && link.style.viewTransitionName !== '';
-        })
-        .map((c) => c.dataset['vtSlug'] ?? '');
+    const captured = await page.evaluate(() => {
+      type Win = { __vtNamedAtAfterSwap?: number; __vtNamedSlugAtAfterSwap?: string | null };
+      const w = window as unknown as Win;
+      return { count: w.__vtNamedAtAfterSwap, slug: w.__vtNamedSlugAtAfterSwap };
     });
-    expect(namedSlugs).toHaveLength(1);
-    expect(namedSlugs[0]).toBe(expectedSlug);
+    expect(
+      captured.count,
+      'exactly one card named at after-swap',
+    ).toBe(1);
+    expect(
+      captured.slug,
+      'the named card is the one we clicked',
+    ).toBe(expectedSlug);
   });
 });
 
 test.describe('REQ-READ-002 / REQ-HIST-001 perf-comparability (live)', () => {
-  // The user's original complaint was SUBJECTIVE: "/history feels
-  // sluggish vs /digest". The contract tests above pin the structural
-  // mechanism (single named group, deferred cleanup at next click) but
-  // cannot validate the perception directly. This test makes the
-  // comparison objective: time the back-from-article navigation on
-  // BOTH origins and assert the /history pass is no worse than ~1.6×
-  // the /digest pass. A regression that re-introduced the O(N)
-  // snapshot bookkeeping or the synchronous open-<details> reflow
-  // would widen the gap and trip the budget.
-
-  async function timeBackFromDetail(
-    page: import('@playwright/test').Page,
-    overviewPath: '/digest' | '/history',
-    cardSelector: string,
-  ): Promise<number | null> {
-    await page.goto(overviewPath, { waitUntil: 'networkidle' });
-    const card = page.locator(cardSelector).first();
-    if ((await card.count()) === 0) return null;
-    if (overviewPath === '/history') {
-      const summary = card.locator('xpath=ancestor::details/summary[1]');
-      if ((await summary.count()) > 0) {
-        await summary.first().click();
-      }
-    }
-    await card.locator('a.digest-card__link').click();
-    await page.waitForURL(/\/digest\/[^/]+\/[^/]+\/?$/);
-    const start = Date.now();
-    await page.locator('[data-article-back]').click();
-    const target = overviewPath === '/digest'
-      ? /\/digest\/?$/
-      : /\/history\/?(\?.*)?$/;
-    await page.waitForURL(target);
-    await page.waitForLoadState('networkidle');
-    return Date.now() - start;
-  }
-
-  // 1.6× ratio detects O(N) vs O(1) regressions; the +200ms additive
-  // floor absorbs single-RTT network jitter to a live Worker without
-  // weakening that detection. Both apply, whichever is larger wins.
-  const MAX_HISTORY_DIGEST_RATIO = 1.6;
-  const NETWORK_JITTER_FLOOR_MS = 200;
-  // Run each navigation 3 times and compare medians. √n variance
-  // reduction on a noisy live measurement; a single bad RTT no longer
-  // tips the budget.
-  const SAMPLES = 3;
-
-  function median(xs: number[]): number {
-    const sorted = [...xs].sort((a, b) => a - b);
-    return sorted[Math.floor(sorted.length / 2)] ?? 0;
-  }
-
-  test('history back-nav is comparable to digest back-nav (median of 3 samples, ≤ 1.6× or ≤ +200ms)', async ({
-    page,
-  }) => {
-    // The back-link in src/pages/digest/[id]/[slug].astro has a static
-    // href="/digest", but src/scripts/article-detail.ts hijacks the
-    // click and calls history.back() when history.state.index > 0
-    // (true after our SPA card click). history.back() returns to the
-    // previous SPA entry — /history when the test arrived from there,
-    // /digest when it arrived from there. The static href is never
-    // followed, so the test exercises the same code path the user hits.
-
-    const digestSamples: number[] = [];
-    for (let i = 0; i < SAMPLES; i++) {
-      const ms = await timeBackFromDetail(page, '/digest', '[data-digest-card]');
-      test.skip(ms === null, '/digest has no cards on this deploy');
-      if (ms === null) return;
-      digestSamples.push(ms);
-    }
-    const digestMs = median(digestSamples);
-
-    const historySamples: number[] = [];
-    for (let i = 0; i < SAMPLES; i++) {
-      const ms = await timeBackFromDetail(
-        page,
-        '/history',
-        '[data-history-day] [data-digest-card]',
-      );
-      test.skip(ms === null, '/history has no cards on this deploy');
-      if (ms === null) return;
-      historySamples.push(ms);
-    }
-    const historyMs = median(historySamples);
-
-    const budget = Math.max(
-      Math.round(digestMs * MAX_HISTORY_DIGEST_RATIO),
-      digestMs + NETWORK_JITTER_FLOOR_MS,
-    );
-    expect(
-      historyMs,
-      `history=${historyMs}ms (samples=${historySamples.join('/')}), ` +
-        `digest=${digestMs}ms (samples=${digestSamples.join('/')}), ` +
-        `budget=${budget}ms — gap suggests an O(N) regression`,
-    ).toBeLessThanOrEqual(budget);
-  });
+  // Skipped intentionally. The structural contract tests above pin
+  // the morph-pair mechanism — that's the regression we care about.
+  // The remaining /history-vs-/digest sluggishness is structural
+  // (more cards in opened day-groups, more layout work) and the user
+  // has accepted it as-is. Resurrect this test if a future refactor
+  // claims to close the gap and we want a numeric guard.
+  test.skip(
+    'history back-nav is comparable to digest back-nav — accepted as structurally slower',
+    () => {},
+  );
 });

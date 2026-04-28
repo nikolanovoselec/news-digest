@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-28
 
+- REQ-PWA-003 AC 4 hardened: the brand wordmark's tap target now stretches across the entire left half of the header instead of hugging the icon-and-text content, so first-tap reliability on mobile improves dramatically without changing the visible layout. Users who aimed roughly at the wordmark and missed it on narrow viewports — and so kept tapping with no feedback — now hit on the first try.
+
 - REQ-PWA-001 AC 6 reverted (rolled back the same day it landed): the in-app brand-canvas splash overlay was meant to hold the cold-launch screen for ~2.4 s after Android Chrome's system splash hid, but the once-per-session gate was unreliable across hard navigations and the overlay re-appeared on every article-detail open. The system splash that Android renders from the manifest is the only splash now — it disappears on first paint, which is the documented OS behaviour and what users expect.
 
 - REQ-PWA-001 AC 1 refined and REQ-DES-002 AC 6 extended: the installable PWA's splash screen and its document body now both stay locked to the dark theme by default — dark-mode readers (the common case at reading hours) never see a white flash on cold launch or during in-app navigation, while light-mode readers see a brief dark splash only at the moment the app is first launched from the home screen, after which their selected theme takes over for the rest of the session.
