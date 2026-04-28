@@ -29,8 +29,19 @@ export function nextTheme(current: Theme): Theme {
   return current === 'dark' ? 'light' : 'dark';
 }
 
+// Keep the iOS / Android system status-bar colour locked to the
+// app-selected theme. Mirrors the same write that /theme-init.js does
+// on first paint so a user toggling theme mid-session sees the status
+// bar repaint immediately, not on the next navigation.
+function applyMetaThemeColor(doc: Document, theme: Theme): void {
+  const meta = doc.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (meta === null) return;
+  meta.setAttribute('content', theme === 'dark' ? '#0a0a0a' : '#ffffff');
+}
+
 export function applyTheme(doc: Document, theme: Theme): void {
   doc.documentElement.dataset[DATA_ATTR] = theme;
+  applyMetaThemeColor(doc, theme);
 }
 
 export function persistTheme(storage: Storage, theme: Theme): void {

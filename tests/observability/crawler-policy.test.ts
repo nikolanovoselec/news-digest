@@ -198,12 +198,21 @@ describe('SEO metadata in Base.astro — REQ-OPS-004 AC 1', () => {
     expect(baseSource).toMatch(/name="twitter:card"\s+content="summary_large_image"/);
   });
 
-  it('REQ-OPS-004: emits dual theme-color metas for light + dark OS schemes', () => {
+  it('REQ-OPS-004: emits a single app-theme-aware theme-color meta tag persisted across navigation', () => {
+    // Replaces the prior dual prefers-color-scheme media-query metas:
+    // those tracked the OS theme, not the app-selected theme, so a
+    // user in dark mode whose device was in light mode saw a white
+    // iOS status bar above an otherwise-dark UI. The new tag carries
+    // the cookie-resolved theme on first paint and is re-stamped by
+    // theme-init.js + theme-toggle.ts on every change.
     expect(baseSource).toMatch(
-      /theme-color[\s\S]{0,120}media="\(prefers-color-scheme:\s*light\)"/,
+      /<meta[\s\S]{0,80}name="theme-color"[\s\S]{0,200}transition:persist/,
     );
     expect(baseSource).toMatch(
-      /theme-color[\s\S]{0,120}media="\(prefers-color-scheme:\s*dark\)"/,
+      /content=\{initialTheme\s*===\s*'dark'\s*\?\s*'#0a0a0a'\s*:\s*'#ffffff'\}/,
+    );
+    expect(baseSource).not.toMatch(
+      /theme-color[\s\S]{0,120}media="\(prefers-color-scheme:/,
     );
     expect(baseSource).toMatch(/name="color-scheme"\s+content="light dark"/);
   });

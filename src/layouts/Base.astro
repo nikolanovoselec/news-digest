@@ -127,8 +127,20 @@ const initialTheme = cookieTheme ?? 'light';
         block stays idempotent across concurrent edits from other phases. */}
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0b0d" />
+    {/* Single theme-color tag tied to the APP-selected theme, not the
+        OS prefers-color-scheme. Without this, a user in dark mode whose
+        device is in light mode sees a white iOS status bar above an
+        otherwise-dark UI (and vice versa) — and on every Astro page
+        swap the browser briefly fell back to the light value while
+        the head was repainting, producing a "white flash" status bar
+        on detail-back navigation. transition:persist keeps the same
+        DOM node across navigations so its `content` value is never
+        torn down between pages. */}
+    <meta
+      name="theme-color"
+      content={initialTheme === 'dark' ? '#0a0a0a' : '#ffffff'}
+      transition:persist
+    />
     <meta name="color-scheme" content="light dark" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -293,7 +305,34 @@ const initialTheme = cookieTheme ?? 'light';
         backdrop-filter: none;
         -webkit-backdrop-filter: none;
       }
+    </style>
 
+    <style is:global>
+      /* The named site-header view-transition group cross-fades its
+         old + new snapshots — both painted opaque, but each at ~50%
+         opacity mid-transition. Standard alpha compositing then
+         resolves to ~75% combined opacity, which lets the body root
+         crossfade beneath bleed visibly through the "black bar".
+         Painting the GROUP container with var(--bg) means the
+         backdrop is solid regardless of how its old/new children
+         compose, and skipping the cross-fade animation collapses
+         the visual to a single steady-state header for the whole
+         transition window — which is correct, because the chrome
+         is identical on every page and there is nothing to morph. */
+      ::view-transition-group(site-header) {
+        background-color: var(--bg);
+      }
+      ::view-transition-old(site-header) {
+        animation: none;
+        opacity: 0;
+      }
+      ::view-transition-new(site-header) {
+        animation: none;
+        opacity: 1;
+      }
+    </style>
+
+    <style>
       .site-header__brand {
         display: inline-flex;
         align-items: center;

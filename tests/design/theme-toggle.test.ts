@@ -50,10 +50,22 @@ function makeMatchMedia(prefersDark: boolean): (q: string) => MediaQueryList {
 
 function makeDoc(): Document {
   const dataset: Record<string, string> = {};
+  // Mock <meta name="theme-color"> so applyTheme's status-bar sync
+  // path is exercisable without spinning up jsdom. The element only
+  // needs the setAttribute hook to record the latest content.
+  const metaAttrs: Record<string, string> = {};
+  const meta = {
+    setAttribute: (k: string, v: string) => {
+      metaAttrs[k] = v;
+    },
+    getAttribute: (k: string) => metaAttrs[k] ?? null,
+  };
   const doc = {
     documentElement: {
       dataset
-    }
+    },
+    querySelector: (sel: string) =>
+      sel === 'meta[name="theme-color"]' ? meta : null,
   } as unknown as Document;
   return doc;
 }
@@ -119,6 +131,17 @@ describe('applyTheme', () => {
     expect(doc.documentElement.dataset.theme).toBe('dark');
     applyTheme(doc, 'light');
     expect(doc.documentElement.dataset.theme).toBe('light');
+  });
+
+  it('REQ-DES-002: also stamps meta[name=theme-color] so the iOS / Android status bar repaints immediately on theme change', () => {
+    const doc = makeDoc();
+    const meta = doc.querySelector(
+      'meta[name="theme-color"]',
+    ) as unknown as { getAttribute: (k: string) => string | null };
+    applyTheme(doc, 'dark');
+    expect(meta.getAttribute('content')).toBe('#0a0a0a');
+    applyTheme(doc, 'light');
+    expect(meta.getAttribute('content')).toBe('#ffffff');
   });
 });
 

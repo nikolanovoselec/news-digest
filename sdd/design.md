@@ -38,6 +38,7 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 3. On every authenticated or anonymous request, the server renders the document root with the user's chosen theme already applied, so the first paint is never the wrong theme even on slow connections or when client-side scripts are deferred.
 4. When the user has not yet expressed a preference, the theme follows `prefers-color-scheme`.
 5. The theme system exposes a consistent set of color tokens per theme (background, surface, text, muted text, border, accent) as CSS custom properties.
+6. The mobile system status bar (iOS / Android) matches the app's selected theme, not the operating-system theme — a user in the app's dark theme whose device is in light mode still sees a dark status bar above the dark UI, and vice versa. The status bar repaints immediately when the user toggles theme mid-session, and its colour persists across client-side route navigations without a transient flash to the opposite theme.
 
 **Constraints:** CON-A11Y-001, CON-SEC-001
 **Priority:** P0
@@ -59,6 +60,7 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 3. The digest card → article detail route uses the View Transitions shared-element morph so the card expands into the detail view.
 4. All motion is wrapped in `@media (prefers-reduced-motion: no-preference)`; under `reduce`, transitions collapse to instant state changes.
 5. Hashtag chip selection, button `:active` press, and card hover (desktop) each have a single, short transition (150–200 ms) on the relevant property only.
+6. The site header chrome stays visually solid throughout every route transition — the user never sees stale body content from the outgoing page bleeding through the header band while the page beneath cross-fades. Because the header is identical on every route, it does not animate during the swap; it simply remains in place with the theme background.
 
 **Constraints:** CON-A11Y-001
 **Priority:** P1
