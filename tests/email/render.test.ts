@@ -87,16 +87,29 @@ describe('renderDigestReadyEmail subject — REQ-MAIL-001 AC 3', () => {
     expect(subject).not.toContain('1 new articles');
   });
 
-  it('REQ-MAIL-001 AC 3: HTML and plain-text greeting also pluralise correctly when N=1', () => {
+  it('REQ-MAIL-001 AC 3: greeting uses singular grammar when N=1 ("Here is your latest article.")', () => {
     const single: Headline = FIVE_HEADLINES[0]!;
     const { html, text } = renderDigestReadyEmail(makeParams({
       headlines: [single],
       tagTally: [{ tag: 'mcp', count: 1 }],
     }));
-    expect(html).toContain('1 new article to read');
-    expect(html).not.toContain('1 new articles to read');
-    expect(text).toContain('1 new article to read');
-    expect(text).not.toContain('1 new articles to read');
+    // Verb agrees with N=1, count is dropped (would be "1 latest article" — redundant).
+    expect(html).toContain('Here is your latest article.');
+    expect(text).toContain('Here is your latest article.');
+    // The plural form must NOT leak into the N=1 path.
+    expect(html).not.toContain('Here are your');
+    expect(text).not.toContain('Here are your');
+    expect(html).not.toContain('latest articles');
+    expect(text).not.toContain('latest articles');
+  });
+
+  it('REQ-MAIL-001 AC 3: greeting uses plural grammar when N>1 ("Here are your N latest articles.")', () => {
+    const { html, text } = renderDigestReadyEmail(makeParams());
+    expect(html).toContain('Here are your 5 latest articles.');
+    expect(text).toContain('Here are your 5 latest articles.');
+    // The previous wording is gone.
+    expect(html).not.toContain('5 new articles to read');
+    expect(text).not.toContain('5 new articles to read');
   });
 });
 
