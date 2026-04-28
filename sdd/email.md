@@ -13,7 +13,7 @@ Resend-backed notification sent after every successful digest — whether genera
 **Acceptance Criteria:**
 1. At most one email per user is sent per day, gated so the same user never receives a second notification on the same local date.
 2. The email fires at the user's configured local digest time, independent of the global scrape cadence.
-3. The subject reads "{N} new articles · {top tags}" when N>0 (top three tag slugs by descending article count, comma-joined); otherwise reads exactly "Your news digest is ready".
+3. The subject reads "{N} new articles · {top tags}" — N is the headline count and {top tags} is the top three tag slugs by descending article count, comma-joined. (N is always ≥ 1 for any email that reaches an inbox, because AC 11 skips the send when N = 0.)
 4. The body lists up to five unread articles (excluding articles the recipient has previously opened), each as a clickable title that links to the article detail page on the dashboard. No adjacent source-name label is rendered next to the headline — the article-detail page surfaces alternate sources instead.
 5. The body shows a tally of articles ingested since the recipient's local midnight, listing each tag with its article count; the line is omitted entirely when no articles have been ingested in that window.
 6. The body shows the current send time and tomorrow's send time, both formatted in the recipient's timezone.
