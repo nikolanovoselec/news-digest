@@ -37,7 +37,22 @@ function makeDb(opts: {
   distinctTzs: TzRow[];
   usersByTz: Record<string, UserRow[]>;
   calls: SqlCall[];
+  /** Per-user override for the headlines query; defaults to one fixture
+   *  row so tests proceed past the AC 11 skip-empty gate. Use `[]` to
+   *  drive the empty-pool branch explicitly. */
+  headlinesByUser?: Record<string, Array<{
+    id: string;
+    title: string;
+    source_name: string | null;
+    primary_source_url: string | null;
+  }>>;
 }): D1Database {
+  const defaultHeadline = {
+    id: 'art-fixture',
+    title: 'Fixture article',
+    source_name: 'Fixture source',
+    primary_source_url: 'https://example.com/x',
+  };
   const prepare = vi.fn().mockImplementation((sql: string) => {
     const bound: unknown[] = [];
     return {
@@ -63,9 +78,15 @@ function makeDb(opts: {
               );
               return { success: true, results };
             }
-            // Headlines query (SELECT a.id, a.title, ...) and tally
-            // grouping query both fire from email-data.ts and must
-            // resolve cleanly; tests don't probe headline content here.
+            // Headlines SELECT — discriminated by `AS source_name`.
+            // Per-user override: ?1 is the user_id bind parameter.
+            if (sql.includes('AS source_name')) {
+              const userId = bound[0] as string;
+              const rows = opts.headlinesByUser?.[userId] ?? [defaultHeadline];
+              return { success: true, results: rows };
+            }
+            // Tally grouping query — empty results are fine; the
+            // dispatcher proceeds even with zero tally entries.
             return { success: true, results: [] };
           }),
           run: vi.fn().mockImplementation(async () => {
@@ -177,9 +198,9 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
       usersByTz: {
         UTC: [
           { id: 'u-fail', email: 'fail@x.com', gh_login: 'fail',
-            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: JSON.stringify(['cloudflare']), last_emailed_local_date: null},
           { id: 'u-ok', email: 'ok@x.com', gh_login: 'ok',
-            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: JSON.stringify(['cloudflare']), last_emailed_local_date: null},
         ],
       },
       calls,
@@ -221,7 +242,7 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
       usersByTz: {
         UTC: [
           { id: 'u-throw', email: 'throw@x.com', gh_login: 'throw',
-            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: JSON.stringify(['cloudflare']), last_emailed_local_date: null},
         ],
       },
       calls: [],
@@ -249,7 +270,7 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
       usersByTz: {
         UTC: [
           { id: 'u-timeout-check', email: 'timeout@x.com', gh_login: 't',
-            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: JSON.stringify(['cloudflare']), last_emailed_local_date: null},
         ],
       },
       calls: [],
@@ -275,9 +296,9 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
       usersByTz: {
         UTC: [
           { id: 'u-success', email: 'ok@x.com', gh_login: 'ok',
-            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: JSON.stringify(['cloudflare']), last_emailed_local_date: null},
           { id: 'u-failure', email: 'fail@x.com', gh_login: 'f',
-            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: JSON.stringify(['cloudflare']), last_emailed_local_date: null},
         ],
       },
       calls,
@@ -332,7 +353,7 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
                     tz: 'UTC',
                     digest_hour: 14,
                     digest_minute: 0,
-                    hashtags_json: null,
+                    hashtags_json: JSON.stringify(['cloudflare']),
                     last_emailed_local_date: null,
                   }],
                 };
@@ -380,7 +401,7 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
       usersByTz: {
         UTC: [
           { id: 'u-retry', email: 'retry@x.com', gh_login: 'retry',
-            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: JSON.stringify(['cloudflare']), last_emailed_local_date: null},
         ],
       },
       calls: calls1,
@@ -399,7 +420,7 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
       usersByTz: {
         UTC: [
           { id: 'u-retry', email: 'retry@x.com', gh_login: 'retry',
-            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: null, last_emailed_local_date: null},
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: JSON.stringify(['cloudflare']), last_emailed_local_date: null},
         ],
       },
       calls: calls2,
@@ -446,9 +467,50 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
     }
   });
 
+  // ---------- REQ-MAIL-001 AC 11: zero unread headlines skip the send ----------
+
+  it('REQ-MAIL-001 AC 11: empty headlines pool → no Resend call, no date stamp, skipped_empty log emitted', async () => {
+    const calls: SqlCall[] = [];
+    const db = makeDb({
+      distinctTzs: [{ tz: 'UTC' }],
+      usersByTz: {
+        UTC: [
+          { id: 'u-empty', email: 'empty@x.com', gh_login: 'empty',
+            tz: 'UTC', digest_hour: 14, digest_minute: 0, hashtags_json: JSON.stringify(['cloudflare']), last_emailed_local_date: null},
+        ],
+      },
+      // Force the headlines query to return 0 rows for this user.
+      headlinesByUser: { 'u-empty': [] },
+      calls,
+    });
+    const fetchStub = makeFetch({ 'empty@x.com': { kind: 'ok' } });
+    const spy = logSpyFactory();
+    try {
+      await dispatchDailyEmails(makeEnv(db, fetchStub.fetch) as Env);
+
+      // No Resend call — the skip happened before sendEmail.
+      expect(fetchStub.calls).toHaveLength(0);
+
+      // No date stamp — the user is naturally retried tomorrow.
+      const stamps = calls.filter(
+        (c) => c.sql.includes('UPDATE users SET last_emailed_local_date') && c.verb === 'run',
+      );
+      expect(stamps).toHaveLength(0);
+
+      // Exactly one structured skipped_empty log with the user id.
+      const skipped = spy.logs.filter((l) => l.event === 'email.dispatch.skipped_empty');
+      expect(skipped).toHaveLength(1);
+      expect(
+        (skipped[0]!.fields as { user_id: string }).user_id,
+      ).toBe('u-empty');
+    } finally {
+      spy.restore();
+    }
+  });
+
   // ---------- CF-055: D1 throw on selectUnreadHeadlinesForUser → degraded log ----------
 
-  it('REQ-MAIL-001 / CF-055: D1 failure on the headlines fetch emits email.dispatch.degraded but still sends + stamps', async () => {
+  it('REQ-MAIL-001 / CF-055: D1 failure on the headlines fetch emits email.dispatch.degraded AND skips the send (AC 11)', async () => {
     const calls: SqlCall[] = [];
     // Special-case the headlines SELECT so it throws while the main
     // user scan + the tally COUNT keep working.
@@ -523,15 +585,24 @@ describe('dispatchDailyEmails — REQ-MAIL-002 non-blocking failure', () => {
           String((l.fields as { error: string }).error).includes('headlines_fetch_failed'),
       );
       expect(headlinesDegraded).toBeDefined();
-      // Email still sent (the fetch was called for this user).
-      expect(fetchStub.calls.find((c) => c.to === 'degraded@x.com')).toBeDefined();
-      // last_emailed_local_date was stamped on success.
+      // AC 11: headlines fetch failed → headlines = [] → skip the send.
+      // No Resend POST should reach the transport.
+      expect(fetchStub.calls.find((c) => c.to === 'degraded@x.com')).toBeUndefined();
+      // No stamp — user is naturally retried tomorrow at their digest time.
       const stamped = calls.find(
         (c) =>
           c.sql.includes('UPDATE users SET last_emailed_local_date') &&
           c.verb === 'run',
       );
-      expect(stamped).toBeDefined();
+      expect(stamped).toBeUndefined();
+      // Skipped-empty log fired alongside the degraded log.
+      const skipped = spy.logs.filter(
+        (l) => l.event === 'email.dispatch.skipped_empty',
+      );
+      expect(skipped).toHaveLength(1);
+      expect(
+        (skipped[0]!.fields as { user_id: string }).user_id,
+      ).toBe('u-degraded');
     } finally {
       spy.restore();
     }

@@ -21,7 +21,7 @@ Resend-backed notification sent after every successful digest — whether genera
 8. The brand footer reads "Built with Codeflare © 2026 Gray Matter GmbH" and matches the in-app site footer (uppercase, tracked, muted), with both "Codeflare" and "Gray Matter GmbH" rendered as hyperlinks.
 9. The From header reads "News Digest <noreply@graymatter.ch>" (display name "News Digest" plus the configured sender address) so inbox lists show the brand instead of the bare email.
 10. Users who turn off `email_enabled` in settings receive no email.
-11. When the recipient has zero unread articles, the body still sends with the static fallback subject plus the tag tally, local-time line, and footer (no headline block) — preserving the once-per-day signal.
+11. When the recipient has zero unread articles for the local day, no email is sent. The per-user "last emailed date" marker is not stamped; the user is naturally retried at their next configured digest time the following local day. An empty email is treated as noise; silence is the contract.
 
 **Constraints:** None
 **Priority:** P1

@@ -19,6 +19,14 @@
 //     do NOT stamp `last_emailed_local_date`: the next cron tick will
 //     retry, so a transient Resend blip recovers automatically within
 //     the same local day.
+//   - When the user has zero unread headlines (either genuinely empty —
+//     no tags / no matches / everything already read — or the headlines
+//     read failed and we couldn't determine), we skip the send AND skip
+//     the date stamp. The user's digest_minute window only matches once
+//     per local day, so they are naturally retried tomorrow at their
+//     digest time. Silent inbox is the right behaviour: an empty email
+//     is noise, and we'd rather wait until there's something worth
+//     reading.
 //
 // Scheduling model:
 //   The cron fires every 5 minutes. We match users whose `digest_minute`
@@ -192,6 +200,27 @@ export async function dispatchDailyEmails(env: Env): Promise<void> {
             user_id: user.id,
             error: `tally_fetch_failed: ${String(tSettled.reason).slice(0, 200)}`,
           });
+        }
+
+        // Skip the send when there is nothing new to surface. Covers
+        // three observable shapes that all collapse to "no signal":
+        //   1. user has no tags → selectUnreadHeadlinesForUser short-
+        //      circuits to []
+        //   2. user has tags but no matching articles arrived today, or
+        //      they have already opened every match
+        //   3. the headlines read failed (degraded log already emitted
+        //      above) — we don't know if there were headlines, default
+        //      to silence rather than spamming an empty notification
+        // last_emailed_local_date is left untouched so the SQL gate
+        // accurately reflects "the last day we actually emailed this
+        // user". The 5-minute digest_minute bucket only matches once
+        // per local day, so the user is naturally retried tomorrow.
+        if (headlines.length === 0) {
+          log('info', 'email.dispatch.skipped_empty', {
+            user_id: user.id,
+            total_since_midnight: totalSinceMidnight,
+          });
+          continue;
         }
 
         const { subject, text, html } = renderDigestReadyEmail({

@@ -260,9 +260,20 @@ function makeDispatchDb(users: DispatchUserRow[]): {
           );
           return { results: filtered };
         }
-        // Headlines query (unread headlines for the user) — empty pool
-        // is fine for these gating tests; the renderer will fall back
-        // to the static-subject form, which sendEmail doesn't care about.
+        // Headlines query — return one fixture row so AC 11
+        // (skip-on-empty) does not short-circuit these gating tests
+        // before they reach the send path.
+        if (sql.includes('AS source_name')) {
+          return {
+            results: [{
+              id: 'art-fixture',
+              title: 'Fixture article',
+              source_name: 'Fixture source',
+              primary_source_url: 'https://example.com/fixture',
+            }],
+          };
+        }
+        // Tally GROUP BY — empty is fine for the gating tests.
         return { results: [] };
       }),
       run: vi.fn().mockImplementation(async () => {
@@ -322,7 +333,7 @@ describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
         tz: 'UTC',
         digest_hour: hour,
         digest_minute: minute - (minute % 5), // inside the current 5-min bucket
-        hashtags_json: null,
+        hashtags_json: '["cloudflare"]',
         last_emailed_local_date: today,
       },
     ];
@@ -354,7 +365,7 @@ describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
         tz: 'UTC',
         digest_hour: hour,
         digest_minute: minute - (minute % 5),
-        hashtags_json: null,
+        hashtags_json: '["cloudflare"]',
         last_emailed_local_date: stale,
       },
     ];
@@ -391,7 +402,7 @@ describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
         tz: 'UTC',
         digest_hour: hour,
         digest_minute: minute - (minute % 5),
-        hashtags_json: null,
+        hashtags_json: '["cloudflare"]',
         last_emailed_local_date: '1970-01-01',
         email_enabled: 1,
       },
@@ -402,7 +413,7 @@ describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
         tz: 'UTC',
         digest_hour: hour,
         digest_minute: minute - (minute % 5),
-        hashtags_json: null,
+        hashtags_json: '["cloudflare"]',
         last_emailed_local_date: '1970-01-01',
         email_enabled: 0,
       },
@@ -434,7 +445,7 @@ describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
         tz: 'UTC',
         digest_hour: hour,
         digest_minute: minute - (minute % 5),
-        hashtags_json: null,
+        hashtags_json: '["cloudflare"]',
         last_emailed_local_date: today === '2099-01-01' ? null : '1970-01-01',
       },
     ];
@@ -496,7 +507,7 @@ describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
         tz: 'UTC',
         digest_hour: hour,
         digest_minute: minute - (minute % 5),
-        hashtags_json: null,
+        hashtags_json: '["cloudflare"]',
         last_emailed_local_date: null,
       },
     ];
