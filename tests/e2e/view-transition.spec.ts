@@ -207,8 +207,7 @@ test.describe('REQ-READ-002 / REQ-HIST-001 perf-comparability (live)', () => {
   // BOTH origins and assert the /history pass is no worse than ~1.6×
   // the /digest pass. A regression that re-introduced the O(N)
   // snapshot bookkeeping or the synchronous open-<details> reflow
-  // would widen
-  // the gap and trip the budget.
+  // would widen the gap and trip the budget.
 
   async function timeBackFromDetail(
     page: import('@playwright/test').Page,

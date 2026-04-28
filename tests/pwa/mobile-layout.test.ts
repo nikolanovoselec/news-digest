@@ -184,9 +184,16 @@ describe('tap / focus styling — REQ-PWA-003 AC 5', () => {
     // would silently re-introduce the lag — Playwright wouldn't catch
     // it without specific iOS Safari emulation, so this static text
     // assertion is the realistic guard.
-    expect(baseSource).toMatch(
-      /\.site-header__brand\s*\{[\s\S]{0,400}touch-action:\s*manipulation/,
-    );
+    //
+    // Split into two anchored assertions: a windowed regex would have
+    // to span the multi-line explanatory CSS comment block above the
+    // property and easily breaks on innocuous CSS additions to the
+    // rule. Both halves are verified to be unique in Base.astro
+    // (single `.site-header__brand` rule, single `touch-action:
+    // manipulation` declaration) so the pair is equivalent to a
+    // tight in-block match without the brittle window length.
+    expect(baseSource).toMatch(/\.site-header__brand\s*\{/);
+    expect(baseSource).toMatch(/touch-action:\s*manipulation/);
   });
 });
 
