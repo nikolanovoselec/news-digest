@@ -359,6 +359,16 @@ const initialTheme = cookieTheme ?? 'light';
         align-items: center;
         gap: 10px;
         min-height: 44px;
+        /* Stretch the anchor to fill the entire left half of the
+           header. The visible content (icon + wordmark) stays
+           left-aligned, but the click/tap target now extends across
+           all the void space up to the nav. The narrow text-only
+           target is surprisingly easy to miss on mobile — and a
+           missed tap on the brand returns no feedback, so the user
+           keeps tapping. `min-width: 0` lets the flex child shrink
+           below its content's intrinsic size on narrow viewports. */
+        flex: 1 1 auto;
+        min-width: 0;
         color: var(--text);
         text-decoration: none;
         /* Tell mobile browsers this is a single-tap target, not a
