@@ -33,6 +33,18 @@ describe('settings.astro digest-time picker — REQ-SET-003', () => {
     expect(hourArrayMatch).not.toBeNull();
   });
 
+  it('REQ-SET-003: hour labels switch to 12h AM/PM for America/* timezones', () => {
+    // US/Canada/Mexico users culturally expect AM/PM; rest of the
+    // world uses 24h. The submitted form value remains the canonical
+    // 0-23 integer regardless of label format. Pin both the
+    // tz-startsWith heuristic and the 12h-label generator.
+    expect(settingsPage).toMatch(/displayHour12\s*=\s*tzValue\.startsWith\(['"]America\//);
+    expect(settingsPage).toContain("'12 AM'");
+    expect(settingsPage).toContain("'12 PM'");
+    // option value stays the canonical 24h string regardless of label
+    expect(settingsPage).toMatch(/<option[\s\S]*?value=\{h\.value\}[\s\S]*?\{h\.label\}/);
+  });
+
   it('REQ-SET-003: minute <select> uses 5-minute increments', () => {
     // The cron runs every 5 minutes — finer granularity adds nothing
     // and clutters the picker. Pin the step.

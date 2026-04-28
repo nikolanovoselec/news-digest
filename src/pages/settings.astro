@@ -82,13 +82,36 @@ const tzValue = user.tz === '' ? DEFAULT_TZ : user.tz;
 // Hour/minute options for the two-select time picker. We render the
 // schedule as `<select>`s rather than `<input type="time">` because the
 // native time-input UI ignores the `lang` attribute on Chromium and
-// Safari and falls back to the OS-level locale — meaning a user in
-// Europe/Zagreb still saw "08:00 AM" if their device locale was en-US.
-// `<select>` options are literal strings, so 24h text always renders
-// 24h, regardless of browser, OS, or device locale.
-const HOUR_OPTIONS: string[] = Array.from({ length: 24 }, (_, i) =>
-  String(i).padStart(2, '0'),
-);
+// Safari and falls back to the OS-level locale — meaning a Europe/Zagreb
+// user still saw "08:00 AM" if their device locale was en-US, and a
+// California user might see "13:00" instead of "1 PM" depending on the
+// device. `<select>` option labels are literal strings, so we control
+// the displayed format ourselves and pick it from the user's tz.
+//
+// `displayHour12` decides whether to render 12-hour AM/PM labels or
+// 24-hour labels. America/* zones get AM/PM (US/Canada/Mexico cultural
+// default); every other zone gets 24h. The submitted form value is
+// always the canonical 0-23 integer regardless of label format, so the
+// API contract is unchanged. Mirrors `localeForTz` in `~/lib/tz.ts`.
+const displayHour12 = tzValue.startsWith('America/');
+function hour12Label(h: number): string {
+  // 0 → "12 AM", 1..11 → "1 AM".."11 AM", 12 → "12 PM", 13..23 → "1 PM".."11 PM".
+  if (h === 0) return '12 AM';
+  if (h < 12) return `${h} AM`;
+  if (h === 12) return '12 PM';
+  return `${h - 12} PM`;
+}
+interface HourOption {
+  value: string;
+  label: string;
+}
+const HOUR_OPTIONS: HourOption[] = Array.from({ length: 24 }, (_, i) => {
+  const value = String(i).padStart(2, '0');
+  return {
+    value,
+    label: displayHour12 ? hour12Label(i) : value,
+  };
+});
 // 5-minute resolution matches the email cron (`*/5 * * * *`); finer
 // granularity does not deliver any earlier and just clutters the picker.
 const MINUTE_STEP_OPTIONS: string[] = Array.from({ length: 12 }, (_, i) =>
@@ -300,7 +323,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               aria-label="Daily digest time, hour"
             >
               {HOUR_OPTIONS.map((h) => (
-                <option value={h} selected={h === hourValue}>{h}</option>
+                <option value={h.value} selected={h.value === hourValue}>{h.label}</option>
               ))}
             </select>
             <span class="settings__time-sep" aria-hidden="true">:</span>
