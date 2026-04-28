@@ -6,6 +6,8 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-28
 
+- REQ-PWA-001 AC 1 refined and REQ-DES-002 AC 6 extended: the installable PWA's splash screen and its document body now both stay locked to the dark theme by default — dark-mode readers (the common case at reading hours) never see a white flash on cold launch or during in-app navigation, while light-mode readers see a brief dark splash only at the moment the app is first launched from the home screen, after which their selected theme takes over for the rest of the session.
+
 - REQ-DES-002 AC 6 added and REQ-DES-003 AC 6 added: the mobile system status bar now follows the app's selected theme rather than the device's OS theme — a user in dark mode on a light-mode phone sees a dark status bar above the dark UI, repainted instantly on toggle and preserved across page navigations. The site header chrome also stays visually solid through every route transition, fixing the "black bar bleed" where outgoing body content briefly showed through the header band on detail-back navigation.
 
 - REQ-PWA-003 AC 4 extended: clicking the brand wordmark while already on the digest now scrolls the page to the top instead of triggering a self-navigation, so the wordmark doubles as a "back to top" affordance once the user has scrolled into the list.
