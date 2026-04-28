@@ -288,7 +288,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
             text always renders 24h. Hour 00-23, minute in 5-min
             steps to match the cron cadence. */}
         <fieldset class="settings__field settings__field--time">
-          <legend class="settings__field-label" id="settings-time-label">
+          <legend class="settings__field-label">
             Daily digest time
           </legend>
           <div class="settings__time-picker" data-time-picker>
@@ -297,26 +297,24 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               data-hour-select
               required
               class="settings__time-select settings__time-select--hour"
-              aria-labelledby="settings-time-label settings-time-hour-label"
+              aria-label="hour"
             >
               {HOUR_OPTIONS.map((h) => (
                 <option value={h} selected={h === hourValue}>{h}</option>
               ))}
             </select>
-            <span id="settings-time-hour-label" hidden>hour</span>
             <span class="settings__time-sep" aria-hidden="true">:</span>
             <select
               name="minute"
               data-minute-select
               required
               class="settings__time-select settings__time-select--minute"
-              aria-labelledby="settings-time-label settings-time-minute-label"
+              aria-label="minute"
             >
               {minuteOptions.map((m) => (
                 <option value={m} selected={m === minuteValue}>{m}</option>
               ))}
             </select>
-            <span id="settings-time-minute-label" hidden>minute</span>
           </div>
         </fieldset>
         <label class="settings__tz" data-tz-block>
