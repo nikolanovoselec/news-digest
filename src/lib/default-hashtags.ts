@@ -27,7 +27,8 @@ export const DEFAULT_HASHTAGS: readonly string[] = [
   'pqc',
   'openziti',
   'supply-chain-security',
-  'gcp'
+  'gcp',
+  'graymatter'
 ] as const;
 
 /** Label used by the settings-page restore button. Single-source-of-

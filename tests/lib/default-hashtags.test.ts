@@ -12,6 +12,9 @@ import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
 //   - Added: appsec, coding-agents, docker, iam, siem, pqc, openziti,
 //     supply-chain-security, gcp (security + identity + LLM-ops + cloud
 //     vendor coverage matching the project owner's actual reading list)
+// 2026-04-28: added `graymatter` so the curated graymatter.ch RSS feed
+// surfaces in every new account's seed (#graymatter manually added by a
+// user previously had no curated source backing it).
 const SEED_TAGS = [
   'cloudflare',
   'mcp',
@@ -33,11 +36,12 @@ const SEED_TAGS = [
   'openziti',
   'supply-chain-security',
   'gcp',
+  'graymatter',
 ] as const;
 
 describe('default-hashtags — REQ-AUTH-001', () => {
-  it('REQ-AUTH-001: DEFAULT_HASHTAGS has exactly 20 entries', () => {
-    expect(DEFAULT_HASHTAGS).toHaveLength(20);
+  it('REQ-AUTH-001: DEFAULT_HASHTAGS has exactly 21 entries', () => {
+    expect(DEFAULT_HASHTAGS).toHaveLength(21);
   });
 
   it('REQ-AUTH-001: DEFAULT_HASHTAGS matches the canonical seed list', () => {

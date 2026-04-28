@@ -495,4 +495,13 @@ export const CURATED_SOURCES: readonly CuratedSource[] = [
     kind: 'rss',
     tags: ['kubernetes', 'devsecops'],
   },
+
+  // ---- Brand sources -----------------------------------------------------
+  {
+    slug: 'graymatter-blog',
+    name: 'Gray Matter',
+    feed_url: 'https://graymatter.ch/rss-en.xml',
+    kind: 'rss',
+    tags: ['graymatter', 'zero-trust', 'ai-agents'],
+  },
 ] as const;
