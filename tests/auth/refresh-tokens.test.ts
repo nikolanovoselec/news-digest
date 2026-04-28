@@ -300,6 +300,22 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
     const result = await loadSession(replayReq, env.DB, SECRET);
     expect(result.user).toBeNull();
 
+    // Theft response must clear BOTH cookies (Max-Age=0) so the
+    // browser stops replaying the known-bad refresh value. A future
+    // regression that returns `unauthenticated(false)` (no clear)
+    // would still produce a null user but would silently let the
+    // browser continue submitting the stolen cookie.
+    expect(
+      result.cookiesToSet.some(
+        (c) => c.startsWith(`${SESSION_COOKIE_NAME}=`) && c.includes('Max-Age=0'),
+      ),
+    ).toBe(true);
+    expect(
+      result.cookiesToSet.some(
+        (c) => c.startsWith(`${REFRESH_TOKEN_COOKIE_NAME}=`) && c.includes('Max-Age=0'),
+      ),
+    ).toBe(true);
+
     // Other device's refresh row IS revoked (global wipe — theft path).
     const otherRow = await findRefreshToken(env.DB, otherValue);
     expect(otherRow!.revoked_at).not.toBeNull();
