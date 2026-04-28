@@ -121,6 +121,28 @@ describe('Base.astro / page-effects.ts — view-transition wiring (REQ-DES-003 /
     expect(block).not.toMatch(/(?:^|\s|;)(?:-webkit-)?backdrop-filter:/);
   });
 
+  it('::view-transition-group(site-header) is painted with var(--bg) and old/new snapshots skip the cross-fade so the header stays solid mid-transition', () => {
+    // Even with a solid base background, the BROWSER cross-fades the
+    // OLD and NEW site-header snapshots when the named transition
+    // group activates: each ends up at ~50% opacity halfway through,
+    // alpha-composing to ~75% combined opacity, which is what the
+    // user saw bleeding scrolled body text through the "black bar"
+    // on detail-back nav. Painting the GROUP container with var(--bg)
+    // gives the cross-fade a solid backstop, and `animation: none` on
+    // both pseudo-elements collapses the visual to a single steady-
+    // state header — correct, because the chrome is identical on
+    // every page and there is nothing to morph.
+    expect(baseSource).toMatch(
+      /::view-transition-group\(site-header\)\s*\{[\s\S]{0,80}background-color:\s*var\(--bg\)/,
+    );
+    expect(baseSource).toMatch(
+      /::view-transition-old\(site-header\)\s*\{[\s\S]{0,80}animation:\s*none/,
+    );
+    expect(baseSource).toMatch(
+      /::view-transition-new\(site-header\)\s*\{[\s\S]{0,80}animation:\s*none/,
+    );
+  });
+
   it('synchronously restores scroll on astro:after-swap so view-transition snapshots include below-fold cards', () => {
     // Without an in-callback scroll restore, the View-Transition
     // snapshot of the new page is captured at scrollY=0. Any card

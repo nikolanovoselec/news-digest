@@ -12,6 +12,18 @@
     var theme = stored || (prefersDark ? 'dark' : 'light');
     document.documentElement.dataset.theme = theme;
 
+    // Keep the iOS / Android system status-bar colour locked to the
+    // app-selected theme. Without this sync, a user in dark mode whose
+    // device is in light mode sees a white status bar above an
+    // otherwise-dark UI (the meta tag previously used
+    // prefers-color-scheme media queries, which track the OS, not the
+    // app theme). On Astro client-side navigation the meta node is
+    // marked transition:persist so its content survives the swap.
+    var metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+      metaTheme.setAttribute('content', theme === 'dark' ? '#0a0a0a' : '#ffffff');
+    }
+
     // Mirror into the `theme` cookie so Base.astro can emit data-theme on
     // the very first byte of the next navigation. Only write if the
     // cookie doesn't already match what we resolved — avoids churn.
