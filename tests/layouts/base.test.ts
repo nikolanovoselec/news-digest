@@ -157,8 +157,14 @@ describe('Base.astro / page-effects.ts — view-transition wiring (REQ-DES-003 /
   });
 
   it('page-effects binds a tap handler that intercepts data-brand-home anchors and scrolls to top when already on /digest', () => {
+    // Listeners MUST be document capture-phase. Samsung Internet's
+    // WebView dispatches the native anchor handler before element-level
+    // listeners get the event, so element-bound listeners miss the
+    // first 2-3 taps of the session. Capture-phase on `document` fires
+    // before WebView's native dispatch and lets us preventDefault.
+    // Both click and pointerup are bound for the click-elision fallback.
     expect(effectsSource).toMatch(
-      /querySelector[\s\S]{0,80}a\[data-brand-home\]/,
+      /closest[\s\S]{0,80}a\[data-brand-home\]/,
     );
     expect(effectsSource).toMatch(
       /window\.location\.pathname\s*!==\s*['"]\/digest['"]/,
@@ -166,29 +172,75 @@ describe('Base.astro / page-effects.ts — view-transition wiring (REQ-DES-003 /
     expect(effectsSource).toMatch(
       /window\.scrollTo\(\s*\{\s*top:\s*0/,
     );
-    // Listeners are bound directly to the brand element rather than
-    // to `document` in capture phase. Element-target dispatch fires
-    // before any bubble-phase document delegate Astro ClientRouter
-    // registers, and stopPropagation prevents the event from reaching
-    // ClientRouter at all. Both click and pointerup are bound for the
-    // Samsung Internet first-tap fallback.
-    expect(effectsSource).toMatch(/link\.addEventListener\(\s*['"]click['"]/);
-    expect(effectsSource).toMatch(/link\.addEventListener\(\s*['"]pointerup['"]/);
+    expect(effectsSource).toMatch(
+      /document\.addEventListener\(\s*\n?\s*['"]click['"][\s\S]{0,400}true\s*,?\s*\)/,
+    );
+    expect(effectsSource).toMatch(
+      /document\.addEventListener\(\s*\n?\s*['"]pointerup['"][\s\S]{0,400}true\s*,?\s*\)/,
+    );
     expect(effectsSource).toMatch(/e\.stopPropagation\(\)/);
   });
 
-  it('::view-transition-group(site-header) carries an explicit z-index so morphing cards never paint over the header', () => {
+  it('::view-transition-group(site-header) carries an explicit z-index so the promoted morphing card never paints over the header', () => {
     // Z-order in the view-transition layer follows DOM order of named
-    // groups by default. Every digest card has `transition:name=card-...`
-    // and lives inside <main>, AFTER the site-header in the body, so the
-    // browser paints each card group ABOVE the site-header group while
-    // its position interpolates between the article-detail title (top
-    // of the page) and the card's natural position in the digest list.
-    // Mid-flight the card crosses the header zone and the user sees the
-    // card text "popping through" the header. An explicit z-index on
-    // the header group keeps the chrome on top regardless of DOM order.
+    // groups. `src/scripts/page-effects.ts` promotes a single card per
+    // navigation via `view-transition-name: card-{slug}` on the
+    // matching link — that link lives inside <main>, AFTER the site-
+    // header in body order, so the browser paints the card group ABOVE
+    // the site-header group while its position interpolates between
+    // the article-detail title and the card's natural list position.
+    // Without an explicit z-index on the header group the user would
+    // see card text popping through the header mid-morph.
     expect(baseSource).toMatch(
       /::view-transition-group\(site-header\)\s*\{[\s\S]{0,200}z-index:\s*\d+/,
+    );
+  });
+
+  it('page-effects.ts shapes view-transitions to a single named group per navigation (REQ-READ-002 / REQ-HIST-001)', () => {
+    // Default-no-name baseline: every DigestCard ships without a
+    // `transition:name`. /history can render 100+ cards across opened
+    // days, and the browser captures every named element on the page
+    // as part of the view-transition pseudo tree — paying O(N)
+    // snapshot bookkeeping for a morph that only ever pairs ONE card
+    // with the article-detail header. Promoting a single card per
+    // navigation collapses bookkeeping to O(1) and (per gpt-5.2's
+    // performance analysis) is the dominant lever closing the
+    // /history vs /digest sluggishness gap.
+    //
+    // Forward (overview → detail): on `astro:before-preparation` the
+    // sourceElement is the clicked anchor; we walk to the surrounding
+    // [data-digest-card], read its slug, and assign
+    // `view-transition-name: card-${slug}` on the link before the OLD
+    // snapshot is captured.
+    expect(effectsSource).toMatch(/promoteSourceCardForOutgoingMorph/);
+    expect(effectsSource).toMatch(
+      /astro:before-preparation[\s\S]{0,200}promoteSourceCardForOutgoingMorph/,
+    );
+    expect(effectsSource).toMatch(
+      /view-transition-name['"`]\s*,\s*[`'"]card-\$\{slug\}/,
+    );
+    // Backward (detail → overview): on astro:before-swap we read the
+    // outgoing URL (/digest/{id}/{slug}) and locate the matching card
+    // in event.newDocument, skipping copies inside hidden ancestors
+    // or closed <details> (those aren't in layout, so a name on them
+    // has no bbox and the morph degrades).
+    expect(effectsSource).toMatch(/promoteIncomingCardForReturnMorph/);
+    expect(effectsSource).toMatch(
+      /astro:before-swap[\s\S]{0,300}promoteIncomingCardForReturnMorph/,
+    );
+    expect(effectsSource).toMatch(/ARTICLE_DETAIL_PATH_RE/);
+    // Visibility filter: the helper that finds the promotable card
+    // skips elements inside [hidden] ancestors and inside closed
+    // <details>, otherwise the name lands on an off-layout element
+    // and the morph silently degrades to a root cross-fade.
+    expect(effectsSource).toMatch(/closest\(['"]\[hidden\]['"]\)/);
+    expect(effectsSource).toMatch(/closest[\s\S]{0,40}['"]details['"]/);
+    // Cleanup on after-swap so the next navigation starts from a
+    // no-name baseline; without this every morphed card would carry
+    // a leftover name into the next snapshot, recreating the O(N)
+    // bookkeeping the moment a second card is clicked.
+    expect(effectsSource).toMatch(
+      /astro:after-swap[\s\S]{0,200}clearAllVtNames/,
     );
   });
 

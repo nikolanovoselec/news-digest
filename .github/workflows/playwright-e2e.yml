@@ -1,0 +1,60 @@
+name: Playwright E2E (live)
+# Live-site smoke suite. Runs against the deployed Worker (default
+# https://news.graymatter.ch) and exercises behaviours that vitest
+# cannot validate — real browser layout, view-transition snapshots,
+# scroll restore, the click-to-morph contract, and the single-named-
+# group invariant on /digest and /history.
+#
+# Triggered manually (workflow_dispatch). Optional `base_url` input
+# targets a preview deploy. The synthetic `__e2e__` user (provisioned
+# by migrations/0006_e2e_user.sql) owns every mutation; the operator's
+# real account is never touched.
+#
+# Requires repository secret `DEV_BYPASS_TOKEN` matching the Worker
+# secret on the target deployment.
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Target deployment URL (default https://news.graymatter.ch)'
+        required: false
+        default: 'https://news.graymatter.ch'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: Live view-transition smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --no-fund --no-audit
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright e2e
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
+          PLAYWRIGHT_DEV_BYPASS_TOKEN: ${{ secrets.DEV_BYPASS_TOKEN }}
+          CI: 'true'
+        run: npm run test:e2e
+
+      - name: Upload Playwright trace on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-trace
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,4 +1,4 @@
-// Implements REQ-DES-002, REQ-DES-003, REQ-HIST-001, REQ-PWA-003, REQ-SET-007
+// Implements REQ-DES-002, REQ-DES-003, REQ-HIST-001, REQ-PWA-003, REQ-SET-007, REQ-READ-002
 //
 // Layout-level client behaviour. Served as a static file from /public so
 // CSP `script-src 'self'` permits it (Astro 5 directRenderScript inlines
@@ -152,15 +152,87 @@ function preOpenHistoryDayInIncomingDocument(e) {
   det.open = true;
 }
 
+// Single-named-group view-transition shaping. DigestCard no longer
+// emits a default transition:name — capturing every card on /digest
+// and especially /history (100+ named elements across opened days)
+// imposed O(N) snapshot/bookkeeping cost for a morph that only ever
+// pairs one card with the article-detail header. Promote exactly one
+// card per navigation, clear all on after-swap.
+const ARTICLE_DETAIL_PATH_RE = /^\/digest\/[^/]+\/([^/]+)\/?$/;
+
+function findPromotableCard(scope, slug) {
+  const cards = scope.querySelectorAll(
+    `[data-digest-card][data-vt-slug="${CSS.escape(slug)}"]`,
+  );
+  for (const card of cards) {
+    if (card.closest('[hidden]') !== null) continue;
+    const det = card.closest('details');
+    if (det !== null && !det.open) continue;
+    const link = card.querySelector('a.digest-card__link');
+    if (link !== null) return link;
+  }
+  return null;
+}
+
+function clearAllVtNames(scope) {
+  scope
+    .querySelectorAll('[data-digest-card] a.digest-card__link')
+    .forEach((el) => {
+      el.style.removeProperty('view-transition-name');
+    });
+}
+
+function promoteSourceCardForOutgoingMorph(e) {
+  const ev = e;
+  const to = ev.to;
+  if (to === undefined) return;
+  const match = ARTICLE_DETAIL_PATH_RE.exec(to.pathname);
+  if (match === null) return;
+  const src = ev.sourceElement;
+  if (!(src instanceof HTMLElement)) return;
+  const card = src.closest('[data-digest-card][data-vt-slug]');
+  if (card === null) return;
+  const slug = card.dataset.vtSlug;
+  if (typeof slug !== 'string' || slug === '') return;
+  const link = card.querySelector('a.digest-card__link');
+  if (link === null) return;
+  clearAllVtNames(document);
+  link.style.setProperty('view-transition-name', `card-${slug}`);
+}
+
+function promoteIncomingCardForReturnMorph(e) {
+  const ev = e;
+  const from = ev.from;
+  if (from === undefined) return;
+  const match = ARTICLE_DETAIL_PATH_RE.exec(from.pathname);
+  if (match === null) return;
+  const slug = match[1];
+  if (slug === undefined || slug === '') return;
+  const doc = ev.newDocument;
+  if (doc === undefined) return;
+  const link = findPromotableCard(doc, slug);
+  if (link === null) return;
+  link.style.setProperty('view-transition-name', `card-${slug}`);
+}
+
 // Header brand link: scroll-to-top when already on /digest, otherwise
-// fall through to Astro ClientRouter's default navigation. Listeners
-// are bound directly to the brand element (not the document) so they
-// cannot interfere with pointer events anywhere else on the page.
-// Both `click` and `pointerup` are handled because some mobile
-// WebViews (Samsung Internet) elide the synthesised click on the
-// first tap of the session. window.scrollTo is idempotent so both
-// firing is harmless. Re-binds on astro:page-load.
-function shouldInterceptBrandTap() {
+// fall through to Astro ClientRouter's default navigation.
+//
+// MUST be document capture-phase. Samsung Internet's WebView dispatches
+// the native anchor handler BEFORE element-level listeners get the
+// event — element-bound listeners miss the first 2-3 taps of the
+// session entirely. Document capture phase fires before WebView's
+// native dispatch, so we catch the tap on the very first try.
+//
+// `pointerup` is the fallback for the same WebViews that elide the
+// synthesised `click` after touchstart+touchend. Both run in capture
+// phase with stopPropagation; `window.scrollTo` is idempotent so a
+// click+pointerup pair both firing is harmless. Modifier-clicks and
+// non-primary buttons fall through (open-in-new-tab still works).
+function shouldInterceptBrandTap(target) {
+  if (!(target instanceof Element)) return false;
+  const link = target.closest('a[data-brand-home]');
+  if (link === null) return false;
   if (window.location.pathname !== '/digest') return false;
   if (window.location.search !== '') return false;
   return true;
@@ -171,34 +243,55 @@ function scrollTopRespectingMotion() {
   window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
 }
 
-function handleBrandTap(e) {
-  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-  if (e.button !== 0) return;
-  if (!shouldInterceptBrandTap()) return;
-  e.preventDefault();
-  e.stopPropagation();
-  scrollTopRespectingMotion();
-}
-
 function bindBrandLinkScrollToTop() {
-  const link = document.querySelector('a[data-brand-home]');
-  if (link === null) return;
-  if (link.dataset.brandTapBound === '1') return;
-  link.dataset.brandTapBound = '1';
-  link.addEventListener('click', handleBrandTap);
-  link.addEventListener('pointerup', handleBrandTap);
+  const root = document.documentElement;
+  if (root.dataset.brandLinkBound === '1') return;
+  root.dataset.brandLinkBound = '1';
+
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      if (e instanceof MouseEvent && e.button !== 0) return;
+      if (!shouldInterceptBrandTap(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      scrollTopRespectingMotion();
+    },
+    true,
+  );
+
+  document.addEventListener(
+    'pointerup',
+    (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      if (e.button !== 0) return;
+      if (!shouldInterceptBrandTap(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      scrollTopRespectingMotion();
+    },
+    true,
+  );
 }
 
 bindBrandLinkScrollToTop();
-document.addEventListener('astro:page-load', bindBrandLinkScrollToTop);
 
 if (document.documentElement.dataset.scrollRestoreBound !== '1') {
   document.documentElement.dataset.scrollRestoreBound = '1';
   if ('scrollRestoration' in window.history) {
     window.history.scrollRestoration = 'manual';
   }
+  document.addEventListener(
+    'astro:before-preparation',
+    promoteSourceCardForOutgoingMorph,
+  );
   document.addEventListener('astro:before-swap', preFilterIncomingDocument);
   document.addEventListener('astro:before-swap', preOpenHistoryDayInIncomingDocument);
+  document.addEventListener(
+    'astro:before-swap',
+    promoteIncomingCardForReturnMorph,
+  );
   document.addEventListener('astro:before-swap', saveScroll);
   document.addEventListener('astro:after-swap', () => {
     try {
@@ -216,6 +309,12 @@ if (document.documentElement.dataset.scrollRestoreBound !== '1') {
   });
   document.addEventListener('astro:after-swap', () => {
     delete document.documentElement.dataset.vtActive;
+  });
+  // Wipe view-transition-name from every card on the live DOM so the
+  // next navigation starts from the no-name baseline. The promotion
+  // handlers re-add a single name on the card actually morphing.
+  document.addEventListener('astro:after-swap', () => {
+    clearAllVtNames(document);
   });
   window.addEventListener('pagehide', saveScroll);
   document.addEventListener('astro:page-load', restoreScroll);

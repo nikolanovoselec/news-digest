@@ -146,9 +146,18 @@ describe('DigestCard.astro — REQ-READ-001 AC 2/3', () => {
     expect(digestCardSource).toMatch(/<a[\s\S]*?href=\{href\}/);
   });
 
-  it('REQ-READ-002: declares a transition:name derived from slug for shared-element morph', () => {
-    expect(digestCardSource).toContain('transition:name={transitionName}');
-    expect(digestCardSource).toMatch(/card-\$\{slug\}/);
+  it('REQ-READ-002: emits no default transition:name and exposes data-vt-slug for single-card promotion', () => {
+    // The morph-shaping refactor strips the default `transition:name`
+    // from every card. /history can render 100+ cards across opened
+    // days, and the browser captures every named element on the page
+    // as part of the view-transition pseudo tree — O(N) snapshot
+    // bookkeeping for a morph that only ever pairs ONE card with the
+    // article-detail header. The card carries `data-vt-slug={slug}`
+    // so `src/scripts/page-effects.ts` can promote exactly one card
+    // (the clicked one outbound, the matching one inbound) by setting
+    // `view-transition-name: card-${slug}` at navigation time.
+    expect(digestCardSource).not.toMatch(/transition:name=\{transitionName\}/);
+    expect(digestCardSource).toMatch(/data-vt-slug=\{slug\}/);
   });
 
   it('REQ-READ-001: link target resolves to the detail route', () => {

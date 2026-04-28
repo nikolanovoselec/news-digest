@@ -13,6 +13,7 @@
     "typecheck": "npm run fixtures && astro check && tsc --noEmit",
     "test": "npm run fixtures && vitest run",
     "test:watch": "npm run fixtures && vitest",
+    "test:e2e": "playwright test",
     "lint": "oxlint src/ tests/ --deny-warnings --ignore-pattern '**/*.astro'",
     "lint:fix": "oxlint src/ tests/ --fix --ignore-pattern '**/*.astro'",
     "knip": "knip"
@@ -27,6 +28,7 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.8",
     "@cloudflare/vitest-pool-workers": "^0.14.9",
+    "@playwright/test": "^1.50.0",
     "@cloudflare/workers-types": "^4.20260422.1",
     "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^25.6.0",

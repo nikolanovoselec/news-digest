@@ -441,11 +441,6 @@ function formatCostUsd(value: number | null | undefined): string {
           .forEach((b) => {
             b.removeAttribute('data-bound');
           });
-        clone
-          .querySelectorAll<HTMLElement>('[data-astro-transition-scope]')
-          .forEach((scoped) => {
-            scoped.removeAttribute('data-astro-transition-scope');
-          });
         searchGrid.appendChild(clone);
         matches++;
       }
@@ -982,6 +977,12 @@ function formatCostUsd(value: number | null | undefined): string {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 0.75rem;
+    /* Bound the reflow that fires when `<details>` is force-opened
+       inside the incoming document during a view-transition pre-swap.
+       `contain: layout style` confines layout invalidation to the
+       grid's box rather than escaping into the page root, which keeps
+       snapshot capture cheap on history back-nav. */
+    contain: layout style;
   }
 
   /* Search results grid — matches .digest-page__grid breakpoints so

@@ -8,10 +8,15 @@
 // and an inline `#` disclosure that opens a non-interactive popover
 // with the article's tag list (REQ-READ-001 AC 6).
 //
-// View Transitions: each card carries a unique `transition:name` derived
-// from the article slug so Astro's ClientRouter performs a shared-element
-// morph into the detail page's matching container. The detail page uses
-// the same name on its title wrapper.
+// View Transitions: cards carry the slug as `data-vt-slug` so a single
+// name can be assigned at click time (forward nav) or pre-swap (back
+// nav). NO default `transition:name` is emitted server-side: pages like
+// `/history` can render 100+ cards and capturing every one as a named
+// element imposes O(N) snapshot bookkeeping for a morph that only ever
+// pairs ONE card with the article-detail header. `src/scripts/page-effects.ts`
+// sets `view-transition-name: card-${slug}` on the single target card —
+// the clicked card going outward, and the matching `data-vt-slug` card
+// in the incoming document when returning from `/digest/{id}/{slug}`.
 //
 // Text is rendered as plain `{expression}` — Astro escapes by default,
 // so REQ-READ-002 AC 2 (no innerHTML, no markdown parsing) is satisfied
@@ -57,15 +62,11 @@ interface Props {
    */
   filterHide?: boolean;
   /**
-   * When true, omit the `transition:name` on the card's anchor so
-   * the element does NOT participate in View-Transition shared-
-   * element morphs. Used on /history's server-rendered day-list
-   * when the user has `?tags=` in the URL — that list sits hidden
-   * below an SSR'd flat search-grid whose cards carry the same
-   * per-slug transition names; duplicates abort the transition per
-   * spec. Stripping names from the hidden list eliminates the
-   * collision while keeping the list available for the client's
-   * clone-based filter fallback.
+   * Retained for prop-shape backward compatibility with callers that
+   * still pass `suppressTransition={...}`. The default-no-transition
+   * model means there is nothing to suppress: every card is born
+   * without a `view-transition-name` and the page-effects script
+   * promotes exactly one card per navigation. Prop becomes a no-op.
    */
   suppressTransition?: boolean;
 }
@@ -86,7 +87,6 @@ const {
 } = Astro.props;
 
 const href = `/digest/${digestId}/${slug}`;
-const transitionName = `card-${slug}`;
 // No-op stagger calculation kept so existing call sites that pass
 // `index={i}` don't need updating. Clamp preserved for when we
 // revive any per-card staging (accessibility focus order, e.g.).
@@ -124,6 +124,7 @@ const displaySourceName = resolveDisplaySource();
   class="digest-card"
   data-digest-card
   data-article-id={articleId}
+  data-vt-slug={slug}
   data-starred={starred ? 'true' : 'false'}
   data-stagger-index={stagger}
   data-tags={tagAttr}
@@ -135,22 +136,10 @@ const displaySourceName = resolveDisplaySource();
       receive touch events natively — nesting <button> inside <a>
       flattens to the anchor on mobile Safari/Samsung Browser, which
       is why the star and # were unresponsive to taps. */}
-  {suppressTransition ? (
-    <a class="digest-card__link" href={href} aria-label={title}>
-      <h2 class="digest-card__title">{title}</h2>
-      <p class="digest-card__one-liner">{oneLiner}</p>
-    </a>
-  ) : (
-  <a
-    class="digest-card__link"
-    href={href}
-    transition:name={transitionName}
-    aria-label={title}
-  >
+  <a class="digest-card__link" href={href} aria-label={title}>
     <h2 class="digest-card__title">{title}</h2>
     <p class="digest-card__one-liner">{oneLiner}</p>
   </a>
-  )}
   <footer class="digest-card__footer">
     <span class="digest-card__footer-left">
       {

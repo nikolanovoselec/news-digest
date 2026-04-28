@@ -84,16 +84,23 @@ describe('history.astro — REQ-HIST-001', () => {
     expect(historyPageSource).toMatch(/initCardInteractions\(searchGrid\)/);
   });
 
-  it('REQ-HIST-001: cloned cards strip data-astro-transition-scope so they do not collide with the hidden originals in View Transitions', () => {
-    // Astro's `transition:name={id}` generates a
-    // `data-astro-transition-scope="..."` attribute + a scoped
-    // stylesheet rule mapping scope → view-transition-name. The spec
-    // requires unique view-transition-name values across participating
-    // elements; duplicates silently abort the transition. Since the
-    // ORIGINAL card stays in the hidden [data-history-list] while its
-    // clone shows in the search grid, the clone must drop the scope
-    // to avoid the collision.
-    expect(historyPageSource).toMatch(
+  it('REQ-HIST-001: cloned cards do not need a data-astro-transition-scope strip because DigestCard emits no default transition:name', () => {
+    // Earlier behaviour: every DigestCard carried `transition:name`,
+    // which Astro compiled to a `data-astro-transition-scope` + a
+    // scoped stylesheet rule mapping the scope to `view-transition-name`.
+    // Cloning a card into the search grid duplicated the name across
+    // the visible clone AND the hidden original, and the spec aborts
+    // a view transition when two participating elements share a name.
+    // The clone-strip removed the scope to break the collision.
+    //
+    // Current behaviour: DigestCard emits NO default transition:name —
+    // `src/scripts/page-effects.ts` promotes exactly one card per
+    // navigation by setting `view-transition-name` inline on a single
+    // visible card. Originals inside the hidden day-list are filtered
+    // out by `findPromotableCard`. There is no scope attribute to
+    // strip and no collision to avoid, so the strip helper has been
+    // removed from the clone path.
+    expect(historyPageSource).not.toMatch(
       /removeAttribute\('data-astro-transition-scope'\)/,
     );
   });

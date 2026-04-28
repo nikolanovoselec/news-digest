@@ -327,16 +327,18 @@ const initialTheme = cookieTheme ?? 'light';
          transition window — which is correct, because the chrome
          is identical on every page and there is nothing to morph.
          Z-order in the transition layer follows DOM order of named
-         groups: every digest card carries `transition:name=card-...`
-         and lives inside <main>, AFTER the site-header in the body.
-         The browser therefore paints each card group ABOVE the
-         site-header group while their positions interpolate between
+         groups. `src/scripts/page-effects.ts` promotes a single card
+         per navigation by setting `view-transition-name: card-{slug}`
+         on the matching `[data-digest-card] a.digest-card__link` —
+         that one card lives inside <main>, AFTER the site-header in
+         body order, so the browser paints the card group ABOVE the
+         site-header group while its position interpolates between
          the article-detail title (top of the page) and the card's
-         natural position in the digest list. Mid-flight the card
-         crosses the header zone and the user sees the card text
-         "popping through" the header for the duration of the morph.
-         An explicit z-index on the site-header group keeps the chrome
-         on top of every morphing card regardless of DOM order. */
+         natural position in the list. Mid-flight the card crosses
+         the header zone and the user would see card text "popping
+         through" the header for the duration of the morph. An
+         explicit z-index on the site-header group keeps the chrome
+         on top of the promoted card regardless of DOM order. */
       ::view-transition-group(site-header) {
         background-color: var(--bg);
         z-index: 100;

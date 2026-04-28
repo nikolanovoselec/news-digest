@@ -122,7 +122,7 @@ describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
     // navigation to clean /digest still clears the filter, and (3)
     // never preventDefault on modifier-clicks (cmd/ctrl/shift/alt) so
     // "open in new tab" still works.
-    expect(effectsSource).toMatch(/querySelector[\s\S]{0,80}a\[data-brand-home\]/);
+    expect(effectsSource).toMatch(/closest[\s\S]{0,80}a\[data-brand-home\]/);
     expect(effectsSource).toMatch(
       /window\.location\.pathname\s*!==\s*['"]\/digest['"]/,
     );
@@ -133,20 +133,27 @@ describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
     expect(effectsSource).toMatch(/window\.scrollTo\(\s*\{\s*top:\s*0/);
   });
 
-  it('REQ-PWA-003 AC 4: brand-link listener is element-bound (not document) with stopPropagation to preempt Astro ClientRouter', () => {
-    // The brand-tap handler is bound directly to the brand <a> element
-    // rather than to `document` in capture phase. Element-target
-    // dispatch fires before any bubble-phase document delegate that
-    // ClientRouter registers, and stopPropagation prevents the event
-    // from reaching ClientRouter's delegate at all. Both `click` and
-    // `pointerup` are bound for the Samsung Internet first-tap fallback.
-    expect(effectsSource).toMatch(/link\.addEventListener\(\s*['"]click['"]/);
-    expect(effectsSource).toMatch(/link\.addEventListener\(\s*['"]pointerup['"]/);
-    expect(effectsSource).toMatch(/e\.stopPropagation\(\)/);
-    // Re-bind on astro:page-load because ClientRouter swaps the DOM.
+  it('REQ-PWA-003 AC 4: brand-link listener is document capture-phase with stopPropagation to beat Samsung Internet WebView native anchor dispatch', () => {
+    // The brand-tap handler MUST be `document.addEventListener(..., true)`
+    // — capture phase on `document`. Samsung Internet's WebView
+    // dispatches the native anchor handler BEFORE element-level
+    // listeners receive the event; an element-bound listener misses
+    // the first 2-3 taps of every session because the WebView has
+    // already navigated by the time the listener would fire. Capture
+    // phase fires earliest in the propagation order, so we get the
+    // event before WebView's native dispatch and `preventDefault`
+    // sticks. `stopPropagation` then prevents the event from reaching
+    // any later document delegate (Astro ClientRouter included).
+    // Both `click` and `pointerup` are bound — the same WebViews elide
+    // the synthesised click after touchstart/touchend so pointerup is
+    // the reliable fallback.
     expect(effectsSource).toMatch(
-      /astro:page-load[\s\S]{0,80}bindBrandLinkScrollToTop/,
+      /document\.addEventListener\(\s*\n?\s*['"]click['"][\s\S]{0,400}true\s*,?\s*\)/,
     );
+    expect(effectsSource).toMatch(
+      /document\.addEventListener\(\s*\n?\s*['"]pointerup['"][\s\S]{0,400}true\s*,?\s*\)/,
+    );
+    expect(effectsSource).toMatch(/e\.stopPropagation\(\)/);
   });
 });
 
