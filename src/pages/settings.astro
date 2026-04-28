@@ -838,14 +838,24 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
   document.addEventListener('astro:before-swap', teardownScrapeProgress);
 
   /**
+   * Implements REQ-SET-003 AC 1.
+   *
    * Auto-detect the browser's preferred hour cycle and re-label the
    * hour-picker options to AM/PM when the user is in a 12-hour locale
    * (en-US, en-CA, en-AU, en-PH, …). The server renders 24-hour
    * labels for everyone — this swaps them client-side based on
-   * `Intl.DateTimeFormat().resolvedOptions().hourCycle` so a US user
-   * sees "12 AM, 1 AM, …, 11 PM" while a UK / Croatian / Japanese
-   * user sees "00, 01, …, 23". No country-by-country hardcoding —
-   * the runtime tells us what the user prefers.
+   * `Intl.DateTimeFormat().resolvedOptions().hourCycle`. en-US → 12h,
+   * en-GB / hr-HR / ja-JP → 24h. No country-by-country hardcoding.
+   *
+   * `h11` (Japanese 0-11 cycle, where midnight is "0 AM" / 午前0時)
+   * is left as 24h: the conventional "12 AM" mapping we use for `h12`
+   * would be linguistically wrong for `h11`, and Japanese digital
+   * clocks default to 24h anyway. So `h11` users see the canonical
+   * 24h picker rather than a culturally-inappropriate AM/PM blend.
+   *
+   * Idempotent: runs again on every `astro:page-load` SPA navigation,
+   * but each run reads option values 0..23 and overwrites textContent
+   * the same way — no accumulation, no dataset guard needed.
    *
    * Submitted form value is unchanged (canonical 0-23 integer).
    */
@@ -857,12 +867,25 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     } catch {
       return; // Non-Intl runtime (extremely rare). Leave 24h labels.
     }
-    if (hourCycle !== 'h11' && hourCycle !== 'h12') return;
-    const hourSelect = document.querySelector<HTMLSelectElement>(
+    // Only re-label for the conventional US-style 12-hour cycle. `h11`
+    // semantically maps midnight → "0 AM" not "12 AM", and the runtime
+    // returns it primarily for ja-JP where 24h is already the digital
+    // norm — so we leave those users with the 24h labels.
+    if (hourCycle !== 'h12') return;
+    // Cast pattern matches the rest of this file — the generic on
+    // querySelector trips Astro's TypeScript checker because the
+    // overloaded lib.dom signature for SVGSVGElement narrowing makes
+    // <HTMLSelectElement> overlap-incompatible with the Element
+    // base constraint. Untyped query + cast to the narrower type is
+    // the lane the file already uses (see tzSelect, hourSelect, etc.).
+    const hourSelect = document.querySelector(
       '[data-hour-select]',
-    );
+    ) as HTMLSelectElement | null;
     if (hourSelect === null) return;
-    for (const opt of Array.from(hourSelect.options)) {
+    const options = hourSelect.options;
+    for (let i = 0; i < options.length; i++) {
+      const opt = options.item(i);
+      if (opt === null) continue;
       const h = Number.parseInt(opt.value, 10);
       if (!Number.isFinite(h) || h < 0 || h > 23) continue;
       // 0 → "12 AM", 1..11 → "1 AM".."11 AM", 12 → "12 PM",
