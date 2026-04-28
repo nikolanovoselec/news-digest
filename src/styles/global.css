@@ -73,10 +73,12 @@ html {
 
 /* Lock the browser's UA-default page background to the APP-selected
  * theme, not the OS preference. Without this, every Astro page swap
- * exposes a frame of white via three independent paths on iOS PWA
- * mode (apple-mobile-web-app-status-bar-style: black-translucent —
- * the status bar is transparent and shows whatever the page paints
- * underneath):
+ * exposes a frame of white via three independent paths in installed-PWA
+ * standalone mode (observed on Android Chrome and iOS Safari; iOS uses
+ * apple-mobile-web-app-status-bar-style: black-translucent which makes
+ * the status bar transparent and shows whatever the page paints
+ * underneath, and Android Chrome's WebView exhibits the same default-
+ * white canvas during route swaps):
  *   1. Mid-swap, the html element briefly has no rendered children
  *      and the UA falls back to its default page color. With
  *      `color-scheme: light dark` the UA tracks the OS, not the app,

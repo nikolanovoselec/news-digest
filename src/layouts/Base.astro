@@ -133,13 +133,13 @@ const initialTheme = cookieTheme ?? 'light';
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     {/* Single theme-color tag tied to the APP-selected theme, not the
         OS prefers-color-scheme. Without this, a user in dark mode whose
-        device is in light mode sees a white iOS status bar above an
-        otherwise-dark UI (and vice versa) — and on every Astro page
-        swap the browser briefly fell back to the light value while
-        the head was repainting, producing a "white flash" status bar
-        on detail-back navigation. transition:persist keeps the same
-        DOM node across navigations so its `content` value is never
-        torn down between pages. */}
+        device is in light mode sees a white system status bar above an
+        otherwise-dark UI on Android Chrome and iOS Safari (and vice
+        versa) — and on every Astro page swap the browser briefly fell
+        back to the light value while the head was repainting, producing
+        a "white flash" status bar on detail-back navigation.
+        transition:persist keeps the same DOM node across navigations so
+        its `content` value is never torn down between pages. */}
     <meta
       name="theme-color"
       content={initialTheme === 'dark' ? '#0a0a0a' : '#ffffff'}
