@@ -42,10 +42,12 @@ describe('settings.astro digest-time picker — REQ-SET-003', () => {
     // The picker derives 12h vs 24h from
     // `Intl.DateTimeFormat().resolvedOptions().hourCycle`, NOT from a
     // hardcoded country list — so en-US sees AM/PM, en-GB sees 24h,
-    // and any future locale change just works. Pin the runtime check
-    // and the 12h-label generator.
+    // and any future locale change just works. Only the conventional
+    // US-style 12h cycle ('h12') gets re-labelled; 'h11' (Japanese
+    // 0-11 cycle) stays as 24h, since AC 1 lists ja-JP as a 24h locale
+    // and a literal "12 AM" would be linguistically wrong for h11.
     expect(settingsPage).toMatch(/Intl\.DateTimeFormat\(\[\][\s\S]*?hour:\s*['"]numeric['"][\s\S]*?\.resolvedOptions\(\)/);
-    expect(settingsPage).toMatch(/hourCycle\s*!==\s*['"]h11['"]\s*&&\s*hourCycle\s*!==\s*['"]h12['"]/);
+    expect(settingsPage).toMatch(/hourCycle\s*!==\s*['"]h12['"]/);
     expect(settingsPage).toContain("'12 AM'");
     expect(settingsPage).toContain("'12 PM'");
     // No country-name heuristic survives.
