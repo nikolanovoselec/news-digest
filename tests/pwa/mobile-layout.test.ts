@@ -171,6 +171,23 @@ describe('tap / focus styling — REQ-PWA-003 AC 5', () => {
     // :focus-visible selector must define an outline/ring.
     expect(globalCss).toMatch(/:focus-visible|\.focus-ring/);
   });
+
+  it('REQ-PWA-003 AC 4: .site-header__brand opts out of iOS double-tap-zoom delay (touch-action: manipulation)', () => {
+    // Without `touch-action: manipulation` on the brand link, mobile
+    // Safari applies a ~350ms delay on the first tap to disambiguate
+    // from a possible double-tap-to-zoom — manifesting as the
+    // "scroll-to-top needs 4-5 taps to fire" regression the user
+    // reported on prod. `manipulation` keeps pinch-zoom and panning
+    // while disabling the double-tap delay so the first tap commits
+    // immediately to the click handler. A future CSS reorder /
+    // prettier pass / selector consolidation that drops the rule
+    // would silently re-introduce the lag — Playwright wouldn't catch
+    // it without specific iOS Safari emulation, so this static text
+    // assertion is the realistic guard.
+    expect(baseSource).toMatch(
+      /\.site-header__brand\s*\{[\s\S]{0,400}touch-action:\s*manipulation/,
+    );
+  });
 });
 
 describe('header tap-target minimums — REQ-PWA-003 AC 6', () => {

@@ -201,12 +201,13 @@ test.describe('REQ-HIST-001 history return-morph (live)', () => {
 test.describe('REQ-READ-002 / REQ-HIST-001 perf-comparability (live)', () => {
   // The user's original complaint was SUBJECTIVE: "/history feels
   // sluggish vs /digest". The contract tests above pin the structural
-  // mechanism (single named group, cleanup on after-swap) but cannot
-  // validate the perception directly. This test makes the comparison
-  // objective: time the back-from-article navigation on BOTH origins
-  // and assert the /history pass is no worse than ~1.6× the /digest
-  // pass. A regression that re-introduced the O(N) snapshot
-  // bookkeeping or the synchronous open-<details> reflow would widen
+  // mechanism (single named group, deferred cleanup at next click) but
+  // cannot validate the perception directly. This test makes the
+  // comparison objective: time the back-from-article navigation on
+  // BOTH origins and assert the /history pass is no worse than ~1.6×
+  // the /digest pass. A regression that re-introduced the O(N)
+  // snapshot bookkeeping or the synchronous open-<details> reflow
+  // would widen
   // the gap and trip the budget.
 
   async function timeBackFromDetail(
