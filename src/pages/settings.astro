@@ -82,36 +82,22 @@ const tzValue = user.tz === '' ? DEFAULT_TZ : user.tz;
 // Hour/minute options for the two-select time picker. We render the
 // schedule as `<select>`s rather than `<input type="time">` because the
 // native time-input UI ignores the `lang` attribute on Chromium and
-// Safari and falls back to the OS-level locale — meaning a Europe/Zagreb
-// user still saw "08:00 AM" if their device locale was en-US, and a
-// California user might see "13:00" instead of "1 PM" depending on the
-// device. `<select>` option labels are literal strings, so we control
-// the displayed format ourselves and pick it from the user's tz.
+// Safari and falls back to the OS-level locale — a Europe/Zagreb user
+// on an en-US device saw "08:00 AM" with no way to override. `<select>`
+// option labels are literal strings, so we fully control what the user
+// sees.
 //
-// `displayHour12` decides whether to render 12-hour AM/PM labels or
-// 24-hour labels. America/* zones get AM/PM (US/Canada/Mexico cultural
-// default); every other zone gets 24h. The submitted form value is
-// always the canonical 0-23 integer regardless of label format, so the
-// API contract is unchanged. Mirrors `localeForTz` in `~/lib/tz.ts`.
-const displayHour12 = tzValue.startsWith('America/');
-function hour12Label(h: number): string {
-  // 0 → "12 AM", 1..11 → "1 AM".."11 AM", 12 → "12 PM", 13..23 → "1 PM".."11 PM".
-  if (h === 0) return '12 AM';
-  if (h < 12) return `${h} AM`;
-  if (h === 12) return '12 PM';
-  return `${h - 12} PM`;
-}
-interface HourOption {
-  value: string;
-  label: string;
-}
-const HOUR_OPTIONS: HourOption[] = Array.from({ length: 24 }, (_, i) => {
-  const value = String(i).padStart(2, '0');
-  return {
-    value,
-    label: displayHour12 ? hour12Label(i) : value,
-  };
-});
+// The server renders 24-hour labels (00, 01, …, 23) for every user;
+// the client-side init then re-labels the options to 12-hour AM/PM
+// when the BROWSER's resolved locale prefers 12-hour
+// (`Intl.DateTimeFormat().resolvedOptions().hourCycle === 'h11' | 'h12'`).
+// This auto-detects format from the user's actual browser/OS settings
+// (en-US → AM/PM, en-GB → 24h, hr-HR → 24h, ja-JP → 24h, …) without
+// any country-by-country hardcoding. The submitted form value is the
+// canonical 0-23 integer regardless of label format.
+const HOUR_OPTIONS: string[] = Array.from({ length: 24 }, (_, i) =>
+  String(i).padStart(2, '0'),
+);
 // 5-minute resolution matches the email cron (`*/5 * * * *`); finer
 // granularity does not deliver any earlier and just clutters the picker.
 const MINUTE_STEP_OPTIONS: string[] = Array.from({ length: 12 }, (_, i) =>
@@ -323,7 +309,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               aria-label="Daily digest time, hour"
             >
               {HOUR_OPTIONS.map((h) => (
-                <option value={h.value} selected={h.value === hourValue}>{h.label}</option>
+                <option value={h} selected={h === hourValue}>{h}</option>
               ))}
             </select>
             <span class="settings__time-sep" aria-hidden="true">:</span>
@@ -851,6 +837,48 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
   }
   document.addEventListener('astro:before-swap', teardownScrapeProgress);
 
+  /**
+   * Auto-detect the browser's preferred hour cycle and re-label the
+   * hour-picker options to AM/PM when the user is in a 12-hour locale
+   * (en-US, en-CA, en-AU, en-PH, …). The server renders 24-hour
+   * labels for everyone — this swaps them client-side based on
+   * `Intl.DateTimeFormat().resolvedOptions().hourCycle` so a US user
+   * sees "12 AM, 1 AM, …, 11 PM" while a UK / Croatian / Japanese
+   * user sees "00, 01, …, 23". No country-by-country hardcoding —
+   * the runtime tells us what the user prefers.
+   *
+   * Submitted form value is unchanged (canonical 0-23 integer).
+   */
+  function relabelHoursIfTwelveHourLocale(): void {
+    let hourCycle: string | undefined;
+    try {
+      hourCycle = new Intl.DateTimeFormat([], { hour: 'numeric' })
+        .resolvedOptions().hourCycle;
+    } catch {
+      return; // Non-Intl runtime (extremely rare). Leave 24h labels.
+    }
+    if (hourCycle !== 'h11' && hourCycle !== 'h12') return;
+    const hourSelect = document.querySelector<HTMLSelectElement>(
+      '[data-hour-select]',
+    );
+    if (hourSelect === null) return;
+    for (const opt of Array.from(hourSelect.options)) {
+      const h = Number.parseInt(opt.value, 10);
+      if (!Number.isFinite(h) || h < 0 || h > 23) continue;
+      // 0 → "12 AM", 1..11 → "1 AM".."11 AM", 12 → "12 PM",
+      // 13..23 → "1 PM".."11 PM". 'h11' and 'h12' both render the
+      // same conventional labels here; the difference is which one
+      // the runtime would pick for plain numeric output, not which
+      // labels users expect to read.
+      let label: string;
+      if (h === 0) label = '12 AM';
+      else if (h < 12) label = `${h} AM`;
+      else if (h === 12) label = '12 PM';
+      else label = `${h - 12} PM`;
+      opt.textContent = label;
+    }
+  }
+
   function init(): void {
     // Restore + delete forms live OUTSIDE the main settings form (they
     // were hoisted to fix a nested-<form> bug). Wire them first so they
@@ -858,6 +886,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     wireRestoreForm();
     wireDeleteForm();
     wireScrapeProgress();
+    relabelHoursIfTwelveHourLocale();
 
     const form = document.querySelector<HTMLFormElement>('[data-settings-form]');
     if (form === null) return;

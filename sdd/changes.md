@@ -6,7 +6,7 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-28
 
-- REQ-SET-003 AC 1 refined: the schedule picker now displays the digest time in 24-hour format identically for every user, regardless of browser, OS, or device locale — previously a Europe/Zagreb user on an en-US Android device saw "08:00 AM" because the native browser time input fell back to the device locale.
+- REQ-SET-003 AC 1 refined: the digest schedule picker now displays 12-hour AM/PM labels for users on 12-hour locales (en-US and similar) and 24-hour labels for 24-hour locales (en-GB, hr-HR, and similar), auto-detected from the browser without any country-by-country hardcoding — previously a Europe/Zagreb user on an en-US Android device saw "08:00 AM" because the native browser time input fell back to the device locale.
 
 ## 2026-04-27
 

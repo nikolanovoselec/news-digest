@@ -16,9 +16,14 @@ import settingsPage from '../../src/pages/settings.astro?raw';
 describe('settings.astro digest-time picker — REQ-SET-003', () => {
   it('REQ-SET-003: replaces native <input type="time"> with two <select>s', () => {
     // Hard regression guard: native time-input UI is unreliable across
-    // platforms, so the picker must NOT use it. The bare strings
-    // catch even attribute-reordered variants.
-    expect(settingsPage).not.toMatch(/<input[^>]*type=["']time["']/);
+    // platforms, so the picker must NOT use it. We strip JS / JSX
+    // comments before grepping so the matcher does not trip on
+    // surrounding doc comments that explain WHY the input was removed.
+    const stripped = settingsPage
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')   // {/* JSX block comment */}
+      .replace(/\/\*[\s\S]*?\*\//g, '')       // /* block comment */
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');  // // line comment (not URLs)
+    expect(stripped).not.toMatch(/<input[^>]*\btype=["']time["']/);
     expect(settingsPage).toMatch(/<select[\s\S]*?data-hour-select/);
     expect(settingsPage).toMatch(/<select[\s\S]*?data-minute-select/);
   });
@@ -33,16 +38,18 @@ describe('settings.astro digest-time picker — REQ-SET-003', () => {
     expect(hourArrayMatch).not.toBeNull();
   });
 
-  it('REQ-SET-003: hour labels switch to 12h AM/PM for America/* timezones', () => {
-    // US/Canada/Mexico users culturally expect AM/PM; rest of the
-    // world uses 24h. The submitted form value remains the canonical
-    // 0-23 integer regardless of label format. Pin both the
-    // tz-startsWith heuristic and the 12h-label generator.
-    expect(settingsPage).toMatch(/displayHour12\s*=\s*tzValue\.startsWith\(['"]America\//);
+  it('REQ-SET-003: hour labels auto-switch to 12h AM/PM via browser locale (no country hardcoding)', () => {
+    // The picker derives 12h vs 24h from
+    // `Intl.DateTimeFormat().resolvedOptions().hourCycle`, NOT from a
+    // hardcoded country list — so en-US sees AM/PM, en-GB sees 24h,
+    // and any future locale change just works. Pin the runtime check
+    // and the 12h-label generator.
+    expect(settingsPage).toMatch(/Intl\.DateTimeFormat\(\[\][\s\S]*?hour:\s*['"]numeric['"][\s\S]*?\.resolvedOptions\(\)/);
+    expect(settingsPage).toMatch(/hourCycle\s*!==\s*['"]h11['"]\s*&&\s*hourCycle\s*!==\s*['"]h12['"]/);
     expect(settingsPage).toContain("'12 AM'");
     expect(settingsPage).toContain("'12 PM'");
-    // option value stays the canonical 24h string regardless of label
-    expect(settingsPage).toMatch(/<option[\s\S]*?value=\{h\.value\}[\s\S]*?\{h\.label\}/);
+    // No country-name heuristic survives.
+    expect(settingsPage).not.toMatch(/tzValue\.startsWith\(['"]America\//);
   });
 
   it('REQ-SET-003: minute <select> uses 5-minute increments', () => {
