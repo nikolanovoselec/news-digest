@@ -11,7 +11,7 @@ The app is installable on iOS, Android, and desktop via a standards web manifest
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. `/manifest.webmanifest` declares `name`, `short_name`, `description`, `start_url=/digest`, `display=standalone`, `theme_color`, and `background_color`.
+1. `/manifest.webmanifest` declares `name`, `short_name`, `description`, `start_url=/digest`, `display=standalone`, `theme_color`, and `background_color`. The manifest's `theme_color` and `background_color` are pinned to the dark-theme background colour so that PWA users in dark mode (the common case for a news reader at the typical reading hours) never see a light-coloured splash or status bar at cold launch or during standalone-mode navigation transitions; users in light mode see a brief dark splash at cold launch only, after which the runtime theme controls take over and paint the document in their selected theme.
 2. The icon set declared in `/manifest.webmanifest` includes at least one icon with `purpose: "any"` and one with `purpose: "maskable"`. Scalable SVG icons (`type: "image/svg+xml"`, `sizes: "any"`) satisfy both requirements; raster PNG icons at 192 × 192 and 512 × 512 also satisfy both requirements. Apple-touch-icon for iOS is referenced from the root layout.
 3. Apple meta tags in the root layout set `apple-mobile-web-app-capable=yes`, `apple-mobile-web-app-status-bar-style=black-translucent`, `apple-mobile-web-app-title`, and `apple-touch-icon` (180×180 PNG).
 4. iOS Safari users (detected via user agent with `!navigator.standalone`) see a one-time instructional note: "Tap the share icon, then Add to Home Screen."

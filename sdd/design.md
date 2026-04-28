@@ -38,7 +38,7 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 3. On every authenticated or anonymous request, the server renders the document root with the user's chosen theme already applied, so the first paint is never the wrong theme even on slow connections or when client-side scripts are deferred.
 4. When the user has not yet expressed a preference, the theme follows `prefers-color-scheme`.
 5. The theme system exposes a consistent set of color tokens per theme (background, surface, text, muted text, border, accent) as CSS custom properties.
-6. The mobile system status bar (iOS / Android) matches the app's selected theme, not the operating-system theme — a user in the app's dark theme whose device is in light mode still sees a dark status bar above the dark UI, and vice versa. The status bar repaints immediately when the user toggles theme mid-session, and its colour persists across client-side route navigations without a transient flash to the opposite theme.
+6. The mobile system status bar (iOS / Android) matches the app's selected theme, not the operating-system theme — a user in the app's dark theme whose device is in light mode still sees a dark status bar above the dark UI, and vice versa. The status bar repaints immediately when the user toggles theme mid-session, and its colour persists across client-side route navigations without a transient flash to the opposite theme. The document body itself never flashes the opposite theme either — even when the app is launched as an installed PWA and navigated via client-side route swaps, the page background paints the user's chosen theme from the very first frame, never an intermediate white frame between routes.
 
 **Constraints:** CON-A11Y-001, CON-SEC-001
 **Priority:** P0
