@@ -29,18 +29,32 @@ export function nextTheme(current: Theme): Theme {
   return current === 'dark' ? 'light' : 'dark';
 }
 
+const BG_BY_THEME: Record<Theme, string> = {
+  light: '#ffffff',
+  dark: '#0a0a0a',
+};
+
 // Keep the iOS / Android system status-bar colour locked to the
-// app-selected theme. Mirrors the same write that /theme-init.js does
-// on first paint so a user toggling theme mid-session sees the status
-// bar repaint immediately, not on the next navigation.
+// app-selected theme.
 function applyMetaThemeColor(doc: Document, theme: Theme): void {
   const meta = doc.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
   if (meta === null) return;
-  meta.setAttribute('content', theme === 'dark' ? '#0a0a0a' : '#ffffff');
+  meta.setAttribute('content', BG_BY_THEME[theme]);
+}
+
+// Hardcode the html element's background-color via the inline style
+// attribute so the document bg paints as a literal hex value, not via
+// var(--bg) lookup. Required for iOS PWA standalone mode where any
+// microsecond gap in CSS-variable resolution during an Astro
+// ClientRouter swap exposes the WKWebView's underlying default (white)
+// through the transparent status bar overlay.
+function applyHtmlBgInlineStyle(doc: Document, theme: Theme): void {
+  doc.documentElement.style.backgroundColor = BG_BY_THEME[theme];
 }
 
 export function applyTheme(doc: Document, theme: Theme): void {
   doc.documentElement.dataset[DATA_ATTR] = theme;
+  applyHtmlBgInlineStyle(doc, theme);
   applyMetaThemeColor(doc, theme);
 }
 

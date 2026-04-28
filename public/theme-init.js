@@ -10,18 +10,25 @@
     var prefersDark =
       window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
     var theme = stored || (prefersDark ? 'dark' : 'light');
+    var bg = theme === 'dark' ? '#0a0a0a' : '#ffffff';
     document.documentElement.dataset.theme = theme;
 
-    // Keep the iOS / Android system status-bar colour locked to the
-    // app-selected theme. Without this sync, a user in dark mode whose
-    // device is in light mode sees a white status bar above an
-    // otherwise-dark UI (the meta tag previously used
-    // prefers-color-scheme media queries, which track the OS, not the
-    // app theme). On Astro client-side navigation the meta node is
-    // marked transition:persist so its content survives the swap.
+    // Hardcode the html element's background-color via the inline style
+    // attribute so the document bg paints as a literal hex value, not via
+    // var(--bg) lookup. iOS PWA standalone mode has a distinct rendering
+    // pipeline where any microsecond gap in CSS-variable resolution during
+    // an Astro ClientRouter swap exposes the WebView's underlying default
+    // (white) through the transparent status bar overlay
+    // (apple-mobile-web-app-status-bar-style: black-translucent).
+    document.documentElement.style.backgroundColor = bg;
+
+    // Mirror the theme into the system status-bar meta tag so the iOS /
+    // Android system bar follows the app-selected theme rather than the
+    // OS prefers-color-scheme. transition:persist on the tag keeps the
+    // node alive through Astro page swaps.
     var metaTheme = document.querySelector('meta[name="theme-color"]');
     if (metaTheme) {
-      metaTheme.setAttribute('content', theme === 'dark' ? '#0a0a0a' : '#ffffff');
+      metaTheme.setAttribute('content', bg);
     }
 
     // Mirror into the `theme` cookie so Base.astro can emit data-theme on
