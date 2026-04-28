@@ -305,25 +305,31 @@ describe('renderDigestReadyEmail typography — REQ-MAIL-001', () => {
   });
 });
 
-// ---------- AC 10 fallback ----------
-
-describe('renderDigestReadyEmail zero-unread fallback — REQ-MAIL-001 AC 10', () => {
-  it('REQ-MAIL-001 AC 10: zero-headline subject is the static fallback', () => {
+// ---------- Defence-in-depth: zero-headline render path ----------
+// AC 11 (dispatcher-skip on empty headlines) prevents the dispatcher
+// from ever invoking renderDigestReadyEmail with `headlines: []` in
+// production, so end users will never observe the static-fallback
+// subject. These tests remain as a guard rail: the renderer is a
+// pure function and any FUTURE direct caller (a manual replay script,
+// an admin debug endpoint, etc.) must still receive a coherent email
+// shape — not a thrown TypeError or a corrupted subject.
+describe('renderDigestReadyEmail zero-unread fallback — defence-in-depth (AC 11 prevents production trigger)', () => {
+  it('zero-headline subject is the static fallback (defence-in-depth)', () => {
     const { subject } = renderDigestReadyEmail(makeParams({ headlines: [] }));
     expect(subject).toBe('Your news digest is ready');
   });
 
-  it('REQ-MAIL-001 AC 10: zero-headline body still has the tally line (when non-empty)', () => {
+  it('zero-headline body still has the tally line (when non-empty) (defence-in-depth)', () => {
     const { html } = renderDigestReadyEmail(makeParams({ headlines: [] }));
     expect(html).toMatch(/Since midnight/);
   });
 
-  it('REQ-MAIL-001 AC 10: zero-headline body still has the local-time line', () => {
+  it('zero-headline body still has the local-time line (defence-in-depth)', () => {
     const { html } = renderDigestReadyEmail(makeParams({ headlines: [] }));
     expect(html).toContain('Sent 08:00 Europe/Zurich');
   });
 
-  it('REQ-MAIL-001 AC 11: zero-headline body still has the manage-notifications link and the brand footer', () => {
+  it('zero-headline body still has the manage-notifications link and the brand footer (defence-in-depth)', () => {
     const { html } = renderDigestReadyEmail(makeParams({ headlines: [] }));
     expect(html).toContain('Manage notifications');
     expect(html).toContain('href="https://graymatter.ch"');

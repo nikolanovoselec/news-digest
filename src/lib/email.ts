@@ -12,12 +12,16 @@
 // per-user render call.
 //
 // Subject + preheader algorithm (REQ-MAIL-001 AC 3):
-//   - 0 headlines  → static "Your news digest is ready" subject + empty
-//                    preheader; body still ships tally + local-time +
-//                    footer (AC 10).
 //   - >0 headlines → "{N} new articles · {top 3 tag slugs}" subject;
 //                    preheader is the comma-joined first-3 headline
 //                    titles (Outlook/Gmail inbox-preview convention).
+//   - 0 headlines  → static "Your news digest is ready" subject + empty
+//                    preheader. Defence-in-depth only — the dispatcher
+//                    short-circuits zero-headline users via REQ-MAIL-001
+//                    AC 11, so end users never see this subject in
+//                    production. Retained so a future direct caller
+//                    (admin replay, debug endpoint) gets a coherent
+//                    email shape rather than a thrown TypeError.
 //
 // HTML escaping: every user-derived string (article titles, source
 // names, tag slugs, preheader) flows through `escapeHtml`. The only
