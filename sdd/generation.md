@@ -6,7 +6,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 ### REQ-PIPE-001: Global scrape-and-summarise pipeline on a fixed cadence
 
-**Intent:** Every 4 hours, the system fetches from the curated source registry, canonical-URL-dedupes candidates, and queues LLM summarization so the per-user dashboard reads from a single up-to-date pool rather than running the LLM per user. Cost scales O(1) in users instead of O(users × refreshes).
+**Intent:** One shared scrape per cadence feeds every user's dashboard, so adding users does not multiply LLM spend — the system runs the LLM the same number of times whether 10 people are signed up or 10,000.
 
 **Applies To:** System
 
@@ -18,7 +18,12 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 5. The pipeline is independent of individual user accounts — it runs once per tick regardless of how many users are signed up, and adding users does not multiply LLM spend.
 6. Each candidate's published-at timestamp reflects the source feed's real publish date (parsed from the feed entry) rather than the ingestion tick time, so a story first published three weeks ago is never displayed as "today" on the dashboard. When a feed entry provides no usable publish date, or the parsed value is implausible (pre-2000 or more than one day in the future), the ingestion time is used as a safe fallback.
 7. Candidates whose parsed publish date is older than 48 hours before the current tick are dropped before LLM summarisation so stale backlog items do not consume LLM budget or clutter the dashboard. Candidates with no parsable publish date (which fall back to the ingestion time) are kept — a missing date is not treated the same as a stale date.
-8. When a candidate's feed snippet is too thin to ground a faithful summary, the coordinator fetches the article URL directly over HTTPS with an SSRF filter applied, a bounded network timeout, and a capped download size. Readable plaintext is extracted and attached to the candidate; when extraction yields too little text the candidate falls back to whatever the feed itself provided, so a failed body-fetch never blocks a summary.
+8. When a candidate's feed snippet is too thin to ground a faithful summary, the coordinator fetches the article body directly:
+   a. The fetch is HTTPS-only and passes an SSRF filter.
+   b. The fetch is bounded by a network timeout and a maximum download size.
+   c. Readable plaintext is extracted and attached to the candidate.
+   d. When extraction yields too little text, the candidate falls back to whatever the feed itself provided.
+   e. A failed body-fetch never blocks a summary.
 
 **Constraints:** CON-LLM-001, CON-PERF-001, CON-SEC-002
 **Priority:** P0
@@ -169,12 +174,16 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 1. After every chunk of a scrape tick finishes, exactly one finalize pass runs over the articles persisted under that scrape tick and emits one Workers AI call returning the same dedup-groups output contract used by the per-chunk pass. The pass is skipped when the tick produced one or fewer articles.
 2. Within each returned group, the article with the earliest publication time survives as the winner; the others are merged into it, matching the first-source-wins rule from REQ-PIPE-003.
 3. Merging a loser into a winner re-points all of the loser's child rows: alternative sources, tag list (tag union), and per-user state (stars and reads). User-facing state is preserved across the merge — the merge never makes a user lose a star or a read mark.
-4. Articles become visible to users at the moment the chunk consumer that closed the run flipped status to ready; the finalize pass runs in a separate queue message and may briefly leave duplicates visible. The window is bounded by the finalize queue's processing latency.
-5. The pass is idempotent: a finalize message redelivered by the queue converges to the same final article set without double-counting tokens or losing user state.
+4. Articles become visible to users as soon as the scrape run reaches `ready`. Because the cross-chunk dedup pass runs asynchronously after that, users may briefly see two cards for the same story; the window is bounded by the queue's processing latency.
+5. The pass is idempotent: a redelivered finalize message converges to the same final article set without double-counting tokens or losing user state.
 6. The pass caps its LLM input at the 250 most recent articles by ingestion time; ticks that produced more skip dedup on the tail. This ceiling is documented as a known limitation.
 7. Token and cost counters from the finalize call fold into the scrape tick's totals via the same per-chunk stats helper; the deduped-article counter increments by the number of losers deleted.
 8. A finalize that exhausts its queue retry budget logs a structured error and leaves the tick's articles in their un-merged state. The tick's status is not flipped from ready to failed — the articles are real and visible; only the cross-chunk merge is missing.
-9. The "exactly one finalize pass" guarantee in AC 1 holds across both directions of failure: concurrent or redelivered last-chunk consumers never enqueue a second finalize (so the LLM is not billed twice for the same tick), and a transient failure when the closing consumer hands the finalize off to its queue does not strand the run with zero finalize passes — the next redelivery of the closing message re-acquires the gate and re-attempts the handoff so the cross-chunk dedup eventually runs. If the lock-clearing step itself fails (a second transient outage of the run-state store landing inside the same closing handoff), a structured operator-visible log entry records the stranded lock and the original send error, and the original send error is the one surfaced to the queue retry path so the underlying cause is not masked.
+9. The "exactly one finalize pass" guarantee in AC 1 holds across both directions of failure:
+   a. Concurrent or redelivered last-chunk consumers never enqueue a second finalize, so the LLM is not billed twice for the same tick.
+   b. A transient failure when the closing consumer hands the finalize off to its queue does not strand the run with zero finalize passes; the next redelivery of the closing message re-acquires the gate and re-attempts the handoff.
+   c. When the lock-clearing step itself fails after a successful handoff, a structured operator-visible log entry records the stranded lock alongside the original send error.
+   d. On any failure path above, the original send error is the one surfaced to the queue retry path so the underlying cause is not masked.
 
 **Constraints:** CON-LLM-001
 **Priority:** P1
@@ -186,7 +195,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 ## Out of Scope
 
-The following REQs described the previous per-user digest generation pipeline. They are superseded by REQ-PIPE-001..006 in the 2026-04-23 global-feed rework and are preserved here verbatim for decision history.
+The following REQs described the previous per-user digest generation pipeline. They are superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework and are preserved here verbatim for decision history.
 
 ---
 
@@ -209,7 +218,9 @@ Superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework.
 **Priority:** P0
 **Dependencies:** REQ-SET-003
 **Verification:** Integration test
-**Status:** Implemented
+**Status:** Deprecated
+**Replaced By:** REQ-PIPE-001
+**Removed In:** 2026-04-23
 
 ---
 
@@ -256,7 +267,9 @@ Superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework.
 **Priority:** P0
 **Dependencies:** REQ-GEN-001, REQ-DISC-001
 **Verification:** Integration test
-**Status:** Implemented
+**Status:** Deprecated
+**Replaced By:** REQ-PIPE-001
+**Removed In:** 2026-04-23
 
 ---
 
@@ -279,7 +292,9 @@ Superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework.
 **Priority:** P0
 **Dependencies:** REQ-GEN-003
 **Verification:** Automated test
-**Status:** Implemented
+**Status:** Deprecated
+**Replaced By:** REQ-PIPE-003
+**Removed In:** 2026-04-23
 
 ---
 
@@ -304,7 +319,9 @@ Superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework.
 **Priority:** P0
 **Dependencies:** REQ-GEN-003
 **Verification:** Integration test
-**Status:** Implemented
+**Status:** Deprecated
+**Replaced By:** REQ-PIPE-002
+**Removed In:** 2026-04-23
 
 ---
 

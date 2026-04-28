@@ -32,7 +32,7 @@ The codebase and the product spec (`sdd/`) use several names interchangeably for
 
 New prose written in this folder should prefer the left column for consistency. "tick" remains the natural term for **cron firings** themselves (e.g., "the every-5-minute tick fires the email dispatcher") — the synonym only applies when "tick" is used to mean the scrape-run pipeline execution.
 
-## Related
+## Related Documentation
 
 - [Product Specification](../sdd/README.md) — Requirements and design intent
 - [Project README](../README.md) — Project overview and quickstart

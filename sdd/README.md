@@ -21,7 +21,7 @@ A personalized daily tech news digest. Users sign in with a federated identity p
 4. **Email is the completion signal** — the app never demands real-time attention; client polling is only a fallback for active-page manual refresh
 5. **Beautiful reading is MVP, not v2** — Swiss-minimal aesthetic with purposeful motion and dark mode are part of the first ship
 6. **Strong consistency where decisions hinge on it, edge caching everywhere else** — D1 for user/digest/queue state, KV for caches that tolerate eventual consistency
-7. **Security by construction** — no inline scripts, no server-side fetching of article bodies, LLM output rendered as plaintext only
+7. **Security by construction** — no inline scripts, server-side fetches are SSRF-guarded with strict timeout and size caps, LLM output rendered as plaintext only
 
 ## Domains
 
@@ -47,7 +47,7 @@ The following were considered and intentionally excluded from the MVP:
 - **User-added feeds / OPML import** — discovery via LLM + generic search APIs covers both default and custom hashtags without per-user feed management
 - **Sharing, bookmarking, cross-user recommendations** — the product is personal, not social
 - **Embeddings or vector search** — a single LLM call handles ranking; embeddings would add a dependency without measurable quality gain at this scale
-- **Fetching article page bodies** — summaries are produced from search-API headlines and snippets; this eliminates an entire class of SSRF risk
+- **Unbounded server-side fetching** — article body fetching is in scope per REQ-PIPE-001 AC 8 but only via the SSRF filter (HTTPS-only, no private/loopback/link-local ranges), an 8-second timeout, and a 1.5 MB download cap; arbitrary URL resolution remains explicitly out of scope
 - **Admin actor / multi-tenancy** — single actor (User) for MVP
 - **Cloudflare WAF-based OAuth rate limiting** (was REQ-AUTH-006) — infrastructure policy, not product behaviour; handled outside the spec if ever needed
 - **Sender domain verification walkthrough** (was REQ-MAIL-003) — operational setup task; deployment docs already cover Resend DNS configuration

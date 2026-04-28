@@ -125,12 +125,14 @@ When the REQ backlink gate fails, either the referenced REQ-ID needs to be added
 
 ## Admin-only routes (Cloudflare Access gating)
 
-A handful of operator endpoints drive LLM calls or queue work on demand — budget-sensitive operations that must be reachable only by the site operator. These endpoints are protected by two independent layers:
+A handful of operator endpoints drive LLM calls or queue work on demand — budget-sensitive operations reachable only by the site operator. Two independent layers protect them, and the layers play different roles:
 
-1. **Cloudflare Access (zone-level):** every request to `/api/admin/*` must carry a valid `Cf-Access-Jwt-Assertion` header. Without it, Access redirects the browser to the Access login page before the Worker ever sees the request.
-2. **Worker-side gate (`src/middleware/admin-auth.ts`):** even when the Access header is present, the Worker enforces three additional checks — (a) the CF Access JWT header must be present; (b) the requester must hold a valid Worker session cookie; (c) the session user's email must match `ADMIN_EMAIL` (case-insensitive). When `CF_ACCESS_AUD` is also configured, a fourth check validates the `aud` claim of the Access JWT. Each failing check returns at the first failure with no observable side effect. Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8.
+| Layer | Role | Implementation |
+|---|---|---|
+| **Worker-side gate** (`src/middleware/admin-auth.ts`) | **Security boundary.** Sufficient on its own. | Enforces three checks — Access JWT header present, valid Worker session cookie, session email matches `ADMIN_EMAIL` (case-insensitive). With `CF_ACCESS_AUD` set, a fourth check validates the JWT `aud` claim. Each layer returns at the first failure with no observable side effect. Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8. |
+| **Cloudflare Access** (zone-level) | **UX layer.** Redirects unauthenticated browsers to the Access login page instead of returning a bare 403. | Every request to `/api/admin/*` must carry a valid `Cf-Access-Jwt-Assertion` header; Access enforces this at the edge before the Worker is invoked. |
 
-This dual-layer design means a misconfigured or disabled Access policy does **not** silently open the endpoints — the Worker gate is an independent backstop.
+Because the Worker gate alone is sufficient, a misconfigured or disabled Access policy does not silently open the endpoints. The two layers complement each other: Access improves the UX of unauthorized access (login redirect, no bare 403); the Worker gate provides the actual security guarantee.
 
 ### Paths to gate
 
@@ -154,7 +156,7 @@ The pages containing these buttons (`/settings`, the dashboard footer) are **not
 
 The dev-bypass endpoint at `/api/dev/login` is gated separately by the `DEV_BYPASS_TOKEN` Worker secret (returns 404 when the secret is unset) and does **not** need a Cloudflare Access policy.
 
-Keep the Cloudflare Access policy in sync with deploys — Access is the first layer and improves user experience (login-page redirect instead of a bare 403). Both layers must be correctly configured for full protection.
+Keep the Cloudflare Access policy in sync with deploys so unauthorized clicks land on the login page rather than a bare 403. The Worker gate is the security boundary; Access tunes the UX around it.
 
 ## Resend domain verification
 
