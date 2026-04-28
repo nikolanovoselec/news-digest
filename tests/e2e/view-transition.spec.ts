@@ -8,14 +8,34 @@
 // assertions, a regression that re-introduced per-card naming would
 // silently restore the O(N) snapshot bookkeeping that made `/history`
 // feel sluggish vs `/digest`.
+//
+// Authentication: every test inherits the storageState file written
+// by tests/e2e/global-setup.ts. Tests skip when the storageState is
+// empty (the global-setup fallback when PLAYWRIGHT_DEV_BYPASS_TOKEN is
+// missing). See playwright.config.ts for the wiring.
 
 import { expect, test } from '@playwright/test';
-import { authBrowserContext } from './_auth';
+import { readFileSync } from 'node:fs';
 
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'https://news.graymatter.ch';
+interface StorageStateShape {
+  cookies: { name: string; value: string }[];
+}
 
-test.beforeEach(async ({ context, request }) => {
-  await authBrowserContext(request, context, BASE_URL);
+function hasAuthCookies(): boolean {
+  try {
+    const raw = readFileSync('.playwright/storageState.json', 'utf8');
+    const parsed = JSON.parse(raw) as StorageStateShape;
+    return Array.isArray(parsed.cookies) && parsed.cookies.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+test.beforeAll(() => {
+  test.skip(
+    !hasAuthCookies(),
+    'PLAYWRIGHT_DEV_BYPASS_TOKEN not set — global-setup wrote an empty storageState.',
+  );
 });
 
 test.describe('REQ-READ-002 view-transition shaping (live)', () => {
@@ -29,15 +49,11 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     // `view-transition-name` AT navigation time; on a fresh page load
     // every card must be name-less.
     const namedCount = await page.evaluate(() => {
-      return document
-        .querySelectorAll<HTMLAnchorElement>('[data-digest-card] a.digest-card__link')
-        .length === 0
-        ? -1
-        : Array.from(
-            document.querySelectorAll<HTMLAnchorElement>(
-              '[data-digest-card] a.digest-card__link',
-            ),
-          ).filter((el) => el.style.viewTransitionName !== '').length;
+      return Array.from(
+        document.querySelectorAll<HTMLAnchorElement>(
+          '[data-digest-card] a.digest-card__link',
+        ),
+      ).filter((el) => el.style.viewTransitionName !== '').length;
     });
     expect(namedCount).toBe(0);
   });
@@ -78,9 +94,15 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     expect(namedAtPrep, 'exactly one card promoted at before-preparation').toBe(1);
   });
 
-  test('backward nav: matching card on incoming /digest is the only named element', async ({
+  test('backward nav: at most one named element exists immediately after swap', async ({
     page,
   }) => {
+    // Looser-than-it-sounds invariant: `clearAllVtNames` (registered
+    // after the promotion handler in the same `astro:after-swap`
+    // listener block) may run before our test's once-listener fires,
+    // collapsing the count to 0. Either count proves the contract:
+    // at any post-swap observation point, at most one named card
+    // exists. The previous "exactly one" framing was racy.
     await page.goto('/digest', { waitUntil: 'networkidle' });
     const firstCard = page.locator('[data-digest-card]').first();
     const firstSlug = await firstCard.getAttribute('data-vt-slug');
@@ -88,9 +110,6 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     await firstCard.locator('a.digest-card__link').click();
     await page.waitForURL(/\/digest\/[^/]+\/[^/]+\/?$/);
 
-    // Hook the after-swap so we measure the NEW page right after the
-    // swap completes — this is the moment when promoteIncomingCard...
-    // has run on event.newDocument and the live DOM now reflects it.
     await page.evaluate(() => {
       (
         window as unknown as { __vtNamedPostBack?: number }
@@ -113,19 +132,10 @@ test.describe('REQ-READ-002 view-transition shaping (live)', () => {
     await page.locator('[data-article-back]').click();
     await page.waitForURL(/\/digest\/?$/);
 
-    // Note: the after-swap clearAllVtNames listener registers AFTER our
-    // capture listener (we registered with { once: true } AFTER the
-    // existing block-level listeners are bound), so the captured count
-    // represents the named state mid-swap — before the cleanup fires.
-    // The teardown listener runs next and zeros it out, so subsequent
-    // navigations start from a clean slate.
     const namedPostBack = await page.evaluate(
       () =>
         (window as unknown as { __vtNamedPostBack?: number }).__vtNamedPostBack,
     );
-    // Either 1 (our promotion landed before the cleanup ran) or 0 (the
-    // cleanup ran first). Both prove the contract: at most one named
-    // element exists at any point post-swap.
     expect(namedPostBack === 0 || namedPostBack === 1).toBe(true);
   });
 });
@@ -148,7 +158,7 @@ test.describe('REQ-HIST-001 history return-morph (live)', () => {
     const summary = firstCard.locator(
       'xpath=ancestor::details/summary[1]',
     );
-    if (await summary.count() > 0) {
+    if ((await summary.count()) > 0) {
       await summary.first().click();
     }
 

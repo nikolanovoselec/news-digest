@@ -18,14 +18,20 @@
 //   3. Local: `PLAYWRIGHT_BASE_URL=https://news.graymatter.ch
 //      PLAYWRIGHT_DEV_BYPASS_TOKEN=... npx playwright test`.
 //
-// The synthetic `__e2e__` user (provisioned by migrations/0006_e2e_user.sql)
-// owns every mutation triggered through this suite — the operator's
-// real account is never touched. See `src/pages/api/dev/login.ts` for
-// the auth contract.
+// Auth model: tests/e2e/global-setup.ts runs ONCE before any test,
+// mints a synthetic-user session via /api/dev/login through a
+// standalone APIRequestContext (which does NOT participate in any
+// test trace), and writes the cookies to .playwright/storageState.json.
+// Tests load that storageState below, so the Bearer token never lands
+// in a per-test trace artifact and per-test fixtures don't need to
+// re-mint. See src/pages/api/dev/login.ts for the auth contract; the
+// synthetic `__e2e__` user (migrations/0006_e2e_user.sql) owns every
+// mutation, so the operator's real account is never touched.
 
 import { defineConfig, devices } from '@playwright/test';
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'https://news.graymatter.ch';
+const STORAGE_STATE = '.playwright/storageState.json';
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -34,12 +40,12 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   workers: 1,
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
+  globalSetup: './tests/e2e/global-setup.ts',
   use: {
     baseURL: BASE_URL,
+    storageState: STORAGE_STATE,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    // The dev-login bypass token is read by tests/e2e/_auth.ts and
-    // exchanged for a session cookie before the suite runs.
     extraHTTPHeaders: {
       Origin: BASE_URL,
     },
