@@ -171,3 +171,78 @@ test.describe('REQ-HIST-001 history return-morph (live)', () => {
     expect(lingering).toBe(0);
   });
 });
+
+test.describe('REQ-READ-002 / REQ-HIST-001 perf-comparability (live)', () => {
+  // The user's original complaint was SUBJECTIVE: "/history feels
+  // sluggish vs /digest". The contract tests above pin the structural
+  // mechanism (single named group, cleanup on after-swap) but cannot
+  // validate the perception directly. This test makes the comparison
+  // objective: time the back-from-article navigation on BOTH origins
+  // and assert the /history pass is no worse than ~1.6× the /digest
+  // pass. A regression that re-introduced the O(N) snapshot
+  // bookkeeping or the synchronous open-<details> reflow would widen
+  // the gap and trip the budget.
+
+  async function timeBackFromDetail(
+    page: import('@playwright/test').Page,
+    overviewPath: '/digest' | '/history',
+    cardSelector: string,
+  ): Promise<number | null> {
+    await page.goto(overviewPath, { waitUntil: 'networkidle' });
+    const card = page.locator(cardSelector).first();
+    if ((await card.count()) === 0) return null;
+    if (overviewPath === '/history') {
+      const summary = card.locator('xpath=ancestor::details/summary[1]');
+      if ((await summary.count()) > 0) {
+        await summary.first().click();
+      }
+    }
+    await card.locator('a.digest-card__link').click();
+    await page.waitForURL(/\/digest\/[^/]+\/[^/]+\/?$/);
+    const start = Date.now();
+    await page.locator('[data-article-back]').click();
+    const target = overviewPath === '/digest'
+      ? /\/digest\/?$/
+      : /\/history\/?(\?.*)?$/;
+    await page.waitForURL(target);
+    await page.waitForLoadState('networkidle');
+    return Date.now() - start;
+  }
+
+  test('history back-nav is comparable to digest back-nav (≤ 1.6× duration)', async ({
+    page,
+  }) => {
+    // Important: /digest's article-detail__back-link href is "/digest"
+    // unconditionally, so leaving from a /history article also lands
+    // on /digest by default. We override by directly navigating to
+    // /history first then clicking through, so the back-link's
+    // ClientRouter intercept resolves naturally — the SAME mechanism
+    // the user experiences when reading from /history.
+
+    const digestMs = await timeBackFromDetail(
+      page,
+      '/digest',
+      '[data-digest-card]',
+    );
+    test.skip(digestMs === null, '/digest has no cards on this deploy');
+    if (digestMs === null) return;
+
+    const historyMs = await timeBackFromDetail(
+      page,
+      '/history',
+      '[data-history-day] [data-digest-card]',
+    );
+    test.skip(historyMs === null, '/history has no cards on this deploy');
+    if (historyMs === null) return;
+
+    // 1.6× headroom absorbs CI runner jitter without permitting a real
+    // O(N)-vs-O(1) regression to slip through. On the prod deploy
+    // post-1e569af both pages should round in roughly the same wall
+    // time (Astro ClientRouter network fetch + paint dominates;
+    // snapshot-capture cost is now O(1) on both).
+    expect(
+      historyMs,
+      `history=${historyMs}ms, digest=${digestMs}ms — gap > 1.6× suggests an O(N) regression`,
+    ).toBeLessThanOrEqual(Math.round(digestMs * 1.6));
+  });
+});
