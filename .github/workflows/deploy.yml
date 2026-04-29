@@ -50,7 +50,10 @@ jobs:
       # CRITICAL only because HIGH+ findings often land in build-tool
       # transitives (miniflare/wrangler/undici under @astrojs/cloudflare)
       # that never reach the deployed Worker bundle.
-      - name: npm audit (production deps, critical+)
+      - name: npm audit (production deps, high+ — advisory only)
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+      - name: npm audit (production deps, critical+ — blocking)
         run: npm audit --omit=dev --audit-level=critical
 
       - name: Build

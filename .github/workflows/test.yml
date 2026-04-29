@@ -44,7 +44,13 @@ jobs:
       # would block on transitive-only CVEs that have no production
       # path; that's the failure mode of the previous advisory-only
       # configuration we just fixed.
-      - name: npm audit (production deps, critical+)
+      # Advisory-only HIGH+ surface so operators see the full list per
+      # push and can drive Dependabot triage without the build failing
+      # on transitive build-tool CVEs.
+      - name: npm audit (production deps, high+ — advisory only)
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+      - name: npm audit (production deps, critical+ — blocking)
         run: npm audit --omit=dev --audit-level=critical
 
       - name: Lint
