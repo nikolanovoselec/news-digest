@@ -69,7 +69,10 @@ export function persistTheme(storage: Storage, theme: Theme): void {
  * eliminating the light-to-dark flash on page load. Defaults: no JS-visible
  * path change, SameSite=Lax so it accompanies cross-site navigations,
  * Secure so the cookie is never sent over plain HTTP (defence-in-depth —
- * the value itself is non-sensitive UI state).
+ * the value itself is non-sensitive UI state). On non-HTTPS dev hosts that
+ * are not `localhost` (e.g. `127.0.0.1`, LAN IPs, ngrok HTTP tunnels) older
+ * browsers may silently drop this cookie; the theme then reverts to the
+ * server default. The first-paint hint is the only thing affected.
  */
 export function persistThemeCookie(doc: Document, theme: Theme): void {
   const oneYearSec = 60 * 60 * 24 * 365;

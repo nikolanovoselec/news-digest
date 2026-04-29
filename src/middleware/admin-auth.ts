@@ -76,12 +76,16 @@ function audMatches(
   return false;
 }
 
-// Per-isolate memo so the AUD-unset warning fires once per Worker
-// instance, not on every admin probe. Logs are best-effort
-// observability; emitting on every request would flood Logpush during
-// brute-force probes against an Access-bound deploy that forgot to
-// set CF_ACCESS_AUD.
-let audWarningEmitted = false;
+// Per-isolate hourly stamp so the AUD-unset warning fires at most
+// once per hour per Worker isolate, not on every admin probe. Logs
+// are best-effort observability; emitting on every request would
+// flood Logpush during brute-force probes against an Access-bound
+// deploy that forgot to set CF_ACCESS_AUD. Long-lived isolates would
+// hide a permanent misconfiguration with a single fire-and-forget
+// flag, so re-emit hourly to keep the operator alerted while the
+// misconfiguration persists.
+const AUD_WARN_INTERVAL_MS = 60 * 60 * 1000;
+let lastAudWarnAt = 0;
 
 /**
  * Run the three-layer admin gate. Returns `{ ok: true, ... }` only when
@@ -124,11 +128,12 @@ export async function requireAdminSession(
     // perimeter check is missing. Surfacing the warn log lets the
     // operator catch this misconfiguration via tail/Logpush.
     //
-    // Emit once per Worker isolate (not per request). Workers cycle
-    // isolates every ~30 minutes under load, which is the right
-    // cadence for an operator alert without flooding Logpush.
-    if (!audWarningEmitted) {
-      audWarningEmitted = true;
+    // Re-emit at most once per hour per isolate so a long-lived
+    // isolate doesn't hide a permanent misconfiguration after a
+    // single fire.
+    const nowMs = Date.now();
+    if (nowMs - lastAudWarnAt > AUD_WARN_INTERVAL_MS) {
+      lastAudWarnAt = nowMs;
       log('warn', 'admin.auth.aud_unset_warning', {
         detail:
           'Cf-Access-Jwt-Assertion present but CF_ACCESS_AUD is unset; ' +

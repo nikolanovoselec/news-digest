@@ -19,8 +19,10 @@ export function escapeHtml(input: string): string {
 }
 
 /** Per-headline `<tr>...<a></a></tr>` block used in the email body.
- * Title is escaped; href components (id, slug) are escaped. The appUrl
- * is escaped at the call site by `safeAppUrlAttr`. */
+ * Title is escaped; href path segments (id, slug) are URL-encoded so a
+ * slug containing `/`, `?`, `#`, `&`, or whitespace cannot escape the
+ * intended path. The appUrl origin is escaped at the call site by
+ * `safeAppUrlAttr`. */
 export interface HeadlineRowInput {
   appUrlAttr: string;
   id: string;
@@ -32,7 +34,7 @@ const HEADLINE_LINK_STYLE =
   'color:#111; text-decoration:none; font-weight:600; font-size:17px; line-height:1.35;';
 
 export function headlineRow(input: HeadlineRowInput): string {
-  const href = `${input.appUrlAttr}/digest/${escapeHtml(input.id)}/${escapeHtml(input.slug)}`;
+  const href = `${input.appUrlAttr}/digest/${encodeURIComponent(input.id)}/${encodeURIComponent(input.slug)}`;
   const safeTitle = escapeHtml(input.title);
   return `<tr><td style="padding:14px 0; border-bottom:1px solid #ececef;">
               <a href="${href}" style="${HEADLINE_LINK_STYLE}">${safeTitle}</a>
