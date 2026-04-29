@@ -4,6 +4,12 @@ Semantic changes to the specification. Git history captures diffs; this file cap
 
 Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verification pass" entries. No spec cleanup or format fixes (those live in git history).
 
+## 2026-04-29
+
+- REQ-OPS-003 AC 1 tightened: the page Content-Security-Policy no longer permits inline styles — `style-src` is now strictly `'self'`, so a future XSS that lands a `<style>` block or a `style="..."` attribute is blocked by the browser instead of executed. No user-visible change to the app's look and feel; every styled surface already came from external stylesheets.
+
+- REQ-AUTH-001 AC 9a broadened: rate-limit coverage now extends beyond auth and mutation endpoints to any authenticated endpoint that legitimate clients poll sub-minute. The settings-page timezone-update path and the discovery-progress polling path each carry per-user limits sized to leave normal usage untouched while bounding pathological loops.
+
 ## 2026-04-28
 
 - REQ-PWA-003 AC 4 hardened: the brand wordmark's tap target now stretches across the entire left half of the header instead of hugging the icon-and-text content, so first-tap reliability on mobile improves dramatically without changing the visible layout. Users who aimed roughly at the wordmark and missed it on narrow viewports — and so kept tapping with no feedback — now hit on the first try.

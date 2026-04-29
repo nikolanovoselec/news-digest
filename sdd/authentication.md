@@ -24,7 +24,7 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
    c. The session user is the configured operator (email match, case-insensitive).
    A request that fails any layer is rejected at the first failing layer with no observable side effect on the application.
 9. Application-layer rate limits protect authentication and mutation endpoints:
-   a. Every `/api/auth/*` route and every authenticated mutation route is rate-limited.
+   a. Every `/api/auth/*` route, every authenticated mutation route, and every authenticated endpoint that legitimate clients poll on a sub-minute cadence is rate-limited.
    b. Unauthenticated paths key the limit by IP; authenticated mutation paths key it by user id.
    c. An exhausted limit returns HTTP 429 with a `Retry-After` header.
    d. Sign-in and OAuth-callback rules fail open on a backing-store outage so a transient outage cannot lock users out of sign-in.
