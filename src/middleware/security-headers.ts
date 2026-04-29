@@ -29,17 +29,18 @@
 /** Exact Content-Security-Policy value required by REQ-OPS-003 AC 1.
  * Pinned byte-for-byte in tests — do not reformat or reorder directives.
  *
- * `style-src 'self'` (no `'unsafe-inline'`): every `<style>` block in
- * the codebase is scoped or `is:global` — Astro extracts both kinds to
- * external `.css` files at build time, served from the same origin
- * and satisfying `'self'`. There are no `<style is:inline>` blocks and
- * no `style="..."` attributes anywhere in `src/`. Dynamic style work
- * (FLIP transforms, view-transition-name assignments) uses the DOM
- * API (`el.style.X = ...`, `setProperty`), which CSP `style-src` does
- * NOT block — that policy targets inline `<style>` content and `style=`
- * attributes only. */
+ * `style-src 'self' 'unsafe-inline'`: Astro emits component-scoped CSS
+ * (the `data-astro-cid-*` mechanism) as inline `<style>` blocks at the
+ * end of the head, NOT as external `.css` files. The first deploy of
+ * `style-src 'self'` (no `'unsafe-inline'`) broke every page in
+ * production: scoped styles for the landing page, the digest grid, the
+ * tag railing, and every component-scoped animation were blocked. The
+ * `'unsafe-inline'` allowance is the only viable policy until Astro
+ * supports per-block nonce attribution for compiled scoped styles
+ * (tracked upstream — no current workaround). `script-src 'self'`
+ * remains strict. */
 export const CSP_HEADER_VALUE =
-  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com";
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com";
 
 /** HSTS value required by REQ-OPS-003 AC 2 — two-year max-age, subdomains,
  * and opt-in to the HSTS preload list. */

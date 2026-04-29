@@ -33,7 +33,7 @@ describe('security-headers middleware', () => {
   describe('constants', () => {
     it('REQ-OPS-003: CSP matches the spec byte-for-byte', () => {
       expect(CSP_HEADER_VALUE).toBe(
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com",
       );
     });
 
