@@ -10,6 +10,12 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 - REQ-AUTH-001 AC 9a broadened: rate-limit coverage now extends beyond auth and mutation endpoints to any authenticated endpoint that legitimate clients poll sub-minute. The settings-page timezone-update path and the discovery-progress polling path each carry per-user limits sized to leave normal usage untouched while bounding pathological loops.
 
+- REQ-SET-006 AC 5 and REQ-SET-007 AC 7 added: the per-user rate limits introduced by the broader REQ-AUTH-001 AC 9a are now documented in the domains where the affected endpoints are user-facing, so the polling and timezone-update paths each name their own contract.
+
+- REQ-AUTH-001 AC 8a extended: the admin gate now logs a structured operational warning when a Cloudflare-Access-shaped header is presented but the audience tag is unset, surfacing the unbound-perimeter misconfiguration on the operator's tail/Logpush stream without otherwise changing how the request is gated.
+
+- Per-digest retrieval endpoint retired alongside REQ-READ-004's earlier deprecation: stale clients that still poll the per-id digest path now receive HTTP 410 Gone, matching the sibling refresh-endpoint tombstone. No user-visible change — the endpoint stopped being the source of truth on 2026-04-23 when the global-feed rework landed.
+
 ## 2026-04-28
 
 - REQ-PWA-003 AC 4 hardened: the brand wordmark's tap target now stretches across the entire left half of the header instead of hugging the icon-and-text content, so first-tap reliability on mobile improves dramatically without changing the visible layout. Users who aimed roughly at the wordmark and missed it on narrow viewports — and so kept tapping with no feedback — now hit on the first try.
