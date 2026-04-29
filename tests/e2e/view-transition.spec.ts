@@ -207,9 +207,10 @@ test.describe('REQ-OPS-003 CSP enforcement (live)', () => {
   test('article-detail enter/exit animations fire zero CSP violations', async ({
     page,
   }) => {
-    await page.goto('/digest', { waitUntil: 'networkidle' });
-
-    await page.evaluate(() => {
+    // addInitScript installs the listener before any page script runs,
+    // so violations during initial-parse / first-render are captured
+    // too — not just those during in-page navigation.
+    await page.addInitScript(() => {
       const w = window as Window & {
         __cspViolations?: { directive: string; blockedURI: string; sample: string }[];
       };
@@ -222,6 +223,8 @@ test.describe('REQ-OPS-003 CSP enforcement (live)', () => {
         });
       });
     });
+
+    await page.goto('/digest', { waitUntil: 'networkidle' });
 
     // Forward into article-detail.
     const firstCard = page.locator('[data-digest-card] a').first();

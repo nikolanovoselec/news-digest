@@ -18,17 +18,6 @@ export function escapeHtml(input: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/** Build an `<a>` tag with the href attribute escaped and the body
- * passed through escapeHtml. `inlineStyle` is interpolated verbatim —
- * callers should pass static style strings only. */
-export function htmlLink(
-  href: string,
-  body: string,
-  inlineStyle: string,
-): string {
-  return `<a href="${escapeHtml(href)}" style="${inlineStyle}">${escapeHtml(body)}</a>`;
-}
-
 /** Per-headline `<tr>...<a></a></tr>` block used in the email body.
  * Title is escaped; href components (id, slug) are escaped. The appUrl
  * is escaped at the call site by `safeAppUrlAttr`. */

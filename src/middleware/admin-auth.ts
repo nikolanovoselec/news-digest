@@ -76,6 +76,13 @@ function audMatches(
   return false;
 }
 
+// Per-isolate memo so the AUD-unset warning fires once per Worker
+// instance, not on every admin probe. Logs are best-effort
+// observability; emitting on every request would flood Logpush during
+// brute-force probes against an Access-bound deploy that forgot to
+// set CF_ACCESS_AUD.
+let audWarningEmitted = false;
+
 /**
  * Run the three-layer admin gate. Returns `{ ok: true, ... }` only when
  * all enforced layers pass; otherwise returns a pre-built `Response`
@@ -116,11 +123,18 @@ export async function requireAdminSession(
     // workers.dev and pass Layer 1. Layers 2+3 still gate, but the
     // perimeter check is missing. Surfacing the warn log lets the
     // operator catch this misconfiguration via tail/Logpush.
-    log('warn', 'admin.auth.aud_unset_warning', {
-      detail:
-        'Cf-Access-Jwt-Assertion present but CF_ACCESS_AUD is unset; ' +
-        'set CF_ACCESS_AUD or disable the *.workers.dev subdomain.',
-    });
+    //
+    // Emit once per Worker isolate (not per request). Workers cycle
+    // isolates every ~30 minutes under load, which is the right
+    // cadence for an operator alert without flooding Logpush.
+    if (!audWarningEmitted) {
+      audWarningEmitted = true;
+      log('warn', 'admin.auth.aud_unset_warning', {
+        detail:
+          'Cf-Access-Jwt-Assertion present but CF_ACCESS_AUD is unset; ' +
+          'set CF_ACCESS_AUD or disable the *.workers.dev subdomain.',
+      });
+    }
   }
 
   // Layer 2: Worker-side session.
