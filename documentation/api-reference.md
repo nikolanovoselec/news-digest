@@ -105,7 +105,9 @@ Bumps `session_version`, revokes the active refresh-token row (single-device onl
 
 Session near-expiry triggers a `Set-Cookie` refresh in the same response.
 
-**Implements:** [REQ-SET-007](../sdd/settings.md#req-set-007-timezone-change-detection), [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
+**Rate limit:** 30 / 60 s per user id (`set_tz`). Fail open. Exhausted → `429` with `Retry-After`. Sized to cover travel/DST edge cases and dev/test loops without bounding legitimate usage.
+
+**Implements:** [REQ-SET-007](../sdd/settings.md#req-set-007-timezone-change-detection), [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9
 
 ### DELETE /api/auth/account
 
@@ -164,6 +166,18 @@ Native form-encoded fallback for the same settings update. Used when the JS fetc
 
 **Implements:** [REQ-SET-001](../sdd/settings.md#req-set-001-unified-first-run-and-edit-flow), [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation), [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone), [REQ-SET-005](../sdd/settings.md#req-set-005-email-notification-preference)
 
+### GET /api/discovery/status
+
+Returns the set of hashtags the authenticated user has queued for background source discovery. The settings page polls this endpoint after a save to show "Still discovering sources for #foo" inline status.
+
+**Auth:** Required (session cookie).
+
+**Response:** `{ pending: string[] }` — list of tag strings whose `pending_discoveries` row has not yet been drained by the discovery cron.
+
+**Rate limit:** 120 / 60 s per user id (`discovery_status`). Fail open. Exhausted → `429` with `Retry-After`. Sized to accommodate a 2-second polling cadence with overhead.
+
+**Implements:** [REQ-SET-006](../sdd/settings.md#req-set-006-settings-incomplete-gate), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9
+
 ---
 
 ## Digests
@@ -198,9 +212,7 @@ Up to 29 articles from the article pool filtered by the user's active hashtags, 
 
 ### GET /api/digest/:id
 
-**Response:** Same article shape as `/today` for a single article by ID from the article pool. Returns 404 if not found.
-
-**Implements:** [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view)
+**Retired.** This per-digest endpoint was removed when the `digests` table was dropped in migration 0003; the article schema no longer carries a `digest_id` column. Stale clients hitting this path receive `410 Gone`. `POST /api/digest/:id` is also tombstoned with the same status.
 
 ### GET /api/scrape-status
 
@@ -235,7 +247,7 @@ Both responses carry a `Set-Cookie` refresh when the session is within 5 minutes
 
 ## Discovery
 
-> **Admin auth.** Every `/api/admin/*` route is gated by three layers: (a) Cloudflare Access zone-level JWT, (b) valid Worker session cookie, (c) session email matches `ADMIN_EMAIL`. See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8.
+> **Admin auth.** Every `/api/admin/*` route is gated by the Worker-side middleware: (a) `Cf-Access-Jwt-Assertion` header present; (b) valid Worker session cookie; (c) session email matches `ADMIN_EMAIL` (case-insensitive); (d) when `CF_ACCESS_AUD` is set, the JWT `aud` claim is validated — strongly recommended in production. See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8.
 
 ### POST /api/admin/discovery/retry
 
@@ -482,6 +494,7 @@ Implements [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-log
 | `auth.refresh.rate_limited` | Inline middleware or the explicit refresh path hit a refresh rate-limit bucket — request rejected with 429. See [Refresh rate-limit fail mode](#refresh-rate-limit-fail-mode) below for the `bucket` field values. |
 | `rate.limit.kv_error` | KV read/write in the rate-limit helper threw. The caller proceeds per the per-rule fail-mode; `decision` and `kv_op` field values are documented in [Refresh rate-limit fail mode](#refresh-rate-limit-fail-mode). |
 | `article.star.failed` | D1 insert or delete in `POST/DELETE /api/articles/:id/star` threw |
+| `admin.auth.aud_unset_warning` | `Cf-Access-Jwt-Assertion` header is present but `CF_ACCESS_AUD` is unset — the Worker is checking header presence only, not the `aud` claim. Emitted once per Worker isolate (isolates cycle roughly every 30 minutes under load) so the misconfiguration is visible via `wrangler tail` or Logpush without flooding Logpush during brute-force probes. See [Deployment: Setting CF_ACCESS_AUD](deployment.md#setting-cf_access_aud-strongly-recommended-in-production). |
 
 Raw exception messages appear only in the `detail` field of error-level records; they are never stored in D1 and never returned to clients (see [REQ-OPS-002](../sdd/observability.md#req-ops-002-sanitized-error-surfaces)).
 

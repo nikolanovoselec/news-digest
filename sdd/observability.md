@@ -51,7 +51,7 @@ Structured JSON logging as the single operational surface — no external observ
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. Every response includes `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com`.
+1. Every response includes `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com`.
 2. Every response includes `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`.
 3. Every response includes `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`.
 4. Every response includes `Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), clipboard-read=()`.
@@ -98,6 +98,7 @@ Structured JSON logging as the single operational surface — no external observ
 3. A machine-readable agents policy file describes what the product is, what is public, and an explicit request not to train on content behind the login.
 4. A sitemap is served from a stable URL, lists only public URLs, and is referenced from the crawler policy file.
 5. Error pages served for not-found and server-error conditions are flagged no-index so crawler spaces stay clean.
+6. Structured-data (JSON-LD) blocks emitted into the page head are serialized through a defensive helper that rewrites every `<`, `>`, and `&` byte to its `\uNNNN` JSON form, defeating every HTML state-transition vector that could escape the script block (`</script>`, `<!--`, `]]>`, `<script` re-entry). Today every JSON-LD value is server-controlled; the defence is preventive insurance for a future refactor that interpolates a user-controlled value (e.g., article title) into the graph.
 
 **Constraints:** CON-SEC-001
 **Priority:** P2

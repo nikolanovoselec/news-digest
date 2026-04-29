@@ -192,3 +192,70 @@ test.describe('REQ-READ-002 / REQ-HIST-001 perf-comparability (live)', () => {
     () => {},
   );
 });
+
+test.describe('REQ-OPS-003 CSP enforcement (live)', () => {
+  // Verifies that the enter/exit + tag-railing-flip animations on the
+  // article-detail flow do not trigger any browser-side CSP violations
+  // after `style-src 'self'` was made strict (no `'unsafe-inline'`).
+  // Subscribes to the `securitypolicyviolation` event in-page, then
+  // exercises the same navigation path a user takes:
+  //   /digest → click first card (forward view-transition)
+  //         ← back-button (reverse view-transition)
+  //          → click first card again (re-enter)
+  // Any violation that fires on style-src, script-src, or any other
+  // directive fails the test with the violation's blockedURI + directive.
+  test('article-detail enter/exit animations fire zero CSP violations', async ({
+    page,
+  }) => {
+    // addInitScript installs the listener before any page script runs,
+    // so violations during initial-parse / first-render are captured
+    // too — not just those during in-page navigation.
+    await page.addInitScript(() => {
+      const w = window as Window & {
+        __cspViolations?: { directive: string; blockedURI: string; sample: string }[];
+      };
+      w.__cspViolations = [];
+      window.addEventListener('securitypolicyviolation', (e) => {
+        // `sample` is optional per the W3C CSP spec — Chromium only
+        // populates it when `report-sample` is in the directive (which
+        // it isn't here). Guard the slice so the listener doesn't
+        // throw and silently drop subsequent violations.
+        const sample = typeof e.sample === 'string' ? e.sample.slice(0, 200) : '';
+        w.__cspViolations!.push({
+          directive: e.violatedDirective,
+          blockedURI: e.blockedURI,
+          sample,
+        });
+      });
+    });
+
+    await page.goto('/digest', { waitUntil: 'networkidle' });
+
+    // Forward into article-detail.
+    const firstCard = page.locator('[data-digest-card] a').first();
+    await firstCard.click();
+    await page.waitForLoadState('networkidle');
+
+    // Back to /digest.
+    await page.goBack({ waitUntil: 'networkidle' });
+
+    // Forward again — re-runs the enter view-transition with a freshly
+    // promoted morph-pair, the path most likely to surface a CSP issue
+    // because the second navigation is when the animation has
+    // already-running CSS interpolations.
+    await page.locator('[data-digest-card] a').first().click();
+    await page.waitForLoadState('networkidle');
+
+    const violations = await page.evaluate(() => {
+      const w = window as Window & {
+        __cspViolations?: { directive: string; blockedURI: string; sample: string }[];
+      };
+      return w.__cspViolations ?? [];
+    });
+
+    expect(
+      violations,
+      `CSP violations during article-detail navigation: ${JSON.stringify(violations, null, 2)}`,
+    ).toEqual([]);
+  });
+});

@@ -9,6 +9,7 @@ import { ClientRouter } from 'astro:transitions';
 import ThemeToggle from '~/components/ThemeToggle.astro';
 import UserMenu from '~/components/UserMenu.astro';
 import HeaderThemeToggle from '~/components/HeaderThemeToggle.astro';
+import { safeJsonLd } from '~/lib/json-ld';
 import '~/styles/global.css';
 
 interface Props {
@@ -88,7 +89,6 @@ const initialTheme = cookieTheme ?? 'light';
 <html
   lang="en"
   data-theme={initialTheme}
-  style={`background-color: ${initialTheme === 'dark' ? '#0a0a0a' : '#ffffff'};`}
 >
   <head>
     <meta charset="utf-8" />
@@ -159,12 +159,12 @@ const initialTheme = cookieTheme ?? 'light';
         knowledge-panel card and disambiguates the site from the
         publisher entity.
 
-        Defensive escape: replace </ with <\/ in the serialized JSON so
-        any future caller-supplied string that contains a literal
-        </script> sequence can't escape the script tag and inject
-        arbitrary HTML. Current callers pass only server-controlled
-        values; this is insurance for future refactors. */}
-    <script is:inline type="application/ld+json" set:html={JSON.stringify({
+        Defensive escape via safeJsonLd: closes </script> sequences
+        that could otherwise break out of the script context if a
+        future caller passes a user-controlled string. Today every
+        value is server-controlled, but the helper makes the path
+        safe by default. */}
+    <script is:inline type="application/ld+json" set:html={safeJsonLd({
       '@context': 'https://schema.org',
       '@graph': [
         {
@@ -184,7 +184,7 @@ const initialTheme = cookieTheme ?? 'light';
           logo: `${Astro.url.origin}/favicon.svg`,
         },
       ],
-    }).replace(/<\//g, '<\\/')} />
+    })} />
 
     {/* REQ-DES-002: /theme-init.js reconciles the server-rendered data-theme
         with prefers-color-scheme on a first visit where no cookie is set. */}

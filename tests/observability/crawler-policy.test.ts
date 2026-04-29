@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import { GET as sitemapGet } from '~/pages/sitemap.xml';
 import baseSource from '../../src/layouts/Base.astro?raw';
+import { GLOBAL_CSS } from '../fixtures/global-css';
 // node:fs isn't available in the Workers-pool runtime; Vite's `?raw`
 // handles plain text files so we inline the crawler-policy payloads
 // directly into the bundle at test time.
@@ -216,16 +217,22 @@ describe('SEO metadata in Base.astro — REQ-OPS-004 AC 1', () => {
     expect(baseSource).toMatch(/name="color-scheme"\s+content="light dark"/);
   });
 
-  it('REQ-OPS-004: <html> carries an inline background-color style stamped from the cookie-resolved theme', () => {
+  it('REQ-OPS-004: html background-color is pinned by literal hex in global.css for both themes', () => {
     // iOS PWA standalone mode renders inside WKWebView whose canvas
     // default is white; with apple-mobile-web-app-status-bar-style:
     // black-translucent the status bar is transparent and shows
     // through to that canvas during any microsecond gap in CSS-
-    // variable resolution between an Astro ClientRouter swap. Pinning
-    // the html bg via a literal hex on the inline style attribute
-    // makes the document bg paint regardless of cascade state.
-    expect(baseSource).toMatch(
-      /<html[\s\S]{0,200}style=\{`background-color:\s*\$\{initialTheme\s*===\s*'dark'\s*\?\s*'#0a0a0a'\s*:\s*'#ffffff'\}/,
+    // variable resolution between an Astro ClientRouter swap.
+    // Pinning the html bg via literal hex values in `global.css`
+    // (not via var(--bg)) keeps the document bg painting regardless
+    // of cascade state — same invariant as the previous inline style
+    // attribute, now in a CSP-compliant external stylesheet under
+    // CSP `style-src 'self'`.
+    expect(GLOBAL_CSS).toMatch(
+      /html\[data-theme='light'\][\s\S]{0,120}background-color:\s*#ffffff/,
+    );
+    expect(GLOBAL_CSS).toMatch(
+      /html\[data-theme='dark'\][\s\S]{0,120}background-color:\s*#0a0a0a/,
     );
   });
 

@@ -41,6 +41,7 @@ export type LogEvent =
   | 'settings.update.failed'
   | 'article.star.failed'
   | 'admin.auth.denied'
+  | 'admin.auth.aud_unset_warning'
   | 'rate.limit.exceeded'
   | 'jwt.secret.weak'
   | 'digest.today.query_failed'

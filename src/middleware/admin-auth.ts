@@ -76,6 +76,18 @@ function audMatches(
   return false;
 }
 
+// Per-isolate hourly stamp so the AUD-unset warning fires roughly
+// once per hour per Worker isolate, not on every admin probe. The
+// gate is best-effort: workerd freezes `Date.now()` between I/O
+// boundaries within one request, so two probes received in the same
+// I/O-quiescent slot can both pass the check-then-write. Worst case
+// is a duplicate log line (two instead of one); the goal is "don't
+// flood Logpush under brute-force probes" not "exactly once per
+// hour". Re-emitting hourly keeps the operator alerted while the
+// misconfiguration persists, which is the property that matters.
+const AUD_WARN_INTERVAL_MS = 60 * 60 * 1000;
+let lastAudWarnAt = 0;
+
 /**
  * Run the three-layer admin gate. Returns `{ ok: true, ... }` only when
  * all enforced layers pass; otherwise returns a pre-built `Response`
@@ -105,6 +117,29 @@ export async function requireAdminSession(
         ok: false,
         response: new Response('Unauthorized', { status: 401 }),
       };
+    }
+  } else {
+    // CF_ACCESS_AUD is unset — Layer 1 is checking header presence
+    // only. Forks without Access bound run with admin unreachable
+    // (Layer 1 always rejects). The risky configuration is a
+    // production deploy where Access IS bound to the custom domain
+    // but the *.workers.dev subdomain remains live AND CF_ACCESS_AUD
+    // is unset — an attacker can forge any JWT-shaped header on
+    // workers.dev and pass Layer 1. Layers 2+3 still gate, but the
+    // perimeter check is missing. Surfacing the warn log lets the
+    // operator catch this misconfiguration via tail/Logpush.
+    //
+    // Re-emit at most once per hour per isolate so a long-lived
+    // isolate doesn't hide a permanent misconfiguration after a
+    // single fire.
+    const nowMs = Date.now();
+    if (nowMs - lastAudWarnAt > AUD_WARN_INTERVAL_MS) {
+      lastAudWarnAt = nowMs;
+      log('warn', 'admin.auth.aud_unset_warning', {
+        detail:
+          'Cf-Access-Jwt-Assertion present but CF_ACCESS_AUD is unset; ' +
+          'set CF_ACCESS_AUD or disable the *.workers.dev subdomain.',
+      });
     }
   }
 

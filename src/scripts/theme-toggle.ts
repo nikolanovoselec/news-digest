@@ -66,13 +66,17 @@ export function persistTheme(storage: Storage, theme: Theme): void {
 /**
  * Write a 1-year `theme` cookie with the selected value. The server reads
  * this in Base.astro and sets `data-theme` on the first rendered HTML,
- * eliminating the light-to-dark flash on page load. Safe defaults: no
- * JS-visible path change, no secure flag (the value is non-sensitive UI
- * state), SameSite=Lax so it accompanies cross-site navigations.
+ * eliminating the light-to-dark flash on page load. Defaults: no JS-visible
+ * path change, SameSite=Lax so it accompanies cross-site navigations,
+ * Secure so the cookie is never sent over plain HTTP (defence-in-depth —
+ * the value itself is non-sensitive UI state). On non-HTTPS dev hosts that
+ * are not `localhost` (e.g. `127.0.0.1`, LAN IPs, ngrok HTTP tunnels) older
+ * browsers may silently drop this cookie; the theme then reverts to the
+ * server default. The first-paint hint is the only thing affected.
  */
 export function persistThemeCookie(doc: Document, theme: Theme): void {
   const oneYearSec = 60 * 60 * 24 * 365;
-  doc.cookie = `theme=${theme}; Path=/; Max-Age=${oneYearSec}; SameSite=Lax`;
+  doc.cookie = `theme=${theme}; Path=/; Max-Age=${oneYearSec}; SameSite=Lax; Secure`;
 }
 
 // Toggles, persists, and applies. Returns the theme now in effect.

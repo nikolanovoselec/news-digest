@@ -43,6 +43,7 @@
 
 import { log } from '~/lib/log';
 import type { Headline, TagTally } from '~/lib/email-data';
+import { escapeHtml, headlineRow } from '~/lib/email-html';
 
 /** External Gray Matter site that the email footer links to.
  *  Hardcoded — this is a brand link, not configurable per-deployment. */
@@ -72,18 +73,6 @@ const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 /** Per-call timeout. Longer than the median (~300ms) but short enough
  * that a stuck request never delays the cron's next branch. */
 const RESEND_TIMEOUT_MS = 5000;
-
-/** Escape a string for interpolation into HTML text or attribute
- * contexts. Minimal replacement set — covers the characters that can
- * break out of a text node or a double-quoted attribute value. */
-function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 /** Zero-pad a 0-23 hour or 0-59 minute to two digits. */
 function pad2(n: number): string {
@@ -225,13 +214,16 @@ export function renderDigestReadyEmail(params: DigestReadyEmailParams): Rendered
     ? ''
     : `<tr><td style="padding-bottom:12px;">
         <table role="presentation" width="100%" style="border-collapse:collapse;">
-          ${headlines.map((h) => {
-            const safeTitle = escapeHtml(h.title);
-            const href = `${safeAppUrlAttr}/digest/${escapeHtml(h.id)}/${escapeHtml(h.slug)}`;
-            return `<tr><td style="padding:14px 0; border-bottom:1px solid #ececef;">
-              <a href="${href}" style="color:#111; text-decoration:none; font-weight:600; font-size:17px; line-height:1.35;">${safeTitle}</a>
-            </td></tr>`;
-          }).join('')}
+          ${headlines
+            .map((h) =>
+              headlineRow({
+                appUrlAttr: safeAppUrlAttr,
+                id: h.id,
+                slug: h.slug,
+                title: h.title,
+              }),
+            )
+            .join('')}
         </table>
       </td></tr>`;
 

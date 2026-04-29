@@ -4,6 +4,20 @@ Semantic changes to the specification. Git history captures diffs; this file cap
 
 Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verification pass" entries. No spec cleanup or format fixes (those live in git history).
 
+## 2026-04-29
+
+- REQ-OPS-004 AC 6 added: structured-data (JSON-LD) blocks in the page head are now serialized through a defensive helper that escapes every `<`, `>`, and `&` byte to its `\uNNNN` JSON form, defeating every HTML state-transition vector that could escape the script block (`</script>`, `<!--`, `]]>`, `<script` re-entry). No user-visible change today — every JSON-LD value is still server-controlled; the defence is preventive insurance for a future refactor that interpolates a user-controlled value.
+
+- REQ-OPS-003 AC 1 tightened: the page Content-Security-Policy no longer permits inline styles — `style-src` is now strictly `'self'`, so a future XSS that lands a `<style>` block or a `style="..."` attribute is blocked by the browser instead of executed. No user-visible change to the app's look and feel; every styled surface already came from external stylesheets.
+
+- REQ-AUTH-001 AC 9a broadened: rate-limit coverage now extends beyond auth and mutation endpoints to any authenticated endpoint that legitimate clients poll sub-minute. The settings-page timezone-update path and the discovery-progress polling path each carry per-user limits sized to leave normal usage untouched while bounding pathological loops.
+
+- REQ-SET-006 AC 5 and REQ-SET-007 AC 7 added: the per-user rate limits introduced by the broader REQ-AUTH-001 AC 9a are now documented in the domains where the affected endpoints are user-facing, so the polling and timezone-update paths each name their own contract.
+
+- REQ-AUTH-001 AC 8a extended: the admin gate now logs a structured operational warning when a Cloudflare-Access-shaped header is presented but the audience tag is unset, surfacing the unbound-perimeter misconfiguration on the operator's tail/Logpush stream without otherwise changing how the request is gated.
+
+- Per-digest retrieval endpoint retired alongside REQ-READ-004's earlier deprecation: stale clients that still poll the per-id digest path now receive HTTP 410 Gone, matching the sibling refresh-endpoint tombstone. No user-visible change — the endpoint stopped being the source of truth on 2026-04-23 when the global-feed rework landed.
+
 ## 2026-04-28
 
 - REQ-PWA-003 AC 4 hardened: the brand wordmark's tap target now stretches across the entire left half of the header instead of hugging the icon-and-text content, so first-tap reliability on mobile improves dramatically without changing the visible layout. Users who aimed roughly at the wordmark and missed it on narrow viewports — and so kept tapping with no feedback — now hit on the first try.

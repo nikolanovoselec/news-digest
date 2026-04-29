@@ -15,6 +15,11 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+  RATE_LIMIT_RULES,
+} from '~/lib/rate-limit';
 import { isValidTz } from '~/lib/tz';
 import { requireSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
@@ -37,6 +42,13 @@ export async function POST(context: APIContext): Promise<Response> {
 
   const auth = await requireSession(context.request, env);
   if (!auth.ok) return auth.response;
+
+  const rl = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.SET_TZ,
+    `user:${auth.user.id}`,
+  );
+  if (!rl.ok) return rateLimitResponse(rl.retryAfter);
 
   let body: SetTzBody;
   try {

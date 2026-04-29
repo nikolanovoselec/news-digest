@@ -19,12 +19,12 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 6. New accounts are also seeded with a default scheduled-digest time of 08:00, a default UTC timezone that the reading surface overwrites with the browser's actual IANA zone on first load, and the email-notification preference enabled. As a result, successful sign-in for a brand-new account lands the user directly on the reading surface with real articles visible — there is no forced onboarding detour through the settings form.
 7. Cross-provider sign-in by the same verified email lands in a single account per REQ-AUTH-007 (was previously per-provider isolation).
 8. Operator endpoints under `/api/admin/*` enforce three independent layers before any side effect:
-   a. The request carries a valid Cloudflare Access assertion (and, when an Access audience tag is configured, validates against it).
+   a. The request carries a valid Cloudflare Access assertion (and, when an Access audience tag is configured, validates against it). When the audience tag is NOT configured but a Cloudflare-Access-shaped header is presented, the request is still evaluated against the remaining layers AND a structured operational warning is logged so the operator can detect the unbound-perimeter misconfiguration via tail/Logpush.
    b. The requester holds a live Worker session cookie.
    c. The session user is the configured operator (email match, case-insensitive).
    A request that fails any layer is rejected at the first failing layer with no observable side effect on the application.
 9. Application-layer rate limits protect authentication and mutation endpoints:
-   a. Every `/api/auth/*` route and every authenticated mutation route is rate-limited.
+   a. Every `/api/auth/*` route, every authenticated mutation route, and every authenticated endpoint that legitimate clients poll on a sub-minute cadence is rate-limited.
    b. Unauthenticated paths key the limit by IP; authenticated mutation paths key it by user id.
    c. An exhausted limit returns HTTP 429 with a `Retry-After` header.
    d. Sign-in and OAuth-callback rules fail open on a backing-store outage so a transient outage cannot lock users out of sign-in.

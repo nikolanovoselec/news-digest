@@ -137,9 +137,17 @@ describe('DigestCard.astro — REQ-READ-001 AC 2/3', () => {
     expect(digestCardSource).toContain('digest-card__source');
   });
 
-  it('REQ-READ-001: applies 40ms-per-index stagger capped at 9', () => {
-    expect(digestCardSource).toContain('stagger * 40');
+  it('REQ-READ-001: index prop is accepted as a no-op (stagger animation retired)', () => {
+    // The per-card stagger animation was retired; `index` is kept
+    // as a backward-compat no-op so existing callers don't need an
+    // ordering churn. The clamp expression remains in source for the
+    // exposed `data-stagger-index` attribute (used for focus-order
+    // experiments). Per CF-016 the inline `style` attribute that
+    // computed `--stagger-delay: ${stagger * 40}ms` was removed when
+    // CSP `style-src 'self'` was enforced — that CSS variable had no
+    // remaining consumers.
     expect(digestCardSource).toMatch(/Math\.min\(index,\s*9\)/);
+    expect(digestCardSource).toContain('data-stagger-index={stagger}');
   });
 
   it('REQ-READ-001: wraps in <a href> so whole card is clickable', () => {

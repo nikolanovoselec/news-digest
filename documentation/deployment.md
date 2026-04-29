@@ -51,10 +51,11 @@ CI/CD: `.github/workflows/deploy.yml` triggers on a `workflow_run` event — fir
 
 The deploy job:
 1. Applies D1 migrations (idempotent).
-2. Pushes Worker secrets via `wrangler secret put` (file-redirect form). Conditional secrets (`ADMIN_EMAIL`, `CF_ACCESS_AUD`, `DEV_BYPASS_USER_ID`) are pushed only when the corresponding GitHub Actions secret is non-empty.
-3. Deploys the Worker.
-4. Binds the custom domain extracted from `APP_URL` via the Workers Custom Domains API. Idempotent.
-5. Smoke-tests `GET /` against `APP_URL`, falling back to `*.workers.dev`. Accepts `200` or `303`.
+2. Runs the same two-step security audit as PR Checks (advisory HIGH+, blocking CRITICAL) as a defence-in-depth gate — catches CVEs introduced between the merge and the deploy (transient transitive bumps, Dependabot lockfile regenerations, etc.).
+3. Pushes Worker secrets via `wrangler secret put` (file-redirect form). Conditional secrets (`ADMIN_EMAIL`, `CF_ACCESS_AUD`, `DEV_BYPASS_USER_ID`) are pushed only when the corresponding GitHub Actions secret is non-empty.
+4. Deploys the Worker.
+5. Binds the custom domain extracted from `APP_URL` via the Workers Custom Domains API. Idempotent.
+6. Smoke-tests `GET /` against `APP_URL`, falling back to `*.workers.dev`. Accepts `200` or `303`.
 
 `scripts/e2e-test.sh` is manual only (`bash scripts/e2e-test.sh --force-prod`) and not part of CI deploy — running it triggers a full LLM-cost scrape and mutates the owner's account.
 
@@ -113,13 +114,14 @@ Every push to `develop` (and every PR targeting `main`) runs the following gates
 | Step | Command | What it enforces |
 |---|---|---|
 | Install | `npm install --no-fund --no-audit` | Dependency resolution |
-| Security audit (advisory-only) | `npm audit --omit=dev --audit-level=high` with `continue-on-error: true` | Surfaces HIGH+ runtime-tree advisories; non-blocking — Dependabot is the enforcement path |
+| Security audit (advisory) | `npm audit --omit=dev --audit-level=high` (continue-on-error) | HIGH+ advisories surface in the CI log for operator triage via Dependabot but never block the build — the Worker runtime is `workerd`, not Node.js, so most HIGH findings live in build tooling that never reaches the deployed bundle. |
+| Security audit (blocking) | `npm audit --omit=dev --audit-level=critical` | Blocks on CRITICAL CVEs in the production-dep tree. |
 | Lint | `npm run lint` | Oxlint rules |
 | REQ backlink coverage | `node scripts/check-req-backlinks.mjs` | Every `REQ-X-NNN` reference in `src/`, `tests/`, `documentation/`, and `migrations/` resolves to a header in `sdd/`. Fails the build if any reference points at a REQ ID that does not exist in the spec (CF-069). |
 | Dead code | `npm run knip` | No unused exports or files |
 | Unit + integration tests | `npx vitest run` | Vitest suite |
 
-**Why the audit step is advisory:** the Worker runtime is `workerd`, not Node.js, so most advisories live in build tooling (`@astrojs/cloudflare`, `wrangler`, `miniflare`, `undici`) and never reach the deployed bundle. Failing the build on these would block legitimate work without improving production security. Operators read the advisory list from CI logs and act via the weekly Dependabot PRs.
+**Why the audit gates on CRITICAL only:** the Worker runtime is `workerd`, not Node.js, so most HIGH+ advisories live in build tooling (`@astrojs/cloudflare`, `wrangler`, `miniflare`, `undici`) and never reach the deployed bundle. Gating on CRITICAL still blocks the worst class of CVEs, while HIGH+ findings remain visible in CI logs for operators to act on via the weekly Dependabot PRs. The same CRITICAL threshold runs in the deploy job as a defence-in-depth check after merge.
 
 When the REQ backlink gate fails, either the referenced REQ-ID needs to be added to `sdd/` (if it is a new requirement), or the stale reference in the source/doc file needs to be updated to point at the correct live REQ.
 
@@ -133,6 +135,16 @@ A handful of operator endpoints drive LLM calls or queue work on demand — budg
 | **Cloudflare Access** (zone-level) | **UX layer.** Redirects unauthenticated browsers to the Access login page instead of returning a bare 403. | Every request to `/api/admin/*` must carry a valid `Cf-Access-Jwt-Assertion` header; Access enforces this at the edge before the Worker is invoked. |
 
 Because the Worker gate alone is sufficient, a misconfigured or disabled Access policy does not silently open the endpoints. The two layers complement each other: Access improves the UX of unauthorized access (login redirect, no bare 403); the Worker gate provides the actual security guarantee.
+
+### Setting `CF_ACCESS_AUD` (strongly recommended in production)
+
+`CF_ACCESS_AUD` is technically optional, but **production deployments where Cloudflare Access is bound to a custom domain should set it.** Without it, the Worker only checks `Cf-Access-Jwt-Assertion` header presence — an attacker hitting the same Worker via the `*.workers.dev` URL (where Access is not bound) can forge any JWT-shaped value in the header and pass Layer 1. The session + `ADMIN_EMAIL` checks (Layers 2 + 3) still gate, but the perimeter check is missing.
+
+Two ways to close that gap:
+1. **Set `CF_ACCESS_AUD`** to the audience tag of the Access application that fronts the custom domain. The Worker then validates the JWT's `aud` claim against the value, and a forged header on workers.dev is rejected at Layer 1. Recommended for any deploy that binds Access.
+2. **Disable the `*.workers.dev` subdomain** in the Cloudflare dashboard (Workers & Pages → your worker → Settings → Domains & Routes → disable workers.dev). Forks that don't use Access at all should leave it enabled; forks that DO use Access in production should disable it so the Access-protected custom domain is the only entry point.
+
+When Access is bound and `CF_ACCESS_AUD` is unset, the structured log `admin.auth.aud_unset_warning` is emitted once per Worker isolate (isolates cycle roughly every 30 minutes under load) so the misconfiguration is visible via `wrangler tail` or Logpush without flooding Logpush during brute-force probes. Forks without Access bound still see admin unreachable at Layer 1 and never trigger this warning.
 
 ### Paths to gate
 

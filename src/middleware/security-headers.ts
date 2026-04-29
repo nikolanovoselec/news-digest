@@ -29,16 +29,17 @@
 /** Exact Content-Security-Policy value required by REQ-OPS-003 AC 1.
  * Pinned byte-for-byte in tests — do not reformat or reorder directives.
  *
- * Open issue: GitHub #91 (CF-027) tracks the migration off
- * `style-src 'self' 'unsafe-inline'` toward `style-src 'self'` (or a
- * per-request nonce). The migration is gated on a runtime audit pass
- * — the dashboard has 19 inline `<style>` blocks plus 2 scoped/global
- * blocks that Astro 5 may extract or inline depending on the build,
- * so the safe path is `Content-Security-Policy-Report-Only` first,
- * read DevTools for violations, then enforce. Not changing the
- * enforced header here without that runtime verification. */
+ * `style-src 'self'` (no `'unsafe-inline'`): every `<style>` block in
+ * the codebase is scoped or `is:global` — Astro extracts both kinds to
+ * external `.css` files at build time, served from the same origin
+ * and satisfying `'self'`. There are no `<style is:inline>` blocks and
+ * no `style="..."` attributes anywhere in `src/`. Dynamic style work
+ * (FLIP transforms, view-transition-name assignments) uses the DOM
+ * API (`el.style.X = ...`, `setProperty`), which CSP `style-src` does
+ * NOT block — that policy targets inline `<style>` content and `style=`
+ * attributes only. */
 export const CSP_HEADER_VALUE =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com";
+  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com";
 
 /** HSTS value required by REQ-OPS-003 AC 2 — two-year max-age, subdomains,
  * and opt-in to the HSTS preload list. */

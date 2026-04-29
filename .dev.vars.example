@@ -27,3 +27,14 @@ RESEND_FROM=News Digest <digest@localhost>
 # Defaults to the synthetic __e2e__ row from migrations/0006_e2e_user.sql
 # so e2e tests never mutate the operator's account.
 # DEV_BYPASS_USER_ID=__e2e__
+
+# Required to gate /api/admin/*. Without ADMIN_EMAIL set, every admin
+# route returns 403 (locks down rather than opening up).
+# ADMIN_EMAIL=you@example.com
+
+# Optional — Cloudflare Access JWT audience claim. STRONGLY RECOMMENDED
+# in production deployments where Access is bound to the zone. Without
+# it, the *.workers.dev URL bypasses the Access perimeter check (Layer
+# 2/3 still gate, but the AUD check raises the bar). Disable the
+# *.workers.dev subdomain in the Cloudflare dashboard as the alternative.
+# CF_ACCESS_AUD=

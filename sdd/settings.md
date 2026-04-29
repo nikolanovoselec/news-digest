@@ -123,6 +123,7 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 2. Once the scheduled-digest time is set, visiting the first-run settings view redirects to the steady-state settings view.
 3. The gate keys only on "scheduled time not yet set" — having no hashtags selected does NOT trip the gate, and a user whose first digest fails is not trapped.
 4. While the gate is active, the global navigation hides entries that lead to gated routes so the user sees only the Settings destination and cannot tap into a dead-end redirect.
+5. The discovery-progress endpoint that the settings page polls while pending discoveries drain is rate-limited per authenticated user, sized to leave a few-seconds polling cadence untouched while bounding pathological client loops, per REQ-AUTH-001 AC 9a. An exhausted limit returns HTTP 429 with `Retry-After`; the settings page surfaces the polling pause without blocking the rest of the form.
 
 **Constraints:** None
 **Priority:** P0
@@ -145,6 +146,7 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 4. A failed correction request is non-fatal: the page continues to render and the next page load retries.
 5. The settings page exposes a manual timezone picker that lets the user select any valid IANA zone explicitly. The picker is pre-populated with the browser-detected zone (or the stored zone when the browser's value is unavailable), so the most likely correct value is one click away even when the silent auto-sync has failed. Saving the form persists the picked zone via the same timezone-update endpoint.
 6. Once the stored timezone is anything other than the seeded default — set either by an earlier silent correction or by the manual settings picker — the silent path stops touching it. Only an explicit save via the manual settings picker can change the value from then on, so a user's deliberate choice is never overwritten by a privacy-masked or stale browser timezone on the next page load.
+7. The timezone-update endpoint that the silent path and the settings picker both call is rate-limited per authenticated user, per REQ-AUTH-001 AC 9a. The limit is generous enough to leave legitimate updates untouched (travel, DST edges, and dev/test loops) while bounding runaway-client patterns that would otherwise hammer the endpoint on every page load. An exhausted limit returns HTTP 429 with `Retry-After`; a failed update remains non-fatal per AC 4.
 
 **Constraints:** None
 **Priority:** P2

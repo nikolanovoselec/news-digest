@@ -413,7 +413,7 @@ function formatCostUsd(value: number | null | undefined): string {
 
       // No search AND no tag → restore day-grouped view.
       if (!searching && !tagFiltering) {
-        searchGrid.innerHTML = '';
+        searchGrid.replaceChildren();
         searchGrid.hidden = true;
         searchEmpty.hidden = true;
         if (list !== null) list.hidden = false;
@@ -424,7 +424,7 @@ function formatCostUsd(value: number | null | undefined): string {
       // AND logic: a card must match the query (if searching) AND
       // share at least one tag with the selected set (if tag-filtering).
       if (list !== null) list.hidden = true;
-      searchGrid.innerHTML = '';
+      searchGrid.replaceChildren();
       let matches = 0;
       for (const { el, haystack, tags } of cards) {
         if (searching && !haystack.includes(q)) continue;

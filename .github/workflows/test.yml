@@ -33,19 +33,25 @@ jobs:
       - name: Install dependencies
         run: npm install --no-fund --no-audit
 
-      # CF-033 — surface HIGH+ npm advisories in CI logs.
-      # `continue-on-error` keeps this advisory-only because Worker
-      # runtime is workerd (not Node.js), so most npm-audit findings
-      # land in build tooling (wrangler, miniflare, undici, astro
-      # build helpers) whose CVEs don't reach the deployed bundle.
-      # The step still runs on every push so operators see the list
-      # and can act via Dependabot PRs; failing the build on transient
-      # build-tool CVEs would block legitimate work without improving
-      # production security. Pin / upgrade decisions are tracked via
-      # Dependabot, not enforced here.
+      # Audit the production-dep tree. `--omit=dev` excludes top-level
+      # devDependencies, but the @astrojs/cloudflare adapter (production)
+      # transitively pulls in miniflare/wrangler/undici (build-time
+      # tooling that never reaches the deployed Worker bundle running
+      # on workerd). Those transitives generate the bulk of the HIGH
+      # findings, so we gate on CRITICAL only — the worst class still
+      # blocks the build, and HIGH+ findings remain visible in the logs
+      # for operators to triage via Dependabot. Tightening to HIGH+
+      # would block on transitive-only CVEs that have no production
+      # path; that's the failure mode of the previous advisory-only
+      # configuration we just fixed.
+      # Advisory-only HIGH+ surface so operators see the full list per
+      # push and can drive Dependabot triage without the build failing
+      # on transitive build-tool CVEs.
       - name: npm audit (production deps, high+ — advisory only)
         run: npm audit --omit=dev --audit-level=high
         continue-on-error: true
+      - name: npm audit (production deps, critical+ — blocking)
+        run: npm audit --omit=dev --audit-level=critical
 
       - name: Lint
         run: npm run lint
