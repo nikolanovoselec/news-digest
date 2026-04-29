@@ -106,6 +106,21 @@ export async function requireAdminSession(
         response: new Response('Unauthorized', { status: 401 }),
       };
     }
+  } else {
+    // CF_ACCESS_AUD is unset — Layer 1 is checking header presence
+    // only. Forks without Access bound run with admin unreachable
+    // (Layer 1 always rejects). The risky configuration is a
+    // production deploy where Access IS bound to the custom domain
+    // but the *.workers.dev subdomain remains live AND CF_ACCESS_AUD
+    // is unset — an attacker can forge any JWT-shaped header on
+    // workers.dev and pass Layer 1. Layers 2+3 still gate, but the
+    // perimeter check is missing. Surfacing the warn log lets the
+    // operator catch this misconfiguration via tail/Logpush.
+    log('warn', 'admin.auth.aud_unset_warning', {
+      detail:
+        'Cf-Access-Jwt-Assertion present but CF_ACCESS_AUD is unset; ' +
+        'set CF_ACCESS_AUD or disable the *.workers.dev subdomain.',
+    });
   }
 
   // Layer 2: Worker-side session.

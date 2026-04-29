@@ -12,6 +12,11 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
+import {
+  enforceRateLimit,
+  rateLimitResponse,
+  RATE_LIMIT_RULES,
+} from '~/lib/rate-limit';
 import { requireSession } from '~/middleware/auth';
 
 /** Row shape returned by the SELECT below. */
@@ -27,6 +32,13 @@ export async function GET(context: APIContext): Promise<Response> {
 
   const auth = await requireSession(context.request, env);
   if (!auth.ok) return auth.response;
+
+  const rl = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.DISCOVERY_STATUS,
+    `user:${auth.user.id}`,
+  );
+  if (!rl.ok) return rateLimitResponse(rl.retryAfter);
 
   let rows: PendingRow[];
   try {

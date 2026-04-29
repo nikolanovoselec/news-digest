@@ -134,6 +134,16 @@ A handful of operator endpoints drive LLM calls or queue work on demand — budg
 
 Because the Worker gate alone is sufficient, a misconfigured or disabled Access policy does not silently open the endpoints. The two layers complement each other: Access improves the UX of unauthorized access (login redirect, no bare 403); the Worker gate provides the actual security guarantee.
 
+### Setting `CF_ACCESS_AUD` (strongly recommended in production)
+
+`CF_ACCESS_AUD` is technically optional, but **production deployments where Cloudflare Access is bound to a custom domain should set it.** Without it, the Worker only checks `Cf-Access-Jwt-Assertion` header presence — an attacker hitting the same Worker via the `*.workers.dev` URL (where Access is not bound) can forge any JWT-shaped value in the header and pass Layer 1. The session + `ADMIN_EMAIL` checks (Layers 2 + 3) still gate, but the perimeter check is missing.
+
+Two ways to close that gap:
+1. **Set `CF_ACCESS_AUD`** to the audience tag of the Access application that fronts the custom domain. The Worker then validates the JWT's `aud` claim against the value, and a forged header on workers.dev is rejected at Layer 1. Recommended for any deploy that binds Access.
+2. **Disable the `*.workers.dev` subdomain** in the Cloudflare dashboard (Workers & Pages → your worker → Settings → Domains & Routes → disable workers.dev). Forks that don't use Access at all should leave it enabled; forks that DO use Access in production should disable it so the Access-protected custom domain is the only entry point.
+
+When Access is bound and `CF_ACCESS_AUD` is unset, every admin request emits the structured log `admin.auth.aud_unset_warning` so the misconfiguration is visible via `wrangler tail` or Logpush. Forks without Access bound still see admin unreachable at Layer 1 and never trigger this warning.
+
 ### Paths to gate
 
 Every admin endpoint sits under `/api/admin/*` so a **single wildcard rule** covers them all and any future endpoint added under that prefix.

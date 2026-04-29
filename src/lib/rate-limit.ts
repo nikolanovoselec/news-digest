@@ -218,4 +218,22 @@ export const RATE_LIMIT_RULES = {
     limit: 5,
     windowSec: 60,
   },
+  // REQ-SET-007 — POST /api/auth/set-tz writes a single users.tz
+  // column. A legitimate user updates this on tz mismatch (rare:
+  // travel, DST edge), so 30/min/user is generous — leaves room for
+  // dev/test loops while still bounding runaway-client patterns.
+  SET_TZ: {
+    routeClass: 'set_tz',
+    limit: 30,
+    windowSec: 60,
+  },
+  // REQ-SET-006 — GET /api/discovery/status is polled by the settings
+  // page every few seconds while pending discoveries drain. 120/min/user
+  // accommodates a 2-second polling cadence with overhead and bounds
+  // pathological loops.
+  DISCOVERY_STATUS: {
+    routeClass: 'discovery_status',
+    limit: 120,
+    windowSec: 60,
+  },
 } as const satisfies Record<string, RateLimitRule>;

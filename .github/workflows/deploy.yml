@@ -43,6 +43,13 @@ jobs:
       - name: Install dependencies
         run: npm install --no-fund --no-audit
 
+      # Defence-in-depth: re-run the same audit gate that PR Checks
+      # used. Catches HIGH+ CVEs introduced between the merge and the
+      # deploy (transient transitive bumps via Dependabot, lockfile
+      # regenerations, etc.). Mirrors the test.yml policy.
+      - name: npm audit (production deps, high+)
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Build
         run: npm run build
 

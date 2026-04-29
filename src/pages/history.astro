@@ -413,7 +413,7 @@ function formatCostUsd(value: number | null | undefined): string {
 
       // No search AND no tag → restore day-grouped view.
       if (!searching && !tagFiltering) {
-        searchGrid.innerHTML = '';
+        searchGrid.replaceChildren();
         searchGrid.hidden = true;
         searchEmpty.hidden = true;
         if (list !== null) list.hidden = false;
