@@ -81,7 +81,7 @@ Every source file annotates the REQ-IDs it implements via `// Implements REQ-X-N
 | `src/middleware/auth.ts` | `loadSession` — access JWT verify and refresh-token rotation; cookie helpers | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection) |
 | `src/middleware/origin-check.ts` | Rejects state-changing requests whose `Origin` does not match `APP_URL` | [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints) |
 | `src/middleware/security-headers.ts` | Stamps CSP, HSTS, and related headers on every response | [REQ-OPS-003](../sdd/observability.md#req-ops-003-security-headers-on-every-response) |
-| `src/middleware/admin-auth.ts` | Three-layer gate for `/api/admin/*` (Access JWT, session, admin email) | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) |
+| `src/middleware/admin-auth.ts` | Admin gate for `/api/admin/*`: Access JWT presence, valid session cookie, `ADMIN_EMAIL` match (case-insensitive); optional 4th check validates the JWT `aud` claim when `CF_ACCESS_AUD` is set; logs `admin.auth.aud_unset_warning` once per isolate when Access header is present but `CF_ACCESS_AUD` is unset | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8 |
 
 ### 4.2 Libraries (`src/lib/`)
 
@@ -132,7 +132,7 @@ Every source file annotates the REQ-IDs it implements via `// Implements REQ-X-N
 | `feed-health.ts` | Per-URL fetch-health counter for the self-healing discovery loop | [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking) |
 | `discovery.ts` | LLM discovery pipeline and pending-discovery cron drain | [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery), [REQ-DISC-005](../sdd/discovery.md#req-disc-005-discovery-prompt-injection-protection) |
 | `tag-railing-flip.ts` | Shared FLIP animation helper for the tag railing | [REQ-READ-007](../sdd/reading.md#req-read-007-tag-railing-reorder-animation) |
-| `json-ld.ts` | Safe JSON-LD serializer for `<script type="application/ld+json">` blocks — closes the `</script>` early-close vector by rewriting `</` to `<\/` after `JSON.stringify` | [REQ-OPS-004](../sdd/observability.md#req-ops-004-crawler-policy-and-public-surface-discoverability) |
+| `json-ld.ts` | Safe JSON-LD serializer for `<script type="application/ld+json">` blocks — rewrites every `<`, `>`, and `&` byte to its `\uNNNN` JSON form, defeating all HTML state-transition vectors that could escape the script block | [REQ-OPS-004](../sdd/observability.md#req-ops-004-crawler-policy-and-public-surface-discoverability) AC 6 |
 
 ### 4.3 Pages and API Routes
 
