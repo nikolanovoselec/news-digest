@@ -8,6 +8,10 @@ Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are a
 
 ## 2026-05-03
 
+- REQ-PIPE-001 AC 4 reversed and REQ-READ-001 AC 5 + glossary "Last feed sighting" entry rewritten: the dashboard now orders by **first ingestion** instead of last feed sighting, and a re-discovered URL appends the new source to the article's source list without re-stamping the ingestion timestamp. Older stories that keep being re-broadcast by feeds no longer displace genuinely fresher arrivals on the dashboard, and the multi-source picker reflects every outlet that ever sighted the story.
+
+- REQ-PIPE-008 AC 1 + AC 7 sharpened: the cross-chunk dedup model now receives each candidate's full summary body (not just title + source name) so it can identify same-story pairs by actual content; source name was dropped as a signal because two outlets covering the same event were occasionally blocked from clustering by name mismatch. The finalize call's token + cost are now folded into the per-tick stats on the first successful LLM response regardless of whether the model returned any merges, so a "no duplicates found" result is no longer hidden from the daily tally — paying for a finalize call that confirms zero merges is still a real cost.
+
 - REQ-DISC-001 AC 1 + AC 3 narrowed: tags already covered by the curated source registry skip the LLM-discovery path entirely, so a brand or consumer tag whose name collides with another company's namespace (e.g., the `graymatter` tag pulling in Graymatter Robotics articles via the mandatory Google News fallback) no longer pollutes the per-tag source cache. Existing curated tags continue to work via the registry; discovery still runs for any tag not in the registry.
 
 ## 2026-04-29

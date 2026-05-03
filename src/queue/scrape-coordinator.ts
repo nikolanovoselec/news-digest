@@ -304,35 +304,26 @@ export async function runCoordinator(
   const survivors = clusters.filter(
     (c) => !existing.has(c.primary.canonical_url),
   );
-  // Re-freshen ingested_at for articles that are STILL IN the live
-  // feed emission. Without this, a scrape tick that finds nothing
-  // net-new leaves the dashboard order frozen on the previous tick's
-  // ingestions — so a 4-hour-old article that's still actively
-  // trending in its source feed looks "stale" to the user even
-  // though it's freshly confirmed as current. Bumping ingested_at
-  // lets sort-by-ingest surface whatever the feeds consider current
-  // right now, not whatever happened to be ingested first. Batched
-  // in groups of 100 to stay inside D1's parameter-count budget.
-  const reSeenUrls = clusters
-    .map((c) => c.primary.canonical_url)
-    .filter((url) => existing.has(url));
-  if (reSeenUrls.length > 0) {
-    const refreshNowSec = Math.floor(Date.now() / 1000);
-    const REFRESH_BATCH = 100;
-    for (let i = 0; i < reSeenUrls.length; i += REFRESH_BATCH) {
-      const slice = reSeenUrls.slice(i, i + REFRESH_BATCH);
-      const placeholders = slice.map((_, j) => `?${j + 2}`).join(', ');
-      await env.DB
-        .prepare(
-          `UPDATE articles SET ingested_at = ?1 WHERE canonical_url IN (${placeholders})`,
-        )
-        .bind(refreshNowSec, ...slice)
-        .run();
-    }
+  // REQ-PIPE-001 AC 4 (revised 2026-05-03): re-discovered URLs are
+  // skipped without re-stamping `ingested_at`. The dashboard now
+  // orders by FIRST ingestion descending — a re-broadcast of an
+  // older story by some feed must NOT push that story back to the
+  // top of the dashboard above genuinely newer arrivals. Multi-
+  // source aggregation (appending the new source to the article's
+  // source list) is the responsibility of the chunk consumer's
+  // existing source-fanout path, which only fires for articles
+  // surviving the canonical-URL filter — not for re-discoveries.
+  // Re-discovery rows are intentionally lost-on-the-floor here; the
+  // primary source on file from the first ingestion is the canonical
+  // attribution for the story.
+  const reSeenCount = clusters.filter((c) =>
+    existing.has(c.primary.canonical_url),
+  ).length;
+  if (reSeenCount > 0) {
     log('info', 'digest.generation', {
-      status: 'coordinator_refreshed_existing',
+      status: 'coordinator_skipped_existing',
       scrape_run_id,
-      re_seen: reSeenUrls.length,
+      re_seen: reSeenCount,
     });
   }
 

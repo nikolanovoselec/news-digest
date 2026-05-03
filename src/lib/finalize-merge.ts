@@ -12,11 +12,15 @@
 // the consumer hands to batchExec. No D1 reads happen here — the
 // finalize consumer owns the read query and passes the rows in.
 
-/** Minimal article shape for winner-picking + statement-building. */
+/** Minimal article shape for winner-picking + statement-building.
+ *  `source_name` was previously carried here but neither `pickWinner`
+ *  nor the merge SQL reads it — the merge statements pull source data
+ *  from D1 (`articles.primary_source_name`, `article_sources.source_name`)
+ *  directly. Dropped 2026-05-03 alongside the finalize-prompt rewrite
+ *  that stopped using source name as a dedup signal. */
 export interface FinalizeRow {
   id: string;
   title: string;
-  source_name: string;
   published_at: number;
 }
 

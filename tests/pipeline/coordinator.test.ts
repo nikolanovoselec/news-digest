@@ -343,13 +343,14 @@ describe('scrape-coordinator — REQ-PIPE-001', () => {
     expect(urls).not.toContain('https://feed0.example.com/stale');
   });
 
-  it('REQ-PIPE-001: re-seen canonical URLs get their ingested_at bumped so live-feed freshness drives dashboard order', async () => {
-    // AC 4 extension: when the coordinator finds a candidate whose
-    // canonical URL already exists in the article pool, it UPDATEs
-    // that row's ingested_at to now. Without this bump, a 4-hour-old
-    // article still actively emitted by its source feed would stay
-    // frozen at the top of the dashboard after force-refresh because
-    // nothing newer had been net-ingested for the user's tag set.
+  it('REQ-PIPE-001: re-seen canonical URLs do NOT have ingested_at re-stamped (preserves first ingestion order)', async () => {
+    // AC 4 (revised 2026-05-03): the dashboard now orders by FIRST
+    // ingestion descending. A 4-hour-old article still actively
+    // emitted by its source feed must NOT bubble back to the top of
+    // the dashboard above genuinely newer arrivals — that would defeat
+    // the whole point of the change. Pin the absence of any
+    // `UPDATE articles SET ingested_at` statement when the only
+    // candidate URL is already known.
     const reSeenUrl = 'https://feed0.example.com/already-known';
     const rss =
       `<rss><channel>` +
@@ -368,19 +369,12 @@ describe('scrape-coordinator — REQ-PIPE-001', () => {
     const { kv } = makeKv();
     const { queue } = makeChunksQueue();
     const env = makeEnv(db, kv, queue);
-    await runCoordinator(env, { scrape_run_id: 'run-refresh' });
-    const update = records.find(
+    await runCoordinator(env, { scrape_run_id: 'run-no-restamp' });
+    const restamp = records.find(
       (r) =>
-        r.sql.includes('UPDATE articles') &&
-        r.sql.includes('ingested_at') &&
-        // Array-element equality check (NOT a URL-substring check).
-        // Using `.some(p => p === url)` instead of `.includes(url)`
-        // so CodeQL's js/incomplete-url-substring-sanitization rule
-        // doesn't false-positive on a test-only membership assertion.
-        (r.params as unknown[]).some((p) => p === reSeenUrl),
+        r.sql.includes('UPDATE articles') && r.sql.includes('ingested_at'),
     );
-    expect(update).toBeDefined();
-    expect(typeof (update!.params as unknown[])[0]).toBe('number');
+    expect(restamp).toBeUndefined();
   });
 
   it('REQ-PIPE-001: when pool is empty, finishRun(ready) is called immediately', async () => {

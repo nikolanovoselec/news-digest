@@ -17,7 +17,6 @@ function row(overrides: Partial<FinalizeRow>): FinalizeRow {
   return {
     id: 'a-1',
     title: 'Title',
-    source_name: 'Source',
     published_at: 1_700_000_000,
     ...overrides,
   };

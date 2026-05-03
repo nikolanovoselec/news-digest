@@ -1,0 +1,38 @@
+-- Implements REQ-PIPE-008
+--
+-- Per-run idempotency gate for finalize-cost recording.
+--
+-- The cross-chunk dedup pass (`processOneFinalize`) calls Workers AI
+-- once per scrape tick and folds the resulting tokens + cost into the
+-- run's stats via `addChunkStats`. The previous gate was
+-- `if (losersDeleted > 0)` which had two problems:
+--
+-- 1. A finalize call that succeeded but found zero cross-chunk
+--    duplicates (a perfectly normal outcome for a small or already-
+--    well-deduped tick) recorded no cost — even though Workers AI was
+--    billed for the call. The daily tally on the stats widget under-
+--    reported real spend by every "no merges found" tick.
+--
+-- 2. It did not actually prevent the double-count it claimed to
+--    prevent. A queue-redelivered finalize message that re-runs the
+--    LLM and DOES find the same merges to perform would record cost
+--    twice (the first attempt succeeded enough to charge, then
+--    failed before the gate; the redelivery sees the merges already
+--    applied and exits losersDeleted == 0 — but a redelivery whose
+--    first attempt failed BEFORE merging would also see the rows
+--    intact and double-bill).
+--
+-- This migration adds a `finalize_recorded` integer column to
+-- scrape_runs. The finalize consumer flips it via a conditional
+-- UPDATE the same way `finalize_enqueued` (migration 0008) gates
+-- the enqueue side:
+--
+--   UPDATE scrape_runs SET finalize_recorded = 1
+--     WHERE id = ?1 AND finalize_recorded = 0
+--
+-- D1 returns meta.changes === 1 for exactly one consumer; redelivered
+-- messages see meta.changes === 0 and skip the cost fold. The cost is
+-- now recorded on the first successful LLM call regardless of merge
+-- outcome, and never recorded twice across redeliveries.
+
+ALTER TABLE scrape_runs ADD COLUMN finalize_recorded INTEGER NOT NULL DEFAULT 0;

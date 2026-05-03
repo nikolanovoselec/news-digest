@@ -22,7 +22,7 @@ interface SqlRecord {
 interface ArticleRow {
   id: string;
   title: string;
-  primary_source_name: string;
+  details: string;
   published_at: number;
   ingested_at: number;
 }
@@ -131,7 +131,7 @@ function row(overrides: Partial<ArticleRow> = {}): ArticleRow {
   return {
     id: 'a-default',
     title: 'Default title',
-    primary_source_name: 'Default Source',
+    details: 'Two-sentence default summary body. Not used by most assertions.',
     published_at: 1_700_000_000,
     ingested_at: 1_700_000_000,
     ...overrides,
@@ -324,9 +324,48 @@ describe('scrape-finalize-consumer — REQ-PIPE-008', () => {
     expect(statsUpdate!.params[5]).toBe(2);
   });
 
-  it('REQ-PIPE-008: addChunkStats is NOT called when zero losers were deleted (retry idempotency)', async () => {
-    // LLM returns no groups → zero losers → no stats call so a clean
-    // retry doesn't double-count tokens.
+  it('REQ-PIPE-008: finalize prompt includes each candidate body and never includes the source name', async () => {
+    // AC 1 (revised 2026-05-03): the dedup model receives full body
+    // text and source name is dropped as a non-signal. Pin both
+    // halves with concrete strings — distinctive details and an
+    // unmistakable source name — so a regression that swaps the
+    // prompt back to title+source can't pass.
+    const rows = [
+      row({
+        id: 'a',
+        title: 'Cloudflare Q1 outage post-mortem',
+        details: 'XYZZY-DETAILS-A: outage root cause was BGP route leak.',
+        published_at: 100,
+      }),
+      row({
+        id: 'b',
+        title: 'Cloudflare incident retro',
+        details: 'XYZZY-DETAILS-B: same outage covered from a different angle.',
+        published_at: 200,
+      }),
+    ];
+    const { db } = makeDb(rows);
+    const { env, aiCalls } = makeEnv(db, [aiOk([])]);
+    await processOneFinalize(env, MSG);
+    expect(aiCalls.length).toBe(1);
+    const userMessage = (aiCalls[0]!.params.messages as Array<{
+      role: string;
+      content: string;
+    }>)[1]!.content;
+    expect(userMessage).toContain('XYZZY-DETAILS-A');
+    expect(userMessage).toContain('XYZZY-DETAILS-B');
+    // Source name must NOT appear anywhere — the test rows above
+    // carry the default 'Default Source' name which would otherwise
+    // be a single substring to grep for.
+    expect(userMessage).not.toContain('Default Source');
+  });
+
+  it('REQ-PIPE-008: addChunkStats IS called even when zero merges were performed (cost is real and must surface on the daily tally)', async () => {
+    // LLM returns no groups → zero losers → but the LLM call still
+    // happened and cost real money, so the addChunkStats fold MUST
+    // run and articles_deduped MUST be 0. This pins the 2026-05-03
+    // REQ-PIPE-008 AC 7 fix that removed the buggy
+    // `if (losersDeleted > 0)` gate which hid zero-merge spend.
     const rows = [
       row({ id: 'a', published_at: 100 }),
       row({ id: 'b', published_at: 200 }),
@@ -335,6 +374,95 @@ describe('scrape-finalize-consumer — REQ-PIPE-008', () => {
     const { env } = makeEnv(db, [aiOk([])]);
     await processOneFinalize(env, MSG);
 
+    const statsUpdate = records.find(
+      (r) =>
+        r.via === 'run' &&
+        r.sql.includes('UPDATE scrape_runs') &&
+        r.sql.includes('articles_deduped'),
+    );
+    expect(statsUpdate).toBeDefined();
+    // articles_deduped param at index 5 must be 0 (no losers merged),
+    // tokens_in / tokens_out / cost at indices 1-3 must be > 0 (the
+    // LLM call happened, was billed, and the stats fold reflects
+    // that real spend).
+    expect(statsUpdate!.params[5]).toBe(0);
+    expect(statsUpdate!.params[1]).toBeGreaterThan(0);
+    expect(statsUpdate!.params[2]).toBeGreaterThan(0);
+    expect(statsUpdate!.params[3]).toBeGreaterThan(0);
+  });
+
+  it('REQ-PIPE-008: a redelivered finalize for a run whose finalize_recorded is already 1 skips the cost fold', async () => {
+    // Models the queue-redelivery edge case: the conditional UPDATE
+    // on scrape_runs.finalize_recorded returns meta.changes === 0 when
+    // the gate was already flipped by a prior successful pass. The
+    // consumer must NOT call addChunkStats in that case — otherwise
+    // every redelivered finalize would double-count its tokens
+    // against the same scrape tick. This pins migration 0010's
+    // contract.
+    const rows = [
+      row({ id: 'a', published_at: 100 }),
+      row({ id: 'b', published_at: 200 }),
+    ];
+    const records: SqlRecord[] = [];
+    const prepare = vi.fn().mockImplementation((sql: string) => ({
+      bind: (...params: unknown[]) => ({
+        __sql: sql,
+        __params: params,
+        run: vi.fn().mockImplementation(async () => {
+          records.push({ sql, params, via: 'run' });
+          // The conditional UPDATE on finalize_recorded must report
+          // meta.changes === 0 to simulate a redelivery seeing the
+          // gate already flipped by an earlier pass. Every other
+          // UPDATE keeps reporting changes: 1 so the chunk-stats
+          // path itself is observable when it runs.
+          if (sql.includes('finalize_recorded')) {
+            return { success: true, meta: { changes: 0 } };
+          }
+          return { success: true, meta: { changes: 1 } };
+        }),
+        all: vi.fn().mockImplementation(async () => {
+          records.push({ sql, params, via: 'all' });
+          if (sql.includes('FROM articles') && sql.includes('scrape_run_id')) {
+            const limit = (params[1] as number) ?? rows.length;
+            return { success: true, results: rows.slice(0, limit) };
+          }
+          return { success: true, results: [] };
+        }),
+        first: vi.fn().mockImplementation(async () => null),
+      }),
+      run: vi.fn().mockImplementation(async () => {
+        records.push({ sql, params: [], via: 'run' });
+        return { success: true, meta: { changes: 0 } };
+      }),
+    }));
+    const db = {
+      prepare,
+      batch: vi.fn().mockImplementation(async (stmts: unknown[]) => {
+        for (const stmt of stmts) {
+          const s = stmt as { __sql?: string; __params?: unknown[] };
+          records.push({
+            sql: s.__sql ?? '',
+            params: s.__params ?? [],
+            via: 'batch',
+          });
+        }
+        return stmts.map(() => ({ success: true, meta: { changes: 1 } }));
+      }),
+      exec: vi.fn().mockImplementation(async () => ({ count: 0, duration: 0 })),
+    } as unknown as D1Database;
+    const { env } = makeEnv(db, [aiOk([[0, 1]])]);
+    await processOneFinalize(env, MSG);
+
+    // The conditional UPDATE on finalize_recorded fired exactly once.
+    const gateUpdate = records.find(
+      (r) => r.via === 'run' && r.sql.includes('finalize_recorded'),
+    );
+    expect(gateUpdate).toBeDefined();
+    expect(gateUpdate!.params[0]).toBe('run-test');
+
+    // addChunkStats DID NOT fire — the gate UPDATE saw changes === 0
+    // so the cost fold is skipped, preventing the redelivery
+    // double-count.
     const statsUpdate = records.find(
       (r) =>
         r.via === 'run' &&
@@ -445,8 +573,14 @@ describe('scrape-finalize-consumer — REQ-PIPE-008', () => {
     expect(aiCalls.length).toBe(1);
     const firstMerges = records.filter((r) => r.via === 'batch').length;
     expect(firstMerges).toBe(6);
+    // Filter on `articles_deduped` so we count ONLY the addChunkStats
+    // UPDATE — the conditional finalize_recorded gate also writes
+    // `UPDATE scrape_runs` and would otherwise inflate the count.
     const firstStats = records.filter(
-      (r) => r.via === 'run' && r.sql.includes('UPDATE scrape_runs'),
+      (r) =>
+        r.via === 'run' &&
+        r.sql.includes('UPDATE scrape_runs') &&
+        r.sql.includes('articles_deduped'),
     ).length;
     expect(firstStats).toBe(1);
     expect(liveRows.map((r) => r.id)).toEqual(['w']);
@@ -458,7 +592,10 @@ describe('scrape-finalize-consumer — REQ-PIPE-008', () => {
     await processOneFinalize(env, MSG);
     expect(aiCalls.length).toBe(1);
     const secondStats = records.filter(
-      (r) => r.via === 'run' && r.sql.includes('UPDATE scrape_runs'),
+      (r) =>
+        r.via === 'run' &&
+        r.sql.includes('UPDATE scrape_runs') &&
+        r.sql.includes('articles_deduped'),
     ).length;
     expect(secondStats).toBe(1);
     // No additional batch SQL after the replay (the only new record is
