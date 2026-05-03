@@ -131,8 +131,22 @@ const primaryIso = toIsoDatetime(primaryPublishedAt);
 
 <style>
   /* Editorial modal: serif heading, small-caps metadata line inside
-   * list items, tokens reused from global.css. Centred, 32rem max. */
+   * list items, tokens reused from global.css.
+   *
+   * Positioning: explicit `position: fixed` + viewport-centred default,
+   * because relying on the native <dialog> UA centering proved fragile
+   * (a regression in the surrounding cascade left the dialog stuck at
+   * the document origin in the upper-left corner). On viewports >=
+   * 768px the JS layer overrides `top` / `left` inline to anchor the
+   * dialog under the trigger button (`alt-sources-modal.ts ::
+   * positionAnchored`). When that override is absent (mobile, or the
+   * trigger rect is unavailable) the centred fallback below applies. */
   .alt-sources-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    margin: 0;
     padding: 0;
     max-width: 32rem;
     width: calc(100% - 2rem);
@@ -140,6 +154,16 @@ const primaryIso = toIsoDatetime(primaryPublishedAt);
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: 0.5rem;
+  }
+
+  /* Desktop-anchor override: when JS sets data-anchored, the dialog
+   * uses inline top/left (set by positionAnchored) and drops the
+   * centring transform so it appears below the "Read at source"
+   * button, not in the middle of the screen. */
+  .alt-sources-modal[data-anchored='1'] {
+    top: 0;
+    left: 0;
+    transform: none;
   }
 
   .alt-sources-modal::backdrop {
