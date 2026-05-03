@@ -45,7 +45,7 @@
 import { log } from '~/lib/log';
 import { applyForeignKeysPragma } from '~/lib/db';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
-import { FINALIZE_DEDUP_SYSTEM, finalizeDedupUserPrompt, LLM_PARAMS } from '~/lib/prompts';
+import { FINALIZE_DEDUP_SYSTEM, finalizeDedupUserPrompt, FINALIZE_LLM_PARAMS } from '~/lib/prompts';
 import { parseLLMJson } from '~/lib/generate';
 import { runJsonWithFallback } from '~/lib/llm-json';
 import { pickWinner, buildMergeStatements, type FinalizeRow } from '~/lib/finalize-merge';
@@ -167,7 +167,7 @@ export async function processOneFinalize(
         { role: 'system', content: FINALIZE_DEDUP_SYSTEM },
         { role: 'user', content: finalizeDedupUserPrompt(candidates) },
       ],
-      ...LLM_PARAMS,
+      ...FINALIZE_LLM_PARAMS,
     },
     narrow: (raw) => parseLLMJson(raw),
     onPrimaryFailure: (info) => {

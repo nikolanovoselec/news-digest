@@ -59,6 +59,7 @@ export async function runCleanup(env: Env): Promise<{
   orphanTagsDeleted: number;
   stuckTagsPruned: number;
   refreshTokensPurged: number;
+  chunkCompletionsPurged: number;
 }> {
   const articlesDeleted = await runArticleRetention(env);
   // Stuck-tag prune runs BEFORE the orphan sweep so the same run
@@ -67,7 +68,46 @@ export async function runCleanup(env: Env): Promise<{
   const stuckTagsPruned = await runStuckTagPrune(env);
   const orphanTagsDeleted = await runOrphanTagSweep(env);
   const refreshTokensPurged = await runRefreshTokenPurge(env);
-  return { articlesDeleted, orphanTagsDeleted, stuckTagsPruned, refreshTokensPurged };
+  const chunkCompletionsPurged = await runChunkCompletionsPurge(env);
+  return {
+    articlesDeleted,
+    orphanTagsDeleted,
+    stuckTagsPruned,
+    refreshTokensPurged,
+    chunkCompletionsPurged,
+  };
+}
+
+/** CF-008 — delete `scrape_chunk_completions` rows for runs whose
+ *  `finished_at` is older than the 14-day retention window. Bounded
+ *  growth: at ~22k rows/year/deployment without this sweep, the table
+ *  becomes the leaking source migration 0007 explicitly called out. */
+async function runChunkCompletionsPurge(env: Env): Promise<number> {
+  const cutoff = Math.floor(Date.now() / 1000) - RETENTION_SECONDS;
+  try {
+    const result = await env.DB
+      .prepare(
+        `DELETE FROM scrape_chunk_completions
+          WHERE scrape_run_id IN (
+            SELECT id FROM scrape_runs WHERE finished_at < ?1
+          )`,
+      )
+      .bind(cutoff)
+      .run();
+    const purged = result.meta?.changes ?? 0;
+    log('info', 'digest.generation', {
+      status: 'cleanup_chunk_completions_purged',
+      purged,
+      cutoff_unix: cutoff,
+    });
+    return purged;
+  } catch (err) {
+    log('error', 'digest.generation', {
+      status: 'cleanup_chunk_completions_failed',
+      detail: String(err).slice(0, 500),
+    });
+    return 0;
+  }
 }
 
 /** REQ-AUTH-008 — drop expired refresh-token rows + revoked rows older

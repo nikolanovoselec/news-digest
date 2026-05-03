@@ -20,12 +20,11 @@ export interface Headline {
   url: string;
   snippet?: string;
   source_name: string;
-  /** User hashtags that produced this headline during fan-out. A single
-   * canonical URL can match multiple tags (e.g. a Cloudflare blog post
-   * that's relevant to both #cloudflare and #ai); dedupe unions the
-   * tags so downstream the LLM sees every matching topic for the item.
-   * Populated by fanOutForTags; extract() implementations don't need
-   * to set it. */
+  /** Tags relevant to this headline. Populated by the coordinator via
+   * the discovered-tag KV cache (`sources:{tag}` reverse-indexed) and
+   * by curated-source registry entries; the LLM sees every matching
+   * topic for the item. Extract() implementations don't need to set
+   * it — the coordinator stamps the field after fetch. */
   source_tags?: string[];
   /** Unix-seconds publication timestamp parsed from the feed entry
    * (RSS `<pubDate>`, Atom `<published>`/`<updated>`, JSON Feed

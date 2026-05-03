@@ -291,8 +291,6 @@ export async function processOneChunk(
   // Map merged clusters back to their LLM article payloads. A merged
   // cluster at anchor index N uses articles[N] for title/details/tags;
   // the other grouped indices are collapsed into article_sources rows.
-  // Track which input indices made it into which merged cluster.
-  const collapsedSet = buildCollapsedSet(perInputClusters.length, dedupGroups);
 
   interface Survivor {
     cluster: Cluster;
@@ -635,9 +633,6 @@ export async function processOneChunk(
     dropped_for_title_mismatch: droppedForTitleMismatch,
   });
 
-  // Suppress unused-variable warning for collapsedSet; kept for future
-  // per-alternative source attribution refinements.
-  void collapsedSet;
 }
 
 // titlesShareAnyToken / tokenizeTitle moved to ~/lib/title-overlap (CF-058).
@@ -737,21 +732,3 @@ function buildAnchorIndices(
   return anchors;
 }
 
-/** Track which input indices were collapsed into a merged cluster so
- * their candidate rows land in `article_sources` rather than creating
- * a new `articles` row. Returned for future per-alternative source
- * attribution; currently referenced via `void` to silence the linter. */
-function buildCollapsedSet(
-  inputCount: number,
-  dedupGroups: number[][],
-): Set<number> {
-  const collapsed = new Set<number>();
-  for (const group of dedupGroups) {
-    const valid = group
-      .filter((i) => Number.isInteger(i) && i >= 0 && i < inputCount)
-      .sort((a, b) => a - b);
-    if (valid.length < 2) continue;
-    for (const i of valid.slice(1)) collapsed.add(i);
-  }
-  return collapsed;
-}
