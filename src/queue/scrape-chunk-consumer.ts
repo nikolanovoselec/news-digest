@@ -54,6 +54,7 @@ import { generateUlid } from '~/lib/ulid';
 import { applyForeignKeysPragma } from '~/lib/db';
 import { log } from '~/lib/log';
 import { titlesShareAnyToken } from '~/lib/title-overlap';
+import { handleBatch } from '~/lib/queue-handler';
 
 /** Shape of every `scrape-chunks` queue message. Produced by the
  * coordinator in `src/queue/scrape-coordinator.ts`. `candidates` are the
@@ -101,41 +102,27 @@ interface LLMChunkPayload {
   dedup_groups?: unknown;
 }
 
-/** Handle one batch of `scrape-chunks` messages. Queues sets
- * `max_batch_size = 1` in wrangler.toml, so `batch.messages` is almost
- * always length 1 — we still loop to be safe. */
+/** Handle one batch of `scrape-chunks` messages. Delegates the per-
+ * message try/ack/retry/terminal-failure pattern to the shared
+ * `handleBatch` envelope. */
 export async function handleChunkBatch(
   batch: MessageBatch<ChunkJobMessage>,
   env: Env,
 ): Promise<void> {
-  for (const message of batch.messages) {
-    try {
-      await processOneChunk(env, message.body);
-      message.ack();
-    } catch (err) {
-      log('error', 'digest.generation', {
-        status: 'chunk_consumer_throw',
-        scrape_run_id: message.body.scrape_run_id,
-        chunk_index: message.body.chunk_index,
-        attempts: message.attempts,
-        detail: String(err).slice(0, 500),
-      });
+  await handleBatch(batch, env, {
+    process: processOneChunk,
+    throwLogStatus: 'chunk_consumer_throw',
+    extraLogFields: (body) => ({
+      scrape_run_id: body.scrape_run_id,
+      chunk_index: body.chunk_index,
+    }),
+    onTerminalFailure: async (env, body) => {
       // On final retry, mark the parent run as failed so operators
       // and the UI don't see an orphan stuck at status='running'.
-      if (message.attempts >= 3) {
-        try {
-          await finishRun(env.DB, message.body.scrape_run_id, 'failed');
-        } catch (finishErr) {
-          log('error', 'digest.generation', {
-            status: 'chunk_finish_failed_after_throw',
-            scrape_run_id: message.body.scrape_run_id,
-            detail: String(finishErr).slice(0, 500),
-          });
-        }
-      }
-      message.retry();
-    }
-  }
+      await finishRun(env.DB, body.scrape_run_id, 'failed');
+    },
+    terminalFailureLogStatus: 'chunk_finish_failed_after_throw',
+  });
 }
 
 /** Process a single chunk message end-to-end. Exported for direct unit
