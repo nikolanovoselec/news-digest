@@ -139,7 +139,7 @@ Security headers (CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permi
 | File | Purpose |
 |---|---|
 | `wrangler.toml` | Cloudflare Worker config: name, compatibility date, D1/KV/Queue/AI bindings, cron triggers |
-| `astro.config.mjs` | Astro adapter (`@astrojs/cloudflare`), integrations (`@vite-pwa/astro`, `@astrojs/tailwind`) |
+| `astro.config.mjs` | Astro adapter (`@astrojs/cloudflare`), integrations (`@vite-pwa/astro`, `@tailwindcss/vite`) |
 | `sdd/config.yml` | SDD workflow config: mode, `enforce_tdd`, test globs, allowlists |
 
 ---

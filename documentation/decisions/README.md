@@ -63,6 +63,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 ### AD3: Server-side article-body fetching with SSRF guard
 
+> **Supersedes:** AD3-original (2026-04-22) which prohibited server-side fetching. The reversal context is described below.
+
 **Status:** Accepted (supersedes AD3-original, 2026-04-22, which prohibited server-side fetching)
 
 **Decision:** When a feed snippet is too thin to ground a useful summary, the chunk consumer fetches the article body directly. Each fetch is SSRF-guarded, time-bounded (8 s), and size-capped (1.5 MB); a failed fetch falls back to the snippet, never blocking a summary.

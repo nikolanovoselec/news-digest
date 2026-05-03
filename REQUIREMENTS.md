@@ -1,6 +1,6 @@
 # news-digest — requirements (historical)
 
-> **Note**: This document seeded the SDD specification and is kept for reference. The canonical source of truth going forward is [`sdd/README.md`](sdd/README.md) (product intent, requirements, acceptance criteria) and the [`documentation/`](documentation/) folder (implementation docs). Changes to product behavior should land in `sdd/`, not here.
+> **This file is historical context only. Current spec lives at [`sdd/README.md`](sdd/README.md). Current architecture lives at [`documentation/architecture.md`](documentation/architecture.md). Requirements drift on this page is expected and not tracked — every product change should land in `sdd/` and `documentation/`, not here.**
 
 A personalized daily tech news digest. Sign in with GitHub, pick your interests as hashtags, and get an AI-curated digest once per day at a time you choose. No feeds to manage — hashtags drive what gets scraped.
 

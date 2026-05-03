@@ -198,13 +198,17 @@ Returns the set of hashtags the authenticated user has queued for background sou
 }
 ```
 
-Up to 29 articles from the article pool filtered by the user's active hashtags, ordered `ingested_at DESC, published_at DESC`. `next_scrape_at = last_scrape_run.started_at + 14400` (4-hour cron).
+Up to 29 articles from the article pool filtered by the user's active hashtags. Ordering is first by ingestion ascending — the canonical URL's earliest-seen `ingested_at` (so a story that was ingested twice surfaces only once at its first appearance), with `published_at DESC` as the tiebreaker for the same ingestion second. `next_scrape_at = last_scrape_run.started_at + 14400` (4-hour cron).
 
 **Implements:** [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) AC 5
 
 ### GET /api/digest/:id
 
 **Retired.** Removed when the `digests` table was dropped in migration 0003. Stale clients receive `410 Gone`. `POST /api/digest/:id` is also tombstoned.
+
+### POST /api/digest/refresh
+
+**Retired.** Replaced by the every-4-hours global scrape pipeline (REQ-PIPE-001) that auto-refreshes the article pool. Stale clients receive `410 Gone`. Operators that want to force a refresh use `POST /api/admin/force-refresh` (REQ-OPS-004) instead.
 
 ### GET /api/scrape-status
 
