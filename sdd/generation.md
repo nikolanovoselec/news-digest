@@ -184,6 +184,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
    b. A transient failure when the closing consumer hands the finalize off to its queue does not strand the run with zero finalize passes; the next redelivery of the closing message re-acquires the gate and re-attempts the handoff.
    c. When the lock-clearing step itself fails after a successful handoff, a structured operator-visible log entry records the stranded lock alongside the original send error.
    d. On any failure path above, the original send error is the one surfaced to the queue retry path so the underlying cause is not masked.
+10. Operator-visible log statuses distinguish the three redelivery outcomes so per-attempt counters are not misread as merges that just happened: a redelivery that the upfront idempotency check skips before the LLM call is logged separately from a redelivery whose post-LLM atomic gate loses a genuine race, and both are logged separately from a successful first-pass finalize that actually performed the merges. A "skipped" log entry never carries the per-row counters from the winning attempt.
 
 **Constraints:** CON-LLM-001
 **Priority:** P1
