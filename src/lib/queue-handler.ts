@@ -46,14 +46,17 @@ export interface BatchHandlerOptions<TBody> {
 }
 
 interface QueueMessage<TBody> {
-  body: TBody;
-  attempts: number;
+  readonly body: TBody;
+  readonly attempts: number;
   ack: () => void;
   retry: () => void;
 }
 
 interface QueueBatch<TBody> {
-  messages: QueueMessage<TBody>[];
+  // Cloudflare's MessageBatch types `messages` as a readonly array of
+  // readonly messages; keeping our shape variance-compatible avoids
+  // forcing every consumer to widen with `as unknown as ...`.
+  readonly messages: readonly QueueMessage<TBody>[];
 }
 
 /** Wrap a per-message processor in the standard queue retry envelope:
