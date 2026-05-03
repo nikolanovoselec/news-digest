@@ -372,7 +372,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
   it('REQ-PIPE-002: articles INSERT column list matches migration 0003 schema (regression guard for the details_json / tags_json / ingested_at / scrape_run_id columns)', async () => {
     const aiResponse = {
       response: JSON.stringify({
-        articles: [{ title: 'Article A — long enough headline copy', details: ['one', 'two'], tags: ['cloudflare'] }],
+        articles: [{ title: 'Article A — long enough headline copy', details: [LONG_BODY], tags: ['cloudflare'] }],
         dedup_groups: [],
       }),
       usage: { input_tokens: 10, output_tokens: 10 },
