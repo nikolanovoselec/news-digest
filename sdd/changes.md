@@ -6,9 +6,9 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 ## 2026-04-29
 
-- REQ-OPS-004 AC 6 added: structured-data (JSON-LD) blocks in the page head are now serialized through a defensive helper that escapes every `<`, `>`, and `&` byte to its `\uNNNN` JSON form, defeating every HTML state-transition vector that could escape the script block (`</script>`, `<!--`, `]]>`, `<script` re-entry). No user-visible change today — every JSON-LD value is still server-controlled; the defence is preventive insurance for a future refactor that interpolates a user-controlled value.
+- REQ-OPS-003 AC 1 corrected (production hotfix): the Content-Security-Policy `style-src` directive now permits `'unsafe-inline'` again. The earlier same-day tightening to `style-src 'self'` broke every page in production because Astro emits component-scoped styles as inline `<style>` blocks at runtime; the strict policy blocked the landing page, digest grid, tag railing, and component animations from rendering. `script-src` remains strictly `'self'`.
 
-- REQ-OPS-003 AC 1 tightened: the page Content-Security-Policy no longer permits inline styles — `style-src` is now strictly `'self'`, so a future XSS that lands a `<style>` block or a `style="..."` attribute is blocked by the browser instead of executed. No user-visible change to the app's look and feel; every styled surface already came from external stylesheets.
+- REQ-OPS-004 AC 6 added: structured-data (JSON-LD) blocks in the page head are now serialized through a defensive helper that escapes every `<`, `>`, and `&` byte to its `\uNNNN` JSON form, defeating every HTML state-transition vector that could escape the script block (`</script>`, `<!--`, `]]>`, `<script` re-entry). No user-visible change today — every JSON-LD value is still server-controlled; the defence is preventive insurance for a future refactor that interpolates a user-controlled value.
 
 - REQ-AUTH-001 AC 9a broadened: rate-limit coverage now extends beyond auth and mutation endpoints to any authenticated endpoint that legitimate clients poll sub-minute. The settings-page timezone-update path and the discovery-progress polling path each carry per-user limits sized to leave normal usage untouched while bounding pathological loops.
 
