@@ -16,21 +16,52 @@
 // across calls so outputs remain reproducible.
 
 /**
- * Shared inference parameters for every Workers AI call.
+ * Shared inference parameters across the LLM calls. Temperature and
+ * response_format are identical; only `max_tokens` varies per call
+ * site (CF-023): chunk processing produces large multi-article
+ * payloads, while finalize and discovery produce tiny JSON envelopes.
+ *
  * - `temperature: 0.6` — warm enough for the model to pick longer
  *   completions over minimum-entropy short replies, cool enough for
  *   stable JSON output. 0.7 was working but 0.6 trims variance on
  *   the shorter 150-200 word target.
- * - `max_tokens: 50000` — budget for ~50 articles per chunk at
- *   150-200 words each (~280 toks/article → ~14K total with JSON
- *   overhead). Input side is ~8K tokens for the prompt +
- *   candidate list.
  * - `response_format` — force JSON output on models that support it.
  */
-export const LLM_PARAMS = {
+const LLM_BASE_PARAMS = {
   temperature: 0.6,
-  max_tokens: 50_000,
   response_format: { type: 'json_object' },
+} as const;
+
+/**
+ * Chunk-prompt budget — ~50 articles × 150-200 words each
+ * (~280 toks/article → ~14K total with JSON overhead). Input side is
+ * ~8K tokens for the prompt + candidate list.
+ */
+export const CHUNK_LLM_PARAMS = {
+  ...LLM_BASE_PARAMS,
+  max_tokens: 50_000,
+} as const;
+
+/**
+ * Finalize-prompt budget — output is just a `dedup_groups: number[][]`
+ * payload, typically <100 tokens. The 50K cap inherited from the
+ * shared variant was wasteful in both reservation and observability.
+ * 4K leaves comfortable headroom for an over-eager LLM without
+ * misrepresenting the call's actual token footprint.
+ */
+export const FINALIZE_LLM_PARAMS = {
+  ...LLM_BASE_PARAMS,
+  max_tokens: 4_000,
+} as const;
+
+/**
+ * Discovery-prompt budget — output is `{ feeds: [{ url, name, kind }] }`,
+ * usually a handful of entries. Same 4K cap as finalize: small JSON
+ * envelope, no benefit from the chunk-sized 50K reservation.
+ */
+export const DISCOVERY_LLM_PARAMS = {
+  ...LLM_BASE_PARAMS,
+  max_tokens: 4_000,
 } as const;
 
 // Implements REQ-PIPE-002

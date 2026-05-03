@@ -7,7 +7,6 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import {
-  readCookie,
   buildSessionCookie,
   buildClearSessionCookie,
   loadSession,
@@ -16,6 +15,7 @@ import {
   requireSession,
   SESSION_COOKIE_NAME,
 } from '~/middleware/auth';
+import { readCookie } from '~/lib/crypto';
 import { signSession } from '~/lib/session-jwt';
 
 /**

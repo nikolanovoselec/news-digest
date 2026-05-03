@@ -31,7 +31,7 @@
 
 import {
   PROCESS_CHUNK_SYSTEM,
-  LLM_PARAMS,
+  CHUNK_LLM_PARAMS,
   processChunkUserPrompt,
 } from '~/lib/prompts';
 import {
@@ -46,6 +46,7 @@ import {
 } from '~/lib/dedupe';
 import { fetchArticleBodies } from '~/lib/article-fetch';
 import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
+import { normalizeHashtag } from '~/lib/hashtags';
 import { splitIntoParagraphs } from '~/lib/paragraph-split';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
 import { runJsonWithFallback, previewRawResponse } from '~/lib/llm-json';
@@ -219,7 +220,7 @@ export async function processOneChunk(
         { role: 'system', content: PROCESS_CHUNK_SYSTEM },
         { role: 'user', content: processChunkUserPrompt(promptCandidates, allowedTags) },
       ],
-      ...LLM_PARAMS,
+      ...CHUNK_LLM_PARAMS,
     },
     narrow: (raw) => narrowChunkPayload(parseLLMPayload(raw), raw),
     onPrimaryFailure: (info) => {
@@ -291,8 +292,6 @@ export async function processOneChunk(
   // Map merged clusters back to their LLM article payloads. A merged
   // cluster at anchor index N uses articles[N] for title/details/tags;
   // the other grouped indices are collapsed into article_sources rows.
-  // Track which input indices made it into which merged cluster.
-  const collapsedSet = buildCollapsedSet(perInputClusters.length, dedupGroups);
 
   interface Survivor {
     cluster: Cluster;
@@ -420,7 +419,10 @@ export async function processOneChunk(
     const seen = new Set<string>();
     for (const t of llmTags) {
       if (typeof t !== 'string') continue;
-      const normalised = t.trim().toLowerCase().replace(/^#/, '');
+      // CF-034 — same normalisation the user-settings write-path applies,
+      // so an LLM-emitted "Cloud Infrastructure" lands as the same canonical
+      // form a user typed "#cloud-infrastructure" into settings.
+      const normalised = normalizeHashtag(t.trim());
       if (normalised === '' || seen.has(normalised)) continue;
       if (!allowedTagSet.has(normalised)) continue;
       seen.add(normalised);
@@ -635,9 +637,6 @@ export async function processOneChunk(
     dropped_for_title_mismatch: droppedForTitleMismatch,
   });
 
-  // Suppress unused-variable warning for collapsedSet; kept for future
-  // per-alternative source attribution refinements.
-  void collapsedSet;
 }
 
 // titlesShareAnyToken / tokenizeTitle moved to ~/lib/title-overlap (CF-058).
@@ -737,21 +736,3 @@ function buildAnchorIndices(
   return anchors;
 }
 
-/** Track which input indices were collapsed into a merged cluster so
- * their candidate rows land in `article_sources` rather than creating
- * a new `articles` row. Returned for future per-alternative source
- * attribution; currently referenced via `void` to silence the linter. */
-function buildCollapsedSet(
-  inputCount: number,
-  dedupGroups: number[][],
-): Set<number> {
-  const collapsed = new Set<number>();
-  for (const group of dedupGroups) {
-    const valid = group
-      .filter((i) => Number.isInteger(i) && i >= 0 && i < inputCount)
-      .sort((a, b) => a - b);
-    if (valid.length < 2) continue;
-    for (const i of valid.slice(1)) collapsed.add(i);
-  }
-  return collapsed;
-}

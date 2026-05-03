@@ -176,7 +176,11 @@ const REDDIT: SourceAdapter = {
   },
 };
 
-/** The three generic sources fanned out for every hashtag. */
+/** The three generic sources fanned out for every hashtag.
+ * @internal — used by tests only since the global-feed rework
+ * (2026-04-23) replaced per-tag fan-out with curated registry +
+ * discovered-tag KV entries. Kept exported for the test fixture
+ * suite (tests/sources/published-at.test.ts, tests/lib/prefer-direct-source.test.ts). */
 export const GENERIC_SOURCES: SourceAdapter[] = [HACKER_NEWS, GOOGLE_NEWS, REDDIT];
 
 // ---------- Fetch one source for one tag ---------------------------------
@@ -294,14 +298,18 @@ export async function fetchFromSourceWithResult(
 // ---------- Fan-out ------------------------------------------------------
 
 /**
- * Fan out across every {tag × source} combination, respecting a global
- * concurrency cap of 10. `discoveredByTag` provides tag-specific feeds
- * discovered earlier (see `sources:{tag}` in KV) — those headlines are
- * preferred over generic sources when deduplication drops later
- * occurrences of a canonical URL, and they also come first in the
- * returned array so upstream 100-cap truncation keeps them.
+ * @internal — used by tests only since the global-feed rework
+ * (2026-04-23) replaced per-tag fan-out with the curated registry +
+ * discovered-tag KV cache that scrape-coordinator now drives via
+ * `fetchAllSources` / `fetchFromSourceWithResult`. Kept exported for
+ * the test fixture suite. Production no longer routes through this
+ * function.
  *
- * Returned headlines are deduplicated by canonical URL
+ * Original fan-out semantics: every {tag × source} combination,
+ * respecting a global concurrency cap of 10. `discoveredByTag`
+ * provides tag-specific feeds discovered earlier (see `sources:{tag}`
+ * in KV); discovered feeds come first so upstream 100-cap truncation
+ * keeps them. Returned headlines are deduplicated by canonical URL
  * and truncated to {@link MAX_COMBINED_HEADLINES}.
  */
 export async function fanOutForTags(
@@ -398,10 +406,16 @@ export async function fanOutForTags(
  */
 export function adaptersForDiscoveredFeeds(
   feeds: DiscoveredFeed[],
+  options: { trusted?: boolean } = {},
 ): SourceAdapter[] {
   const adapters: SourceAdapter[] = [];
+  const trusted = options.trusted === true;
   for (const feed of feeds) {
-    if (!isUrlSafe(feed.url)) {
+    // CF-025 — curated adapters call this with `trusted: true` because
+    // the curated registry is HTTPS-by-invariant; running ~70 SSRF
+    // gates per coordinator tick on URLs we hard-coded ourselves is
+    // pure waste. Discovered feeds (LLM-suggested) keep the gate.
+    if (!trusted && !isUrlSafe(feed.url)) {
       log('warn', 'source.fetch.failed', {
         source: feed.name,
         reason: 'ssrf',
@@ -410,7 +424,11 @@ export function adaptersForDiscoveredFeeds(
       continue;
     }
     const feedUrl = feed.url;
-    const sourceName = `feed:${feed.name}`;
+    // CF-021 — drop the `feed:` prefix for consistency with curated
+    // adapters. Dashboards aggregating by `source` field previously
+    // had a hidden split between curated (`Foo Bar`) and discovered
+    // (`feed:Foo Bar`); both now use the bare name.
+    const sourceName = feed.name;
     adapters.push({
       name: sourceName,
       kind: feed.kind,

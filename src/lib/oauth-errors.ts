@@ -45,10 +45,11 @@ export function mapOAuthError(raw: string | null | undefined): OAuthErrorCode {
 }
 
 /**
- * True iff {@link code} is a member of the public allowlist. Callers
- * should prefer {@link mapOAuthError} — this exists for parsing
- * untrusted query strings (e.g., landing-page rendering) where we only
- * want to render a message for a value we produced ourselves.
+ * @internal — exported for the OAuth-error-code unit test only. Production
+ * callers MUST use {@link mapOAuthError}, which delivers the structured
+ * `{ message, severity }` shape; this predicate's existence is purely so
+ * the test surface can verify membership without re-typing the allowlist
+ * literal.
  */
 export function isKnownOAuthErrorCode(code: unknown): code is OAuthErrorCode {
   return typeof code === 'string' && (OAUTH_ERROR_CODES as readonly string[]).includes(code);

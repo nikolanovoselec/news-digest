@@ -40,12 +40,7 @@ import { isValidTz } from '~/lib/tz';
 import { requireSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
-/**
- * Regex enforcing the hashtag character set and length. Matches the
- * spec AC literally — 2..32 chars, lowercase letters, digits, or hyphen.
- * Anchored so a partial match does not satisfy the check.
- */
-export const HASHTAG_REGEX = /^[a-z0-9-]{2,32}$/;
+import { HASHTAG_REGEX, normalizeHashtag } from '~/lib/hashtags';
 
 /** Maximum hashtags per user (REQ-SET-002 AC 6).
  *  Sized to give new accounts headroom above the default seed; the
@@ -73,23 +68,6 @@ interface UserSettingsRow {
   email_enabled: number;
 }
 
-
-/**
- * Normalize a single user-typed hashtag:
- *   1. strip a leading `#`
- *   2. lowercase
- *   3. drop every character not in [a-z0-9-]
- * The result is not checked against the 2..32 length bounds here —
- * callers validate that with {@link HASHTAG_REGEX} after collecting the
- * full list, so error messages can reference the original input.
- */
-export function normalizeHashtag(raw: string): string {
-  const lowered = raw.toLowerCase();
-  const unHashed = lowered.startsWith('#') ? lowered.slice(1) : lowered;
-  // Replace anything outside the allowed set with empty string. Using a
-  // regex avoids a per-char loop on the hot path.
-  return unHashed.replace(/[^a-z0-9-]/g, '');
-}
 
 /**
  * Validate and normalize the hashtags payload. Returns either a cleaned

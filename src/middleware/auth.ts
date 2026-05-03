@@ -21,7 +21,7 @@
 // the UA cannot legitimately drift across two parallel requests.
 
 import { signSession, verifySession } from '~/lib/session-jwt';
-import { readCookie as readCookieCanonical } from '~/lib/crypto';
+import { readCookie } from '~/lib/crypto';
 import {
   REFRESH_TOKEN_COOKIE_NAME,
   ROTATION_GRACE_SECONDS,
@@ -63,16 +63,6 @@ interface UserRow {
   email_enabled: number;
   session_version: number;
 }
-
-/**
- * Parse a single cookie value out of a Cookie header string. Returns
- * null when the cookie is absent. Case-sensitive per RFC 6265.
- *
- * Re-exported from `~/lib/crypto` (CF-005). New code should import the
- * canonical version directly; this re-export preserves callers that
- * already imported `readCookie` from this module.
- */
-export const readCookie = readCookieCanonical;
 
 /**
  * Build the `Set-Cookie` string for a signed session JWT.

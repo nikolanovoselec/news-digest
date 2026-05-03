@@ -79,6 +79,14 @@ const PER_SOURCE_ITEM_CAP = 10;
  * tag set without exploding LLM cost. */
 const MAX_CHUNKS_PER_TICK = 40;
 
+/** Freshness cutoff for keeping a candidate after the canonical-dedupe
+ * pass. Anything older than 48 hours is treated as stale and dropped
+ * unless the feed declined to provide a pubDate (those fall back to
+ * the coordinator's now-second so they always pass the cutoff and
+ * land with a usable timestamp). Promoted to module scope so the
+ * tunable lives next to the other coordinator constants. */
+const FRESHNESS_WINDOW_SEC = 48 * 60 * 60;
+
 /** CF-012 + CF-073: cap the chunk fan-out at `max` and emit a single
  *  `coordinator_chunks_capped` warning when truncation actually
  *  happens. Exported for direct testing — the production caller is
@@ -120,6 +128,22 @@ function isSafeWebUrl(url: string): boolean {
  * cron branch in `src/worker.ts`. */
 export interface CoordinatorMessage {
   scrape_run_id: string;
+}
+
+/** Shape of a single chunk candidate enqueued to the chunk consumer.
+ * Promoted to a named interface so the array typing reads naturally
+ * (`ChunkCandidate[][]` instead of `typeof chunkCandidates[]`). */
+export interface ChunkCandidate {
+  canonical_url: string;
+  source_url: string;
+  source_name: string;
+  title: string;
+  published_at: number;
+  body_snippet?: string;
+  alternatives: Array<{
+    source_url: string;
+    source_name: string;
+  }>;
 }
 
 /** Queue handler entry point. Delegates the per-message try/ack/retry/
@@ -234,7 +258,7 @@ export async function runCoordinator(
   // value in an href attribute is NOT enough — Astro's escaping
   // prevents HTML injection but a `javascript:` href is valid HTML).
   const candidates: Candidate[] = [];
-  const evictionNowSec = Math.floor(Date.now() / 1000);
+  const coordinatorNowSec = Math.floor(Date.now() / 1000);
   // Drop candidates whose source pubDate is more than 48 hours old.
   // Cron runs every 4 hours, so anything older than two days has
   // either been seen on a prior tick (and is already in the pool)
@@ -242,10 +266,9 @@ export async function runCoordinator(
   // summarising it wastes LLM budget and clutters the dashboard with
   // 'new ingest, old publish_at' cards that sort below genuinely
   // fresh stories and make the feed look stuck. candidates with an
-  // unparsable pubDate (we fall back to evictionNowSec) are kept — a
+  // unparsable pubDate (we fall back to coordinatorNowSec) are kept — a
   // missing date is not the same as a stale date.
-  const FRESHNESS_WINDOW_SEC = 48 * 60 * 60;
-  const staleCutoff = evictionNowSec - FRESHNESS_WINDOW_SEC;
+  const staleCutoff = coordinatorNowSec - FRESHNESS_WINDOW_SEC;
   let droppedStale = 0;
   let missingPubdateKept = 0;
   for (const row of rawHeadlines) {
@@ -254,7 +277,7 @@ export async function runCoordinator(
     if (!isSafeWebUrl(canonical)) continue;
     const hasParsedPub =
       typeof row.headline.published_at === 'number' && row.headline.published_at > 0;
-    const pub = hasParsedPub ? (row.headline.published_at as number) : evictionNowSec;
+    const pub = hasParsedPub ? (row.headline.published_at as number) : coordinatorNowSec;
     if (hasParsedPub && pub < staleCutoff) {
       droppedStale += 1;
       continue;
@@ -384,7 +407,7 @@ export async function runCoordinator(
   // budget and parallelises across chunks.
 
   // --- Step 7: Flatten clusters into chunk-ready candidates -----------
-  const chunkCandidates = survivors.map((c) => {
+  const chunkCandidates: ChunkCandidate[] = survivors.map((c) => {
     const existingSnippet = c.primary.body_snippet ?? '';
     return {
       canonical_url: c.primary.canonical_url,
@@ -401,7 +424,7 @@ export async function runCoordinator(
   });
 
   // --- Step 8: Chunk + prime KV counter + enqueue ---------------------
-  const chunks: typeof chunkCandidates[] = [];
+  const chunks: ChunkCandidate[][] = [];
   for (let i = 0; i < chunkCandidates.length; i += CHUNK_SIZE) {
     chunks.push(chunkCandidates.slice(i, i + CHUNK_SIZE));
   }
@@ -493,7 +516,7 @@ function curatedToAdapter(curated: CuratedSource): SourceAdapter {
     url: curated.feed_url,
     kind: curated.kind,
   };
-  const adapters = adaptersForDiscoveredFeeds([feed]);
+  const adapters = adaptersForDiscoveredFeeds([feed], { trusted: true });
   const first = adapters[0];
   if (first !== undefined) return first;
   // Shouldn't happen — if adaptersForDiscoveredFeeds rejects a curated
@@ -745,7 +768,19 @@ export async function applyEvictions(
       if (raw === null) {
         // Entry already cleared (likely via /api/admin/discovery/retry
         // between ticks); still clear the per-URL counter and move on.
-        for (const url of evictedUrls) await clearHealth(env, url);
+        for (const url of evictedUrls) {
+          try {
+            await clearHealth(env, url);
+          } catch (err) {
+            log('warn', 'discovery.completed', {
+              status: 'clear_health_failed',
+              scrape_run_id,
+              tag,
+              url,
+              detail: String(err).slice(0, 500),
+            });
+          }
+        }
         continue;
       }
       let parsed: unknown;
@@ -772,6 +807,14 @@ export async function applyEvictions(
       // on any mismatch — health counters are already cleared above,
       // and the next scrape tick will re-evaluate health against the
       // new feed set.
+      //
+      // CF-017 — the byte-equal `latestRaw === raw` compare is
+      // correct ONLY because `JSON.stringify` is the sole writer of
+      // sources:{tag} entries (in this file at line 813 and in
+      // discovery.ts when persisting fresh feeds). If a future caller
+      // writes the entry with a different serialization (whitespace
+      // variation, key ordering), this race-recheck will false-
+      // positive and clobber legitimate concurrent writes.
       const latestRaw = await env.KV.get(`sources:${tag}`, 'text');
       if (latestRaw !== raw) {
         log('info', 'discovery.completed', {
@@ -779,7 +822,19 @@ export async function applyEvictions(
           scrape_run_id,
           tag,
         });
-        for (const url of evictedUrls) await clearHealth(env, url);
+        for (const url of evictedUrls) {
+          try {
+            await clearHealth(env, url);
+          } catch (err) {
+            log('warn', 'discovery.completed', {
+              status: 'clear_health_failed',
+              scrape_run_id,
+              tag,
+              url,
+              detail: String(err).slice(0, 500),
+            });
+          }
+        }
         continue;
       }
 
@@ -791,7 +846,19 @@ export async function applyEvictions(
 
       // Clear the per-URL health counters so a re-discovered URL at
       // the same address starts from a clean slate.
-      for (const url of evictedUrls) await clearHealth(env, url);
+      for (const url of evictedUrls) {
+        try {
+          await clearHealth(env, url);
+        } catch (err) {
+          log('warn', 'discovery.completed', {
+            status: 'clear_health_failed',
+            scrape_run_id,
+            tag,
+            url,
+            detail: String(err).slice(0, 500),
+          });
+        }
+      }
 
       log('warn', 'discovery.completed', {
         status: 'feed_evicted',
