@@ -164,7 +164,8 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 | `src/components/StatsWidget.astro` | Four-tile stats widget | [REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget) |
 | `src/scripts/page-effects.ts` | Layout-level client behaviour (tz sync, scroll restore, brand-link, view transitions, single-named-group card promotion). Mirrored to `public/scripts/page-effects.js` (CSP requires external bundles) | [REQ-DES-002](../sdd/design.md#req-des-002-light-and-dark-mode-with-no-flash), [REQ-DES-003](../sdd/design.md#req-des-003-deliberate-motion-system), [REQ-PWA-003](../sdd/pwa.md#req-pwa-003-mobile-first-responsive-layout), [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view), [REQ-SET-007](../sdd/settings.md#req-set-007-timezone-change-detection) |
 | `src/scripts/article-detail.ts` | Star toggle and history-aware back arrow on the article page | [REQ-STAR-001](../sdd/reading.md#req-star-001-star-and-unstar-articles), [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view) |
-| `src/scripts/card-interactions.ts` | Star toggle and tag-disclosure popover bindings on dashboard cards | [REQ-STAR-001](../sdd/reading.md#req-star-001-star-and-unstar-articles), [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) |
+| `src/scripts/alt-sources-modal.ts` | Alt-source picker open/close and responsive desktop anchor (positions below trigger on ≥768 px viewports, centred on mobile). Mirrored to `public/scripts/alt-sources-modal.js` (CSP requires external bundles) | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view) |
+| `src/scripts/card-interactions.ts` | Star toggle and tag-disclosure popover bindings on dashboard cards. Mirrored to `public/scripts/card-interactions.js` and loaded layout-wide via `Base.astro` (CSP blocks the inline Astro bundle that would otherwise be emitted per-page) | [REQ-STAR-001](../sdd/reading.md#req-star-001-star-and-unstar-articles), [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) |
 | `src/scripts/install-prompt.ts` | PWA install-prompt bindings | [REQ-PWA-001](../sdd/pwa.md#req-pwa-001-installable-pwa-manifest) |
 | `src/scripts/theme-toggle.ts` | Theme toggle and meta-tag updates | [REQ-DES-002](../sdd/design.md#req-des-002-light-and-dark-mode-with-no-flash) |
 | `src/styles/global.css` | Design tokens, type scale, focus ring, motion system | [REQ-DES-001](../sdd/design.md#req-des-001-swiss-minimal-visual-language), [REQ-DES-002](../sdd/design.md#req-des-002-light-and-dark-mode-with-no-flash), [REQ-DES-003](../sdd/design.md#req-des-003-deliberate-motion-system) |
@@ -174,9 +175,9 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 | Path | Role | Implements |
 |---|---|---|
 | `src/worker.ts` | Cron + queue dispatch entry — three cron branches, four queue message types | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email) |
-| `src/queue/scrape-coordinator.ts` | Fan-out, freshness filter, eviction pass, chunk dispatch | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking) |
+| `src/queue/scrape-coordinator.ts` | Fan-out, freshness filter, eviction pass, multi-source aggregation on re-discovery, chunk dispatch | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking) |
 | `src/queue/scrape-chunk-consumer.ts` | Per-chunk LLM call, dedup, atomic completion gate, finalize handoff | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
-| `src/queue/scrape-finalize-consumer.ts` | Finalize pass (cross-chunk semantic dedup) over the scrape run's surviving articles | [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
+| `src/queue/scrape-finalize-consumer.ts` | Finalize pass (cross-chunk semantic dedup) — LLM prompt uses title + full article body; source name dropped as non-signal. Cost recorded atomically via `finalize_recorded` gate (migration 0010) regardless of merge count | [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
 | `src/queue/cleanup.ts` | Daily 3-pass cleanup: retention, stuck-tag prune, orphan-tag KV sweep | [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-DISC-006](../sdd/discovery.md#req-disc-006-stuck-tag-retention), [REQ-PIPE-007](../sdd/generation.md#req-pipe-007-orphan-tag-source-cleanup) |
 | `migrations/0001_initial.sql` | Initial schema | (foundational) |
 | `migrations/0002_article_tags.sql` | Article tag columns | (schema) |
@@ -186,6 +187,8 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 | `migrations/0006_e2e_user.sql` | `__e2e__` sentinel user | (schema) |
 | `migrations/0007_scrape_chunk_completions.sql` | Atomic chunk-completion tracking table | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) |
 | `migrations/0008_scrape_runs_finalize_lock.sql` | Atomic finalize-enqueue gate column | [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
+| `migrations/0009_refresh_tokens.sql` | `refresh_tokens` table for the access/refresh-token split (30-day opaque token with rotation chain and reuse-detection) | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection) |
+| `migrations/0010_scrape_runs_finalize_recorded.sql` | `finalize_recorded` gate column — atomic idempotency for cost recording; records finalize LLM cost on first pass regardless of merge count, skips on queue redelivery | [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
 
 ## 5. Request Lifecycles
 
@@ -203,6 +206,8 @@ Coordinator
   ├─ Evict URLs at 30 consecutive failures; re-queue discovery if feed list empties
   ├─ Drop candidates older than 48 h; keep undated candidates
   ├─ Canonical-URL dedup across all candidates
+  ├─ Re-seen URLs: INSERT OR IGNORE new sources into article_sources (multi-source aggregation);
+  │  ingested_at and primary attribution are NOT re-stamped (first-ingestion preserved)
   └─ Chunk → enqueue one SCRAPE_CHUNK per chunk
        │
        ▼
@@ -218,8 +223,10 @@ Chunk consumer (per chunk)
        ▼
 Finalize consumer
   ├─ Skip when ≤ 1 article (finalize_noop)
-  ├─ Single Workers AI call over title+source+pub-ts list
-  └─ Per dedup group (≥ 2): merge losers into earliest-pub-ts winner (D1 batch)
+  ├─ Single Workers AI call over title+full-body per article (source name omitted — non-signal)
+  ├─ Per dedup group (≥ 2): merge losers into earliest-pub-ts winner (D1 batch)
+  └─ Atomic cost gate: UPDATE scrape_runs SET finalize_recorded=1 … WHERE finalize_recorded=0
+     (migration 0010) — records LLM cost on first pass regardless of merge count; skips on redelivery
 ```
 
 ### 5.2 Operator force-refresh
@@ -286,13 +293,21 @@ PWA icons render from `public/icons/app-icon.svg` via `scripts/generate-pwa-icon
 
 The site CSP is `script-src 'self'`, which blocks every inline `<script>...</script>` block. Astro inlines page-level `<script>` blocks that contain no `import` statement, so a script written without an import is silently dropped at runtime.
 
-**Pattern:** put the script body in `src/scripts/<module>.ts` and import it from the page:
+**Pattern A — per-page Astro bundle:** put the script body in `src/scripts/<module>.ts` and import it from the page:
 
 ```astro
 <script>import '~/scripts/<module>';</script>
 ```
 
-Astro then emits the code as an external `<script type="module" src="/_astro/...js">` bundle that CSP allows.
+Astro emits the code as an external `<script type="module" src="/_astro/...js">` bundle that CSP allows.
+
+**Pattern B — static mirror (layout-wide scripts):** for scripts that must run on every page regardless of which Astro page initiated the navigation (e.g., `card-interactions.ts` running on `/digest`, `/history`, and `/starred`), the compiled output is committed to `public/scripts/<module>.js` and loaded from `Base.astro` directly:
+
+```astro
+<script is:inline type="module" src="/scripts/<module>.js"></script>
+```
+
+The `is:inline` attribute prevents Astro from re-bundling the file. The `public/scripts/` copy must be kept in sync with `src/scripts/<module>.ts` manually (or via build tooling). Scripts currently using this pattern: `page-effects.js`, `card-interactions.js`, `alt-sources-modal.js`.
 
 ---
 

@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+<!-- doc-allow-large: index + full ADR bodies colocated by design; individual ADRs cannot be split without breaking cross-references -->
+
 Decisions made during implementation, with rationale.
 
 **Audience:** Developers
