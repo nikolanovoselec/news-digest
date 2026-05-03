@@ -622,7 +622,7 @@ describe('cleanup cron — CF-008 chunk_completions purge', () => {
   async function insertChunkCompletion(runId: string, seq: number): Promise<void> {
     await env.DB
       .prepare(
-        `INSERT INTO scrape_chunk_completions (scrape_run_id, chunk_seq, completed_at)
+        `INSERT INTO scrape_chunk_completions (scrape_run_id, chunk_index, completed_at)
          VALUES (?1, ?2, ?3)`,
       )
       .bind(runId, seq, nowSec())
