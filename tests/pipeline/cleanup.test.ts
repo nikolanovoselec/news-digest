@@ -606,10 +606,16 @@ describe('cleanup cron — CF-008 chunk_completions purge', () => {
   ): Promise<void> {
     await env.DB
       .prepare(
-        `INSERT INTO scrape_runs (id, started_at, finished_at, status)
-         VALUES (?1, ?2, ?3, ?4)`,
+        `INSERT INTO scrape_runs (id, started_at, finished_at, status, model_id)
+         VALUES (?1, ?2, ?3, ?4, ?5)`,
       )
-      .bind(id, startedAt, finishedAt, finishedAt === null ? 'running' : 'success')
+      .bind(
+        id,
+        startedAt,
+        finishedAt,
+        finishedAt === null ? 'running' : 'success',
+        '@cf/openai/gpt-oss-20b',
+      )
       .run();
   }
 
