@@ -30,6 +30,11 @@ import {
 } from '~/lib/sources';
 import { canonicalize } from '~/lib/canonical-url';
 import { clusterByCanonical, type Candidate } from '~/lib/dedupe';
+import {
+  loadExistingCanonicalToIdMap,
+  loadExistingCanonicalUrls,
+} from '~/lib/articles-repo';
+import { handleBatch } from '~/lib/queue-handler';
 import { finishRun } from '~/lib/scrape-run';
 import { clearHealth, recordFetchResult } from '~/lib/feed-health';
 import { SYSTEM_USER_ID } from '~/lib/system-user';
@@ -61,11 +66,6 @@ const COORDINATOR_FETCH_CONCURRENCY = 10;
  * cadence, giving slow chunks ample retry headroom without leaking
  * counter keys forever. */
 const COUNTER_TTL_SECONDS = 3 * 3600;
-
-/** Per-query IN-clause batch size for existing-canonical lookups. D1's
- * SQL string length cap (about 100KB compiled) comfortably handles 100
- * parameters per query; 100 keeps the query under the cap with margin. */
-const EXISTING_URL_BATCH = 100;
 
 /** Per-source item cap. Curated feeds frequently expose 50+ items;
  * downstream chunking and the global 10× chunk ceiling make a per-feed
@@ -122,40 +122,23 @@ export interface CoordinatorMessage {
   scrape_run_id: string;
 }
 
-/** Queue handler entry point. Loops over each message in the batch;
- * Queues sets `max_batch_size = 1`, so in practice the loop runs once. */
+/** Queue handler entry point. Delegates the per-message try/ack/retry/
+ * terminal-failure pattern to the shared `handleBatch` envelope. */
 export async function handleCoordinatorBatch(
   batch: MessageBatch<CoordinatorMessage>,
   env: Env,
 ): Promise<void> {
-  for (const message of batch.messages) {
-    try {
-      await runCoordinator(env, message.body);
-      message.ack();
-    } catch (err) {
-      log('error', 'digest.generation', {
-        status: 'coordinator_throw',
-        scrape_run_id: message.body.scrape_run_id,
-        attempts: message.attempts,
-        detail: String(err).slice(0, 500),
-      });
+  await handleBatch(batch, env, {
+    process: runCoordinator,
+    throwLogStatus: 'coordinator_throw',
+    extraLogFields: (body) => ({ scrape_run_id: body.scrape_run_id }),
+    onTerminalFailure: async (env, body) => {
       // On final retry, mark the scrape_run as failed so /history and
       // /stats don't render orphans stuck at status='running' forever.
-      // Queues uses 1-based attempts and max_retries=3 in wrangler.toml.
-      if (message.attempts >= 3) {
-        try {
-          await finishRun(env.DB, message.body.scrape_run_id, 'failed');
-        } catch (finishErr) {
-          log('error', 'digest.generation', {
-            status: 'coordinator_finish_failed_after_throw',
-            scrape_run_id: message.body.scrape_run_id,
-            detail: String(finishErr).slice(0, 500),
-          });
-        }
-      }
-      message.retry();
-    }
-  }
+      await finishRun(env.DB, body.scrape_run_id, 'failed');
+    },
+    terminalFailureLogStatus: 'coordinator_finish_failed_after_throw',
+  });
 }
 
 /** Run one coordinator pass end-to-end. Exported for direct testing
@@ -856,75 +839,3 @@ export async function applyEvictions(
   }
 }
 
-/** Sibling of {@link loadExistingCanonicalUrls} that also returns the
- * matched articles' ids — used by the multi-source aggregation path
- * (REQ-PIPE-001 AC 4) to look up the existing article_id for each
- * re-discovered cluster so its new sources can be appended to
- * `article_sources`. */
-async function loadExistingCanonicalToIdMap(
-  db: D1Database,
-  urls: string[],
-): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  for (let i = 0; i < urls.length; i += EXISTING_URL_BATCH) {
-    const slice = urls.slice(i, i + EXISTING_URL_BATCH);
-    if (slice.length === 0) continue;
-    const placeholders = slice.map((_, idx) => `?${idx + 1}`).join(', ');
-    try {
-      const result = await db
-        .prepare(
-          `SELECT id, canonical_url FROM articles WHERE canonical_url IN (${placeholders})`,
-        )
-        .bind(...slice)
-        .all<{ id: string; canonical_url: string }>();
-      for (const row of result.results ?? []) {
-        if (
-          typeof row.canonical_url === 'string' &&
-          typeof row.id === 'string'
-        ) {
-          map.set(row.canonical_url, row.id);
-        }
-      }
-    } catch (err) {
-      log('warn', 'digest.generation', {
-        status: 'coordinator_existing_id_lookup_failed',
-        detail: String(err).slice(0, 500),
-      });
-    }
-  }
-  return map;
-}
-
-/** Look up which of the supplied canonical URLs already exist in
- * `articles.canonical_url`. Batched in chunks of EXISTING_URL_BATCH to
- * keep individual queries under D1's string-length cap. */
-async function loadExistingCanonicalUrls(
-  db: D1Database,
-  urls: string[],
-): Promise<Set<string>> {
-  const existing = new Set<string>();
-  for (let i = 0; i < urls.length; i += EXISTING_URL_BATCH) {
-    const slice = urls.slice(i, i + EXISTING_URL_BATCH);
-    if (slice.length === 0) continue;
-    const placeholders = slice.map((_, idx) => `?${idx + 1}`).join(', ');
-    try {
-      const result = await db
-        .prepare(
-          `SELECT canonical_url FROM articles WHERE canonical_url IN (${placeholders})`,
-        )
-        .bind(...slice)
-        .all<{ canonical_url: string }>();
-      for (const row of result.results ?? []) {
-        if (typeof row.canonical_url === 'string') {
-          existing.add(row.canonical_url);
-        }
-      }
-    } catch (err) {
-      log('warn', 'digest.generation', {
-        status: 'coordinator_existing_lookup_failed',
-        detail: String(err).slice(0, 200),
-      });
-    }
-  }
-  return existing;
-}

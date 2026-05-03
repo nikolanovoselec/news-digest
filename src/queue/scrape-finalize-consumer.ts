@@ -50,6 +50,7 @@ import { parseLLMJson } from '~/lib/generate';
 import { runJsonWithFallback } from '~/lib/llm-json';
 import { pickWinner, buildMergeStatements, type FinalizeRow } from '~/lib/finalize-merge';
 import { normaliseRawDedupGroups } from '~/lib/dedupe';
+import { handleBatch } from '~/lib/queue-handler';
 
 /** Hard cap on candidates per finalize call. Comfortable headroom over
  *  current production loads (~150-200 articles per tick) and well
@@ -73,32 +74,22 @@ interface ArticleRow {
   ingested_at: number;
 }
 
-/** Handle one batch of `scrape-finalize` messages. Queues sets
- *  `max_batch_size = 1` in wrangler.toml so this loop is almost always
- *  length 1; we still iterate to be safe and never let a sibling
- *  message's failure poison the others. */
+/** Handle one batch of `scrape-finalize` messages. Delegates to the
+ *  shared `handleBatch` envelope. Per REQ-PIPE-008 AC 8 we deliberately
+ *  do NOT pass `onTerminalFailure` — the run is already `ready` from
+ *  the chunk consumer's last-chunk write, the articles are visible,
+ *  and only the cross-chunk merge is missing. Operators investigate
+ *  via the `finalize_failed` log event. */
 export async function handleFinalizeBatch(
   batch: MessageBatch<FinalizeJobMessage>,
   env: Env,
 ): Promise<void> {
-  for (const message of batch.messages) {
-    try {
-      await processOneFinalize(env, message.body);
-      message.ack();
-    } catch (err) {
-      log('error', 'digest.generation', {
-        status: 'finalize_failed',
-        scrape_run_id: message.body.scrape_run_id,
-        attempts: message.attempts,
-        detail: String(err).slice(0, 500),
-      });
-      // Per REQ-PIPE-008 AC 8: never flip the run from `ready` to
-      // `failed` here. The articles are real and visible; only the
-      // cross-chunk merge is missing. Operators investigate via the
-      // `finalize_failed` log event.
-      message.retry();
-    }
-  }
+  await handleBatch(batch, env, {
+    process: processOneFinalize,
+    throwLogStatus: 'finalize_failed',
+    extraLogFields: (body) => ({ scrape_run_id: body.scrape_run_id }),
+    // No onTerminalFailure — REQ-PIPE-008 AC 8.
+  });
 }
 
 /** Process a single finalize message end-to-end. Exported for direct

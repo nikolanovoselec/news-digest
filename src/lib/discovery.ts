@@ -25,8 +25,8 @@
 
 import { XMLParser } from 'fast-xml-parser';
 import { DISCOVERY_SYSTEM, discoveryUserPrompt, LLM_PARAMS } from '~/lib/prompts';
-import { DEFAULT_MODEL_ID } from '~/lib/models';
-import { extractResponsePayload, type AIRunResponse } from '~/lib/generate';
+import { FALLBACK_MODEL_ID } from '~/lib/models';
+import { runJsonWithFallback } from '~/lib/llm-json';
 import { isUrlSafe } from '~/lib/ssrf';
 import { log } from '~/lib/log';
 import type { DiscoveredFeed, SourcesCacheValue } from '~/lib/types';
@@ -54,6 +54,25 @@ interface LLMDiscoveryPayload {
   }>;
 }
 
+/** Narrow the raw response envelope to LLMDiscoveryPayload. Returns
+ *  null when the response was empty or unparseable so runJsonWithFallback
+ *  retries with the fallback model. The returned object's `feeds` key
+ *  may still be missing/malformed — that's a "we got JSON but the
+ *  model ignored the schema" case and is logged at the call site. */
+function narrowDiscoveryPayload(raw: unknown): LLMDiscoveryPayload | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === 'string') {
+    if (raw === '') return null;
+    try {
+      return JSON.parse(raw) as LLMDiscoveryPayload;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof raw === 'object') return raw as LLMDiscoveryPayload;
+  return null;
+}
+
 /**
  * Run one-shot discovery for {@link tag}. Returns every feed that passed
  * the full validation pipeline. The LLM call is wrapped in try/catch so a
@@ -61,88 +80,55 @@ interface LLMDiscoveryPayload {
  * to do with that; this function has no side effects).
  */
 export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed[]> {
-  // 1. Ask the LLM for candidate URLs. The Workers AI `.run` signature
-  // varies per model, so we build the params as a plain object and cast
-  // through `unknown` to hand it off — the return shape is also model-
-  // dependent, so we narrow it at the usage site.
+  // 1. Ask the LLM via runJsonWithFallback so discovery shares the
+  // primary→fallback retry, cost accounting, and waste tracking that
+  // chunk + finalize already use. The narrow function inspects the
+  // raw envelope and returns the validated payload (or null to signal
+  // "this attempt failed, try the fallback").
   const userPrompt = discoveryUserPrompt(tag);
-  let payloadRaw: unknown;
-  try {
-    // The `@cf/openai/*` family (incl. the current default
-    // gpt-oss-120b) only accepts the chat-completions `messages`
-    // shape — calling with `{prompt: "..."}` returns an
-    // effectively-empty envelope, which shows up as
-    // `empty_llm_response` on every tick. Mirror the chunk consumer
-    // (src/queue/scrape-chunk-consumer.ts) and send role-tagged
-    // messages so the same call shape works across every model in
-    // MODELS.
-    const runParams = {
+  const llmRun = await runJsonWithFallback<LLMDiscoveryPayload>({
+    ai: env.AI as unknown as {
+      run: (model: string, params: Record<string, unknown>) => Promise<unknown>;
+    },
+    params: {
       messages: [
         { role: 'system', content: DISCOVERY_SYSTEM },
         { role: 'user', content: userPrompt },
       ],
       ...LLM_PARAMS,
-    };
-    // Preserve `this` binding — `env.AI.run` may be a method that
-    // depends on the receiver. The cast through `unknown` sidesteps
-    // Workers AI's per-model overload resolution.
-    const ai = env.AI as unknown as {
-      run: (model: string, params: Record<string, unknown>) => Promise<AIRunResponse>;
-    };
-    const result = await ai.run(DEFAULT_MODEL_ID, runParams);
-    // Workers AI returns two shapes: flat `{response: "..."}` for
-    // Llama/Mistral/Kimi, and the OpenAI envelope
-    // `{choices:[{message:{content:"..."}}]}` for every @cf/openai/*
-    // model. extractResponsePayload tolerates both.
-    payloadRaw = extractResponsePayload(result);
-    if (
-      payloadRaw === undefined ||
-      payloadRaw === null ||
-      (typeof payloadRaw === 'string' && payloadRaw === '')
-    ) {
+    },
+    narrow: (raw) => narrowDiscoveryPayload(raw),
+    onPrimaryFailure: (info) => {
       log('warn', 'discovery.completed', {
         tag,
-        status: 'empty_llm_response',
+        status: 'discovery_invalid_json_fallback_try',
+        primary_model: info.modelUsed,
+        fallback_model: FALLBACK_MODEL_ID,
+        primary_tokens_in: info.tokensIn,
+        primary_tokens_out: info.tokensOut,
+        primary_cost_usd: info.costUsd,
       });
-      return [];
-    }
-  } catch (err) {
+    },
+  }).catch((err: unknown) => {
     log('error', 'discovery.completed', {
       tag,
       status: 'llm_failed',
       detail: String(err).slice(0, 500),
     });
-    return [];
-  }
+    return null;
+  });
 
-  // 2. Normalise to a parsed object. extractResponsePayload can return
-  // either the raw JSON string (text-generation models) or an already-
-  // parsed object (models that honour `response_format: json_object`
-  // by inlining the shape). Accept both paths.
-  let payload: LLMDiscoveryPayload;
-  if (typeof payloadRaw === 'string') {
-    try {
-      payload = JSON.parse(payloadRaw) as LLMDiscoveryPayload;
-    } catch {
-      log('warn', 'discovery.completed', {
-        tag,
-        status: 'llm_invalid_json',
-      });
-      return [];
-    }
-  } else if (typeof payloadRaw === 'object') {
-    // The earlier `payloadRaw === null` early-return already excludes
-    // null, so the redundant runtime null check that was here was
-    // flagged by CodeQL #166 (js/comparison-between-incompatible-types)
-    // as comparing a non-nullable type to null.
-    payload = payloadRaw as LLMDiscoveryPayload;
-  } else {
+  if (llmRun === null) return [];
+  if (!llmRun.ok) {
     log('warn', 'discovery.completed', {
       tag,
       status: 'llm_invalid_json',
+      primary_model: llmRun.primary.modelUsed,
+      fallback_model: llmRun.fallback.modelUsed,
     });
     return [];
   }
+  const payload = llmRun.parsed;
 
   // Log the missing-feeds case explicitly so operators see a breadcrumb
   // when the model returns a shaped object with no `feeds` key (e.g.
