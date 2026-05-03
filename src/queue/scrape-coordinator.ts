@@ -538,7 +538,9 @@ function curatedToAdapter(curated: CuratedSource): SourceAdapter {
  *    and the returned set is incomplete; the caller logs a degraded-
  *    state warning so operators don't read an empty `sources` array
  *    as "no discovered tags exist". */
-async function loadDiscoveredSources(
+/** @internal Exported for unit tests only — covers the orphan-purge,
+ *  per-key try/catch, and partial-flag contract introduced by CF-015. */
+export async function loadDiscoveredSources(
   kv: KVNamespace,
 ): Promise<{ sources: SourceForFetch[]; partial: boolean }> {
   const out: SourceForFetch[] = [];

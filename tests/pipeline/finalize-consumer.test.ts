@@ -391,16 +391,16 @@ describe('scrape-finalize-consumer — REQ-PIPE-008', () => {
     expect(statsUpdate!.params[3]).toBeGreaterThan(0);
   });
 
-  it('REQ-PIPE-008: gate UPDATE carries WHERE finalize_recorded = 0 so a redelivery is a no-op', async () => {
-    // Models the queue-redelivery edge case via the SQL contract:
-    // the consumer issues a single atomic UPDATE that adds the
-    // stats AND flips finalize_recorded only when the column is
-    // currently 0. On a redelivered message the WHERE clause
-    // does not match, meta.changes === 0, and the row is unchanged
-    // — so the LLM cost is never double-counted against the same
-    // scrape tick. Pin both halves of the contract: (a) the SQL
-    // includes the gating WHERE clause; (b) the bind shape carries
-    // the runId and the per-call counters.
+  it('REQ-PIPE-008: gate UPDATE carries WHERE finalize_recorded = 0 (race-failsafe path)', async () => {
+    // Race-failsafe path: the upfront SELECT short-circuit covers the
+    // common-case redelivery (the sibling test above pins that), but
+    // two truly concurrent redeliveries can both observe
+    // finalize_recorded=0 in the SELECT and proceed to the LLM call.
+    // For that race window the atomic UPDATE WHERE finalize_recorded=0
+    // is what guarantees only one of them actually folds the cost into
+    // the row. This test models that race by holding finalize_recorded
+    // at 0 throughout (mock's default `first()` return), proving both
+    // passes issue the gating UPDATE and only one wins the flag flip.
     const rows = [
       row({ id: 'a', published_at: 100 }),
       row({ id: 'b', published_at: 200 }),

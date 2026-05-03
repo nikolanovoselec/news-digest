@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
   clusterByCanonical,
   mergeClustersByLlmHints,
+  normaliseRawDedupGroups,
   type Candidate,
   type Cluster,
 } from '~/lib/dedupe';
@@ -218,6 +219,52 @@ describe('dedupe — REQ-PIPE-003', () => {
       expect(merged[0]?.alternatives.map((c) => c.source_name)).toEqual(['b']);
       expect(merged[1]?.primary.source_name).toBe('c');
       expect(merged[1]?.alternatives.map((c) => c.source_name)).toEqual(['d']);
+    });
+  });
+
+  describe('normaliseRawDedupGroups — REQ-PIPE-003', () => {
+    it('REQ-PIPE-003: dedupes repeated indices within a group via Set', () => {
+      // CF-005 — an LLM emitting [0, 1, 1] would otherwise inflate
+      // `losers_deleted` and queue redundant merge SQL for the
+      // duplicated index. The chunk consumer's previous private copy
+      // was missing this set-uniquing.
+      const out = normaliseRawDedupGroups([[0, 1, 1]]);
+      expect(out).toHaveLength(1);
+      const indices = (out[0] ?? []).slice().sort((a, b) => a - b);
+      expect(indices).toEqual([0, 1]);
+    });
+
+    it('REQ-PIPE-003: drops groups whose unique-index size falls below 2', () => {
+      // [0, 0] reduces to {0} which can't be a merge group; must be
+      // dropped silently.
+      const out = normaliseRawDedupGroups([[0, 0], [3, 3, 3]]);
+      expect(out).toEqual([]);
+    });
+
+    it('REQ-PIPE-003: drops non-array groups, non-integer entries, negative indices', () => {
+      const out = normaliseRawDedupGroups([
+        'not-an-array',
+        [1, 2, 3],
+        [4, '5', 6],
+        [-1, 7, 8],
+        [9, null, 10],
+      ]);
+      // First group survives intact (1,2,3).
+      // Second group filters '5' (string) → {4, 6} → kept (size 2).
+      // Third group filters -1 → {7, 8} → kept.
+      // Fourth group filters null → {9, 10} → kept.
+      expect(out).toHaveLength(4);
+      expect(out[0]).toEqual([1, 2, 3]);
+      expect((out[1] ?? []).slice().sort()).toEqual([4, 6]);
+      expect((out[2] ?? []).slice().sort()).toEqual([7, 8]);
+      expect((out[3] ?? []).slice().sort()).toEqual([10, 9]);
+    });
+
+    it('REQ-PIPE-003: returns [] for non-array input (LLM returned wrong shape)', () => {
+      expect(normaliseRawDedupGroups(undefined)).toEqual([]);
+      expect(normaliseRawDedupGroups(null)).toEqual([]);
+      expect(normaliseRawDedupGroups({ feeds: [] })).toEqual([]);
+      expect(normaliseRawDedupGroups('a string')).toEqual([]);
     });
   });
 });
