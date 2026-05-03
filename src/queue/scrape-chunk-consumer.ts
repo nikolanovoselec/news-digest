@@ -432,11 +432,11 @@ export async function processOneChunk(
     }
 
     // CF-030 — REQ-PIPE-002 AC2: the spec asks for 45-80-character
-    // headlines. Don't reject 44 or 81 (the LLM is fuzzy by design),
-    // but a hard sanity floor + ceiling catches the genuinely broken
-    // cases (single-word labels, paragraph-as-title) that would never
-    // render right in the UI.
-    if (title.length < 20 || title.length > 200) {
+    // headlines but the LLM is fuzzy by design. A wide sanity range
+    // catches the genuinely broken cases (single-character labels,
+    // paragraph-as-title) without rejecting the merely short or long
+    // edges the LLM produces in the wild.
+    if (title.length < 5 || title.length > 500) {
       log('warn', 'digest.generation', {
         status: 'chunk_article_dropped_title_length',
         scrape_run_id: body.scrape_run_id,

@@ -940,11 +940,13 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     expect(articleInserts[0]!.params).not.toContain('Title B — also long enough headline');
   });
 
-  it('REQ-PIPE-002 AC2 / CF-030: drops articles whose title length is outside the [20, 200] sanity range', async () => {
-    // 45-80 chars is the spec target; 20 / 200 are sanity bounds for
-    // genuinely broken cases (single-word labels, paragraph-as-title)
-    // that no UI rendering would survive. Inside-the-bounds article
-    // proves the guard isn't accidentally aggressive.
+  it('REQ-PIPE-002 AC2 / CF-030: drops articles whose title length is outside the [5, 500] sanity range', async () => {
+    // 45-80 chars is the spec target; 5 / 500 are wide sanity bounds
+    // for genuinely broken cases (single-character labels,
+    // paragraph-as-title) that no UI rendering would survive.
+    // Inside-the-bounds article proves the guard isn't accidentally
+    // aggressive against the merely-short titles the LLM produces in
+    // the wild.
     const longBody =
       'This is a long-enough article body that easily clears the 120-word floor. '
         .repeat(14) +
@@ -953,7 +955,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
       response: JSON.stringify({
         articles: [
           { index: 0, title: 'Headline OK — within sanity bounds', details: longBody, tags: ['cloudflare'] },
-          { index: 1, title: 'Tiny', details: longBody, tags: ['generative-ai'] },
+          { index: 1, title: 'Hi.', details: longBody, tags: ['generative-ai'] },
         ],
         dedup_groups: [],
       }),
@@ -970,6 +972,6 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     );
     expect(articleInserts.length).toBe(1);
     expect(articleInserts[0]!.params).toContain('Headline OK — within sanity bounds');
-    expect(articleInserts[0]!.params).not.toContain('Tiny');
+    expect(articleInserts[0]!.params).not.toContain('Hi.');
   });
 });
