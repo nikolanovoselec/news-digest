@@ -34,6 +34,7 @@ import {
   FEED_FETCH_TIMEOUT_MS,
   FEED_MAX_BODY_BYTES,
 } from '~/lib/fetch-policy';
+import { hasCuratedSource } from '~/lib/curated-sources';
 
 const FETCH_TIMEOUT_MS = FEED_FETCH_TIMEOUT_MS;
 const MAX_BODY_BYTES = FEED_MAX_BODY_BYTES;
@@ -408,6 +409,23 @@ export async function processPendingDiscoveries(
   const tags = (rows.results ?? []).map((r) => r.tag).filter((t) => typeof t === 'string' && t !== '');
 
   for (const tag of tags) {
+    // REQ-DISC-001 AC 1 — discovery is short-circuited for tags covered
+    // by the curated registry. Catch any pending rows that bypassed the
+    // user-facing gate (admin paths, pre-fix rows): clear the row and
+    // skip the LLM call entirely. Counted as `processed` because the
+    // tag has a working source — it's just not coming from discovery.
+    if (hasCuratedSource(tag)) {
+      await env.DB.prepare('DELETE FROM pending_discoveries WHERE tag = ?1')
+        .bind(tag)
+        .run();
+      processed.push(tag);
+      log('info', 'discovery.completed', {
+        tag,
+        status: 'skipped_curated',
+      });
+      continue;
+    }
+
     try {
       const feeds = await discoverTag(tag, env);
 

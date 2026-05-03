@@ -281,6 +281,17 @@ const initialTheme = cookieTheme ?? 'light';
         at runtime by CSP, taking the morph animation and the per-path
         scroll restore with it. */}
 
+    {/* Star toggle + tag-disclosure popover for every <DigestCard>.
+        Same CSP-bypass story as page-effects above: keeping the
+        bundled <script>import '~/scripts/card-interactions'</script>
+        inside DigestCard.astro left the star button silently dead on
+        /digest because Astro's hoisted bundle landed inline and got
+        CSP-blocked. The .ts source under src/scripts/card-interactions.ts
+        mirrors this file. Loaded layout-wide because /digest, /history,
+        and /starred all render cards. The script no-ops when there
+        are no [data-star-toggle] elements on the page. */}
+    <script is:inline type="module" src="/scripts/card-interactions.js"></script>
+
     <style>
       /* Sticky header. Solid background (no frosted-glass / backdrop-
          blur) so scrolled article body text cannot bleed through during

@@ -178,12 +178,17 @@ Return JSON:
 // Implements REQ-PIPE-008
 //
 // Cross-chunk dedup pass. Runs once per scrape tick AFTER all chunks
-// have written their articles to D1. Sees only title + source + pub-ts
-// (no body snippet — far cheaper than the chunk pass). Output is the
-// same `dedup_groups: number[][]` JSON contract as PROCESS_CHUNK_SYSTEM
-// so the parsing path can be reused; we deliberately drop the
-// `articles` field so the model doesn't waste tokens echoing back
-// summaries the consumer already has.
+// have written their articles to D1. Sees title + the full summary
+// body for each candidate (the same `details` text the dashboard
+// shows) so the model can identify same-story pairs by their actual
+// content rather than by surface lexical overlap on the headline
+// alone. Source name is deliberately excluded as a signal — two
+// outlets covering the same event were occasionally blocked from
+// clustering by a name mismatch (REQ-PIPE-008 AC 1, revised 2026-05-03).
+// Output is the same `dedup_groups: number[][]` JSON contract as
+// PROCESS_CHUNK_SYSTEM so the parsing path can be reused; we
+// deliberately drop the `articles` field so the model doesn't waste
+// tokens echoing back summaries the consumer already has.
 
 export const FINALIZE_DEDUP_SYSTEM = `You receive scraped news articles and identify pairs/groups that describe the same news event.
 
@@ -197,6 +202,7 @@ Shape:
 - "dedup_groups": arrays of input-candidate indices that describe the same news event (e.g. TechCrunch and The Verge both covering the same vendor announcement; vendor blog and HN mirror; press release and reporter's write-up). Only include groups of size >= 2.
 - Use [] when no groups describe the same event.
 - Be CONSERVATIVE: only group items when you are confident they describe the SAME news event, not just the same broad topic. Two unrelated stories about Kubernetes are NOT a group; two articles about the same Kubernetes 1.34 release announcement ARE.
+- Ground every grouping decision in the SUMMARY BODY, not the headline alone. Two articles with similar-sounding titles but disjoint factual content are NOT the same event. Two articles whose bodies describe the same announcement / incident / release / paper ARE the same event even if their titles read very differently.
 
 # WHAT COUNTS AS THE SAME EVENT
 
@@ -213,26 +219,27 @@ Shape:
 
 /**
  * Build the user message for the cross-chunk dedup call. Each candidate
- * is rendered as `[N] title — source (pub-ts)` so the model has a clean
- * mapping between input index and output dedup-group index. No body
- * snippets — the title + source pair is enough signal at finalize time
- * and keeps the prompt small enough that 250 candidates fit comfortably
- * inside the LLM's input budget.
+ * is rendered as a `[N] title` line followed by the candidate's full
+ * `details` body, so the model has both the headline and the grounded
+ * factual content to compare. Source name is intentionally NOT
+ * included — REQ-PIPE-008 AC 1 makes this an explicit non-signal so
+ * two outlets covering the same event are never blocked from
+ * clustering by a publisher-name mismatch.
  */
 export function finalizeDedupUserPrompt(
   candidates: ReadonlyArray<{
     index: number;
     title: string;
-    source_name: string;
+    details: string;
     published_at: number;
   }>,
 ): string {
-  const lines = candidates.map(
-    (c) => `[${c.index}] ${c.title} — ${c.source_name} (${c.published_at})`,
+  const blocks = candidates.map(
+    (c) => `[${c.index}] ${c.title} (published_at: ${c.published_at})\n${c.details}`,
   );
-  return `Candidates (${candidates.length} entries, 0-indexed):
+  return `Candidates (${candidates.length} entries, 0-indexed). Each candidate is a headline followed by its full summary body. Decide whether two candidates describe the same news event by comparing their bodies, not their headlines:
 \`\`\`
-${lines.join('\n')}
+${blocks.join('\n\n---\n\n')}
 \`\`\`
 
 Return JSON: {"dedup_groups":[[idx, idx, ...], ...]} or {"dedup_groups":[]} when none describe the same event.`;

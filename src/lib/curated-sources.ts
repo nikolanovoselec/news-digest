@@ -1,4 +1,4 @@
-// Implements REQ-PIPE-004
+// Implements REQ-PIPE-004, REQ-DISC-001
 //
 // Curated feed registry for the global-feed scrape pipeline. Each entry is
 // a trusted HTTPS feed (RSS, Atom, or JSON Feed) that the scrape coordinator
@@ -505,3 +505,24 @@ export const CURATED_SOURCES: readonly CuratedSource[] = [
     tags: ['graymatter', 'zero-trust', 'ai-agents'],
   },
 ] as const;
+
+/**
+ * Set of every tag that appears in {@link CURATED_SOURCES}. Built once at
+ * module load — the registry is `readonly` and never mutated at runtime.
+ */
+const CURATED_TAGS: ReadonlySet<string> = new Set(
+  CURATED_SOURCES.flatMap((source) => source.tags),
+);
+
+/**
+ * True iff the curated registry has at least one entry tagged
+ * {@link tag}. Discovery is short-circuited for these tags — REQ-DISC-001
+ * AC 1: an LLM-discovery pass would have to include the mandatory Google
+ * News query-RSS fallback per AC 3, which routinely returns
+ * namespace-collision matches (e.g., `graymatter` matches Graymatter
+ * Robotics, a different company). Curated tags always have a working
+ * feed via the registry, so the LLM call is wasteful AND polluting.
+ */
+export function hasCuratedSource(tag: string): boolean {
+  return CURATED_TAGS.has(tag);
+}

@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+<!-- doc-allow-large: index + full ADR bodies colocated by design; individual ADRs cannot be split without breaking cross-references -->
+
 Decisions made during implementation, with rationale.
 
 **Audience:** Developers
@@ -19,6 +21,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD5 | KV for caches, D1 for consistent state | Storage | 2026-04-22 |
 | AD6 | Polling instead of SSE or WebSockets for scrape-run progress | UI | 2026-04-22 |
 | AD7 | D1 for chunk completion tracking, replacing KV read-modify-write (CF-002) | Storage | 2026-04-27 |
+| AD8 | Cookie attributes are the security contract — kept inline in REQ-AUTH-002/003 | Security | 2026-05-03 |
+| AD9 | Storage-shape names (D1 columns, KV keys) are the persistence contract — kept inline in REQ-DISC/AUTH/SET | Storage | 2026-05-03 |
 
 ---
 
@@ -58,15 +62,17 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 ### AD3: Server-side article-body fetching with SSRF guard
 
+**Status:** Accepted (supersedes AD3-original, 2026-04-22, which prohibited server-side fetching)
+
 **Decision:** When a feed snippet is too thin to ground a useful summary, the chunk consumer fetches the article body directly. Each fetch is SSRF-guarded, time-bounded (8 s), and size-capped (1.5 MB); a failed fetch falls back to the snippet, never blocking a summary.
 
-**Rationale:** Workers running from Cloudflare datacenter IPs are an SSRF risk when resolving arbitrary URLs from external feeds, and many publishers rate-limit Cloudflare ranges — but feed snippets are often too short to summarise faithfully, and an SSRF denylist plus strict timeout and size caps reduce the original risk to negligible. Richer prompt context measurably improved summary quality on short-snippet feeds. Fan-out is bounded-concurrency at 20 workers.
+**Context:** The original AD3 (2026-04-22) banned all server-side fetching to avoid SSRF risk and Cloudflare-range rate-limiting by publishers. Reversed on 2026-04-27 during the global-feed rework when it became clear that feed snippets are often too short to summarise faithfully, and that an SSRF denylist plus strict timeout and size caps reduce the original risk to negligible. Richer prompt context measurably improved summary quality on short-snippet feeds.
 
 **Alternatives considered:**
 - Keep the no-fetch posture and accept thin summaries on short-snippet feeds.
 - Use a residential-IP scraping service.
 
-**History:** AD3 originally (2026-04-22) prohibited any server-side fetching. Reversed on 2026-04-27 during the global-feed rework.
+**Rationale:** An SSRF denylist, 8 s timeout, and 1.5 MB size cap bring the risk to negligible. Fan-out is bounded-concurrency at 20 workers. The quality improvement on short-snippet feeds justifies the added complexity.
 
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) AC 8
 
@@ -138,6 +144,63 @@ KV's eventual consistency made both races effectively undetectable via testing i
 **Rationale:** AD5's own principle applies directly: completion counting needs transactional semantics. `INSERT OR IGNORE` into a table keyed by `(scrape_run_id, chunk_index)` is idempotent under redelivery and gives an exact count via `SELECT COUNT(*)` — no race. The finalize-enqueue gate is collapsed into a single atomic `UPDATE … WHERE finalize_enqueued = 0`; D1 returns `meta.changes` for exactly one consumer. The KV counter (`scrape_run:{id}:chunks_remaining`) is retained as a derived mirror for the `/api/scrape-status` progress display but is no longer authoritative. Implements [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) and [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) AC 1 and AC 9.
 
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)
+
+---
+
+### AD8: Cookie attributes are the security contract
+
+**Status:** Accepted (2026-05-03)
+
+**Overrides:** `mechanism-leakage:REQ-AUTH-002`, `mechanism-leakage:REQ-AUTH-003`
+
+**Decision:** Keep the session-cookie attributes (`__Host-` prefix, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`) inline in REQ-AUTH-002 AC 1 and REQ-AUTH-003 AC 3. Treat them as part of the security contract, not implementation detail.
+
+**Context:** `spec-discipline.md`'s mechanism-leakage rule lists cookie attributes as belonging in `documentation/security.md` and recommends rewriting AC bullets to user-observable consequences (e.g., "JavaScript on the page cannot read the session token"). A `/sdd clean` run on 2026-05-03 escalated this as a MEDIUM JUDGMENT against the two auth REQs.
+
+**Alternatives considered:**
+- Rewrite AC 1 to user-observable language and create `documentation/security.md` with the attribute table behind a backlink.
+- Add to `sdd/.user-overrides.md` as an opaque skip entry (today's mechanism, but hides the decision from anyone reading the codebase — see [codeflare#266](https://github.com/nikolanovoselec/codeflare/issues/266)).
+
+**Rationale:**
+- The attributes are load-bearing identifiers — security reviewers grep `__Host-`, `HttpOnly`, `SameSite=Lax` directly to verify the contract holds in source, tests, and the rendered Set-Cookie header.
+- Translating to user-observable language loses information: the AC then doesn't constrain whether `__Host-` vs `__Secure-` prefix is used, doesn't pin the SameSite policy, doesn't require Path scoping. A future contributor reading the AC would not know the contract still constrains these.
+- Same precedent as the existing `email_enabled` exception in `sdd/.user-overrides.md` (column name IS the contract because it's the shared identifier across UI, DB, dispatcher).
+
+**Consequences:**
+- spec-reviewer skips these two REQs via the `Overrides:` header above.
+- Future cookie-policy changes update both the affected REQ AC and this ADR (and the corresponding security tests) in lockstep.
+- `documentation/security.md` is not required by this decision — when it is eventually written, it backlinks here, not the other way around.
+
+**Related requirements:** [REQ-AUTH-002](../../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-003](../../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
+
+---
+
+### AD9: Storage-shape names are the persistence contract
+
+**Status:** Accepted (2026-05-03)
+
+**Overrides:** `mechanism-leakage:REQ-DISC-001`, `mechanism-leakage:REQ-DISC-002`, `mechanism-leakage:REQ-AUTH-002`, `mechanism-leakage:REQ-SET-001`, `mechanism-leakage:REQ-SET-005`
+
+**Decision:** Keep D1 column names (`session_version`, `hashtags_json`, `digest_hour`, `email_enabled`, `pending_discoveries`) and KV key shapes (`sources:{tag}`) inline in their respective REQs' acceptance criteria. Treat them as part of the persistence contract surface, not implementation detail.
+
+**Context:** `spec-discipline.md`'s mechanism-leakage rule lists "database column names" and "internal storage shapes" as belonging in `documentation/architecture.md` schema sections. A `/sdd clean` run on 2026-05-03 escalated this as a MEDIUM JUDGMENT against five REQs across the Discovery, Authentication, and Settings domains.
+
+**Alternatives considered:**
+- Rewrite each AC to describe the user-visible behavior abstractly, with a doc-backlink to a schema section in `documentation/architecture.md`.
+- Add per-REQ entries to `sdd/.user-overrides.md` as opaque skip rules (today's mechanism, see [codeflare#266](https://github.com/nikolanovoselec/codeflare/issues/266)).
+- Split each REQ into a behavior REQ (in `sdd/`) and a schema doc (in `documentation/`) — substantial AC reshape risk.
+
+**Rationale:**
+- These names are the load-bearing identifiers shared across SQL, the Workers runtime, and any future migration tooling. They are how `INSERT OR IGNORE INTO pending_discoveries`, `SELECT session_version FROM users`, and `KV.get('sources:' + tag)` are written in source — and how reviewers grep to verify a behavior holds.
+- Same precedent as the existing `email_enabled` exception in `sdd/.user-overrides.md` (the column name IS the contract noun shared across UI, DB, dispatcher).
+- The mechanism-leakage rule was authored against frontend-heavy projects where storage names are usually behind ORM abstractions. This project is intentionally close-to-the-metal (raw SQL strings, no ORM, KV keys hand-built) — the storage names are *the* user-facing surface for anyone who runs migrations or writes new queries.
+
+**Consequences:**
+- spec-reviewer skips these five REQs via the `Overrides:` header above.
+- Schema changes update both the affected REQ AC and this ADR (and the corresponding migration files) in lockstep.
+- `documentation/architecture.md` references the storage shapes in §4.2 (libraries) and §4.5 (Worker, queue, and migrations); `documentation/configuration.md` documents the KV bindings and naming conventions. This ADR explains why those high-level references coexist with the inline persistence names in the REQs.
+
+**Related requirements:** [REQ-DISC-001](../../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery), [REQ-DISC-002](../../sdd/discovery.md#req-disc-002-discovery-progress-visibility), [REQ-AUTH-002](../../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-SET-001](../../sdd/settings.md#req-set-001-unified-first-run-and-edit-flow), [REQ-SET-005](../../sdd/settings.md#req-set-005-email-notification-preference)
 
 ---
 

@@ -35,6 +35,7 @@ import {
   RATE_LIMIT_RULES,
 } from '~/lib/rate-limit';
 import { parseHashtags as parseHashtagsJson } from '~/lib/hashtags';
+import { hasCuratedSource } from '~/lib/curated-sources';
 import { isValidTz } from '~/lib/tz';
 import { requireSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
@@ -129,8 +130,11 @@ function isIntegerInRange(value: unknown, min: number, max: number): value is nu
 
 /**
  * Identify tags in {@link incoming} that do not yet have a
- * `sources:<tag>` KV entry. Runs the lookups in parallel since KV
- * `get` is a network call per tag.
+ * `sources:<tag>` KV entry AND are not already covered by the curated
+ * source registry. Tags covered by a curated source short-circuit
+ * discovery — see {@link hasCuratedSource} for the rationale (REQ-DISC-001
+ * AC 1). Runs the lookups in parallel since KV `get` is a network call
+ * per tag.
  */
 export async function findTagsNeedingDiscovery(
   kv: KVNamespace,
@@ -138,6 +142,7 @@ export async function findTagsNeedingDiscovery(
 ): Promise<string[]> {
   const results = await Promise.all(
     incoming.map(async (tag) => {
+      if (hasCuratedSource(tag)) return null;
       const hit = await kv.get(`sources:${tag}`);
       return hit === null ? tag : null;
     }),

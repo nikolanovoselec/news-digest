@@ -231,6 +231,43 @@ describe('POST /api/auth/set-tz', () => {
     const res = await POST(makeContext(req, env(db)) as never);
     expect(res.status).toBe(200);
   });
+
+  it('REQ-SET-007 AC 7: returns 429 with Retry-After when SET_TZ bucket is exhausted', async () => {
+    const token = await signSession(
+      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
+      JWT_SECRET,
+    );
+    const { db } = makeDb(baseRow());
+
+    // Pre-seed the KV bucket at the cap (30) so the very next request is
+    // over-limit. The key mirrors the formula in src/lib/rate-limit.ts:
+    //   `ratelimit:${routeClass}:${identity}:${windowIndex}`
+    // where windowIndex = Math.floor(nowSec / windowSec).
+    // Computing it here at test-run time guarantees it matches what the
+    // handler will derive when it runs milliseconds later.
+    const windowIndex = Math.floor(Date.now() / 1000 / 60); // windowSec=60
+    const exhaustedKey = `ratelimit:set_tz:user:12345:${windowIndex}`;
+    const store = new Map<string, string>([[exhaustedKey, '30']]); // at the limit
+    const kvStub = {
+      get: vi.fn(async (key: string) => store.get(key) ?? null),
+      put: vi.fn(async (key: string, value: string) => { store.set(key, value); }),
+      delete: vi.fn(async (key: string) => { store.delete(key); }),
+      list: vi.fn(async () => ({ keys: [], list_complete: true })),
+    } as unknown as KVNamespace;
+
+    const e: Partial<Env> = { APP_URL, OAUTH_JWT_SECRET: JWT_SECRET, DB: db, KV: kvStub };
+    const req = await setTzRequest({
+      origin: APP_ORIGIN,
+      cookie: `${SESSION_COOKIE_NAME}=${token}`,
+      body: { tz: 'UTC' },
+    });
+    const res = await POST(makeContext(req, e) as never);
+
+    expect(res.status).toBe(429);
+    const retryAfter = res.headers.get('Retry-After');
+    expect(retryAfter).not.toBeNull();
+    expect(Number.parseInt(retryAfter!, 10)).toBeGreaterThan(0);
+  });
 });
 
 describe('REQ-SET-007 silent tz auto-correct — Base.astro', () => {

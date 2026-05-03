@@ -172,4 +172,37 @@ describe('GET /api/discovery/status', () => {
     const pendingBinding = bindings[1]!;
     expect(pendingBinding[0]).toBe('12345');
   });
+
+  it('REQ-SET-006 AC 5: returns 429 with Retry-After when DISCOVERY_STATUS bucket is exhausted', async () => {
+    const token = await signSession(
+      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
+      JWT_SECRET,
+    );
+    const { db } = makeDb(baseRow(), []);
+
+    // Pre-seed the KV bucket at the cap (120) so the very next request is
+    // over-limit. The key mirrors the formula in src/lib/rate-limit.ts:
+    //   `ratelimit:${routeClass}:${identity}:${windowIndex}`
+    // where windowIndex = Math.floor(nowSec / windowSec).
+    // Computing it here at test-run time guarantees it matches what the
+    // handler will derive when it runs milliseconds later.
+    const windowIndex = Math.floor(Date.now() / 1000 / 60); // windowSec=60
+    const exhaustedKey = `ratelimit:discovery_status:user:12345:${windowIndex}`;
+    const store = new Map<string, string>([[exhaustedKey, '120']]); // at the limit
+    const kvStub = {
+      get: vi.fn(async (key: string) => store.get(key) ?? null),
+      put: vi.fn(async (key: string, value: string) => { store.set(key, value); }),
+      delete: vi.fn(async (key: string) => { store.delete(key); }),
+      list: vi.fn(async () => ({ keys: [], list_complete: true })),
+    } as unknown as KVNamespace;
+
+    const e: Partial<Env> = { APP_URL, OAUTH_JWT_SECRET: JWT_SECRET, DB: db, KV: kvStub };
+    const req = await discoveryStatusRequest(token);
+    const res = await GET(makeContext(req, e) as never);
+
+    expect(res.status).toBe(429);
+    const retryAfter = res.headers.get('Retry-After');
+    expect(retryAfter).not.toBeNull();
+    expect(Number.parseInt(retryAfter!, 10)).toBeGreaterThan(0);
+  });
 });

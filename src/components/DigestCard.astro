@@ -532,10 +532,12 @@ const displaySourceName = resolveDisplaySource();
   }
 </style>
 
-<script>
-  // All card interactions (star toggle + tag-disclosure popover) live
-  // in src/scripts/card-interactions.ts. That module binds direct
-  // click handlers to every button on DOMContentLoaded and on
-  // astro:page-load — no event delegation, no capture-phase tricks.
-  import '~/scripts/card-interactions';
-</script>
+{/* Star toggle + tag-disclosure popover wiring lives in
+    src/scripts/card-interactions.ts (mirrored to
+    public/scripts/card-interactions.js). Loaded once by
+    src/layouts/Base.astro as a static `<script is:inline type="module"
+    src="/scripts/card-interactions.js">` so the site CSP `script-src
+    'self'` doesn't block it the way it blocks Astro's hoisted inline
+    bundles. Re-emitting the import here would shadow the static load
+    with a CSP-blocked inline copy, so the card markup carries no
+    script tag of its own. */}

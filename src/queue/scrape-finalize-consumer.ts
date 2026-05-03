@@ -10,15 +10,25 @@
 // consumer picks that message up and:
 //
 //   1. Loads up to 250 surviving articles for the run, ordered by
-//      ingested_at DESC.
+//      ingested_at DESC. The SELECT pulls each article's `details`
+//      body so the dedup model grounds decisions in actual content.
 //   2. Calls Workers AI with FINALIZE_DEDUP_SYSTEM over the title +
-//      source list, asking for `dedup_groups` over the prompt indices.
+//      full summary body for each candidate (source name dropped per
+//      REQ-PIPE-008 AC 1), asking for `dedup_groups` over the prompt
+//      indices.
 //   3. For each returned group of size >= 2, picks a winner (earliest
 //      published_at, id-tiebreaker) and merges the losers into it via
 //      the 6-statement sequence in `src/lib/finalize-merge.ts`.
-//   4. Folds tokens + cost + losers_deleted into `addChunkStats` so
-//      the scrape_runs row reflects the full dedup work done for the
-//      tick.
+//   4. Folds tokens + cost + losers_deleted into the scrape_runs
+//      row via a single atomic UPDATE that conditionally adds the
+//      stats only when `finalize_recorded = 0`, then flips the
+//      column to 1. Per REQ-PIPE-008 AC 7 the LLM-call cost is
+//      real and must surface on the daily tally even when zero
+//      merges occurred. Per-run idempotency on redelivery is
+//      enforced by the same statement's gating WHERE clause
+//      (migration 0010); a redelivered finalize sees
+//      `finalize_recorded = 1` already and the WHERE doesn't
+//      match, so no rows change and the cost is not double-counted.
 //
 // Articles are visible to users throughout — the merge runs in the
 // background and may briefly leave duplicates visible (REQ-PIPE-008
@@ -30,13 +40,10 @@
 // INSERT…SELECT in the merge filters on `WHERE article_id = ?loserId`
 // (the article-row DELETE filters on `WHERE id = ?loserId`), so a
 // retry after a successful prior pass walks an empty source set and
-// is a no-op. `addChunkStats` is the only non-idempotent side effect;
-// we gate it on `losersDeleted > 0` so a clean retry doesn't
-// double-count.
+// is a no-op.
 
 import { log } from '~/lib/log';
 import { applyForeignKeysPragma } from '~/lib/db';
-import { addChunkStats } from '~/lib/scrape-run';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
 import { FINALIZE_DEDUP_SYSTEM, finalizeDedupUserPrompt, LLM_PARAMS } from '~/lib/prompts';
 import { parseLLMJson } from '~/lib/generate';
@@ -54,11 +61,13 @@ export interface FinalizeJobMessage {
   scrape_run_id: string;
 }
 
-/** Row shape returned by the per-run article fetch. */
+/** Row shape returned by the per-run article fetch. `details` is the
+ *  full summary body the chunk consumer wrote; the dedup prompt
+ *  consumes it directly (REQ-PIPE-008 AC 1). */
 interface ArticleRow {
   id: string;
   title: string;
-  primary_source_name: string;
+  details: string;
   published_at: number;
   ingested_at: number;
 }
@@ -104,7 +113,7 @@ export async function processOneFinalize(
   // the cap bites.
   const result = await env.DB
     .prepare(
-      `SELECT id, title, primary_source_name, published_at, ingested_at
+      `SELECT id, title, details, published_at, ingested_at
          FROM articles
         WHERE scrape_run_id = ?1
         ORDER BY ingested_at DESC
@@ -125,11 +134,13 @@ export async function processOneFinalize(
   }
 
   // Step 3 — build the prompt. Index aligns to row position in `rows`
-  // so the LLM's dedup_groups indices map directly back.
+  // so the LLM's dedup_groups indices map directly back. Title +
+  // full body per REQ-PIPE-008 AC 1; source name deliberately
+  // omitted as a non-signal.
   const candidates = rows.map((r, idx) => ({
     index: idx,
     title: r.title,
-    source_name: r.primary_source_name,
+    details: r.details,
     published_at: r.published_at,
   }));
 
@@ -210,22 +221,58 @@ export async function processOneFinalize(
     await env.DB.batch(statements);
   }
 
-  // Step 8 — fold cost into the run's totals. Gate on losersDeleted > 0
-  // so a clean retry (every loser already deleted, zero merges performed)
-  // doesn't double-count tokens. AC 5 + AC 7. Counters from the
-  // runJsonWithFallback helper (CF-009).
+  // Step 8 — fold cost into the run's totals. The previous gate
+  // `if (losersDeleted > 0)` hid the cost of every finalize call
+  // that returned zero merges, even though Workers AI was billed
+  // for the call. Per REQ-PIPE-008 AC 7 (revised 2026-05-03) the
+  // cost is recorded on the first successful LLM call regardless
+  // of merge outcome.
+  //
+  // Idempotency on queue redelivery is enforced by a single atomic
+  // UPDATE that adds the stats AND flips `finalize_recorded`,
+  // gated by a `WHERE id = ?1 AND finalize_recorded = 0` clause:
+  //
+  //   UPDATE scrape_runs
+  //      SET finalize_recorded = 1,
+  //          tokens_in = tokens_in + ?2,
+  //          ...
+  //    WHERE id = ?1 AND finalize_recorded = 0
+  //
+  // On the first pass the WHERE matches, every SET clause fires,
+  // and `meta.changes === 1`. On every redelivery the row's
+  // `finalize_recorded` is already 1, the WHERE doesn't match,
+  // zero rows change, and the cost is not double-counted. The
+  // single-statement gate also rules out the prior split-update
+  // failure mode: a transient error inside the statement rolls
+  // back BOTH the gate flip and the cost add, so a retry can
+  // re-record cleanly. AC 5 + AC 7. Counters from
+  // runJsonWithFallback (CF-009).
   const tokensIn = llmRun.tokensIn + wastedTokensIn;
   const tokensOut = llmRun.tokensOut + wastedTokensOut;
   const costUsd = llmRun.costUsd + wastedCostUsd;
-  if (losersDeleted > 0) {
-    await addChunkStats(env.DB, body.scrape_run_id, {
-      tokens_in: tokensIn,
-      tokens_out: tokensOut,
-      estimated_cost_usd: costUsd,
-      articles_ingested: 0,
-      articles_deduped: losersDeleted,
-    });
-  }
+  // Single atomic UPDATE that flips the gate AND adds the stats only
+  // when the row's `finalize_recorded` is currently 0. On the first
+  // successful pass the WHERE matches and every SET clause fires
+  // (cost recorded, gate flipped, meta.changes === 1). On every
+  // queue redelivery the WHERE doesn't match (gate already 1) and
+  // nothing changes (meta.changes === 0, cost not double-counted).
+  // The previous split — gate UPDATE then `addChunkStats` UPDATE —
+  // was non-atomic and would leave the gate flipped if the second
+  // call failed, permanently hiding that tick's spend.
+  const gateAndStats = await env.DB
+    .prepare(
+      `UPDATE scrape_runs
+          SET finalize_recorded = 1,
+              tokens_in = tokens_in + ?2,
+              tokens_out = tokens_out + ?3,
+              estimated_cost_usd = estimated_cost_usd + ?4,
+              articles_ingested = articles_ingested + ?5,
+              articles_deduped = articles_deduped + ?6
+        WHERE id = ?1 AND finalize_recorded = 0`,
+    )
+    .bind(body.scrape_run_id, tokensIn, tokensOut, costUsd, 0, losersDeleted)
+    .run();
+  const wonRecording = (gateAndStats.meta?.changes ?? 0) === 1;
 
   log('info', 'digest.generation', {
     status: 'finalize_ready',
@@ -236,6 +283,7 @@ export async function processOneFinalize(
     tokens_in: tokensIn,
     tokens_out: tokensOut,
     estimated_cost_usd: costUsd,
+    cost_recorded: wonRecording,
     model_used: modelUsed,
     capped_at_250: rows.length === FINALIZE_CANDIDATE_CAP,
   });
@@ -267,7 +315,6 @@ function toFinalizeRow(r: ArticleRow): FinalizeRow {
   return {
     id: r.id,
     title: r.title,
-    source_name: r.primary_source_name,
     published_at: r.published_at,
   };
 }
