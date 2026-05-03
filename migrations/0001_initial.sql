@@ -1,6 +1,8 @@
 -- Initial schema for news-digest
+-- (superseded by 0003_global_feed.sql — see migrations/README.md)
 -- Implements REQ-AUTH-001, REQ-AUTH-002, REQ-AUTH-005, REQ-SET-001..007,
 -- REQ-DISC-001..004, REQ-GEN-001..008, REQ-HIST-001..002, REQ-READ-003
+-- (historical — these REQs now point at the live shape in 0003)
 
 PRAGMA foreign_keys = ON;
 

@@ -103,7 +103,7 @@ Every source file annotates the REQ-IDs it implements via `// Implements REQ-X-N
 | `headline-cache.ts` | KV-backed shared headline cache | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) |
 | `log.ts` | Structured JSON log emitter with closed `LogEvent` enum | [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-logging) |
 | `default-hashtags.ts` | Seed hashtag list for new accounts | [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation) |
-| `models.ts` | `MODELS` catalog, default + fallback model IDs, cost estimator | [REQ-SET-004](../sdd/settings.md#req-set-004-model-selection) *(Deprecated)* |
+| `models.ts` | `MODELS` catalog, default + fallback model IDs, cost estimator (cost accounting still live) | [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress) — per-tick cost counters; [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) AC 7 — finalize cost recording; per-user model selection *(Deprecated 2026-04-23 with REQ-SET-004)* |
 | `oauth-providers.ts` | GitHub + Google adapters with id_token validation | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) |
 | `oauth-errors.ts` | OAuth error code allowlist and sanitizer | [REQ-AUTH-004](../sdd/authentication.md#req-auth-004-oauth-error-surfacing) |
 | `prompts.ts` | LLM system prompts for chunk processing, discovery, and finalize | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass), [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery) |
@@ -226,7 +226,7 @@ Chunk consumer (per chunk)
        ▼
 Finalize consumer
   ├─ Skip when ≤ 1 article (finalize_noop)
-  ├─ SELECT finalize_recorded upfront — if already 1, skip before LLM call (finalize_redelivery_skipped)
+  ├─ SELECT finalize_recorded upfront — if already 1, skip before LLM call (finalize_redelivery_skipped_upfront)
   ├─ Single Workers AI call over title+full-body per article (source name omitted — non-signal)
   ├─ Per dedup group (≥ 2): merge losers into earliest-pub-ts winner (D1 batch)
   └─ Atomic cost gate: UPDATE scrape_runs SET finalize_recorded=1 … WHERE finalize_recorded=0
