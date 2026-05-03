@@ -226,7 +226,7 @@ Chunk consumer (per chunk)
        ▼
 Finalize consumer
   ├─ Skip when ≤ 1 article (finalize_noop)
-  ├─ SELECT finalize_recorded upfront — if already 1, skip before LLM call (finalize_redelivery_skipped)
+  ├─ SELECT finalize_recorded upfront — if already 1, skip before LLM call (finalize_redelivery_skipped_upfront)
   ├─ Single Workers AI call over title+full-body per article (source name omitted — non-signal)
   ├─ Per dedup group (≥ 2): merge losers into earliest-pub-ts winner (D1 batch)
   └─ Atomic cost gate: UPDATE scrape_runs SET finalize_recorded=1 … WHERE finalize_recorded=0
