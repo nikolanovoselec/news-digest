@@ -6,7 +6,8 @@
 // flips the status to `ready` (`finishRun`). Stats feed the /history
 // dashboard and the /stats tile widgets.
 //
-// Schema (migration 0003 — added by the schema agent in the same wave):
+// Schema (live shape after migration 0010 — see migrations/README.md
+// for the full migration index):
 //
 //   CREATE TABLE scrape_runs (
 //     id                    TEXT PRIMARY KEY,    -- ULID from caller
@@ -19,7 +20,14 @@
 //     tokens_out            INTEGER NOT NULL DEFAULT 0,
 //     estimated_cost_usd    REAL    NOT NULL DEFAULT 0,
 //     articles_ingested     INTEGER NOT NULL DEFAULT 0,
-//     articles_deduped      INTEGER NOT NULL DEFAULT 0
+//     articles_deduped      INTEGER NOT NULL DEFAULT 0,
+//     -- migration 0008 — once-per-run gate so SCRAPE_FINALIZE is
+//     -- enqueued exactly once even under chunk-consumer redelivery.
+//     finalize_enqueued     INTEGER NOT NULL DEFAULT 0,
+//     -- migration 0010 — once-per-run gate so the finalize merge is
+//     -- recorded (article_sources rewritten, stats accumulated) at
+//     -- most once per scrape, even under finalize-consumer redelivery.
+//     finalize_recorded     INTEGER NOT NULL DEFAULT 0
 //   );
 //
 // Time-source note: all helpers use `Math.floor(Date.now()/1000)` for
