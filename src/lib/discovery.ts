@@ -24,7 +24,7 @@
 // REQ-DISC-004 can surface a Re-discover button on the settings page.
 
 import { XMLParser } from 'fast-xml-parser';
-import { DISCOVERY_SYSTEM, discoveryUserPrompt, LLM_PARAMS } from '~/lib/prompts';
+import { DISCOVERY_SYSTEM, discoveryUserPrompt, DISCOVERY_LLM_PARAMS } from '~/lib/prompts';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
 import { runJsonWithFallback } from '~/lib/llm-json';
 import { isUrlSafe } from '~/lib/ssrf';
@@ -95,7 +95,7 @@ export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed
         { role: 'system', content: DISCOVERY_SYSTEM },
         { role: 'user', content: userPrompt },
       ],
-      ...LLM_PARAMS,
+      ...DISCOVERY_LLM_PARAMS,
     },
     narrow: (raw) => narrowDiscoveryPayload(raw),
     onPrimaryFailure: (info) => {

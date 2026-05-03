@@ -31,7 +31,7 @@
 
 import {
   PROCESS_CHUNK_SYSTEM,
-  LLM_PARAMS,
+  CHUNK_LLM_PARAMS,
   processChunkUserPrompt,
 } from '~/lib/prompts';
 import {
@@ -220,7 +220,7 @@ export async function processOneChunk(
         { role: 'system', content: PROCESS_CHUNK_SYSTEM },
         { role: 'user', content: processChunkUserPrompt(promptCandidates, allowedTags) },
       ],
-      ...LLM_PARAMS,
+      ...CHUNK_LLM_PARAMS,
     },
     narrow: (raw) => narrowChunkPayload(parseLLMPayload(raw), raw),
     onPrimaryFailure: (info) => {
