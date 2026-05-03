@@ -8,6 +8,8 @@ Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are a
 
 ## 2026-05-03
 
+- REQ-PIPE-002 AC 2 + AC 3 sharpened: the chunk consumer now enforces the malformed-output thresholds server-side rather than trusting the LLM-side prompt alone. Articles whose details body is under 120 words, or whose title falls outside a 20–200 character sanity range, are dropped before persistence — so a model that ignores the prompt's word-count or headline-length instructions can no longer ship truncated bodies or single-word labels as real articles.
+
 - REQ-OPS-003 AC 1, AC 5 added/tightened: the security policy now narrows allowed image origins to `'self'`, `data:`, and the two Gravatar avatar hosts (rather than blanket `https:`), drops the unused `https://github.com` form-action allowance, and adds an explicit `X-Frame-Options: DENY` as defense-in-depth alongside `frame-ancestors 'none'`. Embedded `<img>` tags pointing at arbitrary HTTPS origins (and embedding the site in any frame) are now refused by compliant browsers.
 
 - REQ-PIPE-008 idempotency observability sharpened: a finalize message that arrives after the run already recorded its dedup outcome short-circuits before the LLM call (saving the Workers AI spend that previous redeliveries paid). When the atomic gate UPDATE loses a genuine race, the structured log now reads `finalize_redelivery_skipped` instead of `finalize_ready` with `cost_recorded: false`, so operators no longer misread the per-attempt counters as merges that just happened.
