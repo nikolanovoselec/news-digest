@@ -208,7 +208,7 @@ Up to 29 articles from the article pool filtered by the user's active hashtags. 
 
 ### POST /api/digest/refresh
 
-**Retired.** Replaced by the every-4-hours global scrape pipeline (REQ-PIPE-001) that auto-refreshes the article pool. Stale clients receive `410 Gone`. Operators that want to force a refresh use `POST /api/admin/force-refresh` (REQ-OPS-004) instead.
+**Retired.** Replaced by the every-4-hours global scrape pipeline (REQ-PIPE-001) that auto-refreshes the article pool. Stale clients receive `410 Gone`. Operators that want to force a refresh use `POST /api/admin/force-refresh` (REQ-OPS-005) instead.
 
 ### GET /api/scrape-status
 
