@@ -849,7 +849,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     // candidate[1] has no LLM article (index=1 never appeared) and is
     // dropped; the hallucinated index=99 is also dropped.
     expect(articleInserts.length).toBe(1);
-    expect(articleInserts[0]!.params).toContain('A');
+    expect(articleInserts[0]!.params).toContain('Article A — long enough headline copy');
     expect(articleInserts[0]!.params).not.toContain('Hallucinated');
   });
 
