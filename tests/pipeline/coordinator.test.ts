@@ -20,32 +20,63 @@ function makeDb(opts: {
 } = {}): { db: D1Database; records: SqlRecord[] } {
   const records: SqlRecord[] = [];
   const existing = opts.existingCanonicals ?? [];
+  // Stable canonical_url → article_id map so the coordinator's
+  // multi-source aggregation step can resolve a real id and emit
+  // INSERT statements the test can assert on.
+  const idForUrl = (url: string): string => `art-${url.slice(0, 24)}`;
   const prepare = vi.fn().mockImplementation((sql: string) => ({
-    bind: (...params: unknown[]) => ({
-      run: vi.fn().mockImplementation(async () => {
-        records.push({ sql, params, via: 'run' });
-        return { success: true, meta: { changes: 1 } };
-      }),
-      all: vi.fn().mockImplementation(async () => {
-        records.push({ sql, params, via: 'all' });
-        if (sql.startsWith('SELECT canonical_url FROM articles')) {
-          const matches = existing.filter((u) =>
-            (params as string[]).includes(u),
-          );
-          return {
-            success: true,
-            results: matches.map((u) => ({ canonical_url: u })),
-          };
-        }
-        return { success: true, results: [] };
-      }),
-      first: vi.fn().mockResolvedValue(null),
-    }),
+    bind: (...params: unknown[]) => {
+      const bound = {
+        __sql: sql,
+        __params: params,
+        run: vi.fn().mockImplementation(async () => {
+          records.push({ sql, params, via: 'run' });
+          return { success: true, meta: { changes: 1 } };
+        }),
+        all: vi.fn().mockImplementation(async () => {
+          records.push({ sql, params, via: 'all' });
+          if (sql.startsWith('SELECT canonical_url FROM articles')) {
+            const matches = existing.filter((u) =>
+              (params as string[]).includes(u),
+            );
+            return {
+              success: true,
+              results: matches.map((u) => ({ canonical_url: u })),
+            };
+          }
+          if (sql.startsWith('SELECT id, canonical_url FROM articles')) {
+            const matches = existing.filter((u) =>
+              (params as string[]).includes(u),
+            );
+            return {
+              success: true,
+              results: matches.map((u) => ({
+                id: idForUrl(u),
+                canonical_url: u,
+              })),
+            };
+          }
+          return { success: true, results: [] };
+        }),
+        first: vi.fn().mockResolvedValue(null),
+      };
+      return bound;
+    },
     run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 0 } }),
   }));
   const db = {
     prepare,
-    batch: vi.fn().mockResolvedValue([]),
+    batch: vi.fn().mockImplementation(async (stmts: unknown[]) => {
+      for (const stmt of stmts) {
+        const s = stmt as { __sql?: string; __params?: unknown[] };
+        records.push({
+          sql: s.__sql ?? '',
+          params: s.__params ?? [],
+          via: 'batch',
+        });
+      }
+      return stmts.map(() => ({ success: true, meta: { changes: 1 } }));
+    }),
     exec: vi.fn().mockResolvedValue({ count: 0, duration: 0 }),
   } as unknown as D1Database;
   return { db, records };
@@ -341,6 +372,44 @@ describe('scrape-coordinator — REQ-PIPE-001', () => {
     const urls = allCandidates.map((c) => c.source_url);
     expect(urls).toContain('https://feed0.example.com/fresh');
     expect(urls).not.toContain('https://feed0.example.com/stale');
+  });
+
+  it('REQ-PIPE-001: re-seen canonical URLs append the new source to article_sources (multi-source aggregation)', async () => {
+    // AC 4 (revised 2026-05-03): re-discoveries do not re-stamp
+    // ingested_at, but they DO append the re-broadcasting source to
+    // the article's source list so the alt-source picker reflects
+    // every outlet that ever sighted the story. Pin the
+    // INSERT OR IGNORE INTO article_sources statement on a single
+    // re-seen cluster.
+    const reSeenUrl = 'https://feed0.example.com/already-known';
+    const rss =
+      `<rss><channel>` +
+      `<item><title>Already known</title><link>${reSeenUrl}</link><pubDate>${new Date(Date.now() - 2 * 60 * 60 * 1000).toUTCString()}</pubDate></item>` +
+      `</channel></rss>`;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(rss, {
+          status: 200,
+          headers: { 'content-type': 'application/rss+xml' },
+        }),
+      ),
+    );
+    const { db, records } = makeDb({ existingCanonicals: [reSeenUrl] });
+    const { kv } = makeKv();
+    const { queue } = makeChunksQueue();
+    const env = makeEnv(db, kv, queue);
+    await runCoordinator(env, { scrape_run_id: 'run-aggregate' });
+    const insert = records.find(
+      (r) =>
+        r.via === 'batch' &&
+        r.sql.includes('INSERT OR IGNORE INTO article_sources') &&
+        // The first bind param is the existing article_id resolved
+        // from the canonical_url → id map; the third is the new
+        // source URL we want to see appended.
+        (r.params as unknown[])[2] === reSeenUrl,
+    );
+    expect(insert).toBeDefined();
   });
 
   it('REQ-PIPE-001: re-seen canonical URLs do NOT have ingested_at re-stamped (preserves first ingestion order)', async () => {

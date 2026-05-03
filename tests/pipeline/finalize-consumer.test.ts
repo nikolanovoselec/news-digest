@@ -391,85 +391,39 @@ describe('scrape-finalize-consumer — REQ-PIPE-008', () => {
     expect(statsUpdate!.params[3]).toBeGreaterThan(0);
   });
 
-  it('REQ-PIPE-008: a redelivered finalize for a run whose finalize_recorded is already 1 skips the cost fold', async () => {
-    // Models the queue-redelivery edge case: the conditional UPDATE
-    // on scrape_runs.finalize_recorded returns meta.changes === 0 when
-    // the gate was already flipped by a prior successful pass. The
-    // consumer must NOT call addChunkStats in that case — otherwise
-    // every redelivered finalize would double-count its tokens
-    // against the same scrape tick. This pins migration 0010's
-    // contract.
+  it('REQ-PIPE-008: gate UPDATE carries WHERE finalize_recorded = 0 so a redelivery is a no-op', async () => {
+    // Models the queue-redelivery edge case via the SQL contract:
+    // the consumer issues a single atomic UPDATE that adds the
+    // stats AND flips finalize_recorded only when the column is
+    // currently 0. On a redelivered message the WHERE clause
+    // does not match, meta.changes === 0, and the row is unchanged
+    // — so the LLM cost is never double-counted against the same
+    // scrape tick. Pin both halves of the contract: (a) the SQL
+    // includes the gating WHERE clause; (b) the bind shape carries
+    // the runId and the per-call counters.
     const rows = [
       row({ id: 'a', published_at: 100 }),
       row({ id: 'b', published_at: 200 }),
     ];
-    const records: SqlRecord[] = [];
-    const prepare = vi.fn().mockImplementation((sql: string) => ({
-      bind: (...params: unknown[]) => ({
-        __sql: sql,
-        __params: params,
-        run: vi.fn().mockImplementation(async () => {
-          records.push({ sql, params, via: 'run' });
-          // The conditional UPDATE on finalize_recorded must report
-          // meta.changes === 0 to simulate a redelivery seeing the
-          // gate already flipped by an earlier pass. Every other
-          // UPDATE keeps reporting changes: 1 so the chunk-stats
-          // path itself is observable when it runs.
-          if (sql.includes('finalize_recorded')) {
-            return { success: true, meta: { changes: 0 } };
-          }
-          return { success: true, meta: { changes: 1 } };
-        }),
-        all: vi.fn().mockImplementation(async () => {
-          records.push({ sql, params, via: 'all' });
-          if (sql.includes('FROM articles') && sql.includes('scrape_run_id')) {
-            const limit = (params[1] as number) ?? rows.length;
-            return { success: true, results: rows.slice(0, limit) };
-          }
-          return { success: true, results: [] };
-        }),
-        first: vi.fn().mockImplementation(async () => null),
-      }),
-      run: vi.fn().mockImplementation(async () => {
-        records.push({ sql, params: [], via: 'run' });
-        return { success: true, meta: { changes: 0 } };
-      }),
-    }));
-    const db = {
-      prepare,
-      batch: vi.fn().mockImplementation(async (stmts: unknown[]) => {
-        for (const stmt of stmts) {
-          const s = stmt as { __sql?: string; __params?: unknown[] };
-          records.push({
-            sql: s.__sql ?? '',
-            params: s.__params ?? [],
-            via: 'batch',
-          });
-        }
-        return stmts.map(() => ({ success: true, meta: { changes: 1 } }));
-      }),
-      exec: vi.fn().mockImplementation(async () => ({ count: 0, duration: 0 })),
-    } as unknown as D1Database;
+    const { db, records } = makeDb(rows);
     const { env } = makeEnv(db, [aiOk([[0, 1]])]);
     await processOneFinalize(env, MSG);
 
-    // The conditional UPDATE on finalize_recorded fired exactly once.
-    const gateUpdate = records.find(
-      (r) => r.via === 'run' && r.sql.includes('finalize_recorded'),
-    );
-    expect(gateUpdate).toBeDefined();
-    expect(gateUpdate!.params[0]).toBe('run-test');
-
-    // addChunkStats DID NOT fire — the gate UPDATE saw changes === 0
-    // so the cost fold is skipped, preventing the redelivery
-    // double-count.
-    const statsUpdate = records.find(
+    const gateAndStats = records.find(
       (r) =>
         r.via === 'run' &&
         r.sql.includes('UPDATE scrape_runs') &&
-        r.sql.includes('articles_deduped'),
+        r.sql.includes('finalize_recorded = 1') &&
+        r.sql.includes('articles_deduped') &&
+        // The gating WHERE clause is the load-bearing part of the
+        // idempotency guarantee. A regression that drops it would
+        // re-introduce the redelivery double-count.
+        r.sql.includes('AND finalize_recorded = 0'),
     );
-    expect(statsUpdate).toBeUndefined();
+    expect(gateAndStats).toBeDefined();
+    expect(gateAndStats!.params[0]).toBe('run-test');
+    // articles_deduped (?6) reflects the actual merge count.
+    expect(gateAndStats!.params[5]).toBe(1);
   });
 
   it('REQ-PIPE-008: replaying the same message produces the same final state and does not double-count', async () => {

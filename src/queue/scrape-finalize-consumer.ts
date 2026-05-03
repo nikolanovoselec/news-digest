@@ -19,15 +19,16 @@
 //   3. For each returned group of size >= 2, picks a winner (earliest
 //      published_at, id-tiebreaker) and merges the losers into it via
 //      the 6-statement sequence in `src/lib/finalize-merge.ts`.
-//   4. Folds tokens + cost + losers_deleted into `addChunkStats` so
-//      the scrape_runs row reflects the full dedup work done for the
-//      tick — including ticks where the model confirmed zero
-//      duplicates. Per REQ-PIPE-008 AC 7 the LLM-call cost is real
-//      and must surface on the daily tally even when no merges
-//      occurred. Per-run idempotency on redelivery is enforced by
-//      the conditional UPDATE on `scrape_runs.finalize_recorded`
-//      (migration 0010); a redelivered finalize sees the gate
-//      already flipped and skips the cost fold.
+//   4. Folds tokens + cost + losers_deleted into the scrape_runs
+//      row via a single atomic UPDATE that conditionally adds the
+//      stats only when `finalize_recorded = 0`, then flips the
+//      column to 1. Per REQ-PIPE-008 AC 7 the LLM-call cost is
+//      real and must surface on the daily tally even when zero
+//      merges occurred. Per-run idempotency on redelivery is
+//      enforced by the same statement's gating WHERE clause
+//      (migration 0010); a redelivered finalize sees
+//      `finalize_recorded = 1` already and the WHERE doesn't
+//      match, so no rows change and the cost is not double-counted.
 //
 // Articles are visible to users throughout — the merge runs in the
 // background and may briefly leave duplicates visible (REQ-PIPE-008
@@ -43,7 +44,6 @@
 
 import { log } from '~/lib/log';
 import { applyForeignKeysPragma } from '~/lib/db';
-import { addChunkStats } from '~/lib/scrape-run';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
 import { FINALIZE_DEDUP_SYSTEM, finalizeDedupUserPrompt, LLM_PARAMS } from '~/lib/prompts';
 import { parseLLMJson } from '~/lib/generate';
@@ -226,32 +226,53 @@ export async function processOneFinalize(
   // that returned zero merges, even though Workers AI was billed
   // for the call. Per REQ-PIPE-008 AC 7 (revised 2026-05-03) the
   // cost is recorded on the first successful LLM call regardless
-  // of merge outcome. Idempotency on queue redelivery is enforced
-  // by a conditional UPDATE on `scrape_runs.finalize_recorded`
-  // (migration 0010): the first successful pass flips the column
-  // to 1 in a single statement; redelivered messages see
-  // `meta.changes === 0` and skip the cost fold so tokens are
-  // never double-counted against the same scrape tick. AC 5 + AC 7.
-  // Counters from the runJsonWithFallback helper (CF-009).
+  // of merge outcome.
+  //
+  // Idempotency on queue redelivery is enforced by a single atomic
+  // UPDATE that flips `finalize_recorded` AND adds the stats in
+  // one statement, gated by a CASE expression on the column's
+  // pre-update value:
+  //
+  //   UPDATE scrape_runs
+  //      SET tokens_in = tokens_in + CASE WHEN finalize_recorded = 0 THEN ?2 ELSE 0 END,
+  //          ...,
+  //          finalize_recorded = 1
+  //    WHERE id = ?1
+  //
+  // SQLite evaluates SET expressions against the row's PRE-update
+  // values, so the CASE sees `finalize_recorded = 0` only on the
+  // first pass and the cost lands; on every subsequent redelivery
+  // the CASE sees `finalize_recorded = 1` and adds zero. The
+  // single-statement gate also rules out the prior split-update
+  // failure mode: a transient error inside the statement rolls back
+  // BOTH the gate flip and the cost add, so a retry can re-record
+  // cleanly. AC 5 + AC 7. Counters from runJsonWithFallback (CF-009).
   const tokensIn = llmRun.tokensIn + wastedTokensIn;
   const tokensOut = llmRun.tokensOut + wastedTokensOut;
   const costUsd = llmRun.costUsd + wastedCostUsd;
-  const recordGate = await env.DB
+  // Single atomic UPDATE that flips the gate AND adds the stats only
+  // when the row's `finalize_recorded` is currently 0. On the first
+  // successful pass the WHERE matches and every SET clause fires
+  // (cost recorded, gate flipped, meta.changes === 1). On every
+  // queue redelivery the WHERE doesn't match (gate already 1) and
+  // nothing changes (meta.changes === 0, cost not double-counted).
+  // The previous split — gate UPDATE then `addChunkStats` UPDATE —
+  // was non-atomic and would leave the gate flipped if the second
+  // call failed, permanently hiding that tick's spend.
+  const gateAndStats = await env.DB
     .prepare(
-      'UPDATE scrape_runs SET finalize_recorded = 1 WHERE id = ?1 AND finalize_recorded = 0',
+      `UPDATE scrape_runs
+          SET finalize_recorded = 1,
+              tokens_in = tokens_in + ?2,
+              tokens_out = tokens_out + ?3,
+              estimated_cost_usd = estimated_cost_usd + ?4,
+              articles_ingested = articles_ingested + ?5,
+              articles_deduped = articles_deduped + ?6
+        WHERE id = ?1 AND finalize_recorded = 0`,
     )
-    .bind(body.scrape_run_id)
+    .bind(body.scrape_run_id, tokensIn, tokensOut, costUsd, 0, losersDeleted)
     .run();
-  const wonRecording = (recordGate.meta?.changes ?? 0) === 1;
-  if (wonRecording) {
-    await addChunkStats(env.DB, body.scrape_run_id, {
-      tokens_in: tokensIn,
-      tokens_out: tokensOut,
-      estimated_cost_usd: costUsd,
-      articles_ingested: 0,
-      articles_deduped: losersDeleted,
-    });
-  }
+  const wonRecording = (gateAndStats.meta?.changes ?? 0) === 1;
 
   log('info', 'digest.generation', {
     status: 'finalize_ready',

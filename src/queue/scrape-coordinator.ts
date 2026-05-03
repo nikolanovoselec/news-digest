@@ -304,26 +304,70 @@ export async function runCoordinator(
   const survivors = clusters.filter(
     (c) => !existing.has(c.primary.canonical_url),
   );
-  // REQ-PIPE-001 AC 4 (revised 2026-05-03): re-discovered URLs are
-  // skipped without re-stamping `ingested_at`. The dashboard now
-  // orders by FIRST ingestion descending — a re-broadcast of an
-  // older story by some feed must NOT push that story back to the
-  // top of the dashboard above genuinely newer arrivals. Multi-
-  // source aggregation (appending the new source to the article's
-  // source list) is the responsibility of the chunk consumer's
-  // existing source-fanout path, which only fires for articles
-  // surviving the canonical-URL filter — not for re-discoveries.
-  // Re-discovery rows are intentionally lost-on-the-floor here; the
-  // primary source on file from the first ingestion is the canonical
-  // attribution for the story.
-  const reSeenCount = clusters.filter((c) =>
+  // REQ-PIPE-001 AC 4 (revised 2026-05-03): re-discovered URLs do
+  // NOT re-stamp `ingested_at` — the dashboard orders by first
+  // ingestion descending so a re-broadcast of an older story by
+  // some feed must not push it back above genuinely newer arrivals.
+  // The primary source on file from the first ingestion stays the
+  // canonical attribution for the story.
+  //
+  // Multi-source aggregation IS performed here, on every re-
+  // discovery: `INSERT OR IGNORE INTO article_sources` for each
+  // primary + alternative source on the re-seen cluster, keyed on
+  // the existing article's id. The PK `(article_id, source_url)`
+  // collapses any source we already know about; new outlets that
+  // canonicalised to the same URL get appended. The alt-source
+  // modal filters out `articles.primary_source_url` so an idempotent
+  // re-insert of the primary's URL never appears as a "duplicate"
+  // entry in the picker.
+  const reSeenClusters = clusters.filter((c) =>
     existing.has(c.primary.canonical_url),
-  ).length;
-  if (reSeenCount > 0) {
+  );
+  let sourcesAppended = 0;
+  if (reSeenClusters.length > 0) {
+    const idMap = await loadExistingCanonicalToIdMap(
+      env.DB,
+      reSeenClusters.map((c) => c.primary.canonical_url),
+    );
+    const sourceInserts: D1PreparedStatement[] = [];
+    for (const cluster of reSeenClusters) {
+      const articleId = idMap.get(cluster.primary.canonical_url);
+      if (articleId === undefined) continue;
+      const sources = [cluster.primary, ...cluster.alternatives];
+      for (const src of sources) {
+        sourceInserts.push(
+          env.DB
+            .prepare(
+              `INSERT OR IGNORE INTO article_sources
+                 (article_id, source_name, source_url, published_at)
+               VALUES (?1, ?2, ?3, ?4)`,
+            )
+            .bind(
+              articleId,
+              src.source_name,
+              src.source_url,
+              src.published_at,
+            ),
+        );
+      }
+    }
+    if (sourceInserts.length > 0) {
+      // D1 caps a single batch at 100 statements; chunk to keep
+      // unbounded re-discovery loads from blowing the limit. The
+      // INSERT OR IGNORE makes per-chunk failure recoverable —
+      // the next tick re-runs against the same survivor set.
+      const SOURCE_INSERT_BATCH = 100;
+      for (let i = 0; i < sourceInserts.length; i += SOURCE_INSERT_BATCH) {
+        const slice = sourceInserts.slice(i, i + SOURCE_INSERT_BATCH);
+        await env.DB.batch(slice);
+      }
+      sourcesAppended = sourceInserts.length;
+    }
     log('info', 'digest.generation', {
       status: 'coordinator_skipped_existing',
       scrape_run_id,
-      re_seen: reSeenCount,
+      re_seen: reSeenClusters.length,
+      sources_appended: sourcesAppended,
     });
   }
 
@@ -768,6 +812,45 @@ export async function applyEvictions(
       });
     }
   }
+}
+
+/** Sibling of {@link loadExistingCanonicalUrls} that also returns the
+ * matched articles' ids — used by the multi-source aggregation path
+ * (REQ-PIPE-001 AC 4) to look up the existing article_id for each
+ * re-discovered cluster so its new sources can be appended to
+ * `article_sources`. */
+async function loadExistingCanonicalToIdMap(
+  db: D1Database,
+  urls: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  for (let i = 0; i < urls.length; i += EXISTING_URL_BATCH) {
+    const slice = urls.slice(i, i + EXISTING_URL_BATCH);
+    if (slice.length === 0) continue;
+    const placeholders = slice.map((_, idx) => `?${idx + 1}`).join(', ');
+    try {
+      const result = await db
+        .prepare(
+          `SELECT id, canonical_url FROM articles WHERE canonical_url IN (${placeholders})`,
+        )
+        .bind(...slice)
+        .all<{ id: string; canonical_url: string }>();
+      for (const row of result.results ?? []) {
+        if (
+          typeof row.canonical_url === 'string' &&
+          typeof row.id === 'string'
+        ) {
+          map.set(row.canonical_url, row.id);
+        }
+      }
+    } catch (err) {
+      log('warn', 'digest.generation', {
+        status: 'coordinator_existing_id_lookup_failed',
+        detail: String(err).slice(0, 500),
+      });
+    }
+  }
+  return map;
 }
 
 /** Look up which of the supplied canonical URLs already exist in
