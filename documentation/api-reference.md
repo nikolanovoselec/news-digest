@@ -187,20 +187,12 @@ Returns the set of hashtags the authenticated user has queued for background sou
 **Response:**
 ```json
 {
-  "articles": [
-    {
-      "id": "string",
-      "title": "string",
-      "details": ["string"],
-      "primary_source_name": "string",
-      "primary_source_url": "string",
-      "published_at": "ISO-8601",
-      "tags": ["string"],
-      "alt_source_count": 0,
-      "starred": false,
-      "read": false
-    }
-  ],
+  "articles": [{
+    "id": "string", "title": "string", "details": ["string"],
+    "primary_source_name": "string", "primary_source_url": "string",
+    "published_at": "ISO-8601", "tags": ["string"],
+    "alt_source_count": 0, "starred": false, "read": false
+  }],
   "last_scrape_run": { "id": "string", "started_at": 0, "finished_at": 0, "status": "ready" } | null,
   "next_scrape_at": 1234567890 | null
 }
@@ -212,7 +204,7 @@ Up to 29 articles from the article pool filtered by the user's active hashtags, 
 
 ### GET /api/digest/:id
 
-**Retired.** This per-digest endpoint was removed when the `digests` table was dropped in migration 0003; the article schema no longer carries a `digest_id` column. Stale clients hitting this path receive `410 Gone`. `POST /api/digest/:id` is also tombstoned with the same status.
+**Retired.** Removed when the `digests` table was dropped in migration 0003. Stale clients receive `410 Gone`. `POST /api/digest/:id` is also tombstoned.
 
 ### GET /api/scrape-status
 
@@ -428,7 +420,9 @@ Extended machine-readable agents policy (`public/llms-full.txt`). Superset of `l
 |---|---|---|---|
 | `date` | string (`YYYY-MM-DD`) | No | When present, filters to the single matching local day. Used for the "see today" deep-link from the digest grid. |
 
-**Response:** `{ days: [...] }` — up to 14 day-groups keyed by the user's local timezone, sorted `local_date DESC`. Empty days are omitted. Each day group has `local_date`, `article_count`, `articles[]` (filtered to the user's active tags), `ticks[]` (scrape runs in that day), and per-day token/cost/articles-ingested aggregates.
+**Response:** `{ days: [...] }` — up to 14 day-groups keyed by the user's local timezone, sorted `local_date DESC`. Empty days are omitted.
+
+Each day group contains: `local_date`, `article_count`, `articles[]` (filtered to the user's active tags), `ticks[]` (scrape runs in that day), and per-day token/cost/articles-ingested aggregates.
 
 `?q=` and `?tags=` are page-level URL state read client-side; they are not server query params.
 
@@ -494,7 +488,7 @@ Implements [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-log
 | `auth.refresh.rate_limited` | Inline middleware or the explicit refresh path hit a refresh rate-limit bucket — request rejected with 429. See [Refresh rate-limit fail mode](#refresh-rate-limit-fail-mode) below for the `bucket` field values. |
 | `rate.limit.kv_error` | KV read/write in the rate-limit helper threw. The caller proceeds per the per-rule fail-mode; `decision` and `kv_op` field values are documented in [Refresh rate-limit fail mode](#refresh-rate-limit-fail-mode). |
 | `article.star.failed` | D1 insert or delete in `POST/DELETE /api/articles/:id/star` threw |
-| `admin.auth.aud_unset_warning` | `Cf-Access-Jwt-Assertion` header is present but `CF_ACCESS_AUD` is unset — the Worker is checking header presence only, not the `aud` claim. Emitted once per Worker isolate (isolates cycle roughly every 30 minutes under load) so the misconfiguration is visible via `wrangler tail` or Logpush without flooding Logpush during brute-force probes. See [Deployment: Setting CF_ACCESS_AUD](deployment.md#setting-cf_access_aud-strongly-recommended-in-production). |
+| `admin.auth.aud_unset_warning` | `CF_ACCESS_AUD` is unset but the Access assertion header is present — the Worker checks header presence only, not the `aud` claim. Emitted once per isolate. See [Deployment: Setting CF_ACCESS_AUD](deployment.md#setting-cf_access_aud-strongly-recommended-in-production). |
 
 Raw exception messages appear only in the `detail` field of error-level records; they are never stored in D1 and never returned to clients (see [REQ-OPS-002](../sdd/observability.md#req-ops-002-sanitized-error-surfaces)).
 

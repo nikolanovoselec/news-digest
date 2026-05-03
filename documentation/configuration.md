@@ -85,7 +85,9 @@ Three triggers are declared in `wrangler.toml`:
 
 **Daily 03:00 UTC tick:** removes articles older than 14 days (starred articles are exempt). Also purges expired and old-revoked rows from the `refresh_tokens` table; the 7-day grace on revoked rows preserves reuse-detection history per REQ-AUTH-008 AC 5.
 
-**Every-5-minute tick:** a single trigger whose handler runs two unrelated chores. (1) Per-user email dispatcher fan-out — sends digests to users in their local-day window. (2) Pending-discovery drain — runs LLM source discovery for newly added tags as a worker queue consumer with no per-user gating.
+**Every-5-minute tick:** one trigger, two unrelated chores:
+1. Per-user email dispatcher fan-out — sends digests to users in their local-day window.
+2. Pending-discovery drain — runs LLM source discovery for newly added tags with no per-user gating.
 
 ## KV Key Conventions
 
@@ -97,7 +99,7 @@ The `KV` namespace uses a structured key scheme. All keys are shared across all 
 | `discovery_failures:{tag}` | per-tag failure counter (string integer) | — | Per-tag failure bookkeeping; cleared by `POST /api/admin/discovery/retry`; also swept by the daily orphan-tag cleanup when the tag is no longer owned by any user ([REQ-PIPE-007](../sdd/generation.md#req-pipe-007-orphan-tag-source-cleanup)) |
 | `source_health:{url}` | Consecutive failure count (UTF-8 integer string) | 7 days | Per-URL fetch-health counter; incremented on each failed fetch, deleted on success. When the count reaches 30 (`CONSECUTIVE_FETCH_FAILURE_LIMIT`) the coordinator evicts the URL from its `sources:{tag}` entry. Implements [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking). |
 | `headlines:{source}:{tag}` | Array of headline objects | 10 min (600 s) | Per-source/per-tag headline cache shared across all chunk invocations within a single scrape run. Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence). |
-| `scrape_run:{id}:chunks_remaining` | Integer string | — | Derived mirror of chunk progress — written by the coordinator (total) and decremented by each chunk consumer for display purposes only. The authoritative completion gate moved to D1 (`scrape_chunk_completions` table, migration 0007) to eliminate the TOCTOU race window. This KV key is polled by `GET /api/scrape-status` for the update-in-progress indicator ([REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress)) and is **not** the completion signal. |
+| `scrape_run:{id}:chunks_remaining` | Integer string | — | Display mirror of chunk progress for `GET /api/scrape-status` ([REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress)). Not the authoritative completion gate — that lives in D1 `scrape_chunk_completions` (migration 0007, see [AD7](decisions/README.md#ad7-d1-for-chunk-completion-tracking-replacing-kv-read-modify-write)). |
 | `ratelimit:{routeClass}:{identity}:{windowIndex}` | Integer string | Window size | Rate-limit counters; see [Rate-limit rules](#rate-limit-rules) below. Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9. |
 
 ### Rate-limit rules

@@ -69,8 +69,8 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 - Navigation correctness on `/digest` and `/history` back-nav (URL transitions cleanly, originating card remains in DOM)
 
 **What it does NOT cover:**
-- The morph-pair structural contract (no `clearAllVtNames` reintroduced into the `astro:after-swap` listener path) lives in `tests/layouts/base.test.ts` instead — Playwright cannot reliably observe Astro lifecycle event timing from outside the browser context, so a static source-grep is the right layer for that regression class.
-- The history-vs-digest perf-comparability test is permanently skipped (`/history` is structurally slower than `/digest` due to opened day-groups carrying more cards; accepted).
+- The morph-pair structural contract lives in `tests/layouts/base.test.ts` — Playwright cannot observe Astro lifecycle timing from outside the browser, so a static source-grep is the right layer for that class.
+- The history-vs-digest perf-comparability test is permanently skipped (see `.user-overrides.md`: `skipped-test:REQ-READ-002,REQ-HIST-001`).
 
 **How to run:** Actions tab → `Playwright E2E (live)` → Run workflow. Optional `base_url` input targets a preview deploy.
 
@@ -121,7 +121,7 @@ Every push to `develop` (and every PR targeting `main`) runs the following gates
 | Dead code | `npm run knip` | No unused exports or files |
 | Unit + integration tests | `npx vitest run` | Vitest suite |
 
-**Why the audit gates on CRITICAL only:** the Worker runtime is `workerd`, not Node.js, so most HIGH+ advisories live in build tooling (`@astrojs/cloudflare`, `wrangler`, `miniflare`, `undici`) and never reach the deployed bundle. Gating on CRITICAL still blocks the worst class of CVEs, while HIGH+ findings remain visible in CI logs for operators to act on via the weekly Dependabot PRs. The same CRITICAL threshold runs in the deploy job as a defence-in-depth check after merge.
+**Why the audit gates on CRITICAL only:** the deployed bundle runs on `workerd`, not Node.js, so most HIGH+ advisories live in build tooling and never reach production. CRITICAL still blocks the worst CVEs; HIGH+ remains visible in CI logs for Dependabot triage. The deploy job re-runs the same CRITICAL check as defence-in-depth.
 
 When the REQ backlink gate fails, either the referenced REQ-ID needs to be added to `sdd/` (if it is a new requirement), or the stale reference in the source/doc file needs to be updated to point at the correct live REQ.
 
@@ -141,8 +141,8 @@ Because the Worker gate alone is sufficient, a misconfigured or disabled Access 
 `CF_ACCESS_AUD` is technically optional, but **production deployments where Cloudflare Access is bound to a custom domain should set it.** Without it, the Worker only checks `Cf-Access-Jwt-Assertion` header presence — an attacker hitting the same Worker via the `*.workers.dev` URL (where Access is not bound) can forge any JWT-shaped value in the header and pass Layer 1. The session + `ADMIN_EMAIL` checks (Layers 2 + 3) still gate, but the perimeter check is missing.
 
 Two ways to close that gap:
-1. **Set `CF_ACCESS_AUD`** to the audience tag of the Access application that fronts the custom domain. The Worker then validates the JWT's `aud` claim against the value, and a forged header on workers.dev is rejected at Layer 1. Recommended for any deploy that binds Access.
-2. **Disable the `*.workers.dev` subdomain** in the Cloudflare dashboard (Workers & Pages → your worker → Settings → Domains & Routes → disable workers.dev). Forks that don't use Access at all should leave it enabled; forks that DO use Access in production should disable it so the Access-protected custom domain is the only entry point.
+1. **Set `CF_ACCESS_AUD`** — the audience tag of the Access application fronting the custom domain. The Worker validates the JWT `aud` claim; a forged header on `workers.dev` is rejected at Layer 1. Recommended for any deploy that binds Access.
+2. **Disable `*.workers.dev`** — Workers & Pages → your worker → Settings → Domains & Routes → disable workers.dev. Forks without Access should leave it enabled; forks with Access in production should disable it.
 
 When Access is bound and `CF_ACCESS_AUD` is unset, the structured log `admin.auth.aud_unset_warning` is emitted once per Worker isolate (isolates cycle roughly every 30 minutes under load) so the misconfiguration is visible via `wrangler tail` or Logpush without flooding Logpush during brute-force probes. Forks without Access bound still see admin unreachable at Layer 1 and never trigger this warning.
 
