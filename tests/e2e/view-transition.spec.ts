@@ -180,19 +180,6 @@ test.describe('REQ-HIST-001 history return-morph (live)', () => {
   });
 });
 
-test.describe('REQ-READ-002 / REQ-HIST-001 perf-comparability (live)', () => {
-  // Skipped intentionally. The structural contract tests above pin
-  // the morph-pair mechanism — that's the regression we care about.
-  // The remaining /history-vs-/digest sluggishness is structural
-  // (more cards in opened day-groups, more layout work) and the user
-  // has accepted it as-is. Resurrect this test if a future refactor
-  // claims to close the gap and we want a numeric guard.
-  test.skip(
-    'history back-nav is comparable to digest back-nav — accepted as structurally slower',
-    () => {},
-  );
-});
-
 test.describe('REQ-OPS-003 CSP enforcement (live)', () => {
   // Verifies that the enter/exit + tag-railing-flip animations on the
   // article-detail flow do not trigger any browser-side CSP violations

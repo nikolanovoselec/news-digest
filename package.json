@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/generate-pwa-icons.mjs && astro dev",
-    "build": "node scripts/generate-pwa-icons.mjs && astro build && node scripts/merge-worker-handlers.mjs",
+    "dev": "node scripts/generate-pwa-icons.mjs && node scripts/build-client-scripts.mjs && astro dev",
+    "build": "node scripts/generate-pwa-icons.mjs && node scripts/build-client-scripts.mjs && astro build && node scripts/merge-worker-handlers.mjs",
     "preview": "wrangler dev",
-    "deploy": "node scripts/generate-pwa-icons.mjs && astro build && wrangler deploy",
+    "deploy": "node scripts/generate-pwa-icons.mjs && node scripts/build-client-scripts.mjs && astro build && wrangler deploy",
     "icons": "node scripts/generate-pwa-icons.mjs",
     "fixtures": "node scripts/generate-test-fixtures.mjs",
     "typecheck": "npm run fixtures && astro check && tsc --noEmit",
