@@ -165,7 +165,7 @@ KV's eventual consistency made both races effectively undetectable via testing i
 - Same precedent as the existing `email_enabled` exception in `sdd/.user-overrides.md` (column name IS the contract because it's the shared identifier across UI, DB, dispatcher).
 
 **Consequences:**
-- spec-reviewer's mechanism-leakage rule should skip these two REQs once codeflare#266 lands and the spec-reviewer learns to grep ADRs for `Overrides:` headers. Until then, the JUDGMENT will re-surface on full proactive `/sdd clean` scans; reviewers should resolve it by pointing at this ADR.
+- spec-reviewer skips these two REQs via the `Overrides:` header above.
 - Future cookie-policy changes update both the affected REQ AC and this ADR (and the corresponding security tests) in lockstep.
 - `documentation/security.md` is not required by this decision — when it is eventually written, it backlinks here, not the other way around.
 
@@ -194,7 +194,7 @@ KV's eventual consistency made both races effectively undetectable via testing i
 - The mechanism-leakage rule was authored against frontend-heavy projects where storage names are usually behind ORM abstractions. This project is intentionally close-to-the-metal (raw SQL strings, no ORM, KV keys hand-built) — the storage names are *the* user-facing surface for anyone who runs migrations or writes new queries.
 
 **Consequences:**
-- spec-reviewer's mechanism-leakage rule should skip these five REQs once codeflare#266 lands. Until then, the JUDGMENT will re-surface on full proactive `/sdd clean` scans; reviewers should resolve it by pointing at this ADR.
+- spec-reviewer skips these five REQs via the `Overrides:` header above.
 - Schema changes update both the affected REQ AC and this ADR (and the corresponding migration files) in lockstep.
 - `documentation/architecture.md` references the storage shapes in §4.2 (libraries) and §4.5 (Worker, queue, and migrations); `documentation/configuration.md` documents the KV bindings and naming conventions. This ADR explains why those high-level references coexist with the inline persistence names in the REQs.
 
