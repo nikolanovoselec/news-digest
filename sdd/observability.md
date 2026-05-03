@@ -51,11 +51,12 @@ Structured JSON logging as the single operational surface — no external observ
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. Every response includes `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com`. The `'unsafe-inline'` allowance on `style-src` is required because Astro emits component-scoped styles as inline `<style>` blocks; `script-src` remains strict.
+1. Every response includes `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.gravatar.com https://secure.gravatar.com; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`. The `'unsafe-inline'` allowance on `style-src` is required because Astro emits component-scoped styles as inline `<style>` blocks; `script-src` remains strict. `img-src` is narrowed to the only external origin we load (Gravatar avatars). `form-action` is `'self'` only because OAuth redirects are server-side, never browser-submitted.
 2. Every response includes `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`.
 3. Every response includes `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`.
 4. Every response includes `Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), clipboard-read=()`.
-5. No inline script tags exist anywhere in the app; the CSP `script-src` is `'self'` only.
+5. Every response includes `X-Frame-Options: DENY` as defense-in-depth alongside `frame-ancestors 'none'`.
+6. No inline script tags exist anywhere in the app; the CSP `script-src` is `'self'` only.
 
 **Constraints:** CON-SEC-001
 **Priority:** P0

@@ -84,10 +84,14 @@ async function kickCoordinator(env: Env): Promise<{ run_id: string; reused: bool
 
 function redirectToSettings(origin: string, runId: string, reused: boolean): Response {
   const status = reused ? 'reused' : 'ok';
+  // ULIDs in Crockford base32 don't strictly need encoding, but the
+  // value originates from D1 and a future code path that allows non-
+  // ULID IDs would otherwise admit header injection through the
+  // Location header. Mirrors the `tag` encoding in retry.ts.
   return new Response(null, {
     status: 303,
     headers: {
-      Location: `${origin}/settings?force_refresh=${status}&run_id=${runId}`,
+      Location: `${origin}/settings?force_refresh=${status}&run_id=${encodeURIComponent(runId)}`,
     },
   });
 }

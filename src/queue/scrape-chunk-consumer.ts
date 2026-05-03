@@ -40,6 +40,7 @@ import {
 } from '~/lib/generate';
 import {
   mergeClustersByLlmHints,
+  normaliseRawDedupGroups,
   type Candidate,
   type Cluster,
 } from '~/lib/dedupe';
@@ -268,7 +269,7 @@ export async function processOneChunk(
   const wastedCostUsd = llmRun.wastedCostUsd;
 
   const rawArticles = Array.isArray(parsed.articles) ? parsed.articles : [];
-  const dedupGroups = normaliseDedupGroups(parsed.dedup_groups);
+  const dedupGroups = normaliseRawDedupGroups(parsed.dedup_groups);
 
   // Build one candidate cluster per input row. Each starts as a
   // singleton cluster whose primary is the input candidate plus its
@@ -712,23 +713,6 @@ function narrowChunkPayload(
     }
   }
   return { articles: articles as LLMChunkArticle[], dedup_groups: dedupGroups };
-}
-
-/** Coerce an unknown dedup_groups payload into a clean `number[][]`. */
-function normaliseDedupGroups(raw: unknown): number[][] {
-  if (!Array.isArray(raw)) return [];
-  const out: number[][] = [];
-  for (const group of raw) {
-    if (!Array.isArray(group)) continue;
-    const indices: number[] = [];
-    for (const v of group) {
-      if (typeof v === 'number' && Number.isInteger(v) && v >= 0) {
-        indices.push(v);
-      }
-    }
-    if (indices.length >= 2) out.push(indices);
-  }
-  return out;
 }
 
 /** For each merged cluster (in output order), pick the "anchor" input

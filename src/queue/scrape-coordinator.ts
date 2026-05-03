@@ -20,6 +20,7 @@
 
 import {
   CURATED_SOURCES,
+  hasCuratedSource,
   type CuratedSource,
 } from '~/lib/curated-sources';
 import {
@@ -203,7 +204,16 @@ export async function runCoordinator(
   }
 
   // --- Step 1: Build the full source list (curated + discovered) -------
-  const discoveredSources = await loadDiscoveredSources(env.KV);
+  const { sources: discoveredSources, partial: discoveredPartial } =
+    await loadDiscoveredSources(env.KV);
+  if (discoveredPartial) {
+    log('warn', 'digest.generation', {
+      status: 'coordinator_discovered_sources_partial',
+      discovered_count: discoveredSources.length,
+      detail:
+        'KV scan failed mid-iteration; some discovered tags may be missing from this tick.',
+    });
+  }
   const allSources: SourceForFetch[] = [
     ...CURATED_SOURCES.map((s) => ({
       adapter: curatedToAdapter(s),
@@ -516,70 +526,102 @@ function curatedToAdapter(curated: CuratedSource): SourceAdapter {
 
 /** Scan every `sources:{tag}` KV entry and synthesise SourceForFetch
  * rows so the coordinator treats discovered feeds identically to
- * curated ones. SSRF gating happens inside adaptersForDiscoveredFeeds. */
-async function loadDiscoveredSources(
+ * curated ones. SSRF gating happens inside adaptersForDiscoveredFeeds.
+ *
+ * Behaviour notes:
+ *  - Tags that have since been promoted to CURATED_SOURCES are
+ *    skipped AND the orphan KV entry is best-effort deleted in the
+ *    same pass (no second sweep needed).
+ *  - KV failures are caught per-key so one transient miss doesn't
+ *    abort the whole scan and silently truncate the discovered set.
+ *  - `partial: true` signals the caller that one or more keys failed
+ *    and the returned set is incomplete; the caller logs a degraded-
+ *    state warning so operators don't read an empty `sources` array
+ *    as "no discovered tags exist". */
+/** @internal Exported for unit tests only — covers the orphan-purge,
+ *  per-key try/catch, and partial-flag contract introduced by CF-015. */
+export async function loadDiscoveredSources(
   kv: KVNamespace,
-): Promise<SourceForFetch[]> {
+): Promise<{ sources: SourceForFetch[]; partial: boolean }> {
   const out: SourceForFetch[] = [];
+  let partial = false;
   let cursor: string | undefined;
-  try {
-    do {
-      const result: KVNamespaceListResult<unknown> = await kv.list({
+  do {
+    let result: KVNamespaceListResult<unknown>;
+    try {
+      result = await kv.list({
         prefix: 'sources:',
         ...(cursor !== undefined ? { cursor } : {}),
       });
-      for (const key of result.keys) {
-        const raw = await kv.get(key.name, 'text');
-        if (raw === null) continue;
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(raw);
-        } catch {
-          continue;
-        }
-        if (parsed === null || typeof parsed !== 'object') continue;
-        const feeds = (parsed as Partial<SourcesCacheValue>).feeds;
-        if (!Array.isArray(feeds)) continue;
-        const discoveredFeeds: DiscoveredFeed[] = [];
-        for (const f of feeds) {
-          if (f === null || typeof f !== 'object') continue;
-          const name = (f as { name?: unknown }).name;
-          const url = (f as { url?: unknown }).url;
-          const kind = (f as { kind?: unknown }).kind;
-          if (typeof name !== 'string' || name === '') continue;
-          if (typeof url !== 'string' || url === '') continue;
-          if (kind !== 'rss' && kind !== 'atom' && kind !== 'json') continue;
-          discoveredFeeds.push({ name, url, kind });
-        }
-        // Key of this KV entry is `sources:{tag}` — strip the prefix
-        // to identify which tag owns these feeds, so an evicted URL
-        // can be removed from the right entry later.
-        const tag = key.name.startsWith('sources:')
-          ? key.name.slice('sources:'.length)
-          : '';
-        if (tag === '') continue;
-        const adapters = adaptersForDiscoveredFeeds(discoveredFeeds);
-        for (let i = 0; i < adapters.length; i++) {
-          const adapter = adapters[i];
-          const feed = discoveredFeeds[i];
-          if (adapter === undefined || feed === undefined) continue;
-          out.push({
-            adapter,
-            sourceName: feed.name,
-            feedUrl: feed.url,
-            discoveredTag: tag,
-          });
-        }
+    } catch (err) {
+      partial = true;
+      log('warn', 'digest.generation', {
+        status: 'coordinator_discovered_list_failed',
+        detail: String(err).slice(0, 200),
+      });
+      break;
+    }
+    for (const key of result.keys) {
+      const tag = key.name.startsWith('sources:')
+        ? key.name.slice('sources:'.length)
+        : '';
+      if (tag === '') continue;
+      // Orphan purge: a tag that has since been promoted to
+      // CURATED_SOURCES no longer needs its discovered KV entry.
+      // Best-effort delete; failures are silent (next tick retries).
+      if (hasCuratedSource(tag)) {
+        await kv.delete(key.name).catch(() => {});
+        continue;
       }
-      cursor = result.list_complete ? undefined : result.cursor;
-    } while (cursor !== undefined);
-  } catch (err) {
-    log('warn', 'digest.generation', {
-      status: 'coordinator_discovered_scan_failed',
-      detail: String(err).slice(0, 200),
-    });
-  }
-  return out;
+      let raw: string | null;
+      try {
+        raw = await kv.get(key.name, 'text');
+      } catch (err) {
+        partial = true;
+        log('warn', 'digest.generation', {
+          status: 'coordinator_discovered_get_failed',
+          tag,
+          detail: String(err).slice(0, 200),
+        });
+        continue;
+      }
+      if (raw === null) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (parsed === null || typeof parsed !== 'object') continue;
+      const feeds = (parsed as Partial<SourcesCacheValue>).feeds;
+      if (!Array.isArray(feeds)) continue;
+      const discoveredFeeds: DiscoveredFeed[] = [];
+      for (const f of feeds) {
+        if (f === null || typeof f !== 'object') continue;
+        const name = (f as { name?: unknown }).name;
+        const url = (f as { url?: unknown }).url;
+        const kind = (f as { kind?: unknown }).kind;
+        if (typeof name !== 'string' || name === '') continue;
+        if (typeof url !== 'string' || url === '') continue;
+        if (kind !== 'rss' && kind !== 'atom' && kind !== 'json') continue;
+        discoveredFeeds.push({ name, url, kind });
+      }
+      const adapters = adaptersForDiscoveredFeeds(discoveredFeeds);
+      for (let i = 0; i < adapters.length; i++) {
+        const adapter = adapters[i];
+        const feed = discoveredFeeds[i];
+        if (adapter === undefined || feed === undefined) continue;
+        out.push({
+          adapter,
+          sourceName: feed.name,
+          feedUrl: feed.url,
+          discoveredTag: tag,
+        });
+      }
+    }
+    cursor = result.list_complete ? undefined : result.cursor;
+  } while (cursor !== undefined);
+  return { sources: out, partial };
 }
 
 /** Fetch every source in parallel, with a 10-worker semaphore to keep

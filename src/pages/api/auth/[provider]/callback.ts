@@ -236,12 +236,12 @@ export async function GET(context: APIContext): Promise<Response> {
       query_state_present: queryState !== null && queryState !== '',
       cookie_state_present: cookieState !== null && cookieState !== '',
       cookie_header_present: cookieHeader !== null,
-      cookie_names: cookieHeader !== null
-        ? cookieHeader
-            .split(';')
-            .map((p) => p.split('=')[0]?.trim() ?? '')
-            .filter((n) => n !== '')
-        : [],
+      // Log a count rather than the actual cookie names — anyone with
+      // log access otherwise learns the exact auth-cookie inventory
+      // they'd need to forge a session.
+      cookie_count: cookieHeader !== null
+        ? cookieHeader.split(';').filter((p) => p.trim() !== '').length
+        : 0,
       states_match: false,
     });
     const headers = new Headers();

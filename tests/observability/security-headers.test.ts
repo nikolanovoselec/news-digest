@@ -7,6 +7,7 @@ import {
   CSP_HEADER_VALUE,
   HSTS_HEADER_VALUE,
   X_CONTENT_TYPE_OPTIONS_VALUE,
+  X_FRAME_OPTIONS_VALUE,
   REFERRER_POLICY_VALUE,
   PERMISSIONS_POLICY_VALUE,
   SECURITY_HEADERS,
@@ -33,8 +34,12 @@ describe('security-headers middleware', () => {
   describe('constants', () => {
     it('REQ-OPS-003: CSP matches the spec byte-for-byte', () => {
       expect(CSP_HEADER_VALUE).toBe(
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.gravatar.com https://secure.gravatar.com; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
       );
+    });
+
+    it('REQ-OPS-003: X-Frame-Options is DENY (defense-in-depth on top of frame-ancestors)', () => {
+      expect(X_FRAME_OPTIONS_VALUE).toBe('DENY');
     });
 
     it('REQ-OPS-003: HSTS is max-age=63072000; includeSubDomains; preload', () => {
@@ -55,7 +60,7 @@ describe('security-headers middleware', () => {
       );
     });
 
-    it('REQ-OPS-003: SECURITY_HEADERS lists all five required headers', () => {
+    it('REQ-OPS-003: SECURITY_HEADERS lists every required header', () => {
       const names = SECURITY_HEADERS.map(([n]) => n).sort();
       expect(names).toEqual([
         'Content-Security-Policy',
@@ -63,6 +68,7 @@ describe('security-headers middleware', () => {
         'Referrer-Policy',
         'Strict-Transport-Security',
         'X-Content-Type-Options',
+        'X-Frame-Options',
       ]);
     });
   });
@@ -93,14 +99,19 @@ describe('security-headers middleware', () => {
       expect(res.headers.get('Permissions-Policy')).toBe(PERMISSIONS_POLICY_VALUE);
     });
 
-    it('REQ-OPS-003: stamps all five headers even on an error response', async () => {
+    it('REQ-OPS-003: adds X-Frame-Options: DENY', async () => {
+      const res = await run(new Response('ok'));
+      expect(res.headers.get('X-Frame-Options')).toBe('DENY');
+    });
+
+    it('REQ-OPS-003: stamps every required header even on an error response', async () => {
       const res = await run(new Response('gone', { status: 404 }));
       for (const [name, value] of SECURITY_HEADERS) {
         expect(res.headers.get(name), `missing ${name}`).toBe(value);
       }
     });
 
-    it('REQ-OPS-003: stamps all five headers even on a redirect response', async () => {
+    it('REQ-OPS-003: stamps every required header even on a redirect response', async () => {
       const res = await run(
         new Response(null, { status: 302, headers: { Location: '/digest' } }),
       );

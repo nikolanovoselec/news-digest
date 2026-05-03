@@ -73,6 +73,11 @@ export function persistTheme(storage: Storage, theme: Theme): void {
  * are not `localhost` (e.g. `127.0.0.1`, LAN IPs, ngrok HTTP tunnels) older
  * browsers may silently drop this cookie; the theme then reverts to the
  * server default. The first-paint hint is the only thing affected.
+ *
+ * Intentionally NOT HttpOnly: the toggle is JS-driven (this very file
+ * reads/writes the cookie on click) and the value is non-sensitive UI
+ * state, so script access is required and acceptable. Marking HttpOnly
+ * would force a redundant server round-trip per toggle.
  */
 export function persistThemeCookie(doc: Document, theme: Theme): void {
   const oneYearSec = 60 * 60 * 24 * 365;

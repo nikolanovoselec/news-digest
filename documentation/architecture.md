@@ -177,7 +177,7 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 | `src/worker.ts` | Cron + queue dispatch entry — three cron branches, four queue message types | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email) |
 | `src/queue/scrape-coordinator.ts` | Fan-out, freshness filter, eviction pass, multi-source aggregation on re-discovery, chunk dispatch | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking) |
 | `src/queue/scrape-chunk-consumer.ts` | Per-chunk LLM call, dedup, atomic completion gate, finalize handoff | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
-| `src/queue/scrape-finalize-consumer.ts` | Finalize pass (cross-chunk semantic dedup) — LLM prompt uses title + full article body; source name dropped as non-signal. Cost recorded atomically via `finalize_recorded` gate (migration 0010) regardless of merge count | [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
+| `src/queue/scrape-finalize-consumer.ts` | Finalize pass (cross-chunk semantic dedup) — LLM prompt uses title + full article body; source name dropped as non-signal. Upfront SELECT short-circuits redelivery before the LLM call when `finalize_recorded` is already set. Cost recorded atomically via `finalize_recorded` gate (migration 0010) regardless of merge count | [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
 | `src/queue/cleanup.ts` | Daily 3-pass cleanup: retention, stuck-tag prune, orphan-tag KV sweep | [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-DISC-006](../sdd/discovery.md#req-disc-006-stuck-tag-retention), [REQ-PIPE-007](../sdd/generation.md#req-pipe-007-orphan-tag-source-cleanup) |
 | `migrations/0001_initial.sql` | Initial schema | (foundational) |
 | `migrations/0002_article_tags.sql` | Article tag columns | (schema) |
@@ -223,6 +223,7 @@ Chunk consumer (per chunk)
        ▼
 Finalize consumer
   ├─ Skip when ≤ 1 article (finalize_noop)
+  ├─ SELECT finalize_recorded upfront — if already 1, skip before LLM call (finalize_redelivery_skipped)
   ├─ Single Workers AI call over title+full-body per article (source name omitted — non-signal)
   ├─ Per dedup group (≥ 2): merge losers into earliest-pub-ts winner (D1 batch)
   └─ Atomic cost gate: UPDATE scrape_runs SET finalize_recorded=1 … WHERE finalize_recorded=0
@@ -280,7 +281,7 @@ Articles are the central entity in the article pool. Each article belongs to a `
 | Authentication | 5-minute access JWT + 30-day rotating refresh token | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection) |
 | CSRF defence | `Origin` header check on every state-changing request | [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints) |
 | Rate limiting | KV window-counter, applied to auth routes, mutation routes, and authenticated polling endpoints | `src/lib/rate-limit.ts`, [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9 |
-| Security headers | CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` | [REQ-OPS-003](../sdd/observability.md#req-ops-003-security-headers-on-every-response) |
+| Security headers | CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options` | [REQ-OPS-003](../sdd/observability.md#req-ops-003-security-headers-on-every-response) |
 | Observability | Structured JSON logs via closed `LogEvent` enum | [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-logging) |
 | Error surfaces | Closed `ErrorCode` enum, sanitised user-facing messages | [REQ-OPS-002](../sdd/observability.md#req-ops-002-sanitized-error-surfaces) |
 | Admin gate | Worker-side: Access JWT header presence + session + `ADMIN_EMAIL` match; optional `CF_ACCESS_AUD` aud-claim check (strongly recommended in production) | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8 |

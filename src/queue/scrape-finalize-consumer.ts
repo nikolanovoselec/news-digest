@@ -49,6 +49,7 @@ import { FINALIZE_DEDUP_SYSTEM, finalizeDedupUserPrompt, LLM_PARAMS } from '~/li
 import { parseLLMJson } from '~/lib/generate';
 import { runJsonWithFallback } from '~/lib/llm-json';
 import { pickWinner, buildMergeStatements, type FinalizeRow } from '~/lib/finalize-merge';
+import { normaliseRawDedupGroups } from '~/lib/dedupe';
 
 /** Hard cap on candidates per finalize call. Comfortable headroom over
  *  current production loads (~150-200 articles per tick) and well
@@ -107,6 +108,27 @@ export async function processOneFinalize(
   body: FinalizeJobMessage,
 ): Promise<void> {
   await applyForeignKeysPragma(env.DB);
+
+  // Step 0 — best-effort upfront short-circuit on queue redelivery.
+  // The atomic UPDATE later in this function is the genuine race
+  // safety net (two concurrent redeliveries can both pass this SELECT
+  // and only one will win the UPDATE). The upfront check exists to
+  // avoid paying full Workers AI cost on every redelivery for runs
+  // that already finalized cleanly — under Queue redelivery storms
+  // that becomes real money. A miss here just falls through to the
+  // existing path; it never produces a wrong outcome.
+  const gateProbe = await env.DB
+    .prepare(`SELECT finalize_recorded FROM scrape_runs WHERE id = ?1`)
+    .bind(body.scrape_run_id)
+    .first<{ finalize_recorded: number }>();
+  if (gateProbe !== null && gateProbe.finalize_recorded === 1) {
+    log('info', 'digest.generation', {
+      status: 'finalize_redelivery_skipped_upfront',
+      scrape_run_id: body.scrape_run_id,
+      reason: 'finalize_recorded_already_set',
+    });
+    return;
+  }
 
   // Step 1 — load surviving articles for the run, capped at 250 by
   // ingested_at DESC so we always prioritise the freshest tail when
@@ -186,7 +208,7 @@ export async function processOneFinalize(
   const wastedCostUsd = llmRun.wastedCostUsd;
 
   // Step 5 — extract dedup_groups from the parsed payload.
-  const dedupGroups = normaliseDedupGroups(
+  const dedupGroups = normaliseRawDedupGroups(
     (parsed as { dedup_groups?: unknown }).dedup_groups,
   );
 
@@ -274,41 +296,32 @@ export async function processOneFinalize(
     .run();
   const wonRecording = (gateAndStats.meta?.changes ?? 0) === 1;
 
-  log('info', 'digest.generation', {
-    status: 'finalize_ready',
-    scrape_run_id: body.scrape_run_id,
-    article_count: rows.length,
-    groups_merged: groupsMerged,
-    losers_deleted: losersDeleted,
-    tokens_in: tokensIn,
-    tokens_out: tokensOut,
-    estimated_cost_usd: costUsd,
-    cost_recorded: wonRecording,
-    model_used: modelUsed,
-    capped_at_250: rows.length === FINALIZE_CANDIDATE_CAP,
-  });
-}
-
-/** Coerce the LLM's `dedup_groups` payload into a clean `number[][]`.
- *  Same defensive shape-check the chunk consumer applies at
- *  scrape-chunk-consumer.ts:696. */
-function normaliseDedupGroups(value: unknown): number[][] {
-  if (!Array.isArray(value)) return [];
-  const out: number[][] = [];
-  for (const group of value) {
-    if (!Array.isArray(group)) continue;
-    // Dedupe indices within a group: an LLM that emits `[0, 1, 1]` would
-    // otherwise inflate `losers_deleted` and queue redundant merge SQL
-    // for the duplicated index. Set-uniquing collapses each occurrence.
-    const seen = new Set<number>();
-    for (const idx of group) {
-      if (Number.isInteger(idx) && (idx as number) >= 0) {
-        seen.add(idx as number);
-      }
-    }
-    if (seen.size >= 2) out.push(Array.from(seen));
+  if (wonRecording) {
+    log('info', 'digest.generation', {
+      status: 'finalize_ready',
+      scrape_run_id: body.scrape_run_id,
+      article_count: rows.length,
+      groups_merged: groupsMerged,
+      losers_deleted: losersDeleted,
+      tokens_in: tokensIn,
+      tokens_out: tokensOut,
+      estimated_cost_usd: costUsd,
+      cost_recorded: true,
+      model_used: modelUsed,
+      capped_at_250: rows.length === FINALIZE_CANDIDATE_CAP,
+    });
+  } else {
+    // Race lost to a concurrent redelivery that finished first.
+    // Only the fields that describe the outcome of THIS attempt go
+    // here — the per-row counters were already absorbed by the
+    // winning attempt and would mislead operators if repeated.
+    log('info', 'digest.generation', {
+      status: 'finalize_redelivery_skipped',
+      scrape_run_id: body.scrape_run_id,
+      model_used: modelUsed,
+      reason: 'race_lost',
+    });
   }
-  return out;
 }
 
 function toFinalizeRow(r: ArticleRow): FinalizeRow {

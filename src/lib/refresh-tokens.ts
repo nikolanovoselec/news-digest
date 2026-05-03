@@ -323,31 +323,46 @@ export async function revokeRefreshToken(
  * revoke rows without a parallel `session_version` bump (none today)
  * MUST update this contract.
  *
- * **Race:** two concurrent first-time callers may both observe
- * unrevoked rows and both bump. Bounded over-bump is acceptable —
- * `session_version` is monotonically increasing.
+ * **Race:** the prior SELECT-then-batch-UPDATE shape had a TOCTOU
+ * window where another isolate could revoke all rows between SELECT
+ * and UPDATE. We now gate the bump on `EXISTS` against rows whose
+ * `revoked_at` matches the value this call just wrote — and run
+ * BOTH statements inside a single `db.batch()` so the runtime can't
+ * preempt between revoke and bump (which would leave outstanding
+ * access JWTs valid for up to their 5-min lifetime even though all
+ * refresh tokens were revoked). The batch is atomic relative to D1.
+ *
+ * Two concurrent first-time callers can both observe unrevoked rows
+ * under the conditional UPDATE itself (one wins the row flip, the
+ * other observes zero changes and skips); bounded over-bump is
+ * acceptable because `session_version` is monotonically increasing.
  */
 export async function revokeAllForUser(
   db: D1Database,
   userId: string,
   now: number = Math.floor(Date.now() / 1000),
 ): Promise<void> {
-  const existing = await db
-    .prepare(
-      `SELECT 1 FROM refresh_tokens WHERE user_id = ?1 AND revoked_at IS NULL LIMIT 1`,
-    )
-    .bind(userId)
-    .first();
-  if (existing === null) return;
   await db.batch([
     db
       .prepare(
         `UPDATE refresh_tokens SET revoked_at = ?2 WHERE user_id = ?1 AND revoked_at IS NULL`,
       )
       .bind(userId, now),
+    // EXISTS sees the rows the previous statement just flipped (since
+    // the batch executes statements in order against the same logical
+    // snapshot). The bump fires only when the revoke actually had
+    // work to do — no spurious session_version churn on dead-cookie
+    // replays, no preempt-window where tokens revoked but JWTs valid.
     db
-      .prepare(`UPDATE users SET session_version = session_version + 1 WHERE id = ?1`)
-      .bind(userId),
+      .prepare(
+        `UPDATE users SET session_version = session_version + 1
+          WHERE id = ?1
+            AND EXISTS (
+              SELECT 1 FROM refresh_tokens
+               WHERE user_id = ?1 AND revoked_at = ?2
+            )`,
+      )
+      .bind(userId, now),
   ]);
 }
 

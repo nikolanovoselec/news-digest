@@ -190,3 +190,22 @@ function mergeClusters(clusters: Cluster[]): Cluster {
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }
+
+/** Coerce an unknown `dedup_groups` LLM payload into a clean `number[][]`.
+ *  Indices within each group are Set-deduped: an LLM that emits `[0, 1, 1]`
+ *  would otherwise inflate `losers_deleted` and queue redundant merge SQL. */
+export function normaliseRawDedupGroups(value: unknown): number[][] {
+  if (!Array.isArray(value)) return [];
+  const out: number[][] = [];
+  for (const group of value) {
+    if (!Array.isArray(group)) continue;
+    const seen = new Set<number>();
+    for (const idx of group) {
+      if (typeof idx === 'number' && Number.isInteger(idx) && idx >= 0) {
+        seen.add(idx);
+      }
+    }
+    if (seen.size >= 2) out.push(Array.from(seen));
+  }
+  return out;
+}

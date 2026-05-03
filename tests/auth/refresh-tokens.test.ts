@@ -170,6 +170,37 @@ describe('refresh-tokens — REQ-AUTH-008', () => {
     expect(row!.revoked_at).not.toBeNull();
   });
 
+  it('REQ-AUTH-008 AC 4: revokeAllForUser does NOT bump session_version when no rows were revocable', async () => {
+    // CF-029 — the conditional bump must fire only when the revoke
+    // statement actually flipped at least one row. A dead-cookie
+    // replay against revokeAllForUser otherwise re-bumps on every
+    // call, churning every legitimate browser session that already
+    // has a valid access JWT for this user.
+    const before = await env.DB
+      .prepare('SELECT session_version FROM users WHERE id = ?1')
+      .bind(USER_ID)
+      .first<{ session_version: number }>();
+
+    // No tokens issued yet → no rows in `revoked_at IS NULL` state.
+    await revokeAllForUser(env.DB, USER_ID);
+
+    const after = await env.DB
+      .prepare('SELECT session_version FROM users WHERE id = ?1')
+      .bind(USER_ID)
+      .first<{ session_version: number }>();
+
+    expect(after!.session_version).toBe(before!.session_version);
+
+    // Second call with NO new tokens issued → still no bump. Pin the
+    // idempotency-on-replay claim from the doc-comment.
+    await revokeAllForUser(env.DB, USER_ID);
+    const afterReplay = await env.DB
+      .prepare('SELECT session_version FROM users WHERE id = ?1')
+      .bind(USER_ID)
+      .first<{ session_version: number }>();
+    expect(afterReplay!.session_version).toBe(before!.session_version);
+  });
+
   it('REQ-AUTH-008 AC 5: purgeOldRefreshTokens deletes expired rows', async () => {
     // Issue a token, then mark its expires_at to the past.
     const req = fakeRequest({ ua: 'Mozilla/5.0', country: 'CH' });

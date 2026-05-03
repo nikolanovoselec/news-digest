@@ -38,9 +38,24 @@
  * `'unsafe-inline'` allowance is the only viable policy until Astro
  * supports per-block nonce attribution for compiled scoped styles
  * (tracked upstream — no current workaround). `script-src 'self'`
- * remains strict. */
+ * remains strict.
+ *
+ * `img-src` is narrowed to `'self' data: https://www.gravatar.com
+ * https://secure.gravatar.com` — the only external image origin we
+ * actually load is the Gravatar avatar. The prior blanket `https:`
+ * allowed any HTTPS origin to be embedded as `<img>`, which leaks
+ * referrers and widens the exfiltration surface for free.
+ *
+ * `form-action 'self'` — OAuth flows redirect via 302 from server-side
+ * handlers, never via a `<form action="https://github.com/...">`. The
+ * prior `https://github.com` allowance was a vestige of an earlier
+ * design that submitted from the browser and is no longer needed.
+ *
+ * `frame-ancestors 'none'` is the modern equivalent of `X-Frame-
+ * Options: DENY`; both are still emitted as defense-in-depth for older
+ * UAs that don't respect `frame-ancestors`. */
 export const CSP_HEADER_VALUE =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com";
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.gravatar.com https://secure.gravatar.com; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 
 /** HSTS value required by REQ-OPS-003 AC 2 — two-year max-age, subdomains,
  * and opt-in to the HSTS preload list. */
@@ -51,6 +66,12 @@ export const REFERRER_POLICY_VALUE = 'strict-origin-when-cross-origin';
 
 /** X-Content-Type-Options value required by REQ-OPS-003 AC 3. */
 export const X_CONTENT_TYPE_OPTIONS_VALUE = 'nosniff';
+
+/** X-Frame-Options as defense-in-depth — `frame-ancestors 'none'` in
+ * the CSP is the modern equivalent and authoritative for compliant
+ * UAs, but older browsers (Chrome ≤39, Firefox ≤32, IE) honour only
+ * X-Frame-Options. Stamping both costs nothing. */
+export const X_FRAME_OPTIONS_VALUE = 'DENY';
 
 /** Permissions-Policy value required by REQ-OPS-003 AC 4. The app never uses
  * geolocation, microphone, camera, payment, or clipboard-read, so every
@@ -67,6 +88,7 @@ export const SECURITY_HEADERS: ReadonlyArray<readonly [string, string]> = [
   ['Content-Security-Policy', CSP_HEADER_VALUE],
   ['Strict-Transport-Security', HSTS_HEADER_VALUE],
   ['X-Content-Type-Options', X_CONTENT_TYPE_OPTIONS_VALUE],
+  ['X-Frame-Options', X_FRAME_OPTIONS_VALUE],
   ['Referrer-Policy', REFERRER_POLICY_VALUE],
   ['Permissions-Policy', PERMISSIONS_POLICY_VALUE],
 ];
