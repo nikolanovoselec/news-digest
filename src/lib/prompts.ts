@@ -16,11 +16,10 @@
 // across calls so outputs remain reproducible.
 
 /**
- * Shared inference parameters across the chunk + finalize Workers AI
- * calls. Temperature and response_format are identical; only
- * max_tokens varies (CF-023). `LLM_PARAMS` remains exported as the
- * chunk-sized variant for backwards compatibility with any importer
- * that pulled the original constant.
+ * Shared inference parameters across the LLM calls. Temperature and
+ * response_format are identical; only `max_tokens` varies per call
+ * site (CF-023): chunk processing produces large multi-article
+ * payloads, while finalize and discovery produce tiny JSON envelopes.
  *
  * - `temperature: 0.6` — warm enough for the model to pick longer
  *   completions over minimum-entropy short replies, cool enough for
@@ -55,9 +54,15 @@ export const FINALIZE_LLM_PARAMS = {
   max_tokens: 4_000,
 } as const;
 
-/** Backwards-compatible alias. New code should import the variant
- *  that matches the call site (chunk vs finalize) directly. */
-export const LLM_PARAMS = CHUNK_LLM_PARAMS;
+/**
+ * Discovery-prompt budget — output is `{ feeds: [{ url, name, kind }] }`,
+ * usually a handful of entries. Same 4K cap as finalize: small JSON
+ * envelope, no benefit from the chunk-sized 50K reservation.
+ */
+export const DISCOVERY_LLM_PARAMS = {
+  ...LLM_BASE_PARAMS,
+  max_tokens: 4_000,
+} as const;
 
 // Implements REQ-PIPE-002
 //

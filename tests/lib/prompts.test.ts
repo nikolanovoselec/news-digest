@@ -4,18 +4,35 @@
 // they are no longer exported.
 import { describe, it, expect } from 'vitest';
 import {
-  LLM_PARAMS,
+  CHUNK_LLM_PARAMS,
+  FINALIZE_LLM_PARAMS,
+  DISCOVERY_LLM_PARAMS,
   DISCOVERY_SYSTEM,
   PROCESS_CHUNK_SYSTEM,
   discoveryUserPrompt,
   processChunkUserPrompt,
 } from '~/lib/prompts';
 
-describe('LLM_PARAMS', () => {
-  it('LLM_PARAMS pins inference parameters', () => {
-    expect(LLM_PARAMS.temperature).toBe(0.6);
-    expect(LLM_PARAMS.max_tokens).toBe(50_000);
-    expect(LLM_PARAMS.response_format.type).toBe('json_object');
+describe('LLM param sets — REQ-PIPE-002 / REQ-PIPE-008 / REQ-DISC-001 (CF-023)', () => {
+  it('CHUNK_LLM_PARAMS is the chunk-sized variant (50K tokens) for multi-article output', () => {
+    expect(CHUNK_LLM_PARAMS.temperature).toBe(0.6);
+    expect(CHUNK_LLM_PARAMS.max_tokens).toBe(50_000);
+    expect(CHUNK_LLM_PARAMS.response_format.type).toBe('json_object');
+  });
+  it('FINALIZE_LLM_PARAMS is the small-payload variant (4K tokens) for dedup_groups output', () => {
+    expect(FINALIZE_LLM_PARAMS.temperature).toBe(0.6);
+    expect(FINALIZE_LLM_PARAMS.max_tokens).toBe(4_000);
+    expect(FINALIZE_LLM_PARAMS.response_format.type).toBe('json_object');
+  });
+  it('DISCOVERY_LLM_PARAMS is the small-payload variant (4K tokens) for feed-list output', () => {
+    expect(DISCOVERY_LLM_PARAMS.temperature).toBe(0.6);
+    expect(DISCOVERY_LLM_PARAMS.max_tokens).toBe(4_000);
+    expect(DISCOVERY_LLM_PARAMS.response_format.type).toBe('json_object');
+  });
+  it('the three param sets are distinct objects (no aliasing surprise)', () => {
+    expect(CHUNK_LLM_PARAMS).not.toBe(FINALIZE_LLM_PARAMS);
+    expect(CHUNK_LLM_PARAMS).not.toBe(DISCOVERY_LLM_PARAMS);
+    expect(CHUNK_LLM_PARAMS.max_tokens).not.toBe(FINALIZE_LLM_PARAMS.max_tokens);
   });
 });
 

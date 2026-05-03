@@ -79,9 +79,14 @@ export async function runCleanup(env: Env): Promise<{
 }
 
 /** CF-008 — delete `scrape_chunk_completions` rows for runs whose
- *  `finished_at` is older than the 14-day retention window. Bounded
- *  growth: at ~22k rows/year/deployment without this sweep, the table
- *  becomes the leaking source migration 0007 explicitly called out. */
+ *  `finished_at` is older than the 14-day retention window OR whose
+ *  parent `scrape_runs` row is missing entirely (orphan rows from
+ *  finalize crashes / manual aborts). Bounded growth: at ~22k
+ *  rows/year/deployment without this sweep, the table becomes the
+ *  leaking source migration 0007 explicitly called out. The two
+ *  predicates run in one statement so the cron stays a single round-
+ *  trip; finished_at IS NULL on an in-flight run is preserved by the
+ *  EXISTS check. */
 async function runChunkCompletionsPurge(env: Env): Promise<number> {
   const cutoff = Math.floor(Date.now() / 1000) - RETENTION_SECONDS;
   try {
@@ -89,8 +94,12 @@ async function runChunkCompletionsPurge(env: Env): Promise<number> {
       .prepare(
         `DELETE FROM scrape_chunk_completions
           WHERE scrape_run_id IN (
-            SELECT id FROM scrape_runs WHERE finished_at < ?1
-          )`,
+                  SELECT id FROM scrape_runs WHERE finished_at < ?1
+                )
+             OR NOT EXISTS (
+                  SELECT 1 FROM scrape_runs
+                   WHERE id = scrape_chunk_completions.scrape_run_id
+                )`,
       )
       .bind(cutoff)
       .run();

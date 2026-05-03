@@ -46,6 +46,7 @@ import {
 } from '~/lib/dedupe';
 import { fetchArticleBodies } from '~/lib/article-fetch';
 import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
+import { normalizeHashtag } from '~/lib/hashtags';
 import { splitIntoParagraphs } from '~/lib/paragraph-split';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
 import { runJsonWithFallback, previewRawResponse } from '~/lib/llm-json';
@@ -418,7 +419,10 @@ export async function processOneChunk(
     const seen = new Set<string>();
     for (const t of llmTags) {
       if (typeof t !== 'string') continue;
-      const normalised = t.trim().toLowerCase().replace(/^#/, '');
+      // CF-034 — same normalisation the user-settings write-path applies,
+      // so an LLM-emitted "Cloud Infrastructure" lands as the same canonical
+      // form a user typed "#cloud-infrastructure" into settings.
+      const normalised = normalizeHashtag(t.trim());
       if (normalised === '' || seen.has(normalised)) continue;
       if (!allowedTagSet.has(normalised)) continue;
       seen.add(normalised);

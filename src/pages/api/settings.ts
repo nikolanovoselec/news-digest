@@ -40,11 +40,7 @@ import { isValidTz } from '~/lib/tz';
 import { requireSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
-// Re-exported from `~/lib/hashtags` (CF-034 consolidation). Existing
-// importers that pulled `HASHTAG_REGEX` / `normalizeHashtag` from this
-// module keep working; new code SHOULD import from the lib directly.
-import { HASHTAG_REGEX as HASHTAG_REGEX_LIB, normalizeHashtag as normalizeHashtagLib } from '~/lib/hashtags';
-export const HASHTAG_REGEX = HASHTAG_REGEX_LIB;
+import { HASHTAG_REGEX, normalizeHashtag } from '~/lib/hashtags';
 
 /** Maximum hashtags per user (REQ-SET-002 AC 6).
  *  Sized to give new accounts headroom above the default seed; the
@@ -72,8 +68,6 @@ interface UserSettingsRow {
   email_enabled: number;
 }
 
-
-export const normalizeHashtag = normalizeHashtagLib;
 
 /**
  * Validate and normalize the hashtags payload. Returns either a cleaned

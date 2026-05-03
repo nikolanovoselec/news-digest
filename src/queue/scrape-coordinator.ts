@@ -769,7 +769,17 @@ export async function applyEvictions(
         // Entry already cleared (likely via /api/admin/discovery/retry
         // between ticks); still clear the per-URL counter and move on.
         for (const url of evictedUrls) {
-          try { await clearHealth(env, url); } catch { /* CF-017 — best-effort; a per-URL failure must not abort the eviction loop */ }
+          try {
+            await clearHealth(env, url);
+          } catch (err) {
+            log('warn', 'discovery.completed', {
+              status: 'clear_health_failed',
+              scrape_run_id,
+              tag,
+              url,
+              detail: String(err).slice(0, 500),
+            });
+          }
         }
         continue;
       }
@@ -813,7 +823,17 @@ export async function applyEvictions(
           tag,
         });
         for (const url of evictedUrls) {
-          try { await clearHealth(env, url); } catch { /* CF-017 — best-effort; a per-URL failure must not abort the eviction loop */ }
+          try {
+            await clearHealth(env, url);
+          } catch (err) {
+            log('warn', 'discovery.completed', {
+              status: 'clear_health_failed',
+              scrape_run_id,
+              tag,
+              url,
+              detail: String(err).slice(0, 500),
+            });
+          }
         }
         continue;
       }
@@ -827,8 +847,18 @@ export async function applyEvictions(
       // Clear the per-URL health counters so a re-discovered URL at
       // the same address starts from a clean slate.
       for (const url of evictedUrls) {
-          try { await clearHealth(env, url); } catch { /* CF-017 — best-effort; a per-URL failure must not abort the eviction loop */ }
+        try {
+          await clearHealth(env, url);
+        } catch (err) {
+          log('warn', 'discovery.completed', {
+            status: 'clear_health_failed',
+            scrape_run_id,
+            tag,
+            url,
+            detail: String(err).slice(0, 500),
+          });
         }
+      }
 
       log('warn', 'discovery.completed', {
         status: 'feed_evicted',

@@ -592,3 +592,85 @@ describe('cleanup cron — REQ-DISC-006 stuck-tag prune', () => {
     expect(await getUserHashtags(USER_ID)).toEqual(['ai']);
   });
 });
+
+describe('cleanup cron — CF-008 chunk_completions purge', () => {
+  beforeEach(async () => {
+    await env.DB.exec('DELETE FROM scrape_chunk_completions');
+    await env.DB.exec('DELETE FROM scrape_runs');
+  });
+
+  async function insertScrapeRun(
+    id: string,
+    finishedAt: number | null,
+    startedAt = nowSec() - 86400,
+  ): Promise<void> {
+    await env.DB
+      .prepare(
+        `INSERT INTO scrape_runs (id, started_at, finished_at, status)
+         VALUES (?1, ?2, ?3, ?4)`,
+      )
+      .bind(id, startedAt, finishedAt, finishedAt === null ? 'running' : 'success')
+      .run();
+  }
+
+  async function insertChunkCompletion(runId: string, seq: number): Promise<void> {
+    await env.DB
+      .prepare(
+        `INSERT INTO scrape_chunk_completions (scrape_run_id, chunk_seq, completed_at)
+         VALUES (?1, ?2, ?3)`,
+      )
+      .bind(runId, seq, nowSec())
+      .run();
+  }
+
+  it('CF-008: rows for runs whose finished_at is older than 14d are purged', async () => {
+    await insertScrapeRun('run-old', daysAgo(20));
+    await insertChunkCompletion('run-old', 0);
+    await insertChunkCompletion('run-old', 1);
+
+    const result = await runCleanup(env);
+
+    expect(result.chunkCompletionsPurged).toBeGreaterThanOrEqual(2);
+    expect(
+      await countRows(env.DB, 'scrape_chunk_completions', 'scrape_run_id = ?', 'run-old'),
+    ).toBe(0);
+  });
+
+  it('CF-008: rows for runs finished within the 14d window are preserved', async () => {
+    await insertScrapeRun('run-fresh', daysAgo(5));
+    await insertChunkCompletion('run-fresh', 0);
+
+    const result = await runCleanup(env);
+
+    expect(
+      await countRows(env.DB, 'scrape_chunk_completions', 'scrape_run_id = ?', 'run-fresh'),
+    ).toBe(1);
+    expect(result.chunkCompletionsPurged).toBe(0);
+  });
+
+  it('CF-008: rows for in-flight runs (finished_at IS NULL) are preserved', async () => {
+    await insertScrapeRun('run-running', null, nowSec() - 60);
+    await insertChunkCompletion('run-running', 0);
+
+    const result = await runCleanup(env);
+
+    expect(
+      await countRows(env.DB, 'scrape_chunk_completions', 'scrape_run_id = ?', 'run-running'),
+    ).toBe(1);
+    expect(result.chunkCompletionsPurged).toBe(0);
+  });
+
+  it('CF-008: orphan rows whose parent scrape_run row is missing are purged', async () => {
+    // Insert a completion row pointing at a run id that does not exist
+    // (simulates a finalize crash or manual abort that drops the run
+    // row but leaves children behind).
+    await insertChunkCompletion('run-ghost', 0);
+
+    const result = await runCleanup(env);
+
+    expect(result.chunkCompletionsPurged).toBeGreaterThanOrEqual(1);
+    expect(
+      await countRows(env.DB, 'scrape_chunk_completions', 'scrape_run_id = ?', 'run-ghost'),
+    ).toBe(0);
+  });
+});
