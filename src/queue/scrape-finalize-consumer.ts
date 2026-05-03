@@ -229,24 +229,24 @@ export async function processOneFinalize(
   // of merge outcome.
   //
   // Idempotency on queue redelivery is enforced by a single atomic
-  // UPDATE that flips `finalize_recorded` AND adds the stats in
-  // one statement, gated by a CASE expression on the column's
-  // pre-update value:
+  // UPDATE that adds the stats AND flips `finalize_recorded`,
+  // gated by a `WHERE id = ?1 AND finalize_recorded = 0` clause:
   //
   //   UPDATE scrape_runs
-  //      SET tokens_in = tokens_in + CASE WHEN finalize_recorded = 0 THEN ?2 ELSE 0 END,
-  //          ...,
-  //          finalize_recorded = 1
-  //    WHERE id = ?1
+  //      SET finalize_recorded = 1,
+  //          tokens_in = tokens_in + ?2,
+  //          ...
+  //    WHERE id = ?1 AND finalize_recorded = 0
   //
-  // SQLite evaluates SET expressions against the row's PRE-update
-  // values, so the CASE sees `finalize_recorded = 0` only on the
-  // first pass and the cost lands; on every subsequent redelivery
-  // the CASE sees `finalize_recorded = 1` and adds zero. The
+  // On the first pass the WHERE matches, every SET clause fires,
+  // and `meta.changes === 1`. On every redelivery the row's
+  // `finalize_recorded` is already 1, the WHERE doesn't match,
+  // zero rows change, and the cost is not double-counted. The
   // single-statement gate also rules out the prior split-update
-  // failure mode: a transient error inside the statement rolls back
-  // BOTH the gate flip and the cost add, so a retry can re-record
-  // cleanly. AC 5 + AC 7. Counters from runJsonWithFallback (CF-009).
+  // failure mode: a transient error inside the statement rolls
+  // back BOTH the gate flip and the cost add, so a retry can
+  // re-record cleanly. AC 5 + AC 7. Counters from
+  // runJsonWithFallback (CF-009).
   const tokensIn = llmRun.tokensIn + wastedTokensIn;
   const tokensOut = llmRun.tokensOut + wastedTokensOut;
   const costUsd = llmRun.costUsd + wastedCostUsd;
