@@ -473,9 +473,14 @@ describe('PUT /api/settings', () => {
 
   it('REQ-SET-006: inserts pending_discoveries rows for tags missing from KV', async () => {
     const { db, batchCalls } = makeDb(baseRow());
-    const { kv } = makeKv(['ai']); // `llm` and `mcp` are new
+    const { kv } = makeKv(['ai']); // `llm` and `xyz-nonexistent` are new
     const req = await authedRequest('PUT', {
-      hashtags: ['ai', 'llm', 'mcp'],
+      // `mcp` removed from the input set as of 2026-05-03: it is in
+      // CURATED_SOURCES, so REQ-DISC-001 AC 1 short-circuits its
+      // discovery path. `xyz-nonexistent` substitutes as a second
+      // non-curated, non-KV tag so this test still exercises the
+      // multi-tag enqueue path.
+      hashtags: ['ai', 'llm', 'xyz-nonexistent'],
       digest_hour: 8,
       digest_minute: 0,
       tz: 'UTC',
@@ -486,11 +491,11 @@ describe('PUT /api/settings', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; discovering: string[] };
     expect(body.ok).toBe(true);
-    expect(body.discovering.sort()).toEqual(['llm', 'mcp']);
+    expect(body.discovering.sort()).toEqual(['llm', 'xyz-nonexistent']);
     expect(batchCalls.length).toBe(1);
     const inserts = batchCalls[0]!;
     const inserted = inserts.map((s) => s.params[1]).sort();
-    expect(inserted).toEqual(['llm', 'mcp']);
+    expect(inserted).toEqual(['llm', 'xyz-nonexistent']);
     // Every row bound with user_id=12345 as first arg.
     inserts.forEach((s) => expect(s.params[0]).toBe('12345'));
     // SQL uses INSERT OR IGNORE.
