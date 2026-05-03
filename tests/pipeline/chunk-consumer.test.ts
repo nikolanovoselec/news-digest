@@ -193,6 +193,14 @@ function makeEnv(
   } as unknown as Env;
 }
 
+/** CF-030 — chunk consumer enforces a 120-word floor on `details`
+ *  per REQ-PIPE-002 AC3. Test fixtures used to ship single-sentence
+ *  bodies which now get dropped by the guard. Use this constant when
+ *  the test isn't specifically about the word-count contract. */
+const LONG_BODY =
+  'This is a representative article body that easily clears the 120-word floor. '.repeat(8) +
+  'It crosses two natural paragraph boundaries with explicit periods between sentences.';
+
 function makeChunk(
   overrides: Partial<ChunkJobMessage> = {},
 ): ChunkJobMessage {
@@ -232,8 +240,8 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const aiResponse = {
       response: JSON.stringify({
         articles: [
-          { title: 'NYT-A', details: 'para.', tags: ['cloudflare'] },
-          { title: 'NYT-B', details: 'para.', tags: ['generative-ai'] },
+          { title: 'NYT-A', details: LONG_BODY, tags: ['cloudflare'] },
+          { title: 'NYT-B', details: LONG_BODY, tags: ['generative-ai'] },
         ],
         dedup_groups: [],
       }),
@@ -264,8 +272,8 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
           message: {
             content: JSON.stringify({
               articles: [
-                { title: 'Title-A', details: 'body A', tags: ['cloudflare'] },
-                { title: 'Title-B', details: 'body B', tags: ['generative-ai'] },
+                { title: 'Title-A', details: LONG_BODY, tags: ['cloudflare'] },
+                { title: 'Title-B', details: LONG_BODY, tags: ['generative-ai'] },
               ],
               dedup_groups: [],
             }),
@@ -292,8 +300,8 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const aiResponse = {
       response: JSON.stringify({
         articles: [
-          { title: 'Merged Story', details: 'body.', tags: ['cloudflare'] },
-          { title: 'Ignored', details: 'body.', tags: ['cloudflare'] },
+          { title: 'Merged Story', details: LONG_BODY, tags: ['cloudflare'] },
+          { title: 'Ignored', details: LONG_BODY, tags: ['cloudflare'] },
         ],
         dedup_groups: [[0, 1]],
       }),
@@ -342,8 +350,8 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const aiResponse = {
       response: JSON.stringify({
         articles: [
-          { title: 'Bad tags only', details: 'body', tags: ['not-a-real-tag', 'another-bogus-tag'] },
-          { title: 'Good tags', details: 'body', tags: ['cloudflare'] },
+          { title: 'Bad tags only', details: LONG_BODY, tags: ['not-a-real-tag', 'another-bogus-tag'] },
+          { title: 'Good tags', details: LONG_BODY, tags: ['cloudflare'] },
         ],
         dedup_groups: [],
       }),
@@ -364,7 +372,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
   it('REQ-PIPE-002: articles INSERT column list matches migration 0003 schema (regression guard for the details_json / tags_json / ingested_at / scrape_run_id columns)', async () => {
     const aiResponse = {
       response: JSON.stringify({
-        articles: [{ title: 'A', details: ['one', 'two'], tags: ['cloudflare'] }],
+        articles: [{ title: 'Article A — long enough headline copy', details: ['one', 'two'], tags: ['cloudflare'] }],
         dedup_groups: [],
       }),
       usage: { input_tokens: 10, output_tokens: 10 },
@@ -410,8 +418,8 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const aiResponse = {
       response: JSON.stringify({
         articles: [
-          { title: 'A', details: 'a.', tags: ['cloudflare', 'generative-ai'] },
-          { title: 'B', details: 'b.', tags: ['generative-ai'] },
+          { title: 'Article A — long enough headline copy', details: LONG_BODY, tags: ['cloudflare', 'generative-ai'] },
+          { title: 'Article B — long enough headline copy', details: LONG_BODY, tags: ['generative-ai'] },
         ],
         dedup_groups: [],
       }),
@@ -427,7 +435,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
           canonical_url: 'https://example.com/a',
           source_url: 'https://example.com/a',
           source_name: 'A',
-          title: 'A',
+          title: 'Article A — long enough headline copy',
           published_at: 100,
           alternatives: [
             { source_url: 'https://mirror.example.com/a', source_name: 'Mirror' },
@@ -437,7 +445,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
           canonical_url: 'https://example.com/b',
           source_url: 'https://example.com/b',
           source_name: 'B',
-          title: 'B',
+          title: 'Article B — long enough headline copy',
           published_at: 200,
         },
       ],
@@ -463,7 +471,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     // in scrape_chunk_completions, not a KV decrement. The KV counter
     // is kept as a derived mirror so /api/scrape-status keeps working.
     const aiResponse = {
-      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }, { title: 'B', details: 'b.', tags: ['generative-ai'] }], dedup_groups: [] }),
+      response: JSON.stringify({ articles: [{ title: 'Article A — long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] }, { title: 'Article B — long enough headline copy', details: LONG_BODY, tags: ['generative-ai'] }], dedup_groups: [] }),
       usage: { input_tokens: 10, output_tokens: 10 },
     };
     const { db, records } = makeDb();
@@ -489,7 +497,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
 
   it('REQ-PIPE-002: non-last chunk leaves the KV mirror above zero and does NOT call finishRun', async () => {
     const aiResponse = {
-      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }, { title: 'B', details: 'b.', tags: ['generative-ai'] }], dedup_groups: [] }),
+      response: JSON.stringify({ articles: [{ title: 'Article A — long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] }, { title: 'Article B — long enough headline copy', details: LONG_BODY, tags: ['generative-ai'] }], dedup_groups: [] }),
       usage: { input_tokens: 10, output_tokens: 10 },
     };
     const { db, records } = makeDb();
@@ -508,7 +516,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
 
   it('REQ-PIPE-008: last chunk enqueues exactly one SCRAPE_FINALIZE message after finishRun', async () => {
     const aiResponse = {
-      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }], dedup_groups: [] }),
+      response: JSON.stringify({ articles: [{ title: 'Article A — long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] }], dedup_groups: [] }),
       usage: { input_tokens: 10, output_tokens: 10 },
     };
     const { db } = makeDb();
@@ -523,7 +531,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
 
   it('REQ-PIPE-008: non-last chunks do NOT enqueue SCRAPE_FINALIZE', async () => {
     const aiResponse = {
-      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }], dedup_groups: [] }),
+      response: JSON.stringify({ articles: [{ title: 'Article A — long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] }], dedup_groups: [] }),
       usage: { input_tokens: 10, output_tokens: 10 },
     };
     const { db } = makeDb();
@@ -543,7 +551,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     // AND finalize_enqueued = 0` returns meta.changes = 0 on the
     // second attempt, so the consumer short-circuits before sending.
     const aiResponse = {
-      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }], dedup_groups: [] }),
+      response: JSON.stringify({ articles: [{ title: 'Article A — long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] }], dedup_groups: [] }),
       usage: { input_tokens: 10, output_tokens: 10 },
     };
     const { db } = makeDb();
@@ -567,7 +575,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     // a given (run_id, chunk_index) pair runs addChunkStats, the
     // redelivery sees changes === 0 and short-circuits.
     const aiResponse = {
-      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }], dedup_groups: [] }),
+      response: JSON.stringify({ articles: [{ title: 'Article A — long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] }], dedup_groups: [] }),
       usage: { input_tokens: 10, output_tokens: 10 },
     };
     const { db, records } = makeDb();
@@ -591,7 +599,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     // permanently dropping the finalize. The consumer must roll back
     // the lock on send failure so a retry can re-acquire it.
     const aiResponse = {
-      response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }], dedup_groups: [] }),
+      response: JSON.stringify({ articles: [{ title: 'Article A — long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] }], dedup_groups: [] }),
       usage: { input_tokens: 10, output_tokens: 10 },
     };
     const { db, records } = makeDb();
@@ -628,7 +636,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     try {
       const aiResponse = {
-        response: JSON.stringify({ articles: [{ title: 'A', details: 'a.', tags: ['cloudflare'] }], dedup_groups: [] }),
+        response: JSON.stringify({ articles: [{ title: 'Article A — long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] }], dedup_groups: [] }),
         usage: { input_tokens: 10, output_tokens: 10 },
       };
       const { db } = makeDb({ failNextRollback: true });
@@ -664,8 +672,8 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const aiResponse = {
       response: JSON.stringify({
         articles: [
-          { title: 'A', details: 'a.', tags: ['cloudflare'] },
-          { title: 'B', details: 'b.', tags: ['generative-ai'] },
+          { title: 'Article A — long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] },
+          { title: 'Article B — long enough headline copy', details: LONG_BODY, tags: ['generative-ai'] },
         ],
         dedup_groups: [],
       }),
@@ -699,8 +707,8 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const aiResponse = {
       response: JSON.stringify({
         articles: [
-          { index: 1, title: 'Summary of B', details: 'B-body.', tags: ['generative-ai'] },
-          { index: 0, title: 'Summary of A', details: 'A-body.', tags: ['cloudflare'] },
+          { index: 1, title: 'Summary of B', details: LONG_BODY, tags: ['generative-ai'] },
+          { index: 0, title: 'Summary of A', details: LONG_BODY, tags: ['cloudflare'] },
         ],
         dedup_groups: [],
       }),
@@ -753,9 +761,9 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const aiResponse = {
       response: JSON.stringify({
         articles: [
-          { index: 0, title: 'Cloudflare ships Workers update', details: 'body.', tags: ['cloudflare'] },
-          { index: 1, title: 'Postgres 18 announces pluggable storage', details: 'body.', tags: ['mcp'] },
-          { index: 2, title: 'AI coding assistant benchmarks improve', details: 'body.', tags: ['generative-ai'] },
+          { index: 0, title: 'Cloudflare ships Workers update', details: LONG_BODY, tags: ['cloudflare'] },
+          { index: 1, title: 'Postgres 18 announces pluggable storage', details: LONG_BODY, tags: ['mcp'] },
+          { index: 2, title: 'AI coding assistant benchmarks improve', details: LONG_BODY, tags: ['generative-ai'] },
         ],
         dedup_groups: [],
       }),
@@ -815,8 +823,8 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const aiResponse = {
       response: JSON.stringify({
         articles: [
-          { index: 0, title: 'A', details: 'body.', tags: ['cloudflare'] },
-          { index: 99, title: 'Hallucinated', details: 'body.', tags: ['generative-ai'] },
+          { index: 0, title: 'Article A — long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] },
+          { index: 99, title: 'Hallucinated', details: LONG_BODY, tags: ['generative-ai'] },
         ],
         dedup_groups: [],
       }),
@@ -851,7 +859,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
       const aiResponse = {
         response: JSON.stringify({
           // Tag is in DEFAULT_HASHTAGS — survives even with empty KV result.
-          articles: [{ title: 'A', details: 'body.', tags: ['cloudflare'] }],
+          articles: [{ title: 'Article A — long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] }],
           dedup_groups: [],
         }),
         usage: { input_tokens: 10, output_tokens: 10 },
@@ -890,5 +898,73 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     } finally {
       consoleSpy.mockRestore();
     }
+  });
+
+  it('REQ-PIPE-002 AC3 / CF-030: drops articles whose details word count falls under the 120-word floor', async () => {
+    // The prompt itself flags responses under ~120 words as malformed.
+    // Without a server-side guard a model that ignores the contract
+    // can still ship a 30-word stub as a real article. A passing
+    // sibling article in the same chunk proves only the malformed
+    // entry is dropped, not the whole batch.
+    const tooShort = 'Short body sentence one. Sentence two. Sentence three.';
+    const longBody =
+      'This is a long-enough article body that easily clears the 120-word floor. '
+        .repeat(8) +
+      'It crosses two paragraph boundaries with explicit periods between sentences.';
+    const aiResponse = {
+      response: JSON.stringify({
+        articles: [
+          { index: 0, title: 'Title A — long enough headline copy', details: longBody, tags: ['cloudflare'] },
+          { index: 1, title: 'Title B — also long enough headline', details: tooShort, tags: ['generative-ai'] },
+        ],
+        dedup_groups: [],
+      }),
+      usage: { input_tokens: 10, output_tokens: 10 },
+    };
+    const { db, records } = makeDb();
+    const { kv } = makeKv({ chunksRemaining: '1' });
+    const env = makeEnv(db, kv, aiResponse);
+    await processOneChunk(env, makeChunk());
+    const articleInserts = records.filter(
+      (r) =>
+        r.via === 'batch' &&
+        r.sql.startsWith('INSERT OR IGNORE INTO articles'),
+    );
+    expect(articleInserts.length).toBe(1);
+    expect(articleInserts[0]!.params).toContain('Title A — long enough headline copy');
+    expect(articleInserts[0]!.params).not.toContain('Title B — also long enough headline');
+  });
+
+  it('REQ-PIPE-002 AC2 / CF-030: drops articles whose title length is outside the [20, 200] sanity range', async () => {
+    // 45-80 chars is the spec target; 20 / 200 are sanity bounds for
+    // genuinely broken cases (single-word labels, paragraph-as-title)
+    // that no UI rendering would survive. Inside-the-bounds article
+    // proves the guard isn't accidentally aggressive.
+    const longBody =
+      'This is a long-enough article body that easily clears the 120-word floor. '
+        .repeat(8) +
+      'It crosses two paragraph boundaries with explicit periods between sentences.';
+    const aiResponse = {
+      response: JSON.stringify({
+        articles: [
+          { index: 0, title: 'Headline OK — within sanity bounds', details: longBody, tags: ['cloudflare'] },
+          { index: 1, title: 'Tiny', details: longBody, tags: ['generative-ai'] },
+        ],
+        dedup_groups: [],
+      }),
+      usage: { input_tokens: 10, output_tokens: 10 },
+    };
+    const { db, records } = makeDb();
+    const { kv } = makeKv({ chunksRemaining: '1' });
+    const env = makeEnv(db, kv, aiResponse);
+    await processOneChunk(env, makeChunk());
+    const articleInserts = records.filter(
+      (r) =>
+        r.via === 'batch' &&
+        r.sql.startsWith('INSERT OR IGNORE INTO articles'),
+    );
+    expect(articleInserts.length).toBe(1);
+    expect(articleInserts[0]!.params).toContain('Headline OK — within sanity bounds');
+    expect(articleInserts[0]!.params).not.toContain('Tiny');
   });
 });

@@ -414,6 +414,39 @@ export async function processOneChunk(
       .filter((p) => p !== '');
     if (title === '' || details.length === 0) continue;
 
+    // CF-030 — REQ-PIPE-002 AC3: the prompt itself flags responses
+    // under ~120 words as malformed. Enforce the floor server-side so
+    // the LLM-side contract isn't the only line of defense — a model
+    // that ignores the word-count instruction can no longer ship a
+    // truncated 30-word body as a real article.
+    const wordCount = details.join(' ').trim().split(/\s+/).filter((w) => w !== '').length;
+    if (wordCount < 120) {
+      log('warn', 'digest.generation', {
+        status: 'chunk_article_dropped_word_count',
+        scrape_run_id: body.scrape_run_id,
+        chunk_index: body.chunk_index,
+        word_count: wordCount,
+        llm_title: title.slice(0, 120),
+      });
+      continue;
+    }
+
+    // CF-030 — REQ-PIPE-002 AC2: the spec asks for 45-80-character
+    // headlines. Don't reject 44 or 81 (the LLM is fuzzy by design),
+    // but a hard sanity floor + ceiling catches the genuinely broken
+    // cases (single-word labels, paragraph-as-title) that would never
+    // render right in the UI.
+    if (title.length < 20 || title.length > 200) {
+      log('warn', 'digest.generation', {
+        status: 'chunk_article_dropped_title_length',
+        scrape_run_id: body.scrape_run_id,
+        chunk_index: body.chunk_index,
+        title_length: title.length,
+        llm_title: title.slice(0, 120),
+      });
+      continue;
+    }
+
     const llmTags = Array.isArray(s.llmArticle.tags) ? s.llmArticle.tags : [];
     const tags: string[] = [];
     const seen = new Set<string>();
