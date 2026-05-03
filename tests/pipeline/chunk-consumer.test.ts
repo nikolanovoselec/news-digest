@@ -198,7 +198,7 @@ function makeEnv(
  *  bodies which now get dropped by the guard. Use this constant when
  *  the test isn't specifically about the word-count contract. */
 const LONG_BODY =
-  'This is a representative article body that easily clears the 120-word floor. '.repeat(8) +
+  'This is a representative article body that easily clears the 120-word floor. '.repeat(14) +
   'It crosses two natural paragraph boundaries with explicit periods between sentences.';
 
 function makeChunk(
@@ -909,7 +909,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const tooShort = 'Short body sentence one. Sentence two. Sentence three.';
     const longBody =
       'This is a long-enough article body that easily clears the 120-word floor. '
-        .repeat(8) +
+        .repeat(14) +
       'It crosses two paragraph boundaries with explicit periods between sentences.';
     const aiResponse = {
       response: JSON.stringify({
@@ -942,7 +942,7 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     // proves the guard isn't accidentally aggressive.
     const longBody =
       'This is a long-enough article body that easily clears the 120-word floor. '
-        .repeat(8) +
+        .repeat(14) +
       'It crosses two paragraph boundaries with explicit periods between sentences.';
     const aiResponse = {
       response: JSON.stringify({
