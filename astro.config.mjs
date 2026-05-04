@@ -1,4 +1,4 @@
-import { defineConfig } from 'astro/config';
+import { defineConfig, sessionDrivers } from 'astro/config';
 import cloudflare from '@astrojs/cloudflare';
 import tailwindcss from '@tailwindcss/vite';
 import AstroPWA from '@vite-pwa/astro';
@@ -31,8 +31,10 @@ export default defineConfig({
   // advisory without wasting a KV namespace, and has no runtime cost
   // because nothing in the app reads or writes the session.
   session: {
-    driver: 'cloudflare-kv-binding',
-    options: { binding: 'KV' }
+    // Astro 6 deprecated the string-driver signature in favour of
+    // `sessionDrivers.*` factories. Behaviour is unchanged; the same
+    // KV binding still backs the no-op session store.
+    driver: sessionDrivers.cloudflareKVBinding({ binding: 'KV' })
   },
   integrations: [
     AstroPWA({
