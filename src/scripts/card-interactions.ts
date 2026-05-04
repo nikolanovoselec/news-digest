@@ -183,6 +183,16 @@ export function closeAllTagPopovers(except?: HTMLElement): void {
 }
 
 // Auto-wire on DOMContentLoaded + every astro:page-load.
+//
+// IMPORTANT: bindStarDelegation MUST run on every astro:page-load, not
+// just module-load. Astro's default view-transition swap replaces the
+// entire `document.documentElement`, which discards both the bubble-
+// phase click listener AND the `data-star-delegation-bound` idempotency
+// flag we set on it. Re-running here is safe because the dataset guard
+// on the (fresh) documentElement is empty post-swap, so the helper
+// rebinds cleanly. Without this, navigating from /digest to /history
+// (or any cross-page nav) silently loses the star handler until the
+// user does a hard refresh.
 if (typeof document !== 'undefined') {
   bindStarDelegation();
   if (document.readyState === 'loading') {
@@ -190,5 +200,8 @@ if (typeof document !== 'undefined') {
   } else {
     initCardInteractions();
   }
-  document.addEventListener('astro:page-load', () => initCardInteractions());
+  document.addEventListener('astro:page-load', () => {
+    bindStarDelegation();
+    initCardInteractions();
+  });
 }
