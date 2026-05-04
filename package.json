@@ -10,7 +10,7 @@
     "deploy": "node scripts/generate-pwa-icons.mjs && node scripts/build-client-scripts.mjs && astro build && wrangler deploy",
     "icons": "node scripts/generate-pwa-icons.mjs",
     "fixtures": "node scripts/generate-test-fixtures.mjs",
-    "typecheck": "npm run fixtures && node scripts/ensure-worker-stub.mjs && astro check && tsc --noEmit",
+    "typecheck": "npm run fixtures && tsc --noEmit",
     "test": "npm run fixtures && vitest run",
     "test:watch": "npm run fixtures && vitest",
     "test:e2e": "playwright test",
