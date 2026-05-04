@@ -25,7 +25,6 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD9 | Storage-shape names (D1 columns, KV keys) are the persistence contract — kept inline in REQ-DISC/AUTH/SET | Storage | 2026-05-03 |
 | AD10 | Atomic conditional UPDATE as the once-per-run idempotency gate — no `acquireOnceLock` helper | Architecture | 2026-05-03 |
 | AD11 | Keep `style-src 'unsafe-inline'`; runtime `.style.X` writes for FLIP + view-transitions are intentional | Security | 2026-05-04 |
-| AD12 | Integration env: separate Cloudflare resources, manual trigger from develop, crons disabled | Operations | 2026-05-04 |
 
 ---
 
@@ -276,34 +275,6 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - `tests/e2e/csp-violation.spec.ts` continues to act as the merge gate for any CSP tightening — it subscribes to `securitypolicyviolation` events on a live `/digest` navigation and fails the build if any fire.
 
 **Related requirements:** [REQ-OPS-003](../../sdd/operations.md#req-ops-003-baseline-browser-security-headers), [CON-SEC-001](../../sdd/constraints.md#con-sec-001-strict-content-security-policy)
-
----
-
-### AD12: Integration env: separate Cloudflare resources, manual trigger from develop, crons disabled
-
-**Decision:** Stand up an integration deployment target on a distinct hostname (`news.novoselec.ch`) backed by fully isolated Cloudflare resources — D1, KV, queues all suffixed `-integration`. Deploys are manual-only via a dedicated GitHub Actions workflow (`.github/workflows/deploy-integration.yml`) that always pulls the current `develop` HEAD. Cron triggers are disabled on integration; the scrape pipeline runs only when the operator hits `/api/admin/force-refresh`. Worker secrets are sourced from repo-level GitHub Actions secrets via the `environment: integration` fallback.
-
-**Context:** Major dependency bumps (Astro 5→6 was the trigger), schema migrations, CSP tightening, and animation rewrites had no live-edge proving ground before integration existed. The only path to a real-browser test was production, which meant either painful rollbacks (`hotfix/csp-style-unsafe-inline` history) or speculative testing on local dev that didn't catch view-transition / PWA / cron-driven regressions. Vibe-coding without a staging surface was costing rollback time.
-
-**Alternatives considered:**
-
-- **Branch-based auto-deploy** (push to `integration` branch → auto-deploy). Rejected: forces operator to maintain a parallel branch and remember to push it; rebase friction every time develop moves.
-- **Same workflow with environment dropdown** (codeflare's pattern: one `deploy.yml`, manual dispatch picks production or integration). Cleaner but requires deeper restructuring (drop `[env.integration]` blocks in wrangler.toml in favour of `--name` CLI overrides + per-env `vars.X`). The two-workflow shape was the lower-risk path to ship integration today; the single-workflow refactor is a good cleanup later.
-- **Auto-deploy on every push to develop** (mirror production's gate-on-PR-Checks pattern). Rejected: develop receives many small commits during iteration. Auto-deploys would consume time-to-deploy and the operator would lose the "deliberately staged a coherent change to test" workflow.
-- **Shared resources (one D1, one KV) across prod and integration**. Rejected: integration migrations would corrupt prod data; integration force-refresh would compete with prod scrape state.
-- **Cron triggers enabled on integration**. Rejected: would consume Workers AI budget on every-four-hour scrape runs that nobody is watching, and integration's empty seed data isn't representative enough to be worth the cost.
-
-**Rationale:** The integration env serves a single purpose: confidence on changes that have non-trivial blast radius if they break in prod. The operator-only manual trigger matches the actual workflow (a person deciding "this is risky, I want to see it live before main"). Resource isolation removes the data-corruption class of failure. Crons-off keeps the cost surface narrow.
-
-**Consequences:**
-
-- 2× Cloudflare resource provisioning. Negligible cost on the small-data tier (D1, KV, queues are pennies/month).
-- Operator must remember to manually trigger. There's no automation enforcing "test on integration before merging to main"; that discipline is on the human.
-- Per-env GitHub Environment scoping is in place (`environment: integration`) so any secret can later be overridden without touching workflow code (e.g., a separate `OAUTH_JWT_SECRET` to isolate cross-env JWT identity confusion).
-- Integration's APP_URL lives in `wrangler.toml` `[env.integration.vars]`, not as a secret. This is intentional: it's a public hostname, the toml is the canonical record, and pushing it as a secret would conflict with the env-fallback pattern (the prod APP_URL secret would clobber it).
-- The bootstrap script (`scripts/bootstrap-resources.sh`) accepts an `ENV_NAME` env var to operate on env-scoped sections; placeholder IDs in wrangler.toml (`TBD-bootstrap-on-first-deploy`) trigger create-or-lookup-by-name on the first run.
-
-**Related requirements:** [REQ-OPS-006](../../sdd/observability.md#req-ops-006-integration-deployment-target)
 
 ---
 

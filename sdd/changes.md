@@ -6,10 +6,6 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are archived in [`changes-archive-2026-04.md`](changes-archive-2026-04.md).
 
-## 2026-05-04
-
-- REQ-OPS-006 added: a parallel integration deployment target on `news.novoselec.ch` lets risky changes (Astro major bumps, schema migrations, CSP tightening, animation rewrites) be smoke-tested on the live Cloudflare edge before reaching production. Integration runs the same code on isolated Cloudflare resources (D1, KV, queues all suffixed `-integration`), is triggered manually only (Actions → Deploy Integration → Run workflow), always pulls develop's HEAD, and has cron triggers disabled so the operator drives the scrape pipeline via force-refresh.
-
 ## 2026-05-03
 
 - REQ-PIPE-002 AC 2 + AC 3 sharpened: the chunk consumer now enforces the malformed-output thresholds server-side rather than trusting the LLM-side prompt alone. Articles whose details body is under 120 words, or whose title falls outside a 5–500 character sanity range, are dropped before persistence — so a model that ignores the prompt's word-count or headline-length instructions can no longer ship truncated bodies or single-character labels as real articles.

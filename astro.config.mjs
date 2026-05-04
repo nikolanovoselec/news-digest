@@ -1,4 +1,4 @@
-import { defineConfig, sessionDrivers } from 'astro/config';
+import { defineConfig } from 'astro/config';
 import cloudflare from '@astrojs/cloudflare';
 import tailwindcss from '@tailwindcss/vite';
 import AstroPWA from '@vite-pwa/astro';
@@ -7,18 +7,9 @@ import AstroPWA from '@vite-pwa/astro';
 export default defineConfig({
   output: 'server',
   adapter: cloudflare({
-    // platformProxy disabled. @astrojs/cloudflare@13 ships a new
-    // @cloudflare/vite-plugin that, with platformProxy enabled,
-    // tries to start a wrangler REMOTE proxy session at config-load
-    // time (including during `astro check` / typecheck). Remote mode
-    // requires `wrangler login` auth which CI doesn't have, so
-    // typecheck fails before any code is even checked. We don't run
-    // `astro dev` anywhere (no-local-builds rule); production uses
-    // `Astro.locals.runtime.env` directly via the deployed Worker
-    // bindings, no proxy needed. If local dev with bindings is ever
-    // wanted, re-enable with `experimentalRemoteBindings: false` to
-    // pin it to local miniflare instead of remote.
-
+    platformProxy: {
+      enabled: true
+    },
     // `imageService: 'compile'` runs sharp only during the build to
     // optimise prerendered images; the deployed Worker never touches
     // sharp, which isn't available in workerd. Silences the "sharp at
@@ -40,10 +31,8 @@ export default defineConfig({
   // advisory without wasting a KV namespace, and has no runtime cost
   // because nothing in the app reads or writes the session.
   session: {
-    // Astro 6 deprecated the string-driver signature in favour of
-    // `sessionDrivers.*` factories. Behaviour is unchanged; the same
-    // KV binding still backs the no-op session store.
-    driver: sessionDrivers.cloudflareKVBinding({ binding: 'KV' })
+    driver: 'cloudflare-kv-binding',
+    options: { binding: 'KV' }
   },
   integrations: [
     AstroPWA({

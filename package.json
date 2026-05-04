@@ -4,13 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/generate-pwa-icons.mjs && node scripts/build-client-scripts.mjs && node scripts/ensure-worker-stub.mjs && astro dev",
-    "build": "node scripts/generate-pwa-icons.mjs && node scripts/build-client-scripts.mjs && node scripts/ensure-worker-stub.mjs && astro build && node scripts/merge-worker-handlers.mjs",
+    "dev": "node scripts/generate-pwa-icons.mjs && node scripts/build-client-scripts.mjs && astro dev",
+    "build": "node scripts/generate-pwa-icons.mjs && node scripts/build-client-scripts.mjs && astro build && node scripts/merge-worker-handlers.mjs",
     "preview": "wrangler dev",
-    "deploy": "node scripts/generate-pwa-icons.mjs && node scripts/build-client-scripts.mjs && node scripts/ensure-worker-stub.mjs && astro build && wrangler deploy",
+    "deploy": "node scripts/generate-pwa-icons.mjs && node scripts/build-client-scripts.mjs && astro build && wrangler deploy",
     "icons": "node scripts/generate-pwa-icons.mjs",
     "fixtures": "node scripts/generate-test-fixtures.mjs",
-    "typecheck": "npm run fixtures && tsc --noEmit",
+    "typecheck": "npm run fixtures && astro check && tsc --noEmit",
     "test": "npm run fixtures && vitest run",
     "test:watch": "npm run fixtures && vitest",
     "test:e2e": "playwright test",
@@ -19,14 +19,15 @@
     "knip": "knip"
   },
   "dependencies": {
-    "@astrojs/cloudflare": "^13.3.0",
+    "@astrojs/cloudflare": "^12.6.13",
     "@tailwindcss/vite": "^4.2.4",
-    "astro": "^6.2.1",
+    "astro": "^5.18.1",
     "fast-xml-parser": "^5.0.9",
     "tailwindcss": "^4.2.4"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.15.2",
+    "@astrojs/check": "^0.9.8",
+    "@cloudflare/vitest-pool-workers": "^0.14.9",
     "@playwright/test": "^1.50.0",
     "@cloudflare/workers-types": "^4.20260422.1",
     "@resvg/resvg-js": "^2.6.2",
@@ -35,7 +36,7 @@
     "esbuild": "^0.28.0",
     "knip": "^6.6.1",
     "oxlint": "^1.61.0",
-    "typescript": "^6.0.3",
+    "typescript": "^5.7.1",
     "vitest": "^4.1.5",
     "wrangler": "^4.84.1"
   }

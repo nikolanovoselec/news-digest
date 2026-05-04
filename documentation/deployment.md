@@ -82,56 +82,10 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 
 ### Environment-specific configuration
 
-| Environment | Branch | Hostname | Trigger | Crons |
-|---|---|---|---|---|
-| Development | `develop` | (no deploy) | PR Checks (`test.yml`) fire on every push | n/a |
-| Integration | `develop` | `news.novoselec.ch` | Manual (Actions → Deploy Integration) | OFF |
-| Production | `main` | `news.graymatter.ch` | Auto on merge to main, gated on PR Checks success | ON |
-
-## Integration deployment
-
-**Purpose:** Smoke-test risky changes (major dependency bumps, schema migrations, CSP tightening, animation rewrites) on the live Cloudflare edge before they reach production. Implements [REQ-OPS-006](../sdd/observability.md#req-ops-006-integration-deployment-target). Architectural decision: [AD12](decisions/README.md#ad12-integration-env-separate-cloudflare-resources-manual-trigger-from-develop-crons-disabled).
-
-**Workflow file:** `.github/workflows/deploy-integration.yml`
-
-**Cloudflare resources** (all suffixed `-integration`, fully isolated from prod):
-
-| Resource | Name |
-|---|---|
-| Worker | `ai-news-digest-integration` |
-| D1 | `ai-news-digest-integration` |
-| KV | `ai-news-digest-integration-kv` (auto-derived) |
-| Queues | `scrape-coordinator-integration`, `scrape-chunks-integration`, `scrape-finalize-integration` |
-| Workers AI | shared `AI` binding (no per-env isolation needed) |
-
-**How to deploy:**
-
-1. Land the change on `develop` (PR-merged or direct push).
-2. GitHub → Actions → "Deploy Integration" → "Run workflow" → green button.
-3. The branch dropdown in the dispatch dialog is irrelevant — the workflow always pulls `develop`'s current HEAD.
-4. ~3 minutes for first-deploy (resources provisioned), ~2 minutes for subsequent deploys.
-5. Smoke at `https://news.novoselec.ch/`.
-
-**Triggering a scrape on integration** (since crons are off):
-
-```bash
-# Sign in via Google at https://news.novoselec.ch/, then:
-curl -i https://news.novoselec.ch/api/admin/force-refresh
-```
-
-**Promotion path** is one-way: develop → integration smoke → develop merged to main → production auto-deploy. No path pushes integration changes back to develop.
-
-**Secret scoping:** `environment: integration` enables GitHub's standard secret-resolution fallback. Repo-level secrets (`CLOUDFLARE_API_TOKEN`, `OAUTH_JWT_SECRET`, `GOOGLE_OAUTH_CLIENT_ID`/`_SECRET`, etc.) serve integration by default. To override per-env (e.g., a separate `OAUTH_JWT_SECRET` to isolate cross-env JWT identity), add the secret under Settings → Environments → integration; it takes precedence automatically.
-
-**`APP_URL`** for integration lives in `wrangler.toml` `[env.integration.vars]` (it's a public hostname, not a secret). Pushing it as a secret would override the toml var with prod's `APP_URL` via env-fallback — intentional skip.
-
-**First-time setup checklist:**
-
-- Create GitHub Environment `integration` (Settings → Environments → New environment). Empty is fine — it just enables the env-scoping line in the workflow.
-- Confirm DNS / Cloudflare zone for `news.novoselec.ch` is on the same account as production.
-- Add `https://news.novoselec.ch/api/auth/google/callback` to the Google OAuth client's authorized redirect URIs (the same client that prod uses).
-
-GitHub OAuth is intentionally not configured for integration (single Google provider is enough for testing). The landing page renders one button per configured provider, so the GitHub button just doesn't appear.
+| Environment | Branch | Notes |
+|---|---|---|
+| Development | `develop` | Active development branch; PR Checks (`test.yml`) fire on every push |
+| Production | `main` | CI deploys on merge to main; deploy is gated on PR Checks success |
 
 ## Cloudflare Resources
 

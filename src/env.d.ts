@@ -1,19 +1,13 @@
 /// <reference types="astro/client" />
 /// <reference types="@astrojs/cloudflare" />
 
-// @astrojs/cloudflare@13 changed how the runtime context is exposed
-// to Astro.locals. v12 had `interface Locals extends Runtime` where
-// `Runtime` itself wrapped a nested `runtime: { env, cf, ctx }`
-// property. v13 flattened the type — `Runtime<Env>` now IS the
-// `{ env, cf, ctx }` shape directly, and the adapter still attaches
-// it to `Astro.locals.runtime` at runtime. So we declare the
-// `runtime` property explicitly instead of relying on `extends`.
 declare namespace App {
-  interface Locals {
-    runtime: import('@astrojs/cloudflare').Runtime<Env>;
+  interface Locals extends Runtime {
     user?: import('./lib/types').AuthenticatedUser;
   }
 }
+
+type Runtime = import('@astrojs/cloudflare').Runtime<Env>;
 
 interface Env {
   // Bindings

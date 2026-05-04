@@ -106,26 +106,3 @@ Structured JSON logging as the single operational surface — no external observ
 **Dependencies:** None
 **Verification:** Integration test
 **Status:** Implemented
-
----
-
-### REQ-OPS-006: Integration deployment target
-
-**Intent:** Risky changes — major dependency bumps, schema migrations, security-policy tightening, animation rewrites — can be smoke-tested on the live Cloudflare edge before they reach the production domain. Production traffic stays on a deploy-from-main pipeline; integration runs the same code on a parallel set of resources, on a different domain, with manual gating.
-
-**Applies To:** Admin
-
-**Acceptance Criteria:**
-1. The integration environment is reachable at a separate, stable hostname distinct from production. Production and integration share no Cloudflare resources — D1, KV, queues are each provisioned twice with the integration copies suffixed `-integration`.
-2. Integration deploys are triggered manually only. The operator goes to GitHub Actions, picks the deploy-integration workflow, and clicks Run. There is no auto-deploy on push.
-3. The manual trigger always deploys the current `develop` branch HEAD, regardless of which branch the dispatch was fired from in the GitHub UI.
-4. The integration worker has no cron triggers — the scrape pipeline runs only when the operator hits the admin force-refresh endpoint. Production crons (every-four-hours scrape, daily cleanup, every-five-minutes email) do not fire on integration.
-5. Schema migrations apply to a fresh D1 database on first deploy. No production data is copied across; integration starts empty and accumulates only what manual force-refresh runs produce.
-6. Worker secrets are sourced from the same repo-level GitHub Actions secrets the production deploy uses, with GitHub-Environment-scoped overrides taking precedence when defined. The environment variable that anchors the public hostname (APP_URL) lives in the deployment manifest, not in secrets, so swapping environments doesn't require swapping secrets.
-7. Promotion path is one-way: develop → integration smoke (manual) → develop merged to main → production auto-deploy. There is no path that pushes integration changes back to develop.
-
-**Constraints:** CON-SEC-001
-**Priority:** P2
-**Dependencies:** REQ-OPS-005
-**Verification:** Manual check
-**Status:** Implemented
