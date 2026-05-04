@@ -24,6 +24,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   initCardInteractions,
+  bindStarDelegation,
   handleStarClick,
   toggleTagDisclosure,
   closeAllTagPopovers,
@@ -339,6 +340,43 @@ describe('initCardInteractions — REQ-STAR-001 + REQ-READ-001 event plumbing', 
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(stopPropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it('REQ-STAR-001: bindStarDelegation attaches exactly one document click listener and is idempotent', () => {
+    // The whole point of the dual-handler refactor: ONE document-level
+    // listener owns every star-toggle click. A double-bind would fire
+    // two fetches per click (POST + DELETE) and the optimistic toggle
+    // would oscillate. Tracks addEventListener calls on a stubbed
+    // documentElement so we can assert the bound count is exactly 1
+    // even after multiple init invocations (simulating astro:page-load
+    // re-fires).
+    const dataset: Record<string, string> = {};
+    const docElement = { dataset } as unknown as HTMLElement;
+    const calls: { type: string; useCapture: boolean }[] = [];
+    vi.stubGlobal('document', {
+      documentElement: docElement,
+      addEventListener: (
+        type: string,
+        _listener: EventListener,
+        opts?: boolean | AddEventListenerOptions,
+      ) => {
+        const useCapture =
+          typeof opts === 'boolean' ? opts : (opts?.capture ?? false);
+        calls.push({ type, useCapture });
+      },
+      querySelectorAll: () => [] as unknown as NodeListOf<Element>,
+    });
+
+    bindStarDelegation();
+    bindStarDelegation();
+    bindStarDelegation();
+
+    const clickListeners = calls.filter((c) => c.type === 'click');
+    expect(clickListeners.length).toBe(1);
+    // Bubble phase, not capture (paired with stopPropagation in handler).
+    expect(clickListeners[0]!.useCapture).toBe(false);
+    // Idempotency flag set on documentElement after first bind.
+    expect(dataset['starDelegationBound']).toBe('1');
   });
 
   it('REQ-READ-001: re-running init does not double-bind tag-triggers (dataset.bound guard)', () => {

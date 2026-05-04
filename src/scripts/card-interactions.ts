@@ -14,10 +14,14 @@
 // bug. Delegation has nothing to lose because there is nothing
 // per-button to lose.
 //
-// Tag-disclosure triggers stay per-button (the dataset.bound guard is
-// safe here because the buttons are short-lived: each tag popover only
-// exists while its parent card is visible, and re-renders are full
-// element replacements that drop the dataset along with the node).
+// Tag-disclosure triggers stay per-button. They are vulnerable to the
+// same view-transition node-reuse pattern that broke stars, but the
+// failure mode is benign here — a stale handler on a morphed trigger
+// still calls `toggleTagDisclosure`, which queries the live DOM via
+// `closest('[data-tag-disclosure]')` and operates on whatever sibling
+// is currently in the page. If a future regression surfaces "the # tag
+// chip stops opening after navigation", convert this to delegation
+// using the same pattern as `bindStarDelegation`.
 //
 // Exported for unit testing: `initCardInteractions(root)` walks the
 // given root (defaults to `document`) and binds tag-trigger handlers
@@ -79,14 +83,15 @@ export function initCardInteractions(
 /**
  * Bind the document-level star-click delegation. Idempotent via
  * `data-star-delegation-bound` on documentElement so re-imports or
- * astro:page-load re-runs never stack listeners.
+ * astro:page-load re-runs never stack listeners. Exported for unit
+ * tests that need to assert idempotency without driving the full
+ * module-load side effects.
  *
- * Bubble phase (not capture): lets a card-internal handler that
- * called `e.stopPropagation()` opt out, and avoids racing against
- * view-transition snapshot capture which runs synchronously between
- * capture and bubble.
+ * Bubble phase (not capture): pairs naturally with the
+ * `e.stopPropagation()` the handler itself calls, and lets any
+ * card-internal handler opt out by stopping propagation first.
  */
-function bindStarDelegation(): void {
+export function bindStarDelegation(): void {
   if (typeof document === 'undefined') return;
   if (document.documentElement.dataset['starDelegationBound'] === '1') return;
   document.documentElement.dataset['starDelegationBound'] = '1';
