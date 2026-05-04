@@ -25,12 +25,11 @@ jobs:
     name: Deploy to Cloudflare Workers (integration)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # GitHub Environment named "integration" — store integration-only
-    # secrets here (OAUTH_JWT_SECRET, GOOGLE_OAUTH_CLIENT_ID, etc.) so
-    # they don't bleed into the production deploy. APP_URL is set in
-    # wrangler.toml [env.integration.vars] (it's the public hostname,
-    # not a secret).
-    environment: integration
+    # No `environment:` scoping — integration reuses the repo-level
+    # secrets (CLOUDFLARE_API_TOKEN, OAUTH_JWT_SECRET, GOOGLE_OAUTH_*).
+    # APP_URL for integration is set in wrangler.toml
+    # [env.integration.vars] (public hostname, not a secret) so it
+    # doesn't need a per-env secret either.
     steps:
       # Always deploy develop's current HEAD regardless of which branch
       # the dispatch was fired from in the UI. Develop is the single
