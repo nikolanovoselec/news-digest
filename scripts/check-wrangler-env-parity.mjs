@@ -31,11 +31,28 @@ const QUEUE_HANDLER_TS = resolve(ROOT, 'src/lib/queue-handler.ts');
  */
 async function readMaxQueueAttempts() {
   const src = await readFile(QUEUE_HANDLER_TS, 'utf-8');
-  const m = src.match(/(?:export\s+)?const\s+MAX_QUEUE_ATTEMPTS\s*=\s*(\d+)/);
+  // Strip line comments and JSDoc-style continuation lines BEFORE the
+  // regex match. A naive `/MAX_QUEUE_ATTEMPTS\s*=\s*(\d+)/` returns the
+  // first numeric mention, which could land on a JSDoc reference like
+  // `// previously MAX_QUEUE_ATTEMPTS = 5 before lowering to 3` and
+  // silently fail-open on a parity drift.
+  const codeOnly = src
+    .split('\n')
+    .map((l) => {
+      const trimmed = l.trim();
+      if (trimmed.startsWith('//') || trimmed.startsWith('*')) return '';
+      return l;
+    })
+    .join('\n');
+  // Anchor to start-of-line + multiline flag so the match must be the
+  // actual `const MAX_QUEUE_ATTEMPTS = N;` declaration, not a phrase
+  // appearing later in a string or template literal.
+  const m = codeOnly.match(/^\s*(?:export\s+)?const\s+MAX_QUEUE_ATTEMPTS\s*=\s*(\d+)\s*;?\s*$/m);
   if (!m) {
     throw new Error(
-      `MAX_QUEUE_ATTEMPTS not found in ${QUEUE_HANDLER_TS}. ` +
-        `If you renamed it, update scripts/check-wrangler-env-parity.mjs.`,
+      `MAX_QUEUE_ATTEMPTS declaration not found in ${QUEUE_HANDLER_TS}. ` +
+        `Expected exactly one line of the form 'const MAX_QUEUE_ATTEMPTS = <N>;'. ` +
+        `If you renamed it or moved it into another module, update scripts/check-wrangler-env-parity.mjs.`,
     );
   }
   return Number.parseInt(m[1], 10);

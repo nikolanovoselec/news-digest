@@ -41,6 +41,10 @@ import { SYSTEM_USER_ID } from '~/lib/system-user';
 import { log } from '~/lib/log';
 import { mapConcurrent } from '~/lib/concurrency';
 import type { DiscoveredFeed, SourcesCacheValue, Headline } from '~/lib/types';
+import {
+  writeSourcesCache,
+  sourcesCacheRawEqual,
+} from '~/lib/sources-cache';
 
 /** Max candidates per chunk. Matches the LLM's ~8K input-token budget
  * at the gpt-oss-20b default: ~50 candidate headlines per chunk
@@ -808,15 +812,14 @@ export async function applyEvictions(
       // and the next scrape tick will re-evaluate health against the
       // new feed set.
       //
-      // CF-017 — the byte-equal `latestRaw === raw` compare is
-      // correct ONLY because `JSON.stringify` is the sole writer of
-      // sources:{tag} entries (in this file at line 813 and in
-      // discovery.ts when persisting fresh feeds). If a future caller
-      // writes the entry with a different serialization (whitespace
-      // variation, key ordering), this race-recheck will false-
-      // positive and clobber legitimate concurrent writes.
+      // CF-001 / AD16 — recheck uses STRUCTURAL compare on the
+      // canonical raw form (via sourcesCacheRawEqual). Centralised
+      // serialisation in `writeSourcesCache` guarantees byte-equal on
+      // the fast path; if a future writer drifts, the structural
+      // fallback (compare on `discovered_at`) still catches the race
+      // without false-positiving on serialisation order.
       const latestRaw = await env.KV.get(`sources:${tag}`, 'text');
-      if (latestRaw !== raw) {
+      if (latestRaw === null || !sourcesCacheRawEqual(latestRaw, raw)) {
         log('info', 'discovery.completed', {
           status: 'eviction_skipped_raced',
           scrape_run_id,
@@ -842,7 +845,7 @@ export async function applyEvictions(
         feeds: survivingFeeds,
         discovered_at: Date.now(),
       };
-      await env.KV.put(`sources:${tag}`, JSON.stringify(nextCache));
+      await writeSourcesCache(env.KV, tag, nextCache);
 
       // Clear the per-URL health counters so a re-discovered URL at
       // the same address starts from a clean slate.

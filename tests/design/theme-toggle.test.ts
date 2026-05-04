@@ -1,4 +1,4 @@
-// Tests for src/scripts/theme-toggle.ts — REQ-DES-002 (theme persistence,
+// Tests for src/scripts/bundled/theme-toggle.ts — REQ-DES-002 (theme persistence,
 // localStorage key, data-theme attribute). The module exposes pure helpers
 // that take Document/Storage/matchMedia as arguments so these tests don't
 // need jsdom — plain mocks suffice under the workerd test pool.
@@ -13,7 +13,7 @@ import {
   applyTheme,
   persistTheme,
   toggleTheme
-} from '../../src/scripts/theme-toggle';
+} from '../../src/scripts/bundled/theme-toggle';
 
 function makeStorage(initial: Record<string, string> = {}): Storage {
   const store = new Map<string, string>(Object.entries(initial));

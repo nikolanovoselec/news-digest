@@ -30,6 +30,7 @@ import { runJsonWithFallback, asAiBinding } from '~/lib/llm-json';
 import { isUrlSafe } from '~/lib/ssrf';
 import { log } from '~/lib/log';
 import type { DiscoveredFeed, SourcesCacheValue } from '~/lib/types';
+import { writeSourcesCache } from '~/lib/sources-cache';
 import {
   FEED_FETCH_TIMEOUT_MS,
   FEED_MAX_BODY_BYTES,
@@ -419,7 +420,7 @@ export async function processPendingDiscoveries(
           feeds,
           discovered_at: Date.now(),
         };
-        await env.KV.put(`sources:${tag}`, JSON.stringify(cacheValue));
+        await writeSourcesCache(env.KV, tag, cacheValue);
         await env.KV.delete(`discovery_failures:${tag}`);
         await env.DB.prepare('DELETE FROM pending_discoveries WHERE tag = ?1')
           .bind(tag)
@@ -446,7 +447,7 @@ export async function processPendingDiscoveries(
           feeds: [],
           discovered_at: Date.now(),
         };
-        await env.KV.put(`sources:${tag}`, JSON.stringify(emptyCache));
+        await writeSourcesCache(env.KV, tag, emptyCache);
         await env.KV.delete(`discovery_failures:${tag}`);
         await env.DB.prepare('DELETE FROM pending_discoveries WHERE tag = ?1')
           .bind(tag)
