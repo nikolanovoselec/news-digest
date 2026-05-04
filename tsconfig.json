@@ -5,6 +5,7 @@
     "paths": {
       "~/*": ["src/*"]
     },
+    "ignoreDeprecations": "6.0",
     "types": ["@cloudflare/workers-types", "@astrojs/cloudflare", "vitest/globals", "@cloudflare/vitest-pool-workers"],
     "module": "ESNext",
     "moduleResolution": "bundler",
