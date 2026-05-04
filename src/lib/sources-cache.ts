@@ -1,6 +1,6 @@
 // Implements REQ-PIPE-001
 //
-// Centralized read/write of `sources:{tag}` KV entries (CF-001 / AD16).
+// Centralized writer for `sources:{tag}` KV entries (CF-001 / AD16).
 // Every writer in the system MUST go through this module. The
 // invariant the coordinator's eviction recheck relies on — that the
 // serialized form of a cache value is byte-equal whenever the logical
@@ -58,46 +58,21 @@ export async function writeSourcesCache(
   return raw;
 }
 
-/** Read a sources cache entry. Returns `null` when the key is absent
- *  or the stored bytes do not parse to a valid SourcesCacheValue. */
-export async function readSourcesCache(
-  kv: KVNamespace,
-  tag: string,
-): Promise<{ value: SourcesCacheValue; raw: string } | null> {
-  const raw = await kv.get(key(tag), 'text');
-  if (raw === null) return null;
-  try {
-    const parsed = JSON.parse(raw) as SourcesCacheValue;
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      Array.isArray(parsed.feeds) &&
-      typeof parsed.discovered_at === 'number'
-    ) {
-      return { value: parsed, raw };
-    }
-  } catch {
-    // fall through
-  }
-  return null;
-}
-
-/** Compare two raw sources cache strings for content equality, with a
- *  STRUCTURAL fallback. The coordinator's eviction recheck uses this
- *  to decide whether another isolate has written a newer cache value
- *  while the eviction pass was computing.
+/** Compare two raw sources cache strings for content equality.
+ *  The coordinator's eviction recheck uses this to decide whether
+ *  another isolate has written a newer cache value while the
+ *  eviction pass was computing.
  *
- *  Byte-equal is the fast path. When bytes differ, parse both sides
- *  and compare `discovered_at`; if discovered_at matches, the writes
- *  are logically equivalent (same fan-out tick) even if serialization
- *  drifted. This guards against the failure mode AD16 documents. */
+ *  Byte-equal is the only equality path — `writeSourcesCache` is the
+ *  centralised, single-writer-per-cache-line entry point with a fixed
+ *  field order, so any byte divergence MUST mean a genuinely different
+ *  write landed first. A structural fallback that compared only
+ *  `discovered_at` would silently treat two writes that happened to
+ *  collide on the same millisecond as equivalent and clobber a peer's
+ *  distinct feed set — exactly the failure mode the recheck exists
+ *  to prevent (the prior implementation of this function had this
+ *  flaw and was tightened to byte-only by the same review pass that
+ *  introduced the helper). */
 export function sourcesCacheRawEqual(a: string, b: string): boolean {
-  if (a === b) return true;
-  try {
-    const aParsed = JSON.parse(a) as SourcesCacheValue;
-    const bParsed = JSON.parse(b) as SourcesCacheValue;
-    return aParsed.discovered_at === bParsed.discovered_at;
-  } catch {
-    return false;
-  }
+  return a === b;
 }

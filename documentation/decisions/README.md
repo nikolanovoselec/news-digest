@@ -30,6 +30,9 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD14 | History-page perf-comparability test permanently skipped | Testing | 2026-05-04 |
 | AD15 | Test pool exercises worker.ts directly; production runs through Astro-merged entry | Architecture | 2026-05-04 |
 | AD16 | Single-writer invariant for KV `sources:{tag}` enforced via centralized helper | Storage | 2026-05-04 |
+| AD17 | Reject `dedupe-groups.ts` extraction; finalize within-group dedup is downstream-gated | Architecture | 2026-05-04 |
+| AD18 | Reject `deferred-candidates.ts`; chunk-overflow drop path stays log-only until volume justifies persistence | Architecture | 2026-05-04 |
+| AD19 | Reject `tag-railing-flip-core.ts`; FLIP measurements are not separable from DOM and are tested via Playwright | Testing | 2026-05-04 |
 
 ---
 
@@ -411,6 +414,79 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - Future `sources:{tag}` migration to D1 supersedes this ADR. Until then, this is the contract.
 
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+
+---
+
+### AD17: Reject `dedupe-groups.ts` extraction
+
+**Status:** Accepted (2026-05-04)
+
+**Decision:** A prior review batch (PR #168) proposed extracting `normaliseDedupGroups` into a shared `~/lib/dedupe-groups.ts` module — the chunk consumer's variant lacked the within-group dedup that the finalize variant carried. Land the lighter consequence (use the finalize variant's logic in both call sites) without standing up a new module.
+
+**Context:** The chunk consumer ran `normaliseDedupGroups` against LLM-emitted `dedup_groups: number[][]` to canonicalise the groups before clustering. The finalize consumer ran a near-identical helper that additionally ran a Set-based dedup within each group. The prior plan was to extract both into a shared module so both call sites used the stricter logic.
+
+**Alternatives considered:**
+
+- **Land the extraction.** Costs a new module, two import-site updates, and a behaviour change in the chunk consumer (gain within-group dedup). Behaviour change is benign but non-trivial to reason about.
+- **No-op the divergence.** The chunk consumer's downstream gating (canonical-URL dedupe + cluster-by-canonical) already removes within-group duplicates before they reach D1, so the missing helper-level dedup is only a redundant-group annotation, not a data correctness issue.
+
+**Rationale:** The chunk consumer's downstream gating makes within-group dedup at the helper level redundant. Spending review velocity on the extraction would yield a non-observable behaviour change. Recorded as an explicit decision so the next reviewer doesn't replay the proposal.
+
+**Consequences:**
+
+- The chunk consumer's `normaliseDedupGroups` stays as-is, slightly looser than the finalize variant. This is documented in the chunk consumer's source comment.
+- If future canonical-URL dedup is loosened (e.g., a feature lets two canonical URLs survive within one cluster), revisit this decision and land the extraction.
+
+**Related requirements:** [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)
+
+---
+
+### AD18: Reject `deferred-candidates.ts`; chunk-overflow path stays log-only
+
+**Status:** Accepted (2026-05-04)
+
+**Decision:** When a coordinator tick produces more chunk candidates than `MAX_CHUNKS_PER_TICK`, the overflow is dropped with a `coordinator.candidates_dropped` log event. A prior review batch proposed persisting overflow candidates to a `deferred:{scrape_run_id}` KV row and re-merging them on the next tick. Defer indefinitely.
+
+**Context:** `MAX_CHUNKS_PER_TICK` caps the number of chunks one coordinator tick can fan out, primarily to keep the per-tick LLM cost bounded. Today the cap is comfortable headroom (current observed peak is well under the cap). The "persist + re-merge" plan was speculative — protecting a failure mode that hasn't been observed in production.
+
+**Alternatives considered:**
+
+- **Persist overflow to KV with TTL.** Adds a new KV key prefix, a re-merge path on next tick, and an observability story for "deferred candidate fell out before re-merge". Worth implementing IF and WHEN the drop log fires non-trivially.
+- **Raise `MAX_CHUNKS_PER_TICK`.** Trades drop frequency for tick wall-clock time and LLM cost. Same outcome long-term once observed.
+
+**Rationale:** A speculative persistence layer is the wrong direction; until the drop log shows a real problem, the simpler path is to keep the cap and revisit the cap value (not the persistence story) when observability says we're truncating real candidates.
+
+**Consequences:**
+
+- `coordinator.candidates_dropped` event continues to surface drops in `wrangler tail`. Operators monitor this signal; if drops become sustained, raise the cap or implement the persistence layer at that point.
+- This ADR documents WHY a `deferred-candidates.ts` module does not exist, so the next reviewer doesn't replay the proposal.
+
+**Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+
+---
+
+### AD19: Reject `tag-railing-flip-core.ts`; FLIP measurements are not separable from DOM
+
+**Status:** Accepted (2026-05-04)
+
+**Decision:** A prior review batch proposed extracting the FLIP-cascade kernel from `src/lib/tag-railing-flip.ts` into a DOM-free `tag-railing-flip-core.ts` module so the math could be unit-tested in vitest. The math is genuinely intertwined with DOM measurement timing (`getBoundingClientRect` ordering, requestAnimationFrame phase, cascade staggering) and a pure-math kernel would only test the trivial parts. Tests live in Playwright E2E instead.
+
+**Context:** FLIP (First-Last-Invert-Play) animations measure DOM rectangles before and after a layout-affecting mutation, then transform-translate the affected elements to their pre-layout positions and animate them back. The "math" is per-element delta computation; the load-bearing logic is the order in which measurements happen relative to the DOM mutation, the cascade stagger between sibling chips, and the lock-state transitions that prevent overlapping animations from clobbering each other. None of this is meaningfully testable without a real layout engine.
+
+**Alternatives considered:**
+
+- **Extract a kernel anyway.** Would test trivial deltas and miss the actual failure modes. False confidence.
+- **Use a JSDOM-based vitest test pool.** JSDOM doesn't run a real layout engine; `getBoundingClientRect` returns zero. Same problem.
+- **Keep behaviour in `tag-railing-flip.ts`, add Playwright spec that asserts the user-observable contract (lock clears, scrollLeft preserved, no CSP violations).** This is what `tests/e2e/tag-railing-flip.spec.ts` does (added in Phase F).
+
+**Rationale:** The contract is "the chip cascade looks right and doesn't break under view-transitions or PWA scroll restoration." That's an end-to-end contract, not a kernel contract.
+
+**Consequences:**
+
+- `src/lib/tag-railing-flip.ts` stays as-is; the `?raw`-source-grep tests it spawned are deleted in Phase F (CF-011) and replaced by the Playwright spec.
+- This ADR documents WHY a `tag-railing-flip-core.ts` module does not exist.
+
+**Related requirements:** [REQ-READ-007](../../sdd/reading.md#req-read-007-tag-railing-cascade-on-toggle-and-add)
 
 ---
 

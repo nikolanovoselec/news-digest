@@ -17,7 +17,7 @@ import { log } from '~/lib/log';
 /** Per-query IN-clause batch size for existing-canonical lookups. D1's
  * SQL string length cap (about 100KB compiled) comfortably handles 100
  * parameters per query; 100 keeps the query under the cap with margin. */
-export const EXISTING_URL_BATCH = 100;
+const EXISTING_URL_BATCH = 100;
 
 /** Look up which of the supplied canonical URLs already exist in
  * `articles.canonical_url`, returning a Map keyed by canonical URL with
@@ -72,4 +72,30 @@ export async function loadExistingCanonicalUrls(
 ): Promise<Set<string>> {
   const map = await loadExistingCanonicalToIdMap(db, urls);
   return new Set(map.keys());
+}
+
+/** Record one chunk's completion in `scrape_chunk_completions`. Returns
+ * true when this call won the INSERT race (the row didn't already
+ * exist), false when the chunk had already been recorded by a prior
+ * queue redelivery (CF-003 — extracted from scrape-chunk-consumer.ts
+ * so the SQL touching the completions table lives alongside the rest
+ * of the article-domain SQL).
+ *
+ * The `INSERT OR IGNORE` is the single idempotency gate for chunk-
+ * level redelivery — the chunk consumer must NOT increment scrape_run
+ * counters when this returns false, or D1 redeliveries would
+ * double-count tokens, cost, and ingest counters. */
+export async function recordChunkCompletion(
+  db: D1Database,
+  scrapeRunId: string,
+  chunkIndex: number,
+  completedAt: number = Math.floor(Date.now() / 1000),
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      'INSERT OR IGNORE INTO scrape_chunk_completions (scrape_run_id, chunk_index, completed_at) VALUES (?1, ?2, ?3)',
+    )
+    .bind(scrapeRunId, chunkIndex, completedAt)
+    .run();
+  return (result.meta?.changes ?? 0) === 1;
 }
