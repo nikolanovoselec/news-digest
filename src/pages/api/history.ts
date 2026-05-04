@@ -44,6 +44,9 @@ interface ArticleRow {
   ingested_at: number;
   details_json: string | null;
   tags_json: string | null;
+  /** 1 when a row exists in `article_stars` for this (user, article),
+   *  0 otherwise. SQLite returns INTEGER from EXISTS. */
+  starred: number;
 }
 
 /** Row shape for the scrape_runs query. */
@@ -69,6 +72,12 @@ export interface WireArticle {
   published_at: number;
   details: string[];
   tags: string[];
+  /** Per-user star state. Drives the DigestCard's initial
+   *  aria-pressed + filled/outline glyph render on /history. Without
+   *  this, articles the user has already starred render as un-starred
+   *  on the history dashboard until a hard refresh AFTER the user
+   *  toggles them again. */
+  starred: boolean;
 }
 
 /** Wire shape for a scrape_runs tick inside a day group. */
@@ -136,19 +145,25 @@ export async function GET(context: APIContext): Promise<Response> {
     // the feed's real publication time on each card (users read
     // articles by when the news happened); the GROUPING key is
     // ingested_at, the DISPLAY key is published_at.
+    // Per-user star state joins via EXISTS so a missing row produces
+    // `starred = 0` instead of dropping the article from the result.
+    // The user_id placeholder slots in BEFORE the window/tag binds —
+    // ?1 is user_id, ?2 is window_start, ?3..?N are tag slugs.
+    const userIdPlaceholderShift = userTags.map((_, i) => `?${i + 3}`).join(', ');
     const articlesSql =
       `SELECT a.id, a.title, a.primary_source_name, a.primary_source_url, ` +
       `a.published_at, a.ingested_at, a.details_json, ` +
       `(SELECT json_group_array(DISTINCT at.tag) FROM article_tags at ` +
-      `WHERE at.article_id = a.id) AS tags_json ` +
+      `WHERE at.article_id = a.id) AS tags_json, ` +
+      `EXISTS(SELECT 1 FROM article_stars st WHERE st.article_id = a.id AND st.user_id = ?1) AS starred ` +
       `FROM articles a ` +
-      `WHERE a.ingested_at >= ?1 ` +
-      `AND a.id IN (SELECT DISTINCT article_id FROM article_tags WHERE tag IN (${tagPlaceholders})) ` +
+      `WHERE a.ingested_at >= ?2 ` +
+      `AND a.id IN (SELECT DISTINCT article_id FROM article_tags WHERE tag IN (${userIdPlaceholderShift})) ` +
       `ORDER BY a.ingested_at DESC`;
     try {
       const result = await env.DB
         .prepare(articlesSql)
-        .bind(windowStart, ...userTags)
+        .bind(user.id, windowStart, ...userTags)
         .all<ArticleRow>();
       articleRows = result.results ?? [];
     } catch (err) {
@@ -202,6 +217,7 @@ export async function GET(context: APIContext): Promise<Response> {
       published_at: row.published_at,
       details: parseStringArray(row.details_json),
       tags: parseStringArray(row.tags_json),
+      starred: row.starred === 1,
     });
     group.article_count += 1;
   }

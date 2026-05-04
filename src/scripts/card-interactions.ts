@@ -32,6 +32,25 @@
 const POPOVER_TTL_MS = 5000;
 const popoverTimers = new WeakMap<HTMLElement, number>();
 
+// Idempotency flags MUST live in this module's closure, NOT on a DOM
+// node attribute. Astro's default view-transition swap replaces
+// `document.documentElement` (so any `dataset.*` flag we set on it is
+// erased), but the `document` object itself is preserved across the
+// swap — so the click listener we registered on `document` persists.
+// The previous fix (PR #182) put the listener on `document` but the
+// flag on `documentElement.dataset`. After the first cross-page nav
+// the flag was clear while the listener was still live, so the
+// `astro:page-load` re-bind path stacked a SECOND listener. Every
+// subsequent star click fired two racing toggles (POST + DELETE) and
+// the star UI flipped to a non-deterministic end state — surfaced as
+// "marking anything as favorite is broken everywhere".
+//
+// Module-scope booleans pair correctly with the document-scope
+// listeners: both live as long as the module's closure does, neither
+// resets on view-transition.
+let starDelegationBound = false;
+let outsideClickBound = false;
+
 /**
  * Wire every tag-disclosure trigger under {@link root} with click
  * handlers. Re-entrant: triggers already bound are skipped. Returns
@@ -60,14 +79,11 @@ export function initCardInteractions(
     },
   );
 
-  // Outside-click closes any open popover. Bound ONCE globally via
-  // a documentElement flag so we don't stack listeners on astro:
-  // page-load re-entries.
-  if (
-    root === document &&
-    document.documentElement.dataset['cardOutsideClickBound'] !== '1'
-  ) {
-    document.documentElement.dataset['cardOutsideClickBound'] = '1';
+  // Outside-click closes any open popover. Bound ONCE per module
+  // lifetime via a closure flag (see comment near the flag declaration
+  // for why this can't live on documentElement.dataset).
+  if (root === document && !outsideClickBound) {
+    outsideClickBound = true;
     document.addEventListener('click', (e) => {
       const target = e.target;
       if (!(target instanceof Element)) return;
@@ -81,8 +97,8 @@ export function initCardInteractions(
 }
 
 /**
- * Bind the document-level star-click delegation. Idempotent via
- * `data-star-delegation-bound` on documentElement so re-imports or
+ * Bind the document-level star-click delegation. Idempotent via the
+ * module-scope `starDelegationBound` closure flag so re-imports or
  * astro:page-load re-runs never stack listeners. Exported for unit
  * tests that need to assert idempotency without driving the full
  * module-load side effects.
@@ -93,8 +109,8 @@ export function initCardInteractions(
  */
 export function bindStarDelegation(): void {
   if (typeof document === 'undefined') return;
-  if (document.documentElement.dataset['starDelegationBound'] === '1') return;
-  document.documentElement.dataset['starDelegationBound'] = '1';
+  if (starDelegationBound) return;
+  starDelegationBound = true;
   document.addEventListener('click', (e) => {
     const target = e.target;
     if (!(target instanceof Element)) return;
@@ -184,15 +200,14 @@ export function closeAllTagPopovers(except?: HTMLElement): void {
 
 // Auto-wire on DOMContentLoaded + every astro:page-load.
 //
-// IMPORTANT: bindStarDelegation MUST run on every astro:page-load, not
-// just module-load. Astro's default view-transition swap replaces the
-// entire `document.documentElement`, which discards both the bubble-
-// phase click listener AND the `data-star-delegation-bound` idempotency
-// flag we set on it. Re-running here is safe because the dataset guard
-// on the (fresh) documentElement is empty post-swap, so the helper
-// rebinds cleanly. Without this, navigating from /digest to /history
-// (or any cross-page nav) silently loses the star handler until the
-// user does a hard refresh.
+// bindStarDelegation is safe to call on every astro:page-load — its
+// closure-flag idempotency guarantees a single listener regardless of
+// how many times the page-load event fires. initCardInteractions is
+// called per page-load because tag-disclosure triggers ARE per-button
+// and need rebinding when new cards enter the DOM (e.g. /history's
+// day-grouped grids that lazy-render on `<details>` open). The
+// `data-bound` per-trigger guard inside initCardInteractions keeps
+// re-runs idempotent at the per-trigger level.
 if (typeof document !== 'undefined') {
   bindStarDelegation();
   if (document.readyState === 'loading') {

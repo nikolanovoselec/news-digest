@@ -235,6 +235,7 @@ function formatCostUsd(value: number | null | undefined): string {
           sourceUrl={a.primary_source_url}
           oneLiner={a.details[0] ?? ''}
           tags={a.tags.filter((t) => userTagSet.has(t))}
+          starred={a.starred}
         />
       ))}
     </div>
@@ -291,6 +292,7 @@ function formatCostUsd(value: number | null | undefined): string {
                           sourceName={a.primary_source_name}
                           sourceUrl={a.primary_source_url}
                           tags={a.tags.filter((t) => userTagSet.has(t))}
+                          starred={a.starred}
                           index={i}
                           suppressTransition={isFilteringByTag}
                         />

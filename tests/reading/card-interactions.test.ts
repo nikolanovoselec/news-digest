@@ -347,14 +347,20 @@ describe('initCardInteractions — REQ-STAR-001 + REQ-READ-001 event plumbing', 
     // listener owns every star-toggle click. A double-bind would fire
     // two fetches per click (POST + DELETE) and the optimistic toggle
     // would oscillate. Tracks addEventListener calls on a stubbed
-    // documentElement so we can assert the bound count is exactly 1
-    // even after multiple init invocations (simulating astro:page-load
+    // document so we can assert the bound count is exactly 1 even
+    // after multiple init invocations (simulating astro:page-load
     // re-fires).
-    const dataset: Record<string, string> = {};
-    const docElement = { dataset } as unknown as HTMLElement;
+    //
+    // Idempotency now lives in a module-scope closure flag, NOT on
+    // documentElement.dataset — Astro's view-transition swap replaces
+    // documentElement on every cross-page navigation, which previously
+    // erased the flag while the listener (registered on document, the
+    // node that survives the swap) lived on. The result was that
+    // astro:page-load re-binds stacked a second listener and every
+    // star click fired POST + DELETE in parallel.
     const calls: { type: string; useCapture: boolean }[] = [];
     vi.stubGlobal('document', {
-      documentElement: docElement,
+      documentElement: { dataset: {} } as unknown as HTMLElement,
       addEventListener: (
         type: string,
         _listener: EventListener,
@@ -375,8 +381,21 @@ describe('initCardInteractions — REQ-STAR-001 + REQ-READ-001 event plumbing', 
     expect(clickListeners.length).toBe(1);
     // Bubble phase, not capture (paired with stopPropagation in handler).
     expect(clickListeners[0]!.useCapture).toBe(false);
-    // Idempotency flag set on documentElement after first bind.
-    expect(dataset['starDelegationBound']).toBe('1');
+
+    // Regression for the production bug: simulate Astro's
+    // view-transition swap by replacing documentElement WHILE keeping
+    // the same document object (Astro only swaps the <html> element,
+    // not the document itself). If the idempotency flag had moved
+    // back onto documentElement.dataset, this swap would clear it and
+    // the next bindStarDelegation call would stack a second listener.
+    // The closure flag survives the swap.
+    const stubbedDoc = globalThis.document as unknown as {
+      documentElement: HTMLElement;
+    };
+    stubbedDoc.documentElement = { dataset: {} } as unknown as HTMLElement;
+    bindStarDelegation();
+    const afterSwap = calls.filter((c) => c.type === 'click');
+    expect(afterSwap.length).toBe(1);
   });
 
   it('REQ-READ-001: re-running init does not double-bind tag-triggers (dataset.bound guard)', () => {

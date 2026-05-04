@@ -422,6 +422,17 @@ const initialTheme = cookieTheme ?? 'light';
              H1 (48px+) so the brand still feels like navigation. */
           font-size: 40px;
         }
+        /* Icon must scale with the wordmark on desktop. Mobile keeps
+           text-2xl (32px) which matches the icon's intrinsic 32px so
+           `align-items: center` lands cap-height visually on the icon
+           midline. At desktop's 40px wordmark, a 32px icon centres
+           below the text's optical midline — the icon reads as
+           floating high relative to the wordmark. Match dimensions
+           so centre-alignment remains visually balanced. */
+        .site-header__mark {
+          width: 40px;
+          height: 40px;
+        }
       }
       /* "news" in muted, "digest" in full text — kerned together without
          whitespace. Gives the brand character without adding chrome. */
