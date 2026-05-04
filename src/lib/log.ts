@@ -61,7 +61,12 @@ export type LogEvent =
   | 'auth.refresh.rate_limited'
   | 'auth.logout.refresh_revoke_failed'
   | 'auth.logout.sv_bump_failed'
-  | 'rate.limit.kv_error';
+  | 'rate.limit.kv_error'
+  // CF-022 — emitted whenever runJsonWithFallback takes the fallback
+  // model after the primary's parse failed. Operators grep this in
+  // wrangler tail to spot a degraded primary BEFORE the per-tick cost
+  // spike compounds.
+  | 'llm.fallback_invoked';
 
 /** Shape of every emitted log line. */
 export interface LogRecord {

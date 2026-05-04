@@ -21,7 +21,7 @@ async function seedScrapeRun(id: string): Promise<void> {
 
 describe('recordChunkCompletion — REQ-PIPE-002 / CF-003', () => {
   beforeAll(async () => {
-    await applyD1Migrations();
+    await applyD1Migrations(env.DB, env.DB_MIGRATIONS ?? []);
   });
 
   beforeEach(async () => {
