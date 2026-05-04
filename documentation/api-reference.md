@@ -428,6 +428,8 @@ Extended machine-readable agents policy (`public/llms-full.txt`). Superset of `l
 
 Each day group contains: `local_date`, `article_count`, `articles[]` (filtered to the user's active tags), `ticks[]` (scrape runs in that day), and per-day token/cost/articles-ingested aggregates.
 
+Each article in `articles[]` includes a `starred: boolean` field reflecting the authenticated user's current star state. The value is `true` when a row exists in `article_stars` for that `(user_id, article_id)` pair, `false` otherwise. This lets `/history` render the star glyph and `aria-pressed` state server-side on initial load without a separate fetch.
+
 `?q=` and `?tags=` are page-level URL state read client-side; they are not server query params.
 
 **Implements:** [REQ-HIST-001](../sdd/history.md#req-hist-001-day-grouped-article-history) AC 4, AC 5

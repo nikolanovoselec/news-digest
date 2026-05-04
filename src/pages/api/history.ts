@@ -125,31 +125,28 @@ export async function GET(context: APIContext): Promise<Response> {
 
   // --- Articles ---------------------------------------------------------
   // Restrict to articles in the window whose tag set intersects the
-  // user's active tags. Placeholders are positional (?1 = window,
-  // ?2..?N = tags) so tag slugs are bound, never string-interpolated.
+  // user's active tags.
+  //
+  // History groups by `ingested_at` — the day the scrape pipeline
+  // processed the article — NOT `published_at` (the feed's original
+  // publication timestamp). Rationale: a per-day row on /history
+  // ALSO shows tokens / cost / articles-ingested from scrape_runs
+  // whose `started_at` falls on that day; those are ingest-side
+  // numbers. If we grouped articles by published_at instead, a fresh
+  // wipe + rescrape would show articles distributed across ~10 days
+  // (feeds return ~10-day backlog) while tokens/cost concentrate on
+  // the one or two days the runs actually happened — a misleading
+  // schism. Keep selecting `published_at` so the wire payload still
+  // emits the feed's real publication time on each card; the GROUPING
+  // key is ingested_at, the DISPLAY key is published_at.
+  //
+  // Placeholder layout (positional, all values bound, none
+  // interpolated): ?1 = user_id, ?2 = window_start, ?3..?N = tag
+  // slugs. user_id slots first so the EXISTS join on article_stars
+  // can reference it independently of the variable-arity tag list.
   let articleRows: ArticleRow[] = [];
   if (userTags.length > 0) {
-    const tagPlaceholders = userTags.map((_, i) => `?${i + 2}`).join(', ');
-    // History groups by `ingested_at` — the day the scrape pipeline
-    // processed the article — NOT `published_at` (the feed's original
-    // publication timestamp). Rationale: a per-day row on /history
-    // ALSO shows tokens / cost / articles-ingested from
-    // scrape_runs whose `started_at` falls on that day; those are
-    // ingest-side numbers. If we grouped articles by published_at
-    // instead, a fresh wipe + rescrape would show articles
-    // distributed across ~10 days (feeds return ~10-day backlog)
-    // while tokens/cost concentrate on the one or two days the runs
-    // actually happened — a misleading schism.
-    //
-    // Keep selecting `published_at` so the wire payload still emits
-    // the feed's real publication time on each card (users read
-    // articles by when the news happened); the GROUPING key is
-    // ingested_at, the DISPLAY key is published_at.
-    // Per-user star state joins via EXISTS so a missing row produces
-    // `starred = 0` instead of dropping the article from the result.
-    // The user_id placeholder slots in BEFORE the window/tag binds —
-    // ?1 is user_id, ?2 is window_start, ?3..?N are tag slugs.
-    const userIdPlaceholderShift = userTags.map((_, i) => `?${i + 3}`).join(', ');
+    const tagPlaceholders = userTags.map((_, i) => `?${i + 3}`).join(', ');
     const articlesSql =
       `SELECT a.id, a.title, a.primary_source_name, a.primary_source_url, ` +
       `a.published_at, a.ingested_at, a.details_json, ` +
@@ -158,7 +155,7 @@ export async function GET(context: APIContext): Promise<Response> {
       `EXISTS(SELECT 1 FROM article_stars st WHERE st.article_id = a.id AND st.user_id = ?1) AS starred ` +
       `FROM articles a ` +
       `WHERE a.ingested_at >= ?2 ` +
-      `AND a.id IN (SELECT DISTINCT article_id FROM article_tags WHERE tag IN (${userIdPlaceholderShift})) ` +
+      `AND a.id IN (SELECT DISTINCT article_id FROM article_tags WHERE tag IN (${tagPlaceholders})) ` +
       `ORDER BY a.ingested_at DESC`;
     try {
       const result = await env.DB
