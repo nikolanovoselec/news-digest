@@ -49,7 +49,7 @@ import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
 import { normalizeHashtag } from '~/lib/hashtags';
 import { splitIntoParagraphs } from '~/lib/paragraph-split';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
-import { runJsonWithFallback, previewRawResponse } from '~/lib/llm-json';
+import { runJsonWithFallback, previewRawResponse, asAiBinding } from '~/lib/llm-json';
 import { addChunkStats, finishRun } from '~/lib/scrape-run';
 import { generateUlid } from '~/lib/ulid';
 import { applyForeignKeysPragma } from '~/lib/db';
@@ -214,7 +214,7 @@ export async function processOneChunk(
   // (gpt-oss-20b) is JSON-strict for runs where the primary's
   // prompt-following wobbles.
   const llmRun = await runJsonWithFallback({
-    ai: env.AI as unknown as { run: (m: string, p: Record<string, unknown>) => Promise<unknown> },
+    ai: asAiBinding(env.AI),
     params: {
       messages: [
         { role: 'system', content: PROCESS_CHUNK_SYSTEM },

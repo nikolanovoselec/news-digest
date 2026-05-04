@@ -23,7 +23,7 @@ import { log } from '~/lib/log';
  *  wrangler.toml — keep in sync. */
 export const MAX_QUEUE_ATTEMPTS = 3;
 
-export interface BatchHandlerOptions<TBody> {
+interface BatchHandlerOptions<TBody> {
   /** Per-message processor. Throws to trigger queue retry. */
   process: (env: Env, body: TBody) => Promise<void>;
   /** Stable log status emitted on processor throw. */

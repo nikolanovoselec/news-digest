@@ -18,7 +18,7 @@
 
 /** Feed format. We parse RSS 2.0 and Atom the same way (fast-xml-parser);
  * `json` is reserved for JSON Feed 1.1 endpoints. */
-export type CuratedSourceKind = 'rss' | 'atom' | 'json';
+type CuratedSourceKind = 'rss' | 'atom' | 'json';
 
 /** A single curated feed entry. */
 export interface CuratedSource {

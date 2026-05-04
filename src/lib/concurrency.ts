@@ -34,9 +34,12 @@ export async function mapConcurrent<T, R>(
   const total = items.length;
   if (total === 0) return [];
   const workerCount = Math.min(concurrency, total);
-  // Pre-size with a literal pattern (lint forbids new Array(n)). The
-  // null sentinel is overwritten before any worker reads it.
-  const results: R[] = Array.from({ length: total }, () => null as unknown as R);
+  // CF-028 — pre-size with `R | undefined` instead of the prior
+  // `null as unknown as R` cast. Every slot is overwritten by a
+  // worker before `Promise.all` resolves, so the post-await assertion
+  // below is sound. Type fidelity is recovered without a sentinel
+  // that lies about the array's contents.
+  const results: Array<R | undefined> = Array.from({ length: total }, () => undefined);
   let cursor = 0;
   const worker = async (): Promise<void> => {
     while (true) {
@@ -49,5 +52,6 @@ export async function mapConcurrent<T, R>(
   const workers: Promise<void>[] = [];
   for (let w = 0; w < workerCount; w++) workers.push(worker());
   await Promise.all(workers);
-  return results;
+  // Every slot was assigned by a worker before Promise.all resolved.
+  return results as R[];
 }

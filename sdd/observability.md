@@ -129,3 +129,24 @@ Structured JSON logging as the single operational surface — no external observ
 **Dependencies:** REQ-OPS-005
 **Verification:** Manual check
 **Status:** Implemented
+
+---
+
+### REQ-OPS-007: Public sitemap for crawler discovery
+
+**Intent:** Search-engine crawlers find the public surface of the app via a discoverable sitemap. Authenticated routes are excluded so crawlers don't follow redirect chains into the OAuth flow.
+
+**Applies To:** Public
+
+**Acceptance Criteria:**
+1. `GET /sitemap.xml` returns HTTP 200 with an XML response carrying `Content-Type: application/xml`.
+2. The body is a well-formed sitemap containing only public surfaces (the landing page); authenticated routes are absent.
+3. Each entry carries a location URL, a last-modified date stamped to the day of the request, a change-frequency hint, and a priority value.
+4. The response is cacheable for one hour by intermediate caches and crawlers.
+5. The sitemap URL is advertised in `robots.txt` so crawlers find it without guessing.
+
+**Constraints:** —
+**Priority:** P3
+**Dependencies:** —
+**Verification:** Integration test
+**Status:** Implemented

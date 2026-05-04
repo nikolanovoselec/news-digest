@@ -39,8 +39,15 @@ import {
 
 /** Minimal Workers-AI binding shape. We intentionally do not import
  *  the platform-typed `Ai` here so this helper is trivial to mock. */
-interface AiBinding {
+export interface AiBinding {
   run: (model: string, params: Record<string, unknown>) => Promise<unknown>;
+}
+
+/** Cast an unknown env binding to {@link AiBinding}. Centralizes the
+ *  three identical `as unknown as { run: ... }` casts that were
+ *  duplicated across queue consumers and discovery (CF-016). */
+export function asAiBinding(ai: unknown): AiBinding {
+  return ai as AiBinding;
 }
 
 interface AttemptInfo {

@@ -32,8 +32,8 @@ import { hexEncode } from '~/lib/crypto';
 
 export const REFRESH_TOKEN_COOKIE_NAME = '__Host-news_digest_refresh';
 export const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
-export const REFRESH_TOKEN_BYTES = 32;
-export const REFRESH_ROW_ID_BYTES = 16;
+const REFRESH_TOKEN_BYTES = 32;
+const REFRESH_ROW_ID_BYTES = 16;
 
 /** Tolerance window for concurrent-refresh race. When a refresh token
  *  whose `revoked_at` was set within this many seconds is presented,
@@ -69,7 +69,7 @@ export interface RefreshTokenRow {
 
 /** Generate a fresh 32-byte random cookie value (the value the client
  *  holds). Hex-encoded so it's cookie-safe and printable. */
-export function generateRefreshTokenValue(): string {
+function generateRefreshTokenValue(): string {
   const bytes = new Uint8Array(REFRESH_TOKEN_BYTES);
   crypto.getRandomValues(bytes);
   return hexEncode(bytes);
@@ -78,7 +78,7 @@ export function generateRefreshTokenValue(): string {
 /** Generate a fresh 16-byte random row id (the value used as PRIMARY
  *  KEY internally, NEVER the cookie value). Distinct from the cookie
  *  value so a DB leak doesn't expose live tokens. */
-export function generateRowId(): string {
+function generateRowId(): string {
   const bytes = new Uint8Array(REFRESH_ROW_ID_BYTES);
   crypto.getRandomValues(bytes);
   return hexEncode(bytes);
@@ -86,7 +86,7 @@ export function generateRowId(): string {
 
 /** SHA-256 hex of any string. Used for token_hash and device
  *  fingerprint. */
-export async function sha256Hex(input: string): Promise<string> {
+async function sha256Hex(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
   const digest = await crypto.subtle.digest('SHA-256', data);
   return hexEncode(new Uint8Array(digest));
@@ -323,19 +323,28 @@ export async function revokeRefreshToken(
  * revoke rows without a parallel `session_version` bump (none today)
  * MUST update this contract.
  *
- * **Race:** the prior SELECT-then-batch-UPDATE shape had a TOCTOU
- * window where another isolate could revoke all rows between SELECT
- * and UPDATE. We now gate the bump on `EXISTS` against rows whose
- * `revoked_at` matches the value this call just wrote — and run
- * BOTH statements inside a single `db.batch()` so the runtime can't
- * preempt between revoke and bump (which would leave outstanding
- * access JWTs valid for up to their 5-min lifetime even though all
- * refresh tokens were revoked). The batch is atomic relative to D1.
+ * **Race (CF-024):** the prior SELECT-then-batch-UPDATE shape had a
+ * TOCTOU window where another isolate could revoke all rows between
+ * SELECT and UPDATE. We now gate the bump on `EXISTS` against rows
+ * whose `revoked_at` matches the value this call just wrote — and
+ * run BOTH statements inside a single `db.batch()` so the runtime
+ * can't preempt between revoke and bump within ONE caller. The batch
+ * is atomic relative to D1.
  *
- * Two concurrent first-time callers can both observe unrevoked rows
- * under the conditional UPDATE itself (one wins the row flip, the
- * other observes zero changes and skips); bounded over-bump is
- * acceptable because `session_version` is monotonically increasing.
+ * What the batch does NOT prevent: two concurrent isolates calling
+ * this function within the same second BOTH see rows to revoke (the
+ * first one's UPDATE has propagated by the time the second's SELECT
+ * runs in some scenarios; in others the second's UPDATE flips zero
+ * rows but its EXISTS still finds the rows the first one revoked
+ * because the predicate matches by `revoked_at = now`). Either way,
+ * both can bump `session_version`. The over-bump is bounded by the
+ * per-IP/per-user rate limit on the call sites (logout, refresh,
+ * account-delete) and is acceptable because `session_version` is
+ * monotonically increasing — extra bumps invalidate exactly the same
+ * set of stale JWTs an idempotent bump would invalidate.
+ *
+ * The earlier prose framed this as "intra-batch" no-op semantics; the
+ * accurate framing is "cross-isolate over-bump bounded by rate limits."
  */
 export async function revokeAllForUser(
   db: D1Database,

@@ -29,6 +29,7 @@ import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { requireSession } from '~/middleware/auth';
 import { parseHashtags } from '~/lib/hashtags';
+import { log } from '~/lib/log';
 
 interface CountRow {
   n: number | null;
@@ -121,7 +122,16 @@ export async function GET(context: APIContext): Promise<Response> {
     const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
     for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
     return new Response(JSON.stringify(body), { status: 200, headers });
-  } catch {
+  } catch (err) {
+    // CF-015 — every comparable handler structured-logs its 500 path
+    // (settings, tags, articles/[id]/star). A regression in any of the
+    // 5 stats queries used to surface as silent zeros; without this log
+    // it would be undetectable.
+    log('error', 'digest.generation', {
+      user_id: userId,
+      op: 'stats_read',
+      detail: String(err).slice(0, 500),
+    });
     return errorResponse('internal_error');
   }
 }

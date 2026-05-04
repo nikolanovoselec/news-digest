@@ -26,7 +26,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { DISCOVERY_SYSTEM, discoveryUserPrompt, DISCOVERY_LLM_PARAMS } from '~/lib/prompts';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
-import { runJsonWithFallback } from '~/lib/llm-json';
+import { runJsonWithFallback, asAiBinding } from '~/lib/llm-json';
 import { isUrlSafe } from '~/lib/ssrf';
 import { log } from '~/lib/log';
 import type { DiscoveredFeed, SourcesCacheValue } from '~/lib/types';
@@ -87,9 +87,7 @@ export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed
   // "this attempt failed, try the fallback").
   const userPrompt = discoveryUserPrompt(tag);
   const llmRun = await runJsonWithFallback<LLMDiscoveryPayload>({
-    ai: env.AI as unknown as {
-      run: (model: string, params: Record<string, unknown>) => Promise<unknown>;
-    },
+    ai: asAiBinding(env.AI),
     params: {
       messages: [
         { role: 'system', content: DISCOVERY_SYSTEM },

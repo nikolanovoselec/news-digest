@@ -61,7 +61,7 @@ interface ScrapeRunRow {
 
 
 /** Wire shape for an article inside a day group. */
-interface WireArticle {
+export interface WireArticle {
   id: string;
   title: string;
   primary_source_name: string | null;
