@@ -1,0 +1,252 @@
+name: Deploy Integration
+
+# Manual trigger ONLY. Operator workflow: land changes on develop
+# normally; when ready to smoke-test on the live edge, hit
+# Actions → Deploy Integration → Run workflow. The deploy always
+# pulls from the current develop HEAD regardless of which branch
+# the dispatch was fired from in the UI.
+#
+# All Cloudflare resources are env-scoped via wrangler.toml's
+# [env.integration] block — separate D1, KV, queues, all with
+# `-integration` suffixes. Crons are intentionally OFF on integration;
+# trigger scrape runs manually via /api/admin/force-refresh.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-integration
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare Workers (integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # GitHub Environment named "integration" — store integration-only
+    # secrets here (OAUTH_JWT_SECRET, GOOGLE_OAUTH_CLIENT_ID, etc.) so
+    # they don't bleed into the production deploy. APP_URL is set in
+    # wrangler.toml [env.integration.vars] (it's the public hostname,
+    # not a secret).
+    environment: integration
+    steps:
+      # Always deploy develop's current HEAD regardless of which branch
+      # the dispatch was fired from in the UI. Develop is the single
+      # source of truth for what gets smoke-tested on integration.
+      - uses: actions/checkout@v6
+        with:
+          ref: develop
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --no-fund --no-audit
+
+      - name: Build
+        run: npm run build
+
+      - name: Create .assetsignore (exclude _worker.js from asset upload)
+        run: |
+          printf '_worker.js\n_routes.json\n' > dist/.assetsignore
+
+      - name: Bootstrap Cloudflare resources (integration, idempotent)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ENV_NAME: integration
+        run: bash scripts/bootstrap-resources.sh
+
+      - name: Apply D1 migrations (integration)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler d1 migrations apply DB --remote --env integration
+
+      - name: Push Worker secrets (integration)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          OAUTH_JWT_SECRET: ${{ secrets.OAUTH_JWT_SECRET }}
+        run: |
+          set -e
+          # Required.
+          for name in OAUTH_JWT_SECRET; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Required secret '$name' is not set in the integration environment." \
+                   "Add it under Settings → Environments → integration → Add secret."
+              exit 1
+            fi
+            TMP=$(mktemp)
+            printf '%s' "${!name}" > "$TMP"
+            npx --yes wrangler secret put "$name" --env integration < "$TMP"
+            rm "$TMP"
+          done
+
+          # Sign-in providers — Google only on integration (per
+          # operator decision: skip GitHub OAuth setup on integration,
+          # use Google to sign in for testing). The landing page renders
+          # one button per configured provider, so the GitHub button
+          # simply doesn't appear.
+          if [ -n "${GOOGLE_OAUTH_CLIENT_ID:-}" ] && [ -n "${GOOGLE_OAUTH_CLIENT_SECRET:-}" ]; then
+            for name in GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET; do
+              TMP=$(mktemp)
+              printf '%s' "${!name}" > "$TMP"
+              npx --yes wrangler secret put "$name" --env integration < "$TMP"
+              rm "$TMP"
+            done
+            echo "Google sign-in: configured"
+          else
+            echo "::error::Google sign-in not configured for integration." \
+                 "Add GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET to" \
+                 "Settings → Environments → integration."
+            exit 1
+          fi
+
+          # Resend skipped on integration — daily-digest emails disabled.
+          # DEV_BYPASS_TOKEN skipped — no e2e tests against integration yet.
+          # ADMIN_EMAIL / CF_ACCESS_AUD skipped — admin endpoints return 403,
+          # which is the correct default for a single-operator integration env.
+
+      - name: Deploy (integration)
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          # Same duplicate-key warning filter as deploy.yml — Astro's
+          # bundled `entities` dependency emits harmless dup-key warnings.
+          npx --yes wrangler deploy --env integration 2>&1 | tee deploy.log | \
+            awk '
+              /^▲ \[WARNING\] Duplicate key ".*" in object literal \[duplicate-object-key\]/ { skip=1; next }
+              skip && /^$/ { skip=0; next }
+              skip { next }
+              { print }
+            '
+          WORKER_URL=$(grep -oE 'https://[^ ]+\.workers\.dev' deploy.log | head -n1 || true)
+          echo "worker_url=$WORKER_URL" >> "$GITHUB_OUTPUT"
+          echo "Deployed to: $WORKER_URL"
+
+      - name: Bind custom domain (integration)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -e
+          # APP_URL on integration is set in wrangler.toml [env.integration.vars],
+          # not as a secret. Read it directly from the toml so the bind step
+          # has a canonical source.
+          APP_URL=$(awk '
+            $0 == "[env.integration.vars]" { in_sec=1; next }
+            /^\[/ && in_sec { in_sec=0 }
+            in_sec && $1 == "APP_URL" {
+              n = split($0, parts, "\"")
+              if (n >= 2) { print parts[2]; exit }
+            }
+          ' wrangler.toml)
+
+          if [ -z "$APP_URL" ]; then
+            echo "APP_URL not found in wrangler.toml [env.integration.vars]; skipping custom-domain binding"
+            exit 0
+          fi
+          HOST=$(printf '%s' "$APP_URL" | sed -E 's|^[A-Za-z]+://||; s|/.*$||; s|:.*$||')
+          if [ -z "$HOST" ]; then
+            echo "Could not extract hostname from APP_URL; skipping"
+            exit 0
+          fi
+          case "$HOST" in
+            *.*) : ;;
+            *)
+              echo "APP_URL hostname '$HOST' is not fully-qualified; skipping bind"
+              exit 0
+              ;;
+          esac
+          echo "Binding integration Worker to custom domain: $HOST"
+
+          # Worker service name from the env-scoped block.
+          SERVICE=$(awk '
+            $0 == "[env.integration]" { in_sec=1; next }
+            /^\[/ && in_sec && $0 != "[env.integration]" { in_sec=0 }
+            in_sec && $1 == "name" {
+              n = split($0, parts, "\"")
+              if (n >= 2) { print parts[2]; exit }
+            }
+          ' wrangler.toml)
+          if [ -z "$SERVICE" ]; then
+            echo "Could not parse [env.integration].name from wrangler.toml"
+            exit 1
+          fi
+          echo "Worker service: $SERVICE"
+
+          # Find the zone for the hostname (host → ...rest.of.host → apex).
+          CANDIDATE="$HOST"
+          ZONE_ID=""
+          while [ -n "$CANDIDATE" ] && [ "$CANDIDATE" != "${CANDIDATE#*.}" ]; do
+            ZONE_ID=$(curl -fsS \
+              "https://api.cloudflare.com/client/v4/zones?name=$CANDIDATE" \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              | jq -r '.result[0].id // empty')
+            if [ -n "$ZONE_ID" ]; then
+              echo "Found zone for $CANDIDATE: $ZONE_ID"
+              break
+            fi
+            CANDIDATE="${CANDIDATE#*.}"
+          done
+          if [ -z "$ZONE_ID" ]; then
+            echo "No Cloudflare zone found for $HOST in this account; cannot bind custom domain"
+            exit 1
+          fi
+
+          BODY=$(jq -cn \
+            --arg z "$ZONE_ID" --arg h "$HOST" --arg s "$SERVICE" \
+            '{zone_id:$z, hostname:$h, service:$s, environment:"production"}')
+
+          RESP=$(mktemp)
+          HTTP_CODE=$(curl -sS -o "$RESP" -w "%{http_code}" -X PUT \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+          SUCCESS=$(jq -r '.success' < "$RESP" 2>/dev/null || echo "")
+          if [ "$HTTP_CODE" != "200" ] || [ "$SUCCESS" != "true" ]; then
+            echo "Custom-domain bind failed (HTTP $HTTP_CODE):"
+            cat "$RESP"
+            rm -f "$RESP"
+            exit 1
+          fi
+          rm -f "$RESP"
+          echo "Custom domain $HOST → $SERVICE (zone $ZONE_ID) attached"
+
+      - name: Smoke test (integration)
+        env:
+          WORKER_URL: ${{ steps.deploy.outputs.worker_url }}
+        run: |
+          # Read APP_URL from wrangler.toml — same source the bind step used.
+          APP_URL=$(awk '
+            $0 == "[env.integration.vars]" { in_sec=1; next }
+            /^\[/ && in_sec { in_sec=0 }
+            in_sec && $1 == "APP_URL" {
+              n = split($0, parts, "\"")
+              if (n >= 2) { print parts[2]; exit }
+            }
+          ' wrangler.toml)
+
+          for URL in "$APP_URL" "$WORKER_URL"; do
+            if [ -z "$URL" ]; then continue; fi
+            CODE=$(curl -s --max-time 15 -o /dev/null -w "%{http_code}" "$URL/" || echo "000")
+            echo "GET $URL/ → HTTP $CODE"
+            case "$CODE" in
+              200|303)
+                echo "Integration smoke test passed via $URL"
+                exit 0
+                ;;
+            esac
+          done
+          echo "No reachable integration smoke-test URL"
+          exit 1

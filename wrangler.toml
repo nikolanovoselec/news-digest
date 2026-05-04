@@ -69,3 +69,68 @@ crons = ["0 */4 * * *", "0 3 * * *", "*/5 * * * *"]
 
 [vars]
 # APP_URL is set as a Worker secret (different per deployment target)
+
+# ---------------------------------------------------------------------------
+# Integration environment — `wrangler deploy --env integration` targets a
+# fully isolated copy of every resource so risky changes (Astro major bumps,
+# CSP tightening, schema migrations) can be smoke-tested on the live edge
+# without touching production. All resources carry the `-integration`
+# suffix; cron triggers are intentionally OFF (no autonomous LLM spend on
+# integration; force-refresh via /api/admin/force-refresh for manual runs).
+# Bootstrap on first deploy: scripts/bootstrap-resources.sh creates the
+# resources by name, captures their IDs, and patches this file in CI.
+# ---------------------------------------------------------------------------
+
+[env.integration]
+name = "ai-news-digest-integration"
+main = "./dist/_worker.js/_merged.mjs"
+assets = { directory = "./dist", binding = "ASSETS" }
+
+[env.integration.observability]
+enabled = true
+
+[[env.integration.d1_databases]]
+binding = "DB"
+database_name = "ai-news-digest-integration"
+database_id = "TBD-bootstrap-on-first-deploy"
+migrations_dir = "./migrations"
+
+[[env.integration.kv_namespaces]]
+binding = "KV"
+id = "TBD-bootstrap-on-first-deploy"
+
+[[env.integration.queues.producers]]
+binding = "SCRAPE_COORDINATOR"
+queue = "scrape-coordinator-integration"
+
+[[env.integration.queues.producers]]
+binding = "SCRAPE_CHUNKS"
+queue = "scrape-chunks-integration"
+
+[[env.integration.queues.producers]]
+binding = "SCRAPE_FINALIZE"
+queue = "scrape-finalize-integration"
+
+[[env.integration.queues.consumers]]
+queue = "scrape-coordinator-integration"
+max_batch_size = 1
+max_retries = 3
+
+[[env.integration.queues.consumers]]
+queue = "scrape-chunks-integration"
+max_batch_size = 1
+max_retries = 3
+
+[[env.integration.queues.consumers]]
+queue = "scrape-finalize-integration"
+max_batch_size = 1
+max_retries = 3
+
+[env.integration.ai]
+binding = "AI"
+
+# No [env.integration.triggers] block — crons are intentionally disabled
+# on integration. Trigger scrape runs manually via /api/admin/force-refresh.
+
+[env.integration.vars]
+APP_URL = "https://news.novoselec.ch"
