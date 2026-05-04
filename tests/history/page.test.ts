@@ -81,7 +81,12 @@ describe('history.astro — REQ-HIST-001', () => {
     // clones would be visually present but dead to taps.
     expect(historyPageSource).toMatch(/cloneNode\(true\)/);
     expect(historyPageSource).toMatch(/removeAttribute\('data-bound'\)/);
-    expect(historyPageSource).toMatch(/initCardInteractions\(searchGrid\)/);
+    // Per AD20 (window-scoped idempotency), history.astro reaches the
+    // shared init helper via the layout-wide IIFE's window export
+    // instead of importing the module statically — a static import
+    // would double-bundle card-interactions and stack duplicate
+    // document-level click listeners.
+    expect(historyPageSource).toMatch(/window\.__cardInteractions\?\.init\(searchGrid\)/);
   });
 
   it('REQ-HIST-001: cloned cards do not need a data-astro-transition-scope strip because DigestCard emits no default transition:name', () => {

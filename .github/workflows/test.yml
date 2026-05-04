@@ -70,6 +70,14 @@ jobs:
       - name: Wrangler env parity
         run: node scripts/check-wrangler-env-parity.mjs
 
+      # AD20 — fail the build if any src/pages/** or src/components/**
+      # statically imports a top-level src/scripts/*.ts file. That
+      # double-bundles the script (standalone IIFE + page chunk),
+      # which silently registered duplicate document-level listeners
+      # and broke favourite toggles in PRs #182/#184/#185.
+      - name: Pattern B import discipline (AD20)
+        run: node scripts/check-no-page-pattern-b.mjs
+
       - name: Dead code check
         run: npm run knip
 

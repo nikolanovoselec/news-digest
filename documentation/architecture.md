@@ -315,6 +315,8 @@ The `is:inline` attribute prevents Astro from re-bundling the file. `scripts/bui
 
 Replaces the prior hand-maintained `SKIP` set in `build-client-scripts.mjs` (CF-023).
 
+**Critical constraint:** a Pattern B script MUST NOT also be statically imported by any Astro page or component. Doing so causes Vite to bundle the entire module — including its auto-wire IIFE — into the page's `_astro/*.js` chunk. Both module instances share `document` but have independent closure state, so any listener-idempotency flag in module scope fails to deduplicate across the two evaluations. Idempotency tokens for scripts in this situation must live on `window`. See [AD20](decisions/README.md#ad20-idempotency-tokens-for-client-scripts-loaded-both-as-pattern-b-iife-and-via-page-level-import-must-live-on-window) for the full decision record and the CI gate that enforces this constraint.
+
 ---
 
 ## Related Documentation
