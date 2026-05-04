@@ -8,6 +8,7 @@ Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are a
 
 ## 2026-05-04
 
+- REQ-STAR-001 AC 1 broadened and AC 6 added: the spec now names every card surface that exposes a star toggle (dashboard, article detail, starred page, history day-expansions and search results) and requires each card to render its initial starred / unstarred state on first paint, so an article starred elsewhere shows up filled on `/history` without needing a hard refresh.
 - REQ-OPS-006 added: a parallel integration deployment target lets risky changes (Astro major bumps, schema migrations, CSP tightening, animation rewrites) be smoke-tested on the live Cloudflare edge before reaching production. Integration runs the same code on isolated Cloudflare resources (D1, KV, queues all suffixed `-integration`), is triggered manually only (Actions → Deploy Integration → Run workflow), always pulls develop's HEAD, and has cron triggers disabled so the operator drives the scrape pipeline via force-refresh. Forks set their own integration hostname under Settings → Environments → integration → Variables → APP_URL.
 - REQ-SET-004 corrected to Partial: the model-selection UI is hidden, but the settings API still validates and persists `model_id`. Full retirement awaits removing the field from the API and migrations.
 - REQ-OPS-007 added: public sitemap surfaced at `/sitemap.xml` for search-engine discovery, with authenticated routes deliberately excluded. The endpoint shipped earlier; this REQ captures the contract.

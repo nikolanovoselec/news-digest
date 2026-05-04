@@ -555,8 +555,23 @@ const articleDataset = {
        rounding buffer without ever clipping the rendered glyph;
        line 3 then flows full-width. The safe upper bound on the
        negative margin is 1 − cap_h − ascent_pad ≈ 1.22em — pushing
-       past it would start clipping the cap itself. */
-    margin: 0 0.1em -0.34em 0;
+       past it would start clipping the cap itself.
+
+       margin-top: the original tuning assumed Charter's ascent
+       ratio (≈0.78), which leaves ~0.79em of empty space above the
+       cap inside the 3.6em float box. Charter ships only on Apple
+       platforms; on Linux/Windows the stack falls back to Source
+       Serif Pro, Noto Serif, Cambria, or Times — these carry MORE
+       upper padding (ascent ratios 0.65–0.72), so the cap-top lands
+       ~0.3em LOWER than the math predicted, sitting below line 1's
+       cap-top instead of aligned with it. The negative margin-top
+       hauls the float upward to compensate, anchoring cap-top at
+       line 1's cap-top across the whole stack. The value is the
+       average shift across non-Charter fallbacks; on Charter itself
+       (-0.15em above its expected position) the cap still sits
+       within ~3 px of line 1's cap-top — within the optical noise
+       floor for a drop cap. */
+    margin: -0.3em 0.1em -0.34em 0;
     padding: 0;
   }
 

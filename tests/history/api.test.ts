@@ -35,6 +35,11 @@ interface ArticleRow {
   ingested_at: number;
   details_json: string | null;
   tags_json: string | null;
+  // REQ-STAR-001 — `EXISTS(...) AS starred` returns INTEGER 0/1; the
+  // production handler maps `row.starred === 1` to a boolean. Fakes
+  // default to 0 (un-starred); tests asserting on starred state can
+  // override per article.
+  starred: number;
 }
 
 interface ScrapeRunRow {
@@ -77,6 +82,7 @@ function fakeArticle(id: string, publishedAt: number, tags: string[]): ArticleRo
     ingested_at: publishedAt,
     details_json: JSON.stringify(['details']),
     tags_json: JSON.stringify(tags),
+    starred: 0,
   };
 }
 
@@ -263,12 +269,15 @@ describe('GET /api/history — REQ-HIST-001', () => {
 
     const articleBind = bindings.find((b) => b.sql.startsWith('SELECT a.id, a.title'));
     expect(articleBind).toBeDefined();
-    // ?1 = window cutoff, ?2..?N = tags. Both tags must be bound.
+    // REQ-STAR-001 added a per-user EXISTS join on article_stars to
+    // surface the starred glyph on /history. Bind shape is now
+    // ?1 = user_id, ?2 = window cutoff, ?3..?N = tags.
     expect(articleBind!.sql).toContain('article_tags');
     expect(articleBind!.sql).toContain('tag IN');
+    expect(articleBind!.sql).toContain('article_stars');
     const params = articleBind!.params;
-    expect(params.length).toBe(3); // cutoff + 2 tags
-    expect(params.slice(1)).toEqual(['ai', 'cloudflare']);
+    expect(params.length).toBe(4); // user_id + cutoff + 2 tags
+    expect(params.slice(2)).toEqual(['ai', 'cloudflare']);
   });
 
   it('REQ-HIST-001: empty pool returns { days: [] }', async () => {

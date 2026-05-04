@@ -163,11 +163,12 @@ The heart of the product. Overview grid of the freshest articles read from the s
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. Every card in the dashboard grid and the article detail page shows a star toggle; activating it stars the article when unstarred and unstars it when starred.
+1. Every card that lists an article — the dashboard grid, the article detail page, the starred-articles page, and the day-expanded and search-result grids on `/history` — shows a star toggle; activating it stars the article when unstarred and unstars it when starred.
 2. Starring POSTs to the article-star endpoint; unstarring DELETEs the same endpoint; both flip the icon optimistically on click before the server response returns.
 3. Star state is user-scoped — starring an article in one account never reveals the star in any other account's view.
 4. State-changing star requests are protected by the Origin check from REQ-AUTH-003; unauthenticated requests receive HTTP 401.
 5. A successful star/unstar response confirms the new state and the UI reconciles with the server value if the optimistic flip disagreed.
+6. On every page that lists articles, each card renders its initial starred / unstarred state on first paint — articles the user has already starred appear filled and `aria-pressed` from the server-rendered HTML, without needing a hard refresh after a toggle on another page.
 
 **Constraints:** CON-SEC-001, CON-DATA-001
 **Priority:** P1

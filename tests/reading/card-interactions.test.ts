@@ -28,6 +28,7 @@ import {
   handleStarClick,
   toggleTagDisclosure,
   closeAllTagPopovers,
+  __resetForTests,
 } from '~/scripts/card-interactions';
 
 /** Minimal mock of a star <button> — only the surface the handler
@@ -343,18 +344,25 @@ describe('initCardInteractions — REQ-STAR-001 + REQ-READ-001 event plumbing', 
   });
 
   it('REQ-STAR-001: bindStarDelegation attaches exactly one document click listener and is idempotent', () => {
+    __resetForTests();
     // The whole point of the dual-handler refactor: ONE document-level
     // listener owns every star-toggle click. A double-bind would fire
     // two fetches per click (POST + DELETE) and the optimistic toggle
     // would oscillate. Tracks addEventListener calls on a stubbed
-    // documentElement so we can assert the bound count is exactly 1
-    // even after multiple init invocations (simulating astro:page-load
+    // document so we can assert the bound count is exactly 1 even
+    // after multiple init invocations (simulating astro:page-load
     // re-fires).
-    const dataset: Record<string, string> = {};
-    const docElement = { dataset } as unknown as HTMLElement;
+    //
+    // Idempotency now lives in a module-scope closure flag, NOT on
+    // documentElement.dataset — Astro's view-transition swap replaces
+    // documentElement on every cross-page navigation, which previously
+    // erased the flag while the listener (registered on document, the
+    // node that survives the swap) lived on. The result was that
+    // astro:page-load re-binds stacked a second listener and every
+    // star click fired POST + DELETE in parallel.
     const calls: { type: string; useCapture: boolean }[] = [];
     vi.stubGlobal('document', {
-      documentElement: docElement,
+      documentElement: { dataset: {} } as unknown as HTMLElement,
       addEventListener: (
         type: string,
         _listener: EventListener,
@@ -375,8 +383,21 @@ describe('initCardInteractions — REQ-STAR-001 + REQ-READ-001 event plumbing', 
     expect(clickListeners.length).toBe(1);
     // Bubble phase, not capture (paired with stopPropagation in handler).
     expect(clickListeners[0]!.useCapture).toBe(false);
-    // Idempotency flag set on documentElement after first bind.
-    expect(dataset['starDelegationBound']).toBe('1');
+
+    // Regression for the production bug: simulate Astro's
+    // view-transition swap by replacing documentElement WHILE keeping
+    // the same document object (Astro only swaps the <html> element,
+    // not the document itself). If the idempotency flag had moved
+    // back onto documentElement.dataset, this swap would clear it and
+    // the next bindStarDelegation call would stack a second listener.
+    // The closure flag survives the swap.
+    const stubbedDoc = globalThis.document as unknown as {
+      documentElement: HTMLElement;
+    };
+    stubbedDoc.documentElement = { dataset: {} } as unknown as HTMLElement;
+    bindStarDelegation();
+    const afterSwap = calls.filter((c) => c.type === 'click');
+    expect(afterSwap.length).toBe(1);
   });
 
   it('REQ-READ-001: re-running init does not double-bind tag-triggers (dataset.bound guard)', () => {
@@ -396,6 +417,38 @@ describe('initCardInteractions — REQ-STAR-001 + REQ-READ-001 event plumbing', 
     expect(first).toBe(1);
     expect(second).toBe(0);
     expect(button.dataset['bound']).toBe('1');
+  });
+
+  it('REQ-READ-001: outside-click listener stays singleton across documentElement swap (parallel to star-delegation regression)', () => {
+    __resetForTests();
+    // Counterpart to the bindStarDelegation regression test above.
+    // Same view-transition swap that broke star delegation would also
+    // have stacked outside-click listeners on `document` if the
+    // idempotency flag had stayed on documentElement.dataset. The
+    // closure-flag fix lives in the same module, so this test pins
+    // the second half of the bug class.
+    const calls: { type: string }[] = [];
+    vi.stubGlobal('document', {
+      documentElement: { dataset: {} } as unknown as HTMLElement,
+      addEventListener: (type: string) => {
+        calls.push({ type });
+      },
+      querySelectorAll: () => [] as unknown as NodeListOf<Element>,
+    });
+    const root = globalThis.document;
+
+    initCardInteractions(root);
+    // Simulate Astro view-transition: documentElement is replaced
+    // (its dataset is gone) but `document` itself survives. A
+    // dataset-based flag would clear and the next init call would
+    // stack a second listener on the surviving document.
+    (globalThis.document as unknown as { documentElement: HTMLElement }).documentElement = {
+      dataset: {},
+    } as unknown as HTMLElement;
+    initCardInteractions(root);
+
+    const clickListeners = calls.filter((c) => c.type === 'click');
+    expect(clickListeners.length).toBe(1);
   });
 });
 
