@@ -29,16 +29,20 @@
 /** Exact Content-Security-Policy value required by REQ-OPS-003 AC 1.
  * Pinned byte-for-byte in tests — do not reformat or reorder directives.
  *
- * `style-src 'self' 'unsafe-inline'`: Astro emits component-scoped CSS
- * (the `data-astro-cid-*` mechanism) as inline `<style>` blocks at the
- * end of the head, NOT as external `.css` files. The first deploy of
- * `style-src 'self'` (no `'unsafe-inline'`) broke every page in
- * production: scoped styles for the landing page, the digest grid, the
- * tag railing, and every component-scoped animation were blocked. The
- * `'unsafe-inline'` allowance is the only viable policy until Astro
- * supports per-block nonce attribution for compiled scoped styles
- * (tracked upstream — no current workaround). `script-src 'self'`
- * remains strict.
+ * `style-src 'self' 'unsafe-inline'`: required by two architectural
+ * patterns the codebase deliberately uses — the FLIP tag-railing
+ * animation in `src/lib/tag-railing-flip.ts` writes per-frame
+ * `chip.style.transform = translate(...)` values, and the
+ * view-transition-name pre-flight in `src/scripts/page-effects.ts`
+ * sets `link.style.setProperty('view-transition-name', card-${slug})`
+ * before SPA navigation so the browser pairs the source and
+ * destination during the morph. Both write dynamic, per-event values
+ * that no hash- or nonce-source can cover at runtime, and Astro also
+ * emits component-scoped CSS as inline `<style>` blocks. The full
+ * security/architecture reasoning, alternatives considered, and
+ * conditions under which this should be revisited are documented in
+ * AD11 (`documentation/decisions/README.md#ad11`). `script-src 'self'`
+ * remains strict — the actual XSS-prevention work happens there.
  *
  * `img-src` is narrowed to `'self' data: https://www.gravatar.com
  * https://secure.gravatar.com` — the only external image origin we

