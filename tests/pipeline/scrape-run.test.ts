@@ -45,25 +45,26 @@ describe('scrape-run helpers — REQ-PIPE-006', () => {
     await startRun(db, {
       id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
       model_id: '@cf/google/gemma-4-26b-a4b-it',
-      chunk_count: 5,
     });
 
     expect(calls).toHaveLength(1);
     const call = calls[0] as Call;
     expect(call.sql).toMatch(/INSERT\s+INTO\s+scrape_runs/i);
     expect(call.sql).toContain("'running'");
-    // Param order: id, model_id, started_at, chunk_count
+    // Param order: id, model_id, started_at. chunk_count is a literal
+    // 0 in the SQL (CF-021 — coordinator is sole writer; no seed path).
     expect(call.params[0]).toBe('01ARZ3NDEKTSV4RRFFQ69G5FAV');
     expect(call.params[1]).toBe('@cf/google/gemma-4-26b-a4b-it');
     expect(call.params[2]).toBe(nowSeconds);
-    expect(call.params[3]).toBe(5);
+    expect(call.params).toHaveLength(3);
   });
 
-  it('REQ-PIPE-006: startRun defaults chunk_count to 0 when not provided (schema NOT NULL compliance)', async () => {
-    // The schema declares `chunk_count INTEGER NOT NULL DEFAULT 0`.
-    // Binding NULL explicitly bypasses the DEFAULT and trips the
-    // constraint in production (observed live at 2026-04-23 via
-    // /api/admin/force-refresh tail logs). Guard against that regression.
+  it('REQ-PIPE-006: startRun seeds chunk_count to literal 0 (CF-021 invariant)', async () => {
+    // CF-021 — chunk_count > 0 means "fan-out happened" is the
+    // duplicate-dispatch race guard's load-bearing invariant. Every
+    // fresh row MUST start at 0; only the coordinator may flip it
+    // positive. This test pins the literal-0 SQL form so a future
+    // refactor can't reintroduce a non-zero seed path.
     const calls: Call[] = [];
     const db = makeDb(calls);
     await startRun(db, {
@@ -72,8 +73,10 @@ describe('scrape-run helpers — REQ-PIPE-006', () => {
     });
 
     expect(calls).toHaveLength(1);
-    expect((calls[0] as Call).params[3]).toBe(0);
-    expect((calls[0] as Call).params[3]).not.toBeNull();
+    const call = calls[0] as Call;
+    expect(call.sql).toMatch(/'running',\s*0\s*\)/);
+    // No 4th bind parameter: chunk_count is a literal in the SQL.
+    expect(call.params).toHaveLength(3);
   });
 
   it('REQ-PIPE-006: addChunkStats accumulates tokens/cost/ingested/deduped', async () => {

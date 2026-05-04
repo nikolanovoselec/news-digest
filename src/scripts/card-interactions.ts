@@ -100,6 +100,12 @@ export function bindStarDelegation(): void {
     if (!(target instanceof Element)) return;
     const button = target.closest<HTMLButtonElement>('[data-star-toggle]');
     if (button === null) return;
+    // CF-027 — let modifier-key/middle-click bypass the handler, mirror
+    // of the bindBrandLinkScrollToTop pattern in page-effects.ts. A
+    // user holding Cmd/Ctrl on a star button should not have the
+    // toggle fire (no useful semantics for it anyway).
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (e instanceof MouseEvent && e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
     void handleStarClick(button);
@@ -126,9 +132,16 @@ export async function handleStarClick(button: HTMLButtonElement): Promise<void> 
     );
     if (!res.ok) {
       button.setAttribute('aria-pressed', wasPressed ? 'true' : 'false');
+      // CF-015 — silent revert hid the original favorites bug PR #175
+      // fixed; surface the failure in the browser console so
+      // recurrence is observable without DevTools network panel.
+      // eslint-disable-next-line no-console
+      console.warn('star toggle failed', { articleId, status: res.status });
     }
-  } catch {
+  } catch (err) {
     button.setAttribute('aria-pressed', wasPressed ? 'true' : 'false');
+    // eslint-disable-next-line no-console
+    console.warn('star toggle network failed', { articleId, error: err });
   }
 }
 

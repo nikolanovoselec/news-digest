@@ -49,8 +49,9 @@ import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
 import { normalizeHashtag } from '~/lib/hashtags';
 import { splitIntoParagraphs } from '~/lib/paragraph-split';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
-import { runJsonWithFallback, previewRawResponse } from '~/lib/llm-json';
+import { runJsonWithFallback, previewRawResponse, asAiBinding } from '~/lib/llm-json';
 import { addChunkStats, finishRun } from '~/lib/scrape-run';
+import { recordChunkCompletion } from '~/lib/articles-repo';
 import { generateUlid } from '~/lib/ulid';
 import { applyForeignKeysPragma } from '~/lib/db';
 import { log } from '~/lib/log';
@@ -214,7 +215,7 @@ export async function processOneChunk(
   // (gpt-oss-20b) is JSON-strict for runs where the primary's
   // prompt-following wobbles.
   const llmRun = await runJsonWithFallback({
-    ai: env.AI as unknown as { run: (m: string, p: Record<string, unknown>) => Promise<unknown> },
+    ai: asAiBinding(env.AI),
     params: {
       messages: [
         { role: 'system', content: PROCESS_CHUNK_SYSTEM },
@@ -542,14 +543,14 @@ export async function processOneChunk(
   // and article counters on every queue redelivery. Article INSERTs
   // above are already idempotent via `INSERT OR IGNORE` on
   // canonical_url, so they don't need the gate.
-  const completedAt = Math.floor(Date.now() / 1000);
-  const completionResult = await env.DB
-    .prepare(
-      'INSERT OR IGNORE INTO scrape_chunk_completions (scrape_run_id, chunk_index, completed_at) VALUES (?1, ?2, ?3)',
-    )
-    .bind(body.scrape_run_id, body.chunk_index, completedAt)
-    .run();
-  const isFirstCompletion = (completionResult.meta?.changes ?? 0) === 1;
+  // CF-003 — chunk completion gate centralised in articles-repo so
+  // the SQL touching scrape_chunk_completions lives next to the rest
+  // of the article-domain queries.
+  const isFirstCompletion = await recordChunkCompletion(
+    env.DB,
+    body.scrape_run_id,
+    body.chunk_index,
+  );
 
   // Tokens from the failed primary call (when the fallback was taken)
   // count too — they burned real budget even though their output was

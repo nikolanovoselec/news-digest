@@ -20,10 +20,12 @@
 import { log } from '~/lib/log';
 
 /** Cross-consumer queue retry cap. Mirror of `max_retries` in
- *  wrangler.toml — keep in sync. */
-export const MAX_QUEUE_ATTEMPTS = 3;
+ *  wrangler.toml — kept in sync by `scripts/check-wrangler-env-parity.mjs`
+ *  (CF-005 / CF-020). The script greps for this exact line shape, so
+ *  the form `const MAX_QUEUE_ATTEMPTS = N;` is load-bearing. */
+const MAX_QUEUE_ATTEMPTS = 3;
 
-export interface BatchHandlerOptions<TBody> {
+interface BatchHandlerOptions<TBody> {
   /** Per-message processor. Throws to trigger queue retry. */
   process: (env: Env, body: TBody) => Promise<void>;
   /** Stable log status emitted on processor throw. */

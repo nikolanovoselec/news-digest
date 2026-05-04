@@ -1,3 +1,5 @@
+// Implements REQ-OPS-007
+//
 // Dynamic sitemap. Only exposes public surfaces — everything behind
 // the login is deliberately absent so crawlers don't follow a
 // redirect chain into the OAuth flow.

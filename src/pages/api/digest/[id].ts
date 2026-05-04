@@ -1,3 +1,5 @@
+// Implements REQ-PIPE-001 (410 Gone tombstone for retired per-digest endpoint).
+//
 // Per-digest endpoint retired in the global-feed pipeline. The digests
 // table was dropped in migration 0003; the article schema no longer
 // carries a digest_id column. Stale clients hitting this path get 410

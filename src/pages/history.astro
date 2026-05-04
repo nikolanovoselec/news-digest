@@ -18,18 +18,8 @@ import DigestCard from '~/components/DigestCard.astro';
 import TagStrip from '~/components/TagStrip.astro';
 import { loadSessionForPage } from '~/middleware/auth';
 import { slugify } from '~/lib/slug';
-import { GET as getHistory } from '~/pages/api/history';
+import { GET as getHistory, type WireArticle } from '~/pages/api/history';
 import { parseHashtags } from '~/lib/hashtags';
-
-interface WireArticle {
-  id: string;
-  title: string;
-  primary_source_name: string | null;
-  primary_source_url: string | null;
-  published_at: number;
-  details: string[];
-  tags: string[];
-}
 
 interface DayGroup {
   local_date: string;
@@ -339,6 +329,7 @@ function formatCostUsd(value: number | null | undefined): string {
   import { initCardInteractions } from '~/scripts/card-interactions';
   // REQ-READ-007 — shared FLIP cascade for tag-railing reorder.
   import { flipChipToFront, flipChipToPosition, isFlipLocked } from '~/lib/tag-railing-flip';
+  import { normalizeHashtag } from '~/lib/hashtags';
 
   const MIN_QUERY_LEN = 3;
 
@@ -653,7 +644,7 @@ function formatCostUsd(value: number | null | undefined): string {
       addButton.hidden = false;
     };
     const submit = (): void => {
-      const raw = addInput.value.trim().toLowerCase().replace(/^#/, '');
+      const raw = normalizeHashtag(addInput.value);
       if (raw === '') { cancel(); return; }
       void addTag(raw);
     };

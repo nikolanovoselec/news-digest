@@ -57,6 +57,24 @@ export type RateLimitResult =
  * is true). Failing open keeps users from being locked out by KV
  * outages; failing closed is the right call for routes where KV
  * downtime must not bypass the limit.
+ *
+ * ATOMICITY (CF-034): KV `get` + `put` is NOT atomic. Concurrent
+ * requests racing within the same window can each read N, decide
+ * `N < limit`, and write `N+1`, allowing up to roughly
+ * `concurrency × limit` through under contention (bounded by KV's
+ * propagation delay, typically < 60s globally). For most routes the
+ * over-permit factor is small (< 2× under realistic burst patterns)
+ * and acceptable as defence-in-depth — the absolute ceiling stays
+ * bounded by the window length.
+ *
+ * For `failClosed: true` rules (e.g. `AUTH_REFRESH_IP`,
+ * `AUTH_REFRESH_USER`) protecting refresh-token spray attacks
+ * distributed across concurrent requests, the in-Worker KV limiter
+ * is best treated as defence-in-depth rather than the primary gate.
+ * Cloudflare's zone-level Rate Limiting (WAF) is atomic and should
+ * be configured in front of `/api/auth/refresh` for production
+ * deployments — without it, a coordinated burst above ~2× the
+ * configured limit can succeed during the propagation window.
  */
 export async function enforceRateLimit(
   env: { KV: KVNamespace },

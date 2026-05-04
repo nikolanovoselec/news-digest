@@ -1,7 +1,7 @@
 ---
 // Implements REQ-DES-002: single toggle button with sun/moon icons that
 // swaps `data-theme` on <html> and persists to localStorage.theme.
-// The actual click handler lives in src/scripts/theme-toggle.ts and is loaded
+// The actual click handler lives in src/scripts/bundled/theme-toggle.ts and is loaded
 // as a client-side module via the <script> tag below; Astro hoists and bundles
 // component-level scripts automatically.
 ---
@@ -129,7 +129,7 @@
   // happened to execute before Astro's ViewTransition placed the
   // button. Fixes the "tap sometimes does nothing until I reload"
   // mobile bug the per-button initThemeToggle pattern had.
-  import { toggleTheme } from '~/scripts/theme-toggle';
+  import { toggleTheme } from '~/scripts/bundled/theme-toggle';
 
   if (document.documentElement.dataset['themeToggleBound'] !== '1') {
     document.documentElement.dataset['themeToggleBound'] = '1';

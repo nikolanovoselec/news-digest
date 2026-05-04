@@ -182,9 +182,9 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 | `src/queue/scrape-chunk-consumer.ts` | Per-chunk LLM call, dedup, atomic completion gate, finalize handoff | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
 | `src/queue/scrape-finalize-consumer.ts` | Finalize pass (cross-chunk semantic dedup) — LLM prompt uses title + full article body; source name dropped as non-signal. Upfront SELECT short-circuits redelivery before the LLM call when `finalize_recorded` is already set. Cost recorded atomically via `finalize_recorded` gate (migration 0010) regardless of merge count | [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
 | `src/queue/cleanup.ts` | Daily 3-pass cleanup: retention, stuck-tag prune, orphan-tag KV sweep | [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-DISC-006](../sdd/discovery.md#req-disc-006-stuck-tag-retention), [REQ-PIPE-007](../sdd/generation.md#req-pipe-007-orphan-tag-source-cleanup) |
-| `migrations/0001_initial.sql` | Initial schema | (foundational) |
-| `migrations/0002_article_tags.sql` | Article tag columns | (schema) |
-| `migrations/0003_global_feed.sql` | Global-feed rework — articles, tags, sources, stars, reads, scrape_runs | (foundational) |
+| `migrations/0001_initial.sql` | Pre-launch initial schema (superseded by 0003 — tables DROP'd on fresh install; preserved for migration history only) | (historical) |
+| `migrations/0002_article_tags.sql` | Pre-launch tag columns (superseded by 0003 — same DROP-and-recreate; preserved for migration history only) | (historical) |
+| `migrations/0003_global_feed.sql` | Global-feed rework — DROPs pre-launch tables and recreates the canonical schema: articles, tags, sources, stars, reads, scrape_runs (gains `chunk_count`, `finalize_enqueued` via 0008, `finalize_recorded` via 0010 in later migrations) | (foundational) |
 | `migrations/0004_system_user.sql` | `__system__` sentinel user | (schema) |
 | `migrations/0005_auth_links.sql` | Cross-provider account dedup table | [REQ-AUTH-007](../sdd/authentication.md#req-auth-007-cross-provider-account-dedup) |
 | `migrations/0006_e2e_user.sql` | `__e2e__` sentinel user | (schema) |
@@ -297,21 +297,23 @@ PWA icons render from `public/icons/app-icon.svg` via `scripts/generate-pwa-icon
 
 The site CSP is `script-src 'self'`, which blocks every inline `<script>...</script>` block. Astro inlines page-level `<script>` blocks that contain no `import` statement, so a script written without an import is silently dropped at runtime.
 
-**Pattern A — per-page Astro bundle:** put the script body in `src/scripts/<module>.ts` and import it from the page:
+**Pattern A — Astro-bundled (lives under `src/scripts/bundled/`):** the script is imported from an Astro component or page, and Astro/Vite bundles it into the page's hashed JS:
 
 ```astro
-<script>import '~/scripts/<module>';</script>
+<script>import { toggleTheme } from '~/scripts/bundled/<module>';</script>
 ```
 
-Astro emits the code as an external `<script type="module" src="/_astro/...js">` bundle that CSP allows.
+Astro emits the code as an external `<script type="module" src="/_astro/...js">` bundle that CSP allows. New Pattern A files go directly under `src/scripts/bundled/`; the build script ignores that subdirectory.
 
-**Pattern B — static mirror (layout-wide scripts):** for scripts that must run on every page regardless of which Astro page initiated the navigation (e.g., `card-interactions.ts` running on `/digest`, `/history`, and `/starred`), the compiled output is committed to `public/scripts/<module>.js` and loaded from `Base.astro` directly:
+**Pattern B — static mirror (lives at `src/scripts/<module>.ts`):** for scripts that must run on every page regardless of which Astro page initiated the navigation (e.g., `card-interactions.ts` running on `/digest`, `/history`, and `/starred`), the build script compiles the TypeScript into `public/scripts/<module>.js` and the layout loads it directly:
 
 ```astro
 <script is:inline type="module" src="/scripts/<module>.js"></script>
 ```
 
-The `is:inline` attribute prevents Astro from re-bundling the file. The `public/scripts/` copy must be kept in sync with `src/scripts/<module>.ts` manually (or via build tooling). Scripts currently using this pattern: `page-effects.js`, `card-interactions.js`, `alt-sources-modal.js`.
+The `is:inline` attribute prevents Astro from re-bundling the file. `scripts/build-client-scripts.mjs` rebuilds every Pattern B file on every `npm run build`, so the mirror cannot drift from its source. Scripts currently using this pattern: `page-effects.js`, `card-interactions.js`, `alt-sources-modal.js`, `install-prompt.js`, `offline.js`, `rate-limited.js`, `article-detail.js`, `tag-railing-flip.js`.
+
+Replaces the prior hand-maintained `SKIP` set in `build-client-scripts.mjs` (CF-023).
 
 ---
 

@@ -257,8 +257,10 @@ describe('POST /api/admin/force-refresh', () => {
       (c) => c.sql.includes('INSERT INTO scrape_runs') && c.verb === 'run',
     );
     expect(insert).toBeDefined();
-    // Param order: id, model_id, started_at, chunk_count
-    expect(insert!.params[3]).toBe(0);
+    // Param order: id, model_id, started_at. CF-021 dropped chunk_count
+    // from the seed; the SQL writes a literal 0.
+    expect(insert!.sql).toMatch(/'running',\s*0\s*\)/);
+    expect(insert!.params).toHaveLength(3);
     // Queue received exactly one coordinator message with the run id.
     expect(qsent).toHaveLength(1);
     expect((qsent[0] as { scrape_run_id: string }).scrape_run_id).toMatch(

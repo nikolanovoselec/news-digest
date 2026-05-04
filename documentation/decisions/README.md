@@ -26,6 +26,13 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD10 | Atomic conditional UPDATE as the once-per-run idempotency gate — no `acquireOnceLock` helper | Architecture | 2026-05-03 |
 | AD11 | Keep `style-src 'unsafe-inline'`; runtime `.style.X` writes for FLIP + view-transitions are intentional | Security | 2026-05-04 |
 | AD12 | Integration env: separate Cloudflare resources, manual trigger from develop, crons disabled | Operations | 2026-05-04 |
+| AD13 | No non-essential cookies (analytics gate) | Privacy | 2026-05-04 |
+| AD14 | History-page perf-comparability test permanently skipped | Testing | 2026-05-04 |
+| AD15 | Test pool exercises worker.ts directly; production runs through Astro-merged entry | Architecture | 2026-05-04 |
+| AD16 | Single-writer invariant for KV `sources:{tag}` enforced via centralized helper | Storage | 2026-05-04 |
+| AD17 | Reject `dedupe-groups.ts` extraction; finalize within-group dedup is downstream-gated | Architecture | 2026-05-04 |
+| AD18 | Reject `deferred-candidates.ts`; chunk-overflow drop path stays log-only until volume justifies persistence | Architecture | 2026-05-04 |
+| AD19 | Reject `tag-railing-flip-core.ts`; FLIP measurements are not separable from DOM and are tested via Playwright | Testing | 2026-05-04 |
 
 ---
 
@@ -65,13 +72,11 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 ### AD3: Server-side article-body fetching with SSRF guard
 
-> **Supersedes:** AD3-original (2026-04-22) which prohibited server-side fetching. The reversal context is described below.
-
-**Status:** Accepted (supersedes AD3-original, 2026-04-22, which prohibited server-side fetching)
+**Status:** Accepted (2026-04-27, supersedes AD3-original)
 
 **Decision:** When a feed snippet is too thin to ground a useful summary, the chunk consumer fetches the article body directly. Each fetch is SSRF-guarded, time-bounded (8 s), and size-capped (1.5 MB); a failed fetch falls back to the snippet, never blocking a summary.
 
-**Context:** The original AD3 (2026-04-22) banned all server-side fetching to avoid SSRF risk and Cloudflare-range rate-limiting by publishers. Reversed on 2026-04-27 during the global-feed rework when it became clear that feed snippets are often too short to summarise faithfully, and that an SSRF denylist plus strict timeout and size caps reduce the original risk to negligible. Richer prompt context measurably improved summary quality on short-snippet feeds.
+**Context:** Feed snippets are often too short to summarise faithfully. An SSRF denylist plus strict timeout and size caps reduce server-side fetch risk to negligible. Richer prompt context measurably improved summary quality on short-snippet feeds.
 
 **Alternatives considered:**
 - Keep the no-fetch posture and accept thin summaries on short-snippet feeds.
@@ -80,6 +85,18 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 **Rationale:** An SSRF denylist, 8 s timeout, and 1.5 MB size cap bring the risk to negligible. Fan-out is bounded-concurrency at 20 workers. The quality improvement on short-snippet feeds justifies the added complexity.
 
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) AC 8
+
+---
+
+### AD3-original: No server-side article-body fetching
+
+**Status:** Superseded by AD3 on 2026-04-27
+
+**Decision (historical):** Prohibit all server-side article-body fetching. Summaries rely entirely on the feed-provided snippet.
+
+**Context (historical):** Drafted 2026-04-22 to avoid SSRF risk and Cloudflare-range rate-limiting by publishers. Reversed during the global-feed rework when summary quality on short-snippet feeds proved unacceptable and the risk surface was demonstrated to be manageable with explicit denylist + timeout + size cap.
+
+**Why preserved:** Documentation-discipline.md prescribes immutable original ADRs with a separate superseding ADR. This entry is the archived original; AD3 above is the current decision.
 
 ---
 
@@ -184,9 +201,9 @@ KV's eventual consistency made both races effectively undetectable via testing i
 
 **Status:** Accepted (2026-05-03)
 
-**Overrides:** `mechanism-leakage:REQ-DISC-001`, `mechanism-leakage:REQ-DISC-002`, `mechanism-leakage:REQ-AUTH-002`, `mechanism-leakage:REQ-SET-001`, `mechanism-leakage:REQ-SET-005`
+**Overrides:** `mechanism-leakage:REQ-DISC-001`, `mechanism-leakage:REQ-DISC-002`, `mechanism-leakage:REQ-AUTH-002`, `mechanism-leakage:REQ-SET-001`, `mechanism-leakage:REQ-SET-005`, `forbidden-content-column-name:REQ-MAIL-001`
 
-**Decision:** Keep D1 column names (`session_version`, `hashtags_json`, `digest_hour`, `email_enabled`, `pending_discoveries`) and KV key shapes (`sources:{tag}`) inline in their respective REQs' acceptance criteria. Treat them as part of the persistence contract surface, not implementation detail.
+**Decision:** Keep D1 column names (`session_version`, `hashtags_json`, `digest_hour`, `email_enabled`, `pending_discoveries`) and KV key shapes (`sources:{tag}`) inline in their respective REQs' acceptance criteria. Treat them as part of the persistence contract surface, not implementation detail. The same reasoning applies to `email_enabled` in REQ-MAIL-001 AC 9 and the domain header on `sdd/email.md` line 3 — the column name IS the contract noun shared between the settings UI toggle, the `users` column, and the dispatcher's SQL predicate, equivalent to the env-var-as-contract pattern allowed by `spec-discipline.md`.
 
 **Context:** `spec-discipline.md`'s mechanism-leakage rule lists "database column names" and "internal storage shapes" as belonging in `documentation/architecture.md` schema sections. A `/sdd clean` run on 2026-05-03 escalated this as a MEDIUM JUDGMENT against five REQs across the Discovery, Authentication, and Settings domains.
 
@@ -275,7 +292,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - If Astro ever ships native CSP support that handles runtime style mutations (e.g., via per-element nonces resolved at runtime), revisit this decision.
 - `tests/e2e/csp-violation.spec.ts` continues to act as the merge gate for any CSP tightening — it subscribes to `securitypolicyviolation` events on a live `/digest` navigation and fails the build if any fire.
 
-**Related requirements:** [REQ-OPS-003](../../sdd/operations.md#req-ops-003-baseline-browser-security-headers), [CON-SEC-001](../../sdd/constraints.md#con-sec-001-strict-content-security-policy)
+**Related requirements:** [REQ-OPS-003](../../sdd/observability.md#req-ops-003-security-headers-on-every-response), [CON-SEC-001](../../sdd/constraints.md#con-sec-001-strict-content-security-policy)
 
 ---
 
@@ -304,6 +321,173 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - The bootstrap script (`scripts/bootstrap-resources.sh`) accepts an `ENV_NAME` env var to operate on env-scoped sections; placeholder IDs in wrangler.toml (`TBD-bootstrap-on-first-deploy`) trigger create-or-lookup-by-name on the first run.
 
 **Related requirements:** [REQ-OPS-006](../../sdd/observability.md#req-ops-006-integration-deployment-target)
+
+---
+
+### AD13: No non-essential cookies (analytics gate)
+
+**Status:** Accepted (2026-05-04)
+
+**Decision:** The product MUST NOT set non-essential cookies. The only cookies allowed are session-essential ones (auth session token, refresh token, theme preference, OAuth state, CSRF). Adding any analytics, marketing, fingerprinting, A/B-testing, or tracking cookie requires revisiting this ADR and updating the tagline copy.
+
+**Context:** The landing-page tagline at `src/pages/index.astro:54-57` asserts that this product runs without cookie banners ("Where we're going, we don't need cookie banners…"). This is a load-bearing user-trust claim that an unrelated future analytics/marketing PR could silently violate, breaking the tagline contract and potentially creating a compliance liability under EU/Swiss cookie-consent regimes.
+
+**Rationale:** The tagline is not a marketing flourish — it's a stated contract. Reviewing the no-cookies claim during every analytics-curious PR keeps the contract honest. Cookieless analytics options exist (server-side aggregation from Worker request logs, edge-aggregated counters in KV, on-page Web-Vitals reporting via `sendBeacon` without an identifier cookie) and should be preferred when telemetry is genuinely needed.
+
+**Consequences:**
+- Reviewing this ADR is a mandatory step on any PR adding `Set-Cookie` for non-auth purposes.
+- Telemetry/analytics integrations must use cookieless approaches (aggregated edge logs, one-shot beacon to a first-party endpoint with no client-side identifier, etc.) or this ADR must be superseded with an explicit decision and a tagline-copy revision.
+- Until a dedicated `documentation/security.md` is bootstrapped, the essential cookie inventory lives inline in this ADR set (AD8 covers session + refresh-token cookies; OAuth state and theme cookies are documented at their respective issue sites). When `security.md` is eventually written it consolidates and supersedes those scattered entries.
+
+**Related requirements:** none (this is a product-trust contract, not a behavioral REQ).
+
+---
+
+### AD14: History-page perf-comparability test permanently skipped
+
+**Status:** Accepted (2026-05-04)
+
+**Overrides:** `skipped-test:REQ-READ-002`, `skipped-test:REQ-HIST-001`
+
+**Decision:** The numeric perf-comparability test (history back-nav ≤ 1.6× digest back-nav, median of 3 samples) in `tests/e2e/view-transition.spec.ts` is permanently skipped. No expiry, no removal trigger.
+
+**Context:** A perf assertion was added to verify that `/history` back-navigation rendered within 1.6× the time of `/digest` back-navigation. The test reproducibly failed because `/history` is structurally heavier — opened day-groups carry more cards and trigger more layout work than the flat digest list. Multiple attempts to close the gap (lazy-render hidden groups, virtualize the list, defer non-visible card hydration) either regressed visual behavior or didn't move the timing meaningfully. User-confirmed on 2026-04-28: "we leave it as is, enough trying to fix this."
+
+**Rationale:** The structural REQ-READ-002 / REQ-HIST-001 contracts (single-named-group view-transition shaping, return-morph pair forms at `astro:after-swap`) remain covered by the non-skipped tests above the skip in the same file. The numeric perf gap is a property of the feature, not a regression. Keeping a permanently-skipped test costs nothing, and resurrecting it would require a future refactor to claim the gap is closed — at which point the test exists as a guard against re-regression.
+
+**Consequences:**
+- spec-reviewer skips the `it.skip` finding for this specific test via the `Overrides:` header above.
+- If a future refactor intentionally narrows the perf gap, restore the test and update or remove this ADR.
+- The skip line in `tests/e2e/view-transition.spec.ts` references this ADR rather than `sdd/.user-overrides.md` (which is being phased out per codeflare#266).
+
+**Related requirements:** [REQ-READ-002](../../sdd/reading.md#req-read-002-article-detail-view), [REQ-HIST-001](../../sdd/history.md#req-hist-001-day-grouped-article-history)
+
+---
+
+### AD15: Test pool exercises worker.ts directly; production runs through the Astro-merged entry
+
+**Status:** Accepted (2026-05-04)
+
+**Decision:** Vitest's Workers pool loads `src/worker.ts` directly as the test entry. Production loads `dist/_worker.js/_merged.mjs` (the Astro-built bundle) per the `main` field in `wrangler.toml`. The two entry shapes are intentionally NOT unified.
+
+**Context:** Astro 5's `@astrojs/cloudflare` adapter wraps the Worker in its own SSR-aware fetch handler that composes Astro middleware (security headers, view-transition support, asset routing) before delegating to the user-defined cron/queue handlers in `worker.ts`. Vitest cannot load the merged Astro entry because (a) the bundle is produced by `astro build`, which the test pool doesn't run, and (b) the merged file uses Astro-internal module shapes incompatible with `cloudflare:test`. So tests target `worker.ts` directly and exercise the cron/queue surface plus any HTTP routes that `worker.ts` defines inline. Cross-cutting middleware (e.g., the security-headers middleware in `src/middleware/security-headers.ts`) lives in Astro's wrapper and is bypassed in unit tests by construction.
+
+**Alternatives considered:**
+
+- **Force `npm run build` in the test pool setup.** Rejected: doubles CI wall-time on every test run, and the merged module shape is still incompatible with the Workers pool runtime.
+- **Hand-roll a Worker entry that composes the Astro middleware in code, used by both prod and tests.** Rejected: mirrors what `@astrojs/cloudflare` already does, churn on every Astro upgrade, no test wins because the middleware is exercised end-to-end via Playwright already.
+- **Drop unit tests of cross-cutting middleware entirely.** Rejected: Playwright covers the integration path, but unit tests for individual middleware functions (origin check, rate limit, JWT verify) remain valuable and live in `tests/middleware/`.
+
+**Rationale:** The production middleware chain is verified end-to-end by Playwright (`tests/e2e/csp-violation.spec.ts` and the new `tests/e2e/csp-policy.spec.ts` from D3 below). Unit tests cover middleware functions in isolation. The test/prod entry inversion is acceptable as long as the contract gate stays in Playwright, not in vitest.
+
+**Consequences:**
+
+- New cross-cutting middleware that needs to fire on every response MUST add a Playwright spec exercising it via real `fetch`. A vitest-only test against `worker.ts` will pass while the middleware is silently absent in production.
+- The `src/worker.ts` `fetch` branch that exists for the test pool is dead code in production. Mark it with a comment so a future cleanup doesn't delete it on dead-code analysis grounds.
+- Astro upgrades that change the wrapper's middleware composition (Astro 6's session-driver factory is the active example) require a Playwright run before merge to confirm middleware still fires.
+
+**Related requirements:** [REQ-OPS-003](../../sdd/observability.md#req-ops-003-security-headers-on-every-response)
+
+---
+
+### AD16: Single-writer invariant for KV `sources:{tag}` enforced via centralised helper
+
+**Status:** Accepted (2026-05-04)
+
+**Decision:** Every write to `sources:{tag}` KV entries goes through `writeSourcesCache` in `src/lib/sources-cache.ts`. The helper canonicalises serialisation (explicit field order: `feeds` then `discovered_at`). The coordinator's eviction read-modify-write recheck uses the helper's `sourcesCacheRawEqual` companion as a strict byte-equality check; the single-writer invariant makes the fast path sufficient.
+
+**Context:** The eviction pass in `applyEvictions` reads `sources:{tag}`, computes a surviving-feeds list, then re-reads the key right before writing to detect a concurrent discovery-cron write. KV has no conditional-put, so the recheck is the only race guard. Before this ADR, the recheck was a raw `latestRaw === raw` byte compare — correct ONLY because the two existing writers (`discovery.ts` success path, `discovery.ts` give-up path, and the coordinator's eviction path) all coincidentally serialised the same `{ feeds, discovered_at }` shape with the same field order via inline `JSON.stringify(...)`. A future writer using a different shape (different field order, additional fields, alternative codec) would have silently clobbered legitimate concurrent writes the recheck was meant to prevent. Same anti-pattern AD7 explicitly migrated away from for chunk-completion tracking.
+
+**Alternatives considered:**
+
+- **Move `sources:{tag}` to D1.** D1's conditional UPDATE+WHERE makes read-modify-write atomic by construction (the AD7 path). Stronger guarantee but a meaningful schema migration; the eviction path is bounded write volume (a few hundred tags × every-4-hour cron) so KV's eventual consistency is acceptable here. Defer; revisit if write volume grows.
+- **Per-write monotonic version counter (CAS-style).** Adds a column without strengthening the gate; `discovered_at` already conveys the monotonic signal but is not consulted in the byte-equal recheck because byte-equality already covers the contract. Rejected.
+- **Structural-recheck fallback on `discovered_at`.** Initially considered as belt-and-suspenders. Reviewer flagged the failure mode: two writers landing on the same `Date.now()` millisecond with genuinely different feed sets would have been treated as equivalent, silently clobbering one of the writes. The byte path under the single-writer invariant is the right contract.
+- **Trust the comment** ("byte-equal compare valid because JSON.stringify is sole writer"). This is what the previous code did. Reviewer churn confirmed comments don't enforce invariants — the invariant is one careless PR away from breaking.
+
+**Rationale:** Centralising the writer is the cheapest way to make the byte-equal invariant load-bearing instead of comment-bearing. Once `writeSourcesCache` is the sole writer with a fixed serialisation, byte-equality is the right race signal: any byte divergence MUST be a different write, and the eviction recheck correctly bails.
+
+**Consequences:**
+
+- New code touching `sources:{tag}` MUST use `writeSourcesCache`. A direct `KV.put('sources:...', ...)` call is a code-review reject.
+- The helper exposes a `readSourcesCache` companion with matching shape validation; reading paths should migrate as they're touched (no big-bang rewrite — too much surface, too little risk reduction).
+- If the cache value shape ever needs to gain a field, both the helper's `serialize()` field order AND `sourcesCacheRawEqual`'s parse path update in lockstep. The structural recheck's reliance on `discovered_at` is documented inline.
+- Future `sources:{tag}` migration to D1 supersedes this ADR. Until then, this is the contract.
+
+**Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+
+---
+
+### AD17: Reject `dedupe-groups.ts` extraction
+
+**Status:** Accepted (2026-05-04)
+
+**Decision:** A prior review batch (PR #168) proposed extracting `normaliseDedupGroups` into a shared `~/lib/dedupe-groups.ts` module — the chunk consumer's variant lacked the within-group dedup that the finalize variant carried. Land the lighter consequence (use the finalize variant's logic in both call sites) without standing up a new module.
+
+**Context:** The chunk consumer ran `normaliseDedupGroups` against LLM-emitted `dedup_groups: number[][]` to canonicalise the groups before clustering. The finalize consumer ran a near-identical helper that additionally ran a Set-based dedup within each group. The prior plan was to extract both into a shared module so both call sites used the stricter logic.
+
+**Alternatives considered:**
+
+- **Land the extraction.** Costs a new module, two import-site updates, and a behaviour change in the chunk consumer (gain within-group dedup). Behaviour change is benign but non-trivial to reason about.
+- **No-op the divergence.** The chunk consumer's downstream gating (canonical-URL dedupe + cluster-by-canonical) already removes within-group duplicates before they reach D1, so the missing helper-level dedup is only a redundant-group annotation, not a data correctness issue.
+
+**Rationale:** The chunk consumer's downstream gating makes within-group dedup at the helper level redundant. Spending review velocity on the extraction would yield a non-observable behaviour change. Recorded as an explicit decision so the next reviewer doesn't replay the proposal.
+
+**Consequences:**
+
+- The chunk consumer's `normaliseDedupGroups` stays as-is, slightly looser than the finalize variant. This is documented in the chunk consumer's source comment.
+- If future canonical-URL dedup is loosened (e.g., a feature lets two canonical URLs survive within one cluster), revisit this decision and land the extraction.
+
+**Related requirements:** [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)
+
+---
+
+### AD18: Reject `deferred-candidates.ts`; chunk-overflow path stays log-only
+
+**Status:** Accepted (2026-05-04)
+
+**Decision:** When a coordinator tick produces more chunk candidates than `MAX_CHUNKS_PER_TICK`, the overflow is dropped with a `coordinator.candidates_dropped` log event. A prior review batch proposed persisting overflow candidates to a `deferred:{scrape_run_id}` KV row and re-merging them on the next tick. Defer indefinitely.
+
+**Context:** `MAX_CHUNKS_PER_TICK` caps the number of chunks one coordinator tick can fan out, primarily to keep the per-tick LLM cost bounded. Today the cap is comfortable headroom (current observed peak is well under the cap). The "persist + re-merge" plan was speculative — protecting a failure mode that hasn't been observed in production.
+
+**Alternatives considered:**
+
+- **Persist overflow to KV with TTL.** Adds a new KV key prefix, a re-merge path on next tick, and an observability story for "deferred candidate fell out before re-merge". Worth implementing IF and WHEN the drop log fires non-trivially.
+- **Raise `MAX_CHUNKS_PER_TICK`.** Trades drop frequency for tick wall-clock time and LLM cost. Same outcome long-term once observed.
+
+**Rationale:** A speculative persistence layer is the wrong direction; until the drop log shows a real problem, the simpler path is to keep the cap and revisit the cap value (not the persistence story) when observability says we're truncating real candidates.
+
+**Consequences:**
+
+- `coordinator.candidates_dropped` event continues to surface drops in `wrangler tail`. Operators monitor this signal; if drops become sustained, raise the cap or implement the persistence layer at that point.
+- This ADR documents WHY a `deferred-candidates.ts` module does not exist, so the next reviewer doesn't replay the proposal.
+
+**Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+
+---
+
+### AD19: Reject `tag-railing-flip-core.ts`; FLIP measurements are not separable from DOM
+
+**Status:** Accepted (2026-05-04)
+
+**Decision:** A prior review batch proposed extracting the FLIP-cascade kernel from `src/lib/tag-railing-flip.ts` into a DOM-free `tag-railing-flip-core.ts` module so the math could be unit-tested in vitest. The math is genuinely intertwined with DOM measurement timing (`getBoundingClientRect` ordering, requestAnimationFrame phase, cascade staggering) and a pure-math kernel would only test the trivial parts. Tests live in Playwright E2E instead.
+
+**Context:** FLIP (First-Last-Invert-Play) animations measure DOM rectangles before and after a layout-affecting mutation, then transform-translate the affected elements to their pre-layout positions and animate them back. The "math" is per-element delta computation; the load-bearing logic is the order in which measurements happen relative to the DOM mutation, the cascade stagger between sibling chips, and the lock-state transitions that prevent overlapping animations from clobbering each other. None of this is meaningfully testable without a real layout engine.
+
+**Alternatives considered:**
+
+- **Extract a kernel anyway.** Would test trivial deltas and miss the actual failure modes. False confidence.
+- **Use a JSDOM-based vitest test pool.** JSDOM doesn't run a real layout engine; `getBoundingClientRect` returns zero. Same problem.
+- **Keep behaviour in `tag-railing-flip.ts`, add Playwright spec that asserts the user-observable contract (lock clears, scrollLeft preserved, no CSP violations).** This is what `tests/e2e/tag-railing-flip.spec.ts` does (added in Phase F).
+
+**Rationale:** The contract is "the chip cascade looks right and doesn't break under view-transitions or PWA scroll restoration." That's an end-to-end contract, not a kernel contract.
+
+**Consequences:**
+
+- `src/lib/tag-railing-flip.ts` stays as-is; the `?raw`-source-grep tests it spawned are deleted in Phase F (CF-011) and replaced by the Playwright spec.
+- This ADR documents WHY a `tag-railing-flip-core.ts` module does not exist.
+
+**Related requirements:** [REQ-READ-007](../../sdd/reading.md#req-read-007-tag-railing-cascade-on-toggle-and-add)
 
 ---
 

@@ -8,7 +8,7 @@ Local development setup and production deployment steps.
 
 ## Prerequisites
 
-- Node.js 24+ (local dev only; production runs on Cloudflare Workers)
+- Node.js 22+ (local dev only; production runs on Cloudflare Workers)
 - Cloudflare account with Workers Paid plan enabled
 - At least one OAuth provider configured: GitHub (Settings → Developer Settings → OAuth Apps) and/or Google (console.cloud.google.com → APIs & Services → Credentials → OAuth 2.0 Client IDs)
 - Resend account with a verified sending domain
@@ -146,9 +146,7 @@ curl -i ${APP_URL}/api/admin/force-refresh
 Dependabot is configured (`.github/dependabot.yml`) to open weekly PRs every Monday at 06:00 UTC. It covers:
 
 - **npm** — runtime deps get individual PRs; dev deps are grouped into one PR per week to keep review surface manageable.
-- **GitHub Actions** — action pin bumps are PRed automatically, preventing slow-drip deprecation warnings (e.g., Node.js 20 → 24 runner transitions, CodeQL v3 → v4 upgrades).
-
-CI workflows use `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'` at the workflow level so all actions run under Node.js 24 regardless of the action's bundled Node version.
+- **GitHub Actions** — action pin bumps are PRed automatically, preventing slow-drip deprecation warnings (e.g., Node.js 20 → 22 runner transitions, CodeQL v3 → v4 upgrades).
 
 ### PR Checks — CI gates (`test.yml`)
 
@@ -181,13 +179,7 @@ Because the Worker gate alone is sufficient, a misconfigured or disabled Access 
 
 ### Setting `CF_ACCESS_AUD` (strongly recommended in production)
 
-`CF_ACCESS_AUD` is technically optional, but **production deployments where Cloudflare Access is bound to a custom domain should set it.** Without it, the Worker only checks `Cf-Access-Jwt-Assertion` header presence — an attacker hitting the same Worker via the `*.workers.dev` URL (where Access is not bound) can forge any JWT-shaped value in the header and pass Layer 1. The session + `ADMIN_EMAIL` checks (Layers 2 + 3) still gate, but the perimeter check is missing.
-
-Two ways to close that gap:
-1. **Set `CF_ACCESS_AUD`** — the audience tag of the Access application fronting the custom domain. The Worker validates the JWT `aud` claim; a forged header on `workers.dev` is rejected at Layer 1. Recommended for any deploy that binds Access.
-2. **Disable `*.workers.dev`** — Workers & Pages → your worker → Settings → Domains & Routes → disable workers.dev. Forks without Access should leave it enabled; forks with Access in production should disable it.
-
-When Access is bound and `CF_ACCESS_AUD` is unset, the structured log `admin.auth.aud_unset_warning` is emitted once per Worker isolate (isolates cycle roughly every 30 minutes under load) so the misconfiguration is visible via `wrangler tail` or Logpush without flooding Logpush during brute-force probes. Forks without Access bound still see admin unreachable at Layer 1 and never trigger this warning.
+See [Configuration: Setting `CF_ACCESS_AUD`](configuration.md#setting-cf_access_aud-strongly-recommended-in-production) for the threat model, setup steps, and the `admin.auth.aud_unset_warning` log signal.
 
 ### Paths to gate
 

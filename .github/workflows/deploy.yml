@@ -196,15 +196,25 @@ jobs:
             echo "ADMIN_EMAIL not configured — admin endpoints will return 403"
           fi
 
-          # Optional: CF_ACCESS_AUD validates the aud claim of the
-          # Cf-Access-Jwt-Assertion header (REQ-AUTH-001 AC 8). When
-          # unset, only header presence is required (Cloudflare Access
-          # has already verified the JWT signature before forwarding).
+          # CF_ACCESS_AUD validates the aud claim of the Cf-Access-Jwt-
+          # Assertion header (REQ-AUTH-001 AC 8). Strongly recommended
+          # for any deploy that binds Cloudflare Access to a custom
+          # domain — without it, an attacker hitting the *.workers.dev
+          # URL (where Access is NOT enforced) can forge a JWT-shaped
+          # header and pass Layer 1 of admin-auth. workers_dev=false
+          # in wrangler.toml closes that bypass independently, but
+          # CF_ACCESS_AUD remains the in-Worker defence-in-depth gate.
+          #
+          # Emit a CI warning (non-blocking) when unset on production
+          # deploys so the gap surfaces every time without breaking
+          # forks that don't bind Access at all (CF-031).
           if [ -n "${CF_ACCESS_AUD:-}" ]; then
             TMP=$(mktemp)
             printf '%s' "$CF_ACCESS_AUD" > "$TMP"
             npx --yes wrangler secret put CF_ACCESS_AUD < "$TMP"
             rm "$TMP"
+          else
+            echo "::warning title=CF_ACCESS_AUD unset::Cloudflare Access aud-claim validation disabled. Set CF_ACCESS_AUD to the Access application's audience tag for production deploys, OR confirm Cloudflare Access is not bound on this fork. See documentation/configuration.md#setting-cf_access_aud."
           fi
 
       - name: Deploy

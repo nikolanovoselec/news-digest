@@ -47,7 +47,7 @@ import { applyForeignKeysPragma } from '~/lib/db';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
 import { FINALIZE_DEDUP_SYSTEM, finalizeDedupUserPrompt, FINALIZE_LLM_PARAMS } from '~/lib/prompts';
 import { parseLLMJson } from '~/lib/generate';
-import { runJsonWithFallback } from '~/lib/llm-json';
+import { runJsonWithFallback, asAiBinding } from '~/lib/llm-json';
 import { pickWinner, buildMergeStatements, type FinalizeRow } from '~/lib/finalize-merge';
 import { normaliseRawDedupGroups } from '~/lib/dedupe';
 import { handleBatch } from '~/lib/queue-handler';
@@ -161,7 +161,7 @@ export async function processOneFinalize(
   // src/lib/llm-json.ts (CF-009) so chunk + finalize share identical
   // waste-cost accounting and single-attempt narrowing.
   const llmRun = await runJsonWithFallback({
-    ai: env.AI as unknown as { run: (m: string, p: Record<string, unknown>) => Promise<unknown> },
+    ai: asAiBinding(env.AI),
     params: {
       messages: [
         { role: 'system', content: FINALIZE_DEDUP_SYSTEM },

@@ -1,3 +1,5 @@
+// Implements REQ-PIPE-002, REQ-PIPE-008
+//
 // Reusable LLM response helpers consumed by the global-feed pipeline
 // (src/queue/scrape-chunk-consumer.ts).
 

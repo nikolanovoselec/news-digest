@@ -147,16 +147,24 @@ Examples (assume the tag is in the allowlist):
 - All strings are plaintext. No HTML, no Markdown, no bullet prefixes, no inline links.
 - Paragraph breaks in "details" use the JSON escape \\n (one backslash + n). After JSON.parse on the client, \\n becomes a real newline character.`;
 
-// Triple-backtick runs in `body_snippet` would break the fenced block
-// the candidate is rendered inside, allowing an article body to escape
-// the data section and inject into the structural prompt. The hard
-// 2000-char cap is a defense-in-depth bound; upstream `fetchArticleBody`
-// already truncates, but the prompt builder must not trust that.
+// Triple-backtick runs in any candidate-supplied field would break the
+// fenced block the candidate is rendered inside, allowing the article
+// to escape the data section and inject into the structural prompt.
+// Every field interpolated into a fenced block is sanitized through
+// this helper, with a per-field length cap as defense-in-depth (upstream
+// fetch/feed code already enforces some caps; the prompt builder must
+// not trust that). Newlines are preserved (LLMs need them); only the
+// fence-escaping triple-backtick sequence is collapsed (CF-032).
+const TITLE_MAX_CHARS = 300;
+const SOURCE_NAME_MAX_CHARS = 100;
+const URL_MAX_CHARS = 1000;
 const BODY_SNIPPET_MAX_CHARS = 2000;
-function sanitizeBodySnippet(snippet: string): string {
-  const stripped = snippet.replace(/`{3,}/g, '[code-block]');
-  return stripped.length > BODY_SNIPPET_MAX_CHARS
-    ? `${stripped.slice(0, BODY_SNIPPET_MAX_CHARS)}…`
+const DETAILS_MAX_CHARS = 4000;
+
+function sanitizePromptField(value: string, maxChars: number): string {
+  const stripped = value.replace(/`{3,}/g, '[code-block]');
+  return stripped.length > maxChars
+    ? `${stripped.slice(0, maxChars)}…`
     : stripped;
 }
 
@@ -182,12 +190,12 @@ export function processChunkUserPrompt(
   const tagList = allowedTags.join(', ');
   const lines: string[] = [];
   for (const c of candidates) {
-    lines.push(`[${c.index}] ${c.title}`);
-    lines.push(`    source: ${c.source_name}`);
-    lines.push(`    url: ${c.url}`);
+    lines.push(`[${c.index}] ${sanitizePromptField(c.title, TITLE_MAX_CHARS)}`);
+    lines.push(`    source: ${sanitizePromptField(c.source_name, SOURCE_NAME_MAX_CHARS)}`);
+    lines.push(`    url: ${sanitizePromptField(c.url, URL_MAX_CHARS)}`);
     lines.push(`    published_at: ${c.published_at}`);
     if (typeof c.body_snippet === 'string' && c.body_snippet !== '') {
-      lines.push(`    snippet: ${sanitizeBodySnippet(c.body_snippet)}`);
+      lines.push(`    snippet: ${sanitizePromptField(c.body_snippet, BODY_SNIPPET_MAX_CHARS)}`);
     }
   }
 
@@ -275,7 +283,8 @@ export function finalizeDedupUserPrompt(
   }>,
 ): string {
   const blocks = candidates.map(
-    (c) => `[${c.index}] ${c.title} (published_at: ${c.published_at})\n${c.details}`,
+    (c) =>
+      `[${c.index}] ${sanitizePromptField(c.title, TITLE_MAX_CHARS)} (published_at: ${c.published_at})\n${sanitizePromptField(c.details, DETAILS_MAX_CHARS)}`,
   );
   return `Candidates (${candidates.length} entries, 0-indexed). Each candidate is a headline followed by its full summary body. Decide whether two candidates describe the same news event by comparing their bodies, not their headlines:
 \`\`\`

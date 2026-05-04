@@ -28,7 +28,7 @@ import {
 /** Default fan-out for body fetches. Roughly 2x the feed-fetch limit
  *  because article HTML pages are smaller, faster, and tolerate
  *  higher origin pressure than feed re-fetches. */
-export const ARTICLE_BODY_FETCH_CONCURRENCY = 20;
+const ARTICLE_BODY_FETCH_CONCURRENCY = 20;
 
 const FETCH_TIMEOUT_MS = ARTICLE_FETCH_TIMEOUT_MS;
 const MAX_BODY_BYTES = ARTICLE_MAX_BODY_BYTES;
@@ -60,16 +60,15 @@ export function extractArticleText(html: string): string {
   // block past the strip and into the LLM-prompt body when the
   // attribute-shaped close is the only closing variant in the doc.
   // The `\b` anchor blocks `</scripted>` collisions.
-  const cleaned = html
-    .replace(/<script\b[\s\S]*?<\/script\b[^>]*>/gi, ' ')
-    .replace(/<style\b[\s\S]*?<\/style\b[^>]*>/gi, ' ')
-    .replace(/<noscript\b[\s\S]*?<\/noscript\b[^>]*>/gi, ' ')
-    .replace(/<nav\b[\s\S]*?<\/nav\b[^>]*>/gi, ' ')
-    .replace(/<header\b[\s\S]*?<\/header\b[^>]*>/gi, ' ')
-    .replace(/<footer\b[\s\S]*?<\/footer\b[^>]*>/gi, ' ')
-    .replace(/<aside\b[\s\S]*?<\/aside\b[^>]*>/gi, ' ')
-    .replace(/<form\b[\s\S]*?<\/form\b[^>]*>/gi, ' ')
-    .replace(/<svg\b[\s\S]*?<\/svg\b[^>]*>/gi, ' ');
+  // CF-025 — combined alternation runs ONE regex pass over the body
+  // instead of nine sequential passes (~10K full-body passes per cron
+  // tick at 100 candidates × 9 strips). Backreference `\1` keeps the
+  // open and close tag names in lockstep so cross-tag matches like
+  // `<script>...</style>` still close on `</script>`.
+  const cleaned = html.replace(
+    /<(script|style|noscript|nav|header|footer|aside|form|svg)\b[\s\S]*?<\/\1\b[^>]*>/gi,
+    ' ',
+  );
 
   // Collect every candidate container body text — we take whichever
   // produces the longest clean output.

@@ -12,18 +12,6 @@ import { requireSession } from '~/middleware/auth';
 import { parseHashtags } from '~/lib/hashtags';
 import { loadTodayPayload } from '~/lib/digest-today';
 
-// Re-export the wire types so callers that previously imported from
-// this file (tests, anything outside src/lib/) keep working without
-// a separate code change. The lib is the canonical home.
-export {
-  loadTodayPayload,
-  computeNextScrapeAt,
-  type WireArticle,
-  type TodayResponse,
-  type ScrapeRunRow,
-  type ArticleRow,
-} from '~/lib/digest-today';
-
 export async function GET(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env;
   if (typeof env.APP_URL !== 'string' || env.APP_URL === '') {

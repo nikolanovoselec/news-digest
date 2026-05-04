@@ -58,3 +58,25 @@ export function originOf(url: string): string {
 function forbiddenOriginResponse(): Response {
   return errorResponse('forbidden_origin');
 }
+
+/**
+ * Defence-in-depth Origin check used by token-gated dev endpoints
+ * (`/api/dev/login`, `/api/dev/trigger-scrape`). CF-035 — these
+ * endpoints are primarily defended by `DEV_BYPASS_TOKEN`; the Origin
+ * check is uniformity defence that blocks browser-driven CSRF without
+ * breaking curl-driven CI flows that send no Origin header.
+ *
+ * Returns `true` if the request should pass (no Origin header sent,
+ * APP_URL not configured, OR Origin matches APP_URL).
+ * Returns `false` only when the browser sent a wrong Origin —
+ * caller responds 404 to avoid telegraphing the endpoint's existence.
+ */
+export function checkDevEndpointOrigin(
+  request: Request,
+  appUrl: string | undefined,
+): boolean {
+  const origin = request.headers.get('Origin');
+  if (origin === null || origin === '') return true;
+  if (typeof appUrl !== 'string' || appUrl === '') return true;
+  return origin === originOf(appUrl);
+}

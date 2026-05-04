@@ -23,6 +23,7 @@ import { startRun } from '~/lib/scrape-run';
 import { DEFAULT_MODEL_ID } from '~/lib/models';
 import { log } from '~/lib/log';
 import { timingSafeEqualHmac } from '~/lib/crypto';
+import { checkDevEndpointOrigin } from '~/middleware/origin-check';
 
 interface DevEnv {
   DEV_BYPASS_TOKEN?: string;
@@ -41,6 +42,13 @@ export async function POST(context: APIContext): Promise<Response> {
   }
 
   if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
+    return new Response(null, { status: 404 });
+  }
+
+  // Defence-in-depth Origin check (CF-035) — same helper as
+  // /api/dev/login. Browser-driven CSRF blocked; curl-driven CI calls
+  // (no Origin) pass through.
+  if (!checkDevEndpointOrigin(context.request, env.APP_URL)) {
     return new Response(null, { status: 404 });
   }
 

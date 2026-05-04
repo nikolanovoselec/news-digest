@@ -25,12 +25,6 @@ coordinator swallows failures so these are non-blocking, but each is
 - azure-updates returns an unexpected body prefix (probably a JSON
   login redirect)
 
-### Proper OG image at `/og.png`
-Base.astro now omits `og:image` entirely when no caller-supplied image
-is present (avoids broken-image placeholders on Slack/Twitter unfurls).
-A proper 1200×630 PNG in `public/og.png` would restore richer card
-previews.
-
 ### Hardcoded sitemap origin in robots.txt / llms.txt
 `Sitemap: https://news.graymatter.ch/sitemap.xml` is baked in as a
 string; fork deployments serve the production URL from their own

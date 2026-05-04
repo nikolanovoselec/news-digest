@@ -58,11 +58,29 @@
  * `frame-ancestors 'none'` is the modern equivalent of `X-Frame-
  * Options: DENY`; both are still emitted as defense-in-depth for older
  * UAs that don't respect `frame-ancestors`. */
+// CF-019: this exact string is pinned by `tests/e2e/csp-policy.spec.ts`.
+// `'unsafe-inline'` in `style-src` is intentional per AD11 (FLIP
+// transforms + view-transition-name pre-flight write inline styles
+// at runtime). Do NOT remove `'unsafe-inline'` without proposing a
+// concrete alternative for those two patterns AND updating both AD11
+// and the e2e spec; a "just drop it" PR will fail the e2e gate.
 export const CSP_HEADER_VALUE =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.gravatar.com https://secure.gravatar.com; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 
 /** HSTS value required by REQ-OPS-003 AC 2 — two-year max-age, subdomains,
- * and opt-in to the HSTS preload list. */
+ * and opt-in to the HSTS preload list.
+ *
+ * Subdomain footprint (CF-036): `includeSubDomains; preload` instructs
+ * browsers to apply HSTS to every `*.<apex>` host of the deployed origin.
+ * Once a domain is on the preload list, removing the directive is
+ * effectively irreversible — preload-list updates take months to
+ * propagate and cached entries persist for the max-age window.
+ * Operators MUST verify all current and planned subdomains of the
+ * deployed apex serve HTTPS before this header reaches a new domain.
+ * Audit on 2026-05-04 confirmed `news.novoselec.ch` and `news.graymatter.ch`
+ * apexes serve HTTPS only; no HTTP-only sibling subdomains were found.
+ * Forks deploying to a new apex MUST repeat this audit before first
+ * production deploy. */
 export const HSTS_HEADER_VALUE = 'max-age=63072000; includeSubDomains; preload';
 
 /** Referrer-Policy value required by REQ-OPS-003 AC 3. */

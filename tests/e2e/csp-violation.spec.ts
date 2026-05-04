@@ -156,13 +156,18 @@ test.describe('REQ-OPS-003 CSP violation gate', () => {
       return raw !== null ? (JSON.parse(raw) as unknown[]) : [];
     });
 
+    // CF-047 — positive control must observe an actual CSP violation
+    // event (console or DOM event), NOT just an injection throw.
+    // Including `injectionThrew` made the assertion silently pass on
+    // unrelated Playwright errors (network glitch, evaluation timeout)
+    // and disabled the merge gate. If the inline-script injection
+    // doesn't produce a violation event, we want the test to fail
+    // loudly with the diagnostic below.
     const fired =
-      consoleViolations.length > 0 ||
-      eventViolations.length > 0 ||
-      injectionThrew;
+      consoleViolations.length > 0 || eventViolations.length > 0;
     expect(
       fired,
-      `Positive control failed: inline-script injection produced no CSP violation. The negative test in this file is therefore unreliable. console=${JSON.stringify(consoleViolations)} events=${JSON.stringify(eventViolations)} injectionThrew=${injectionThrew}`,
+      `Positive control failed: inline-script injection produced no CSP violation event. The negative test in this file is therefore unreliable. console=${JSON.stringify(consoleViolations)} events=${JSON.stringify(eventViolations)} injectionThrew=${injectionThrew}`,
     ).toBe(true);
   });
 });

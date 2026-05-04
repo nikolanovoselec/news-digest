@@ -62,6 +62,14 @@ jobs:
       - name: REQ backlink coverage
         run: node scripts/check-req-backlinks.mjs
 
+      # CF-005 + CF-020: assert wrangler.toml max_retries literals match
+      # MAX_QUEUE_ATTEMPTS in queue-handler.ts AND binding-shape parity
+      # between top-level and [env.integration.*]. A binding added to
+      # production but missing from integration would silently 500 on
+      # the integration deploy without this gate.
+      - name: Wrangler env parity
+        run: node scripts/check-wrangler-env-parity.mjs
+
       - name: Dead code check
         run: npm run knip
 

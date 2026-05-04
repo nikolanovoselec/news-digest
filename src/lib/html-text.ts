@@ -22,6 +22,9 @@
  *  `js/double-escaping` rule flags the inverse order. Numeric refs
  *  must also run before `&amp;` for the same reason — `&amp;#39;`
  *  preserves its literal form rather than collapsing to an apostrophe.
+ *
+ *  Exported for unit testing. Production code should reach this via
+ *  {@link stripHtmlToText}.
  */
 export function decodeHtmlEntities(input: string): string {
   return input

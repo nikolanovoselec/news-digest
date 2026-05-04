@@ -20,7 +20,7 @@ import DigestCard from '~/components/DigestCard.astro';
 import TagStrip from '~/components/TagStrip.astro';
 import { loadSessionForPage } from '~/middleware/auth';
 import { requireSettingsComplete } from '~/middleware/settings-gate';
-import { loadTodayPayload } from '~/pages/api/digest/today';
+import { loadTodayPayload } from '~/lib/digest-today';
 import { localDateInTz, DEFAULT_TZ, isValidTz } from '~/lib/tz';
 import { parseHashtags } from '~/lib/hashtags';
 
@@ -243,6 +243,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
   //      never "disappears" mid-flight.
 
   import { flipChipToFront, flipChipToPosition, isFlipLocked } from '~/lib/tag-railing-flip';
+  import { normalizeHashtag } from '~/lib/hashtags';
 
   let countdownHandle: number | null = null;
 
@@ -408,11 +409,6 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     ).map((el) => el.dataset['tag'] ?? '').filter((t) => t !== '');
   }
 
-  function normaliseTag(raw: string): string {
-    const s = raw.toLowerCase().trim().replace(/^#/, '');
-    return s.replace(/[^a-z0-9-]/g, '');
-  }
-
   async function saveTags(tags: string[]): Promise<boolean> {
     try {
       const res = await fetch('/api/tags', {
@@ -544,7 +540,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     // Bumped to 25 to give the default seed real headroom for customs.
     const MAX_TAGS = 25;
     const commit = async (): Promise<void> => {
-      const tag = normaliseTag(input.value);
+      const tag = normalizeHashtag(input.value);
       if (tag.length < 2 || tag.length > 32) {
         hide();
         return;

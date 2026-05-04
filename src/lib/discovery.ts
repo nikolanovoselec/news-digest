@@ -26,10 +26,11 @@
 import { XMLParser } from 'fast-xml-parser';
 import { DISCOVERY_SYSTEM, discoveryUserPrompt, DISCOVERY_LLM_PARAMS } from '~/lib/prompts';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
-import { runJsonWithFallback } from '~/lib/llm-json';
+import { runJsonWithFallback, asAiBinding } from '~/lib/llm-json';
 import { isUrlSafe } from '~/lib/ssrf';
 import { log } from '~/lib/log';
 import type { DiscoveredFeed, SourcesCacheValue } from '~/lib/types';
+import { writeSourcesCache } from '~/lib/sources-cache';
 import {
   FEED_FETCH_TIMEOUT_MS,
   FEED_MAX_BODY_BYTES,
@@ -87,9 +88,7 @@ export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed
   // "this attempt failed, try the fallback").
   const userPrompt = discoveryUserPrompt(tag);
   const llmRun = await runJsonWithFallback<LLMDiscoveryPayload>({
-    ai: env.AI as unknown as {
-      run: (model: string, params: Record<string, unknown>) => Promise<unknown>;
-    },
+    ai: asAiBinding(env.AI),
     params: {
       messages: [
         { role: 'system', content: DISCOVERY_SYSTEM },
@@ -421,7 +420,7 @@ export async function processPendingDiscoveries(
           feeds,
           discovered_at: Date.now(),
         };
-        await env.KV.put(`sources:${tag}`, JSON.stringify(cacheValue));
+        await writeSourcesCache(env.KV, tag, cacheValue);
         await env.KV.delete(`discovery_failures:${tag}`);
         await env.DB.prepare('DELETE FROM pending_discoveries WHERE tag = ?1')
           .bind(tag)
@@ -448,7 +447,7 @@ export async function processPendingDiscoveries(
           feeds: [],
           discovered_at: Date.now(),
         };
-        await env.KV.put(`sources:${tag}`, JSON.stringify(emptyCache));
+        await writeSourcesCache(env.KV, tag, emptyCache);
         await env.KV.delete(`discovery_failures:${tag}`);
         await env.DB.prepare('DELETE FROM pending_discoveries WHERE tag = ?1')
           .bind(tag)

@@ -118,8 +118,8 @@ describe('llms.txt — REQ-OPS-004 AC 3', () => {
   });
 });
 
-describe('GET /sitemap.xml — REQ-OPS-004 AC 4', () => {
-  it('REQ-OPS-004: returns valid XML with a urlset wrapper', async () => {
+describe('GET /sitemap.xml — REQ-OPS-007', () => {
+  it('REQ-OPS-007: returns valid XML with a urlset wrapper', async () => {
     const url = new URL('https://news.graymatter.ch/sitemap.xml');
     const res = sitemapGet({ url } as never);
     expect(res.status).toBe(200);
@@ -130,7 +130,7 @@ describe('GET /sitemap.xml — REQ-OPS-004 AC 4', () => {
     expect(body).toMatch(/<\/urlset>/);
   });
 
-  it('REQ-OPS-004: includes the landing page as a <url> entry with the request origin', async () => {
+  it('REQ-OPS-007: includes the landing page as a <url> entry with the request origin', async () => {
     const url = new URL('https://news.graymatter.ch/sitemap.xml');
     const res = sitemapGet({ url } as never);
     const body = await res.text();
@@ -141,7 +141,7 @@ describe('GET /sitemap.xml — REQ-OPS-004 AC 4', () => {
     );
   });
 
-  it('REQ-OPS-004: does NOT list any authenticated or API route', async () => {
+  it('REQ-OPS-007: does NOT list any authenticated or API route', async () => {
     const url = new URL('https://news.graymatter.ch/sitemap.xml');
     const res = sitemapGet({ url } as never);
     const body = await res.text();
@@ -152,7 +152,7 @@ describe('GET /sitemap.xml — REQ-OPS-004 AC 4', () => {
     expect(body).not.toMatch(/<loc>[^<]*\/settings/);
   });
 
-  it('REQ-OPS-004: sitemap origin follows the request, not a hardcoded hostname', async () => {
+  it('REQ-OPS-007: sitemap origin follows the request, not a hardcoded hostname', async () => {
     // Fork-friendliness: a staging deploy at preview.news.example.com
     // must emit preview URLs, not production ones.
     const url = new URL('https://preview.example.com/sitemap.xml');
@@ -164,7 +164,7 @@ describe('GET /sitemap.xml — REQ-OPS-004 AC 4', () => {
     expect(body).not.toMatch(/news\.graymatter\.ch/);
   });
 
-  it('REQ-OPS-004: serves a Cache-Control header so Googlebot can cheaply recheck', async () => {
+  it('REQ-OPS-007: serves a Cache-Control header so Googlebot can cheaply recheck', async () => {
     const url = new URL('https://news.graymatter.ch/sitemap.xml');
     const res = sitemapGet({ url } as never);
     // Some TTL — even a short one — is better than no caching hint.

@@ -280,7 +280,7 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
   // view transitions re-render UserMenu), and doesn't depend on the
   // ThemeToggle.astro component's inline script shipping on pages
   // where that component isn't rendered.
-  import { toggleTheme } from '~/scripts/theme-toggle';
+  import { toggleTheme } from '~/scripts/bundled/theme-toggle';
 
   function handleThemeClick(e: MouseEvent): void {
     const target = e.target;

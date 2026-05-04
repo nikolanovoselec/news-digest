@@ -8,7 +8,10 @@
 // KV failures silently, would ship undetected.
 
 import { describe, it, expect, vi } from 'vitest';
-import { loadDiscoveredSources } from '~/queue/scrape-coordinator';
+import {
+  loadDiscoveredSources,
+  purgeOrphanDiscoveredSources,
+} from '~/queue/scrape-coordinator';
 import { hasCuratedSource } from '~/lib/curated-sources';
 
 interface KvBackingValue {
@@ -60,8 +63,8 @@ const validFeed = {
   feeds: [{ name: 'Example', url: 'https://example.com/feed.xml', kind: 'rss' as const }],
 };
 
-describe('loadDiscoveredSources — REQ-DISC-001 / CF-015', () => {
-  it('CF-015: skips and best-effort deletes sources:{tag} entries for curated-promoted tags', async () => {
+describe('loadDiscoveredSources — REQ-DISC-001 / CF-015 / CF-017', () => {
+  it('CF-015 / CF-017: skips sources:{tag} entries for curated-promoted tags WITHOUT deleting (delete is purgeOrphanDiscoveredSources lane)', async () => {
     // Self-check the test fixture against the live registry — `cloudflare`
     // must remain a curated tag for this test to be meaningful. If the
     // registry ever drops it, the assertion below catches the broken
@@ -79,10 +82,10 @@ describe('loadDiscoveredSources — REQ-DISC-001 / CF-015', () => {
 
     const out = await loadDiscoveredSources(kv);
 
-    // The orphan was deleted (best-effort) AND skipped — no source row
-    // emitted for the curated tag. The non-curated tag's feed survives.
-    expect(deleted).toContain('sources:cloudflare');
-    expect(deleted).not.toContain('sources:some-rare-tag');
+    // CF-017 — load is now pure-read. The curated tag is skipped from
+    // the source list but NOT deleted. The companion
+    // purgeOrphanDiscoveredSources owns the delete pass (covered below).
+    expect(deleted).toEqual([]);
     expect(out.partial).toBe(false);
     expect(out.sources.every((s) => s.discoveredTag !== 'cloudflare')).toBe(true);
     expect(out.sources.some((s) => s.discoveredTag === 'some-rare-tag')).toBe(true);
@@ -135,5 +138,53 @@ describe('loadDiscoveredSources — REQ-DISC-001 / CF-015', () => {
     expect(out.partial).toBe(false);
     expect(deleted).toEqual([]);
     expect(out.sources.map((s) => s.discoveredTag)).toEqual(['tag-x']);
+  });
+});
+
+describe('purgeOrphanDiscoveredSources — CF-017', () => {
+  it('CF-017: deletes sources:{tag} entries for curated-promoted tags only', async () => {
+    expect(hasCuratedSource('cloudflare')).toBe(true);
+    expect(hasCuratedSource('some-rare-tag')).toBe(false);
+
+    const store = new Map<string, KvBackingValue>([
+      ['sources:cloudflare', validFeed],
+      ['sources:some-rare-tag', validFeed],
+    ]);
+    const { kv, deleted } = makeKv({ store });
+
+    const out = await purgeOrphanDiscoveredSources(kv);
+
+    expect(deleted).toEqual(['sources:cloudflare']);
+    expect(out.purged).toBe(1);
+    expect(out.partial).toBe(false);
+    // The non-orphan key must remain.
+    expect(store.has('sources:some-rare-tag')).toBe(true);
+  });
+
+  it('CF-017: list failure on the first call returns partial=true with no deletes', async () => {
+    const store = new Map<string, KvBackingValue>([
+      ['sources:cloudflare', validFeed],
+    ]);
+    const { kv, deleted } = makeKv({ store, failListAfter: 0 });
+
+    const out = await purgeOrphanDiscoveredSources(kv);
+
+    expect(out.partial).toBe(true);
+    expect(out.purged).toBe(0);
+    expect(deleted).toEqual([]);
+  });
+
+  it('CF-017: clean run with no orphans returns purged=0 and partial=false', async () => {
+    const store = new Map<string, KvBackingValue>([
+      ['sources:tag-x', validFeed],
+      ['sources:tag-y', validFeed],
+    ]);
+    const { kv, deleted } = makeKv({ store });
+
+    const out = await purgeOrphanDiscoveredSources(kv);
+
+    expect(out.purged).toBe(0);
+    expect(out.partial).toBe(false);
+    expect(deleted).toEqual([]);
   });
 });

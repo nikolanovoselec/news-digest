@@ -8,11 +8,15 @@
 // their TypeScript sources (CF-001) — having esbuild rebuild them
 // every `npm run build` eliminates the drift class.
 //
-// Convention:
-//  - One TypeScript file per static script.
-//  - Skip files that are imported by Astro components (those are
-//    bundled into the page's hashed JS by Vite/Astro). The skip list
-//    is hardcoded below.
+// Convention (CF-023):
+//  - Top-level src/scripts/*.ts → static script tags loaded by-path
+//    from /scripts/<name>.js (Pattern B). esbuild compiles these
+//    into public/scripts/.
+//  - src/scripts/bundled/*.ts → imported by Astro components or
+//    pages and bundled into the page's hashed JS by Vite/Astro
+//    (Pattern A). The bundler owns these; this script ignores them.
+//  - Adding a third Pattern A file no longer requires updating a
+//    hand-maintained skip list — drop the file under bundled/.
 //  - Output is IIFE format with ES2022 target so the browsers we
 //    support (last-2 evergreen + iOS 15+) parse without polyfills.
 
@@ -23,14 +27,9 @@ import { build } from 'esbuild';
 const SRC_DIR = 'src/scripts';
 const OUT_DIR = 'public/scripts';
 
-// theme-toggle.ts is consumed by Base.astro as an ES module import,
-// not as a static script tag — skip so we don't ship a duplicate.
-const SKIP = new Set(['theme-toggle']);
-
-const entries = readdirSync(SRC_DIR)
-  .filter((f) => extname(f) === '.ts')
-  .filter((f) => !SKIP.has(basename(f, '.ts')))
-  .map((f) => join(SRC_DIR, f));
+const entries = readdirSync(SRC_DIR, { withFileTypes: true })
+  .filter((d) => d.isFile() && extname(d.name) === '.ts')
+  .map((d) => join(SRC_DIR, d.name));
 
 if (entries.length === 0) {
   console.error('build-client-scripts: no entry files found in', SRC_DIR);

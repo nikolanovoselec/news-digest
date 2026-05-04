@@ -41,6 +41,10 @@ import { SYSTEM_USER_ID } from '~/lib/system-user';
 import { log } from '~/lib/log';
 import { mapConcurrent } from '~/lib/concurrency';
 import type { DiscoveredFeed, SourcesCacheValue, Headline } from '~/lib/types';
+import {
+  writeSourcesCache,
+  sourcesCacheRawEqual,
+} from '~/lib/sources-cache';
 
 /** Max candidates per chunk. Matches the LLM's ~8K input-token budget
  * at the gpt-oss-20b default: ~50 candidate headlines per chunk
@@ -211,6 +215,18 @@ export async function runCoordinator(
   }
 
   // --- Step 1: Build the full source list (curated + discovered) -------
+  // CF-017 — purge orphans first (tags promoted to CURATED_SOURCES
+  // since their last discovery), then load. Two passes against the
+  // same KV prefix; the read pass becomes side-effect-free.
+  const { purged: orphansPurged, partial: purgePartial } =
+    await purgeOrphanDiscoveredSources(env.KV);
+  if (orphansPurged > 0 || purgePartial) {
+    log('info', 'digest.generation', {
+      status: 'coordinator_orphan_purge_complete',
+      purged: orphansPurged,
+      partial: purgePartial,
+    });
+  }
   const { sources: discoveredSources, partial: discoveredPartial } =
     await loadDiscoveredSources(env.KV);
   if (discoveredPartial) {
@@ -536,16 +552,26 @@ function curatedToAdapter(curated: CuratedSource): SourceAdapter {
  *
  * Behaviour notes:
  *  - Tags that have since been promoted to CURATED_SOURCES are
- *    skipped AND the orphan KV entry is best-effort deleted in the
- *    same pass (no second sweep needed).
+ *    skipped from the result. CF-017: this function is pure-read
+ *    and does NOT delete the orphan KV entry — `purgeOrphanDiscoveredSources`
+ *    owns that side effect and runs as a separate KV pass before
+ *    the read so the read contract stays read-only.
  *  - KV failures are caught per-key so one transient miss doesn't
  *    abort the whole scan and silently truncate the discovered set.
  *  - `partial: true` signals the caller that one or more keys failed
  *    and the returned set is incomplete; the caller logs a degraded-
  *    state warning so operators don't read an empty `sources` array
  *    as "no discovered tags exist". */
-/** @internal Exported for unit tests only — covers the orphan-purge,
- *  per-key try/catch, and partial-flag contract introduced by CF-015. */
+/** @internal Exported for unit tests only — covers the orphan-skip,
+ *  per-key try/catch, and partial-flag contract introduced by CF-015.
+ *
+ *  CF-017: this function is pure read. Orphan KV entries (tags
+ *  promoted into CURATED_SOURCES since their discovery) are SKIPPED
+ *  but NOT deleted. The companion {@link purgeOrphanDiscoveredSources}
+ *  performs the side-effecting delete pass. The coordinator calls
+ *  them sequentially so the read contract and the cleanup contract
+ *  are no longer coupled — a future read-only caller (admin
+ *  diagnostic, debug endpoint) cannot inadvertently mutate KV state. */
 export async function loadDiscoveredSources(
   kv: KVNamespace,
 ): Promise<{ sources: SourceForFetch[]; partial: boolean }> {
@@ -572,13 +598,10 @@ export async function loadDiscoveredSources(
         ? key.name.slice('sources:'.length)
         : '';
       if (tag === '') continue;
-      // Orphan purge: a tag that has since been promoted to
-      // CURATED_SOURCES no longer needs its discovered KV entry.
-      // Best-effort delete; failures are silent (next tick retries).
-      if (hasCuratedSource(tag)) {
-        await kv.delete(key.name).catch(() => {});
-        continue;
-      }
+      // Skip tags promoted into CURATED_SOURCES; the orphan KV row is
+      // cleaned up by purgeOrphanDiscoveredSources, called separately
+      // by the coordinator (CF-017).
+      if (hasCuratedSource(tag)) continue;
       let raw: string | null;
       try {
         raw = await kv.get(key.name, 'text');
@@ -628,6 +651,49 @@ export async function loadDiscoveredSources(
     cursor = result.list_complete ? undefined : result.cursor;
   } while (cursor !== undefined);
   return { sources: out, partial };
+}
+
+/** @internal Best-effort deletion pass for `sources:{tag}` KV rows
+ *  whose tag has been promoted into CURATED_SOURCES. Pure side
+ *  effect, returns the number purged. Companion to
+ *  {@link loadDiscoveredSources}; the coordinator calls them
+ *  sequentially per CF-017 so the read contract stays read-only. */
+export async function purgeOrphanDiscoveredSources(
+  kv: KVNamespace,
+): Promise<{ purged: number; partial: boolean }> {
+  let purged = 0;
+  let partial = false;
+  let cursor: string | undefined;
+  do {
+    let result: KVNamespaceListResult<unknown>;
+    try {
+      result = await kv.list({
+        prefix: 'sources:',
+        ...(cursor !== undefined ? { cursor } : {}),
+      });
+    } catch (err) {
+      partial = true;
+      log('warn', 'digest.generation', {
+        status: 'coordinator_orphan_purge_list_failed',
+        detail: String(err).slice(0, 200),
+      });
+      break;
+    }
+    for (const key of result.keys) {
+      const tag = key.name.startsWith('sources:')
+        ? key.name.slice('sources:'.length)
+        : '';
+      if (tag === '' || !hasCuratedSource(tag)) continue;
+      try {
+        await kv.delete(key.name);
+        purged += 1;
+      } catch {
+        partial = true;
+      }
+    }
+    cursor = result.list_complete ? undefined : result.cursor;
+  } while (cursor !== undefined);
+  return { purged, partial };
 }
 
 /** Fetch every source in parallel, with a 10-worker semaphore to keep
@@ -808,15 +874,14 @@ export async function applyEvictions(
       // and the next scrape tick will re-evaluate health against the
       // new feed set.
       //
-      // CF-017 — the byte-equal `latestRaw === raw` compare is
-      // correct ONLY because `JSON.stringify` is the sole writer of
-      // sources:{tag} entries (in this file at line 813 and in
-      // discovery.ts when persisting fresh feeds). If a future caller
-      // writes the entry with a different serialization (whitespace
-      // variation, key ordering), this race-recheck will false-
-      // positive and clobber legitimate concurrent writes.
+      // CF-001 / AD16 — recheck is BYTE-equal via sourcesCacheRawEqual.
+      // The single-writer invariant (every writer routes through
+      // `writeSourcesCache`) makes byte-equality sound. An earlier
+      // draft used a structural `discovered_at` fallback for
+      // robustness; that fallback was unsafe under same-millisecond
+      // collisions and was tightened to byte-only.
       const latestRaw = await env.KV.get(`sources:${tag}`, 'text');
-      if (latestRaw !== raw) {
+      if (latestRaw === null || !sourcesCacheRawEqual(latestRaw, raw)) {
         log('info', 'discovery.completed', {
           status: 'eviction_skipped_raced',
           scrape_run_id,
@@ -842,7 +907,7 @@ export async function applyEvictions(
         feeds: survivingFeeds,
         discovered_at: Date.now(),
       };
-      await env.KV.put(`sources:${tag}`, JSON.stringify(nextCache));
+      await writeSourcesCache(env.KV, tag, nextCache);
 
       // Clear the per-URL health counters so a re-discovered URL at
       // the same address starts from a clean slate.

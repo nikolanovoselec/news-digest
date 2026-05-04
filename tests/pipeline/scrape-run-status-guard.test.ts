@@ -36,7 +36,6 @@ describe('finishRun — REQ-PIPE-006 status-flap guard', () => {
     await startRun(env.DB, {
       id: RUN_ID,
       model_id: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
-      chunk_count: 3,
     });
     await finishRun(env.DB, RUN_ID, 'ready');
     expect(await readStatus()).toBe('ready');
@@ -52,7 +51,6 @@ describe('finishRun — REQ-PIPE-006 status-flap guard', () => {
     await startRun(env.DB, {
       id: RUN_ID,
       model_id: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
-      chunk_count: 1,
     });
     expect(await readStatus()).toBe('running');
 
@@ -64,7 +62,6 @@ describe('finishRun — REQ-PIPE-006 status-flap guard', () => {
     await startRun(env.DB, {
       id: RUN_ID,
       model_id: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
-      chunk_count: 1,
     });
     expect(await readStatus()).toBe('running');
 
@@ -80,7 +77,6 @@ describe('finishRun — REQ-PIPE-006 status-flap guard', () => {
     await startRun(env.DB, {
       id: RUN_ID,
       model_id: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
-      chunk_count: 3,
     });
     await finishRun(env.DB, RUN_ID, 'failed');
     expect(await readStatus()).toBe('failed');
@@ -93,7 +89,6 @@ describe('finishRun — REQ-PIPE-006 status-flap guard', () => {
     await startRun(env.DB, {
       id: RUN_ID,
       model_id: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
-      chunk_count: 1,
     });
     await finishRun(env.DB, RUN_ID, 'failed');
     const firstFinishedAt = await env.DB

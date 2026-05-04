@@ -8,7 +8,7 @@
 // clock — so the boundary cases MUST be pinned.
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { computeNextScrapeAt } from '~/pages/api/digest/today';
+import { computeNextScrapeAt } from '~/lib/digest-today';
 
 /** Freeze `Date` at the given UTC time. Returns the unix-seconds of
  *  that frozen clock so the assertions can be computed against it. */

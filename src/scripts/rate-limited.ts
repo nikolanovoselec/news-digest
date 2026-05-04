@@ -5,7 +5,11 @@
 
 // Live countdown + button re-enable.
 
-function formatRemaining(seconds: number): string {
+/** Format a remaining-time count as `Hh Mm` (when the value crosses
+ *  one hour) or `Mm Ss` (under one hour). Exported for unit testing
+ *  per CF-013 — the formatter is the load-bearing user-observable
+ *  contract; the rest of `init()` only wires up DOM. */
+export function formatRemaining(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
@@ -49,11 +53,14 @@ function init(): void {
   }
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init, { once: true });
-} else {
-  init();
+// CF-013 — guard top-level DOM access so the module is importable in
+// the Workers vitest pool (where `document` is undefined). The
+// browser path runs unchanged when the module loads in the page.
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+  } else {
+    init();
+  }
+  document.addEventListener('astro:page-load', init);
 }
-document.addEventListener('astro:page-load', init);
-
-export {};
