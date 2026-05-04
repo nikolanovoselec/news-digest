@@ -292,11 +292,16 @@ describe('initCardInteractions — REQ-STAR-001 + REQ-READ-001 event plumbing', 
     };
   }
 
-  it('REQ-STAR-001: the bound star handler calls preventDefault + stopPropagation so the card anchor does not navigate on tap', () => {
-    // Regression guard for the mobile bug that motivated the
-    // direct-binding refactor: a button sitting inside/near an <a>
-    // element must not let the click bubble up and trigger navigation.
-    const { button, invokeClick } = makeCapturingButton('starToggle');
+  it('REQ-STAR-001: initCardInteractions does NOT bind star buttons (delegation owns them)', () => {
+    // Regression guard for the intermittent "click the star and
+    // nothing happens, then navigating away and back fixes it" bug.
+    // Star toggles are owned by a single document-level delegation
+    // handler bound at module load (see bindStarDelegation in
+    // card-interactions.ts). initCardInteractions must NOT also bind
+    // them per-button — that produced two competing listeners that
+    // raced under Astro's view-transition morphing and lost their
+    // closure-bound listeners while keeping the dataset.bound guard.
+    const { button } = makeCapturingButton('starToggle');
     const rootQS: Record<string, HTMLButtonElement[]> = {
       '[data-star-toggle]': [button],
       '[data-tag-trigger]': [],
@@ -306,15 +311,13 @@ describe('initCardInteractions — REQ-STAR-001 + REQ-READ-001 event plumbing', 
     } as unknown as HTMLElement;
 
     const bound = initCardInteractions(root);
-    expect(bound).toBe(1);
-
-    const preventDefault = vi.fn();
-    const stopPropagation = vi.fn();
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
-    invokeClick({ preventDefault, stopPropagation });
-
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(stopPropagation).toHaveBeenCalledTimes(1);
+    // Star buttons are intentionally skipped — the document-level
+    // delegation handles them. The bound count reflects only
+    // tag-triggers (zero in this test).
+    expect(bound).toBe(0);
+    // The button must not have been touched: no dataset.bound flag,
+    // no addEventListener call (would have populated `captured`).
+    expect(button.dataset['bound']).toBeUndefined();
   });
 
   it('REQ-READ-001: the bound tag-trigger handler calls preventDefault + stopPropagation', () => {
@@ -338,14 +341,15 @@ describe('initCardInteractions — REQ-STAR-001 + REQ-READ-001 event plumbing', 
     expect(stopPropagation).toHaveBeenCalledTimes(1);
   });
 
-  it('REQ-STAR-001: re-running init does not double-bind (dataset.bound guard)', () => {
+  it('REQ-READ-001: re-running init does not double-bind tag-triggers (dataset.bound guard)', () => {
     // Simulates astro:page-load firing twice. A double-bind would
-    // cause a single click to fire two fetches and flip aria-pressed
-    // back and forth instantly.
-    const { button } = makeCapturingButton('starToggle');
+    // open + immediately close the popover on a single tap, since
+    // the second handler would see the disclosure already open and
+    // close it.
+    const { button } = makeCapturingButton('tagTrigger');
     const root = {
       querySelectorAll: (sel: string) =>
-        (sel === '[data-star-toggle]' ? [button] : []) as unknown as NodeListOf<Element>,
+        (sel === '[data-tag-trigger]' ? [button] : []) as unknown as NodeListOf<Element>,
     } as unknown as HTMLElement;
 
     const first = initCardInteractions(root);

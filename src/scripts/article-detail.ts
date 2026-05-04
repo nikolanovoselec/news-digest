@@ -1,4 +1,4 @@
-// Implements REQ-STAR-001, REQ-READ-002
+// Implements REQ-READ-002
 //
 // Article-detail page client behaviour. EXTERNAL module import — the
 // site's CSP is `script-src 'self'`, which blocks every inline
@@ -14,13 +14,22 @@
 // to its `href="/digest"` fallback on every SPA-arriving visit,
 // regardless of whether the back hijack's logic was correct.
 //
-// Two responsibilities:
-//   1. Star-toggle button on the article header — POST/DELETE to
-//      /api/articles/:id/star with optimistic aria-pressed flip.
-//   2. Back-arrow hijack — return to the exact previous page when
-//      the user arrived via in-app navigation. Falls through to the
-//      plain href="/digest" only on a genuine direct-link visit so
-//      the anchor stays a valid link with JS disabled.
+// Single responsibility: back-arrow hijack — return to the exact
+// previous page when the user arrived via in-app navigation. Falls
+// through to the plain href="/digest" only on a genuine direct-link
+// visit so the anchor stays a valid link with JS disabled.
+//
+// Star-toggle behaviour for the article-detail header button is
+// handled by the document-level delegation in
+// `~/scripts/card-interactions.ts`, which is loaded layout-wide via
+// `Base.astro` and finds every `[data-star-toggle]` on the page,
+// regardless of whether it lives inside a card or in the article
+// header. A previous per-page handler in this module collided with
+// the card-interactions one and caused intermittent "click the star
+// and nothing happens" failures after SPA navigation between
+// /digest and an article (the duplicate document-level capture
+// listener persisted across pages and competed with the per-button
+// listener for primacy).
 //
 // Two independent in-app signals — at least one must be present
 // before we hijack the click:
@@ -39,47 +48,6 @@
 // this page with referrer === '' — the prior heuristic then sent
 // them to the static /digest fallback even though history.back()
 // would have correctly returned to /history.
-
-async function handleStarClick(button: HTMLButtonElement): Promise<void> {
-  const articleId = button.dataset['articleId'];
-  if (articleId === undefined || articleId === '') return;
-  const wasPressed = button.getAttribute('aria-pressed') === 'true';
-  const nextPressed = !wasPressed;
-  button.setAttribute('aria-pressed', nextPressed ? 'true' : 'false');
-  try {
-    const res = await fetch(
-      `/api/articles/${encodeURIComponent(articleId)}/star`,
-      {
-        method: nextPressed ? 'POST' : 'DELETE',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-      },
-    );
-    if (!res.ok) {
-      button.setAttribute('aria-pressed', wasPressed ? 'true' : 'false');
-    }
-  } catch {
-    button.setAttribute('aria-pressed', wasPressed ? 'true' : 'false');
-  }
-}
-
-function initStar(): void {
-  if (document.documentElement.dataset['starDetailBound'] === '1') return;
-  document.documentElement.dataset['starDetailBound'] = '1';
-  document.addEventListener(
-    'click',
-    (e) => {
-      const target = e.target;
-      if (!(target instanceof Element)) return;
-      const button = target.closest<HTMLButtonElement>('[data-star-toggle]');
-      if (button === null) return;
-      e.preventDefault();
-      e.stopPropagation();
-      void handleStarClick(button);
-    },
-    true,
-  );
-}
 
 function handleBackClick(this: HTMLAnchorElement, e: MouseEvent): void {
   if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
@@ -109,9 +77,5 @@ function bindBack(): void {
   link.addEventListener('click', handleBackClick);
 }
 
-initStar();
 bindBack();
-document.addEventListener('astro:page-load', () => {
-  initStar();
-  bindBack();
-});
+document.addEventListener('astro:page-load', bindBack);
