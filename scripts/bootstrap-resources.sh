@@ -14,6 +14,11 @@
 # Required env:
 #   CLOUDFLARE_API_TOKEN
 #   CLOUDFLARE_ACCOUNT_ID
+#
+# Optional env:
+#   ENV_NAME  — when set (e.g. "integration"), operates on env-scoped
+#               sections like [[env.integration.d1_databases]]; otherwise
+#               operates on top-level sections (production deploys).
 
 set -euo pipefail
 
@@ -22,6 +27,24 @@ set -euo pipefail
 
 API="https://api.cloudflare.com/client/v4"
 AUTH_HEADER="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+
+# When ENV_NAME is set, prefix every section header with `env.<name>.` so
+# we operate on the environment-scoped resources instead of top-level.
+# When unset, leave the prefix empty (production / single-env path).
+ENV_NAME="${ENV_NAME:-}"
+if [ -n "$ENV_NAME" ]; then
+  SEC_PREFIX="env.${ENV_NAME}."
+  WORKER_NAME_HEADER="[env.${ENV_NAME}]"
+  echo "Bootstrap target: env=${ENV_NAME}"
+else
+  SEC_PREFIX=""
+  WORKER_NAME_HEADER=""
+  echo "Bootstrap target: production (top-level)"
+fi
+
+D1_HEADER="[[${SEC_PREFIX}d1_databases]]"
+KV_HEADER="[[${SEC_PREFIX}kv_namespaces]]"
+QUEUE_HEADER="[[${SEC_PREFIX}queues.producers]]"
 
 # ---------------------------------------------------------------- helpers
 cf_get() { curl -fsS -H "$AUTH_HEADER" "$API$1"; }
@@ -47,17 +70,36 @@ toml_scalar() {
   ' wrangler.toml
 }
 
+# Resolve the worker name for the current env target. Production uses the
+# top-level `name = ...`. Environment overrides live inside [env.<name>]
+# and re-declare `name`.
+resolve_worker_name() {
+  if [ -n "$WORKER_NAME_HEADER" ]; then
+    awk -v hdr="$WORKER_NAME_HEADER" '
+      $0 == hdr { in_section = 1; next }
+      /^\[/ && in_section { in_section = 0 }
+      in_section && $1 == "name" {
+        n = split($0, parts, "\"")
+        if (n >= 2) { print parts[2]; exit }
+      }
+    ' wrangler.toml
+  else
+    awk -F'"' '/^name[[:space:]]*=/ { print $2; exit }' wrangler.toml
+  fi
+}
+
 # ---------------------------------------------------- resource: D1 database
-D1_NAME=$(toml_scalar '[[d1_databases]]' 'database_name')
-D1_CURRENT=$(toml_scalar '[[d1_databases]]' 'database_id')
+D1_NAME=$(toml_scalar "$D1_HEADER" 'database_name')
+D1_CURRENT=$(toml_scalar "$D1_HEADER" 'database_id')
 if [ -z "$D1_NAME" ]; then
-  echo "ERROR: could not parse database_name from wrangler.toml"
+  echo "ERROR: could not parse database_name from wrangler.toml under $D1_HEADER"
   exit 1
 fi
 
 D1_ID=""
-# Step 1: is the pinned id present in this account?
-if [ -n "$D1_CURRENT" ]; then
+# Step 1: is the pinned id present in this account? (skip the 'TBD-...'
+# placeholder — that signals "no id yet, please bootstrap")
+if [ -n "$D1_CURRENT" ] && [[ "$D1_CURRENT" != TBD-* ]]; then
   if cf_get "/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$D1_CURRENT" \
       > /dev/null 2>&1; then
     D1_ID="$D1_CURRENT"
@@ -90,12 +132,16 @@ fi
 # wrangler.toml has no explicit name for the KV namespace (only the id +
 # binding). Derive a canonical title from the worker name so fork deploys
 # create a reusable namespace.
-WORKER_NAME=$(awk -F'"' '/^name[[:space:]]*=/ { print $2; exit }' wrangler.toml)
+WORKER_NAME=$(resolve_worker_name)
+if [ -z "$WORKER_NAME" ]; then
+  echo "ERROR: could not resolve worker name from wrangler.toml"
+  exit 1
+fi
 KV_TITLE="${WORKER_NAME}-kv"
-KV_CURRENT=$(toml_scalar '[[kv_namespaces]]' 'id')
+KV_CURRENT=$(toml_scalar "$KV_HEADER" 'id')
 
 KV_ID=""
-if [ -n "$KV_CURRENT" ]; then
+if [ -n "$KV_CURRENT" ] && [[ "$KV_CURRENT" != TBD-* ]]; then
   # Listing is the only read path for KV; check the id appears in the list.
   if cf_get "/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100" \
       | jq -e --arg id "$KV_CURRENT" '.result | any(.id == $id)' > /dev/null; then
@@ -124,12 +170,11 @@ if [ -z "$KV_ID" ]; then
 fi
 
 # ---------------------------------------------------------- resource: Queues
-# Iterate every `[[queues.producers]]` section in wrangler.toml (the
-# global-feed rework ships two: `scrape-coordinator` + `scrape-chunks`).
-# For each, check-or-create on Cloudflare so a fresh fork lands with the
-# queues pre-provisioned before `wrangler deploy` runs.
-QUEUE_NAMES=$(awk '
-  $0 == "[[queues.producers]]" { in_sec = 1; next }
+# Iterate every `[[queues.producers]]` section in wrangler.toml. For each,
+# check-or-create on Cloudflare so a fresh fork (or a fresh integration env)
+# lands with the queues pre-provisioned before `wrangler deploy` runs.
+QUEUE_NAMES=$(awk -v hdr="$QUEUE_HEADER" '
+  $0 == hdr { in_sec = 1; next }
   /^\[/ && in_sec { in_sec = 0 }
   in_sec && $1 == "queue" {
     n = split($0, parts, "\"")
@@ -138,7 +183,7 @@ QUEUE_NAMES=$(awk '
 ' wrangler.toml)
 
 if [ -z "$QUEUE_NAMES" ]; then
-  echo "ERROR: could not parse any queue names from wrangler.toml"
+  echo "ERROR: could not parse any queue names from wrangler.toml under $QUEUE_HEADER"
   exit 1
 fi
 
@@ -160,15 +205,16 @@ while IFS= read -r QUEUE_NAME; do
 done <<< "$QUEUE_NAMES"
 
 # -------------------------------------------------- patch wrangler.toml ids
-# Only touch the specific id lines inside [[d1_databases]] / [[kv_namespaces]]
-# so we don't accidentally rewrite anything else. The CI checkout is
-# ephemeral — this does not land back in the repo.
+# Only touch the specific id lines inside the targeted [[d1_databases]] /
+# [[kv_namespaces]] sections so we don't accidentally rewrite anything else.
+# When ENV_NAME is set, the env-scoped section is the target. The CI
+# checkout is ephemeral — this does not land back in the repo.
 
-# database_id (first occurrence under [[d1_databases]])
-awk -v new="$D1_ID" '
+# database_id (first occurrence under the targeted [[...d1_databases]])
+awk -v new="$D1_ID" -v hdr="$D1_HEADER" '
   BEGIN { in_sec=0; done=0 }
-  $0 == "[[d1_databases]]" { in_sec=1; print; next }
-  /^\[/ && in_sec && $0 != "[[d1_databases]]" { in_sec=0 }
+  $0 == hdr { in_sec=1; print; next }
+  /^\[/ && in_sec && $0 != hdr { in_sec=0 }
   in_sec && !done && $1 == "database_id" {
     print "database_id = \"" new "\""
     done=1
@@ -177,11 +223,11 @@ awk -v new="$D1_ID" '
   { print }
 ' wrangler.toml > wrangler.toml.tmp && mv wrangler.toml.tmp wrangler.toml
 
-# id (first occurrence under [[kv_namespaces]])
-awk -v new="$KV_ID" '
+# id (first occurrence under the targeted [[...kv_namespaces]])
+awk -v new="$KV_ID" -v hdr="$KV_HEADER" '
   BEGIN { in_sec=0; done=0 }
-  $0 == "[[kv_namespaces]]" { in_sec=1; print; next }
-  /^\[/ && in_sec && $0 != "[[kv_namespaces]]" { in_sec=0 }
+  $0 == hdr { in_sec=1; print; next }
+  /^\[/ && in_sec && $0 != hdr { in_sec=0 }
   in_sec && !done && $1 == "id" {
     print "id = \"" new "\""
     done=1
@@ -191,7 +237,7 @@ awk -v new="$KV_ID" '
 ' wrangler.toml > wrangler.toml.tmp && mv wrangler.toml.tmp wrangler.toml
 
 echo ""
-echo "Resolved resource ids:"
+echo "Resolved resource ids${ENV_NAME:+ (env=$ENV_NAME)}:"
 echo "  D1:     $D1_NAME = $D1_ID"
 echo "  KV:     $KV_TITLE = $KV_ID"
 while IFS= read -r QUEUE_NAME; do
