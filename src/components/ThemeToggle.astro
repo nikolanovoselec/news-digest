@@ -63,16 +63,25 @@ import ThemeIcon from '~/components/ThemeIcon.astro';
     }
   }
 
-  .theme-toggle__icon {
+  /* `:global(...)` selectors are required after CF-059 because the
+     icon wrapper <span> is rendered by ThemeIcon.astro (a child
+     component), not by this file. Astro applies its scope hash only
+     to selectors and elements declared in the same component's
+     <style> block; the child component's <span> carries the bare
+     unscoped class names this parent passes via props. Without the
+     :global wrapping, the scoped rules below would never match the
+     child's DOM and both icons would render simultaneously (the bug
+     this fix repairs). */
+  :global(.theme-toggle__icon) {
     display: none;
     line-height: 0;
   }
 
   /* Show the sun in dark mode (click to go light), moon in light mode. */
-  :global([data-theme='light']) .theme-toggle__icon--moon {
+  :global([data-theme='light'] .theme-toggle__icon--moon) {
     display: inline-flex;
   }
-  :global([data-theme='dark']) .theme-toggle__icon--sun {
+  :global([data-theme='dark'] .theme-toggle__icon--sun) {
     display: inline-flex;
   }
 
