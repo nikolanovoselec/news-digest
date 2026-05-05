@@ -469,13 +469,37 @@ function itemToHeadline(item: unknown, sourceName: string): Headline | null {
     parseFeedDate(item['dc:date']) ??
     parseFeedDate(item['published']);
   const snippet = rssItemSnippet(item);
+  // Per-item `<source>` override: Google News RSS includes
+  // `<source url="...">Publisher Name</source>` identifying the
+  // underlying publisher of each item. When present, it's much more
+  // useful than the feed-level "Google News: mcp" label — the user
+  // sees "Help Net Security" / "HackerNoon" instead of two rows that
+  // collide on the same generic label. Falls back to the feed-level
+  // sourceName when absent or empty.
+  const itemSourceName = extractItemSourceName(item['source']);
   return {
     title,
     url: link,
-    source_name: sourceName,
+    source_name: itemSourceName ?? sourceName,
     ...definedProp('published_at', published_at),
     ...definedProp('snippet', snippet),
   };
+}
+
+/**
+ * Pull the publisher name from an RSS `<source>` node. fxp emits a
+ * `<source url="...">Text</source>` element as either a string (when
+ * the element has no attributes), or an object with `#text`/`#cdata`
+ * for the textual content plus `url` for the attribute. Returns null
+ * when the value is missing or empty.
+ */
+function extractItemSourceName(node: unknown): string | null {
+  if (typeof node === 'string') return asString(node);
+  if (isRecord(node)) {
+    const text = asString(node['#text']) ?? asString(node['#cdata']);
+    if (text !== null) return text;
+  }
+  return null;
 }
 
 function entryToHeadline(entry: unknown, sourceName: string): Headline | null {
