@@ -51,7 +51,7 @@ Structured JSON logging as the single operational surface — no external observ
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. Every response includes `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.gravatar.com https://secure.gravatar.com; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`. The `'unsafe-inline'` allowance on `style-src` is required because Astro emits component-scoped styles as inline `<style>` blocks; `script-src` remains strict. `img-src` is narrowed to the only external origin we load (Gravatar avatars). `form-action` is `'self'` only because OAuth redirects are server-side, never browser-submitted.
+1. Every authenticated response carries a Content-Security-Policy header that restricts script execution to same-origin only and blocks inline event handlers. External image origins are limited to those the app explicitly loads (Gravatar avatars). The page cannot be embedded in an iframe and forms cannot submit to third-party origins. See `documentation/security.md` for the exact CSP directive value.
 2. Every response includes `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`.
 3. Every response includes `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`.
 4. Every response includes `Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), clipboard-read=()`.

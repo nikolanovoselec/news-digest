@@ -33,6 +33,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD17 | Reject `dedupe-groups.ts` extraction; finalize within-group dedup is downstream-gated | Architecture | 2026-05-04 |
 | AD18 | Reject `deferred-candidates.ts`; chunk-overflow drop path stays log-only until volume justifies persistence | Architecture | 2026-05-04 |
 | AD19 | Reject `tag-railing-flip-core.ts`; FLIP measurements are not separable from DOM and are tested via Playwright | Testing | 2026-05-04 |
+| AD20 | Window-scoped idempotency token for star-delegation listener (dual-bundle Pattern B) | Architecture | 2026-05-04 |
+| AD21 | Drop-cap per-platform fine-tuning deferred; system font metrics are the cross-platform constraint | UI | 2026-05-04 |
 | AD22 | SSRF defence relies on Workers network sandbox; static IP allowlist is best-effort only | Security | 2026-05-05 |
 | AD23 | Auth-rate-limit fail-closed without WAF backstop | Security | 2026-05-05 |
 | AD24 | Single OAUTH_JWT_SECRET for both session signing and CSRF state | Security | 2026-05-05 |

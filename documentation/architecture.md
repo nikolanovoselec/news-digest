@@ -235,13 +235,7 @@ Finalize consumer
 
 ### 5.2 Operator force-refresh
 
-Implements [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint). See [`api-reference.md — POST /api/admin/force-refresh`](api-reference.md#post-apiadminforce-refresh-also-get) for the full request/response contract.
-
-```
-POST /api/admin/force-refresh   (or GET, gated by Cloudflare Access)
-  └─ If a 'running' scrape_runs row is < 120 s old: reuse run_id
-     Otherwise: INSERT scrape_runs, send SCRAPE_COORDINATOR
-```
+Implements [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint). The endpoint reuses an in-progress run when one exists within the last two minutes; otherwise it starts a fresh coordinator dispatch — same data flow as the 4-hour cron. See [`api-reference.md — POST /api/admin/force-refresh`](api-reference.md#post-apiadminforce-refresh-also-get) for the full request/response contract.
 
 ### 5.3 Daily retention (03:00 UTC)
 
@@ -316,6 +310,35 @@ The `is:inline` attribute prevents Astro from re-bundling the file. `scripts/bui
 Replaces the prior hand-maintained `SKIP` set in `build-client-scripts.mjs` (CF-023).
 
 **Critical constraint:** a Pattern B script MUST NOT also be statically imported by any Astro page or component. Doing so causes Vite to bundle the entire module — including its auto-wire IIFE — into the page's `_astro/*.js` chunk. Both module instances share `document` but have independent closure state, so any listener-idempotency flag in module scope fails to deduplicate across the two evaluations. Idempotency tokens for scripts in this situation must live on `window`. See [AD20](decisions/README.md#ad20-idempotency-tokens-for-client-scripts-loaded-both-as-pattern-b-iife-and-via-page-level-import-must-live-on-window) for the full decision record and the CI gate that enforces this constraint.
+
+---
+
+## Design System Tokens (REQ-DES-001, REQ-DES-003)
+
+CSS custom properties declared in `src/styles/global.css` and consumed throughout the component tree.
+
+### Type scale
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--text-xs` | 12 px | Captions, metadata |
+| `--text-sm` | 14 px | Secondary body, labels |
+| `--text-base` | 16 px | Primary body |
+| `--text-lg` | 20 px | Card titles, section headers |
+| `--text-2xl` | 32 px | Display (article detail heading) |
+
+Font stacks: sans `(-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif)` for body/UI; serif `(Charter, "Iowan Old Style", Georgia, "Noto Serif", "Source Serif Pro", serif)` for article titles. No webfont download.
+
+Weights: 400 (body), 600 (headings and labels).
+
+### Motion tokens
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--ease` | `cubic-bezier(0.22, 1, 0.36, 1)` | All transitions |
+| `--duration-fast` | 150 ms | Micro-interactions (hover, press) |
+| `--duration-base` | 250 ms | Component transitions, View Transitions |
+| `--duration-slow` | 400 ms | Page-level transitions |
 
 ---
 

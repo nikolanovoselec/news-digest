@@ -18,7 +18,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 5. The pipeline is independent of individual user accounts — it runs once per tick regardless of how many users are signed up, and adding users does not multiply LLM spend.
 6. Each candidate's published-at timestamp reflects the source feed's real publish date (parsed from the feed entry) rather than the ingestion tick time, so a story first published three weeks ago is never displayed as "today" on the dashboard. When a feed entry provides no usable publish date, or the parsed value is implausible (pre-2000 or more than one day in the future), the ingestion time is used as a safe fallback.
 7. Candidates whose parsed publish date is older than 48 hours before the current tick are dropped before LLM summarisation so stale backlog items do not consume LLM budget or clutter the dashboard. Candidates with no parsable publish date (which fall back to the ingestion time) are kept — a missing date is not treated the same as a stale date.
-8. When a candidate's feed snippet is too thin to ground a faithful summary, the coordinator fetches the article body directly:
+8. When a candidate's feed snippet is too thin to ground a faithful summary, the pipeline fetches the article body directly:
    a. The fetch is HTTPS-only and passes an SSRF filter.
    b. The fetch is bounded by a network timeout and a maximum download size.
    c. Readable plaintext is extracted and attached to the candidate.
