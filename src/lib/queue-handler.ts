@@ -19,11 +19,25 @@
 
 import { log } from '~/lib/log';
 
-/** Cross-consumer queue retry cap. Mirror of `max_retries` in
- *  wrangler.toml — kept in sync by `scripts/check-wrangler-env-parity.mjs`
- *  (CF-005 / CF-020). The script greps for this exact line shape, so
- *  the form `const MAX_QUEUE_ATTEMPTS = N;` is load-bearing. */
-const MAX_QUEUE_ATTEMPTS = 3;
+/** CF-004 — cross-consumer queue retry cap, sourced from
+ *  `env.QUEUE_MAX_RETRIES` (wrangler.toml `[vars]`). The earlier
+ *  shape kept the literal `3` mirrored in this file AND in three
+ *  `[[queues.consumers]]` declarations of wrangler.toml, with a grep
+ *  parser script enforcing parity — fragile (a Prettier reformat
+ *  would silently break the script) and now superseded by reading
+ *  the literal once at the platform level.
+ *
+ *  Tests that run outside a Cloudflare runtime (no `env.QUEUE_MAX_RETRIES`
+ *  bound) fall back to 3 to preserve the historical default. */
+function readMaxQueueAttempts(env: Env): number {
+  const raw = (env as { QUEUE_MAX_RETRIES?: string | number }).QUEUE_MAX_RETRIES;
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw > 0) return raw;
+  if (typeof raw === 'string') {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return 3;
+}
 
 interface BatchHandlerOptions<TBody> {
   /** Per-message processor. Throws to trigger queue retry. */
@@ -42,8 +56,8 @@ interface BatchHandlerOptions<TBody> {
   /** Stable log status emitted when `onTerminalFailure` itself throws.
    *  Required iff `onTerminalFailure` is provided. */
   terminalFailureLogStatus?: string;
-  /** Override for {@link MAX_QUEUE_ATTEMPTS} — tests can pin a smaller
-   *  value without rebuilding wrangler.toml. */
+  /** Override for the env-driven cap — tests can pin a smaller value
+   *  without rebuilding wrangler.toml. */
   maxAttempts?: number;
 }
 
@@ -69,7 +83,7 @@ export async function handleBatch<TBody>(
   env: Env,
   opts: BatchHandlerOptions<TBody>,
 ): Promise<void> {
-  const max = opts.maxAttempts ?? MAX_QUEUE_ATTEMPTS;
+  const max = opts.maxAttempts ?? readMaxQueueAttempts(env);
   for (const message of batch.messages) {
     try {
       await opts.process(env, message.body);

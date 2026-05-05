@@ -373,39 +373,77 @@ export async function runCoordinator(
       env.DB,
       reSeenClusters.map((c) => c.primary.canonical_url),
     );
-    const sourceInserts: D1PreparedStatement[] = [];
+
+    // CF-007 — dedupe sourceInserts in JS BEFORE building D1 statements.
+    // The previous shape emitted one prepared statement per (cluster,
+    // source) pair without de-duplication, which on a busy re-discovery
+    // tick produced thousands of nearly-identical INSERT OR IGNORE
+    // statements (most of which collapsed to no-ops at the SQLite PK).
+    // The map is keyed on (article_id, source_url) — the article_sources
+    // PK — so duplicates inside the in-memory candidate set never reach
+    // D1. Short-circuit also drops the cluster's own primary_source_url
+    // because article_sources's primary row already lives in articles.
+    interface SourceInsert {
+      articleId: string;
+      sourceName: string;
+      sourceUrl: string;
+      publishedAt: number;
+    }
+    const dedup = new Map<string, SourceInsert>();
     for (const cluster of reSeenClusters) {
       const articleId = idMap.get(cluster.primary.canonical_url);
       if (articleId === undefined) continue;
+      const primaryUrl = cluster.primary.source_url;
       const sources = [cluster.primary, ...cluster.alternatives];
       for (const src of sources) {
-        sourceInserts.push(
-          env.DB
-            .prepare(
-              `INSERT OR IGNORE INTO article_sources
-                 (article_id, source_name, source_url, published_at)
-               VALUES (?1, ?2, ?3, ?4)`,
-            )
-            .bind(
-              articleId,
-              src.source_name,
-              src.source_url,
-              src.published_at,
-            ),
-        );
+        if (src.source_url === primaryUrl) continue;
+        const key = `${articleId} ${src.source_url}`;
+        if (dedup.has(key)) continue;
+        dedup.set(key, {
+          articleId,
+          sourceName: src.source_name,
+          sourceUrl: src.source_url,
+          publishedAt: src.published_at,
+        });
       }
     }
-    if (sourceInserts.length > 0) {
-      // D1 caps a single batch at 100 statements; chunk to keep
-      // unbounded re-discovery loads from blowing the limit. The
-      // INSERT OR IGNORE makes per-chunk failure recoverable —
-      // the next tick re-runs against the same survivor set.
-      const SOURCE_INSERT_BATCH = 100;
-      for (let i = 0; i < sourceInserts.length; i += SOURCE_INSERT_BATCH) {
-        const slice = sourceInserts.slice(i, i + SOURCE_INSERT_BATCH);
+
+    const inserts = [...dedup.values()];
+    if (inserts.length > 0) {
+      // CF-007 — single multi-VALUES INSERT per batch instead of one
+      // prepared statement per row. D1's placeholder limit is ~100
+      // total; with 4 placeholders per row, batch up to 25 rows per
+      // statement. INSERT OR IGNORE preserves the per-row idempotency
+      // the prior shape relied on.
+      const ROWS_PER_STATEMENT = 25;
+      const SQL_PREFIX =
+        'INSERT OR IGNORE INTO article_sources (article_id, source_name, source_url, published_at) VALUES ';
+      const STATEMENTS_PER_BATCH = 4; // 4 statements × 25 rows = 100 rows / batch
+      const statements: D1PreparedStatement[] = [];
+      for (let i = 0; i < inserts.length; i += ROWS_PER_STATEMENT) {
+        const slice = inserts.slice(i, i + ROWS_PER_STATEMENT);
+        const placeholders = slice
+          .map((_, j) => {
+            const base = j * 4;
+            return `(?${base + 1}, ?${base + 2}, ?${base + 3}, ?${base + 4})`;
+          })
+          .join(', ');
+        const params: (string | number)[] = [];
+        for (const row of slice) {
+          params.push(
+            row.articleId,
+            row.sourceName,
+            row.sourceUrl,
+            row.publishedAt,
+          );
+        }
+        statements.push(env.DB.prepare(SQL_PREFIX + placeholders).bind(...params));
+      }
+      for (let i = 0; i < statements.length; i += STATEMENTS_PER_BATCH) {
+        const slice = statements.slice(i, i + STATEMENTS_PER_BATCH);
         await env.DB.batch(slice);
       }
-      sourcesAppended = sourceInserts.length;
+      sourcesAppended = inserts.length;
     }
     log('info', 'digest.generation', {
       status: 'coordinator_skipped_existing',

@@ -84,6 +84,12 @@ crons = ["0 */4 * * *", "0 3 * * *", "*/5 * * * *"]
 
 [vars]
 # APP_URL is set as a Worker secret (different per deployment target)
+# CF-004 — single source of truth for the queue retry cap. Both the
+# Cloudflare-side per-queue `max_retries` literals and the worker
+# code's batch handler read this value (via `env.QUEUE_MAX_RETRIES`)
+# so a future bump only changes one place. Integers must be quoted as
+# strings here; the consumer `Number.parseInt`s them.
+QUEUE_MAX_RETRIES = "3"
 
 # ---------------------------------------------------------------------------
 # Integration environment — `wrangler deploy --env integration` targets a
@@ -100,6 +106,11 @@ crons = ["0 */4 * * *", "0 3 * * *", "*/5 * * * *"]
 name = "ai-news-digest-integration"
 main = "./dist/_worker.js/_merged.mjs"
 assets = { directory = "./dist", binding = "ASSETS" }
+
+[env.integration.vars]
+# CF-004 — must match the top-level [vars] QUEUE_MAX_RETRIES; the
+# integration env doesn't inherit top-level vars automatically.
+QUEUE_MAX_RETRIES = "3"
 
 [env.integration.observability]
 enabled = true

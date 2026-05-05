@@ -274,13 +274,27 @@ async function runStuckTagPrune(env: Env): Promise<number> {
         prefix: 'sources:',
         ...(cursor !== undefined ? { cursor } : {}),
       });
-      for (const key of page.keys) {
-        const tag = key.name.startsWith('sources:')
-          ? key.name.slice('sources:'.length)
-          : '';
-        if (tag === '') continue;
-        const raw = await env.KV.get(key.name);
-        if (raw === null) continue;
+      // CF-008 — fetch all sources:* values in parallel per page.
+      // Previous shape was a serial `for (const key of page.keys) {
+      // await env.KV.get(...) }` loop, which on the daily cron pinned
+      // the prune wall-clock at N × KV.get latency. The orphan-tag
+      // sweep already uses Promise.all; this brings stuck-tag prune
+      // in line. Pre-filter by namespace prefix so we never issue a
+      // KV.get for a non-`sources:*` key (defensive).
+      const candidates = page.keys
+        .map((k) => ({
+          key: k,
+          tag: k.name.startsWith('sources:')
+            ? k.name.slice('sources:'.length)
+            : '',
+        }))
+        .filter((c) => c.tag !== '');
+      const raws = await Promise.all(
+        candidates.map((c) => env.KV.get(c.key.name)),
+      );
+      for (let i = 0; i < candidates.length; i++) {
+        const raw = raws[i];
+        if (raw === null || raw === undefined) continue;
         let parsed: SourcesCacheValueShape | null;
         try {
           parsed = JSON.parse(raw) as SourcesCacheValueShape;
@@ -291,7 +305,8 @@ async function runStuckTagPrune(env: Env): Promise<number> {
         if (!Array.isArray(parsed.feeds) || parsed.feeds.length !== 0) continue;
         if (typeof parsed.discovered_at !== 'number') continue;
         if (parsed.discovered_at > cutoffMs) continue;
-        stuckTooLong.add(tag);
+        const tag = candidates[i]?.tag;
+        if (tag !== undefined) stuckTooLong.add(tag);
       }
       cursor = page.list_complete ? undefined : page.cursor;
     } while (cursor !== undefined);
