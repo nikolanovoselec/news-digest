@@ -21,6 +21,16 @@ const JWT_SECRET = 'test-secret-for-hmac-sha256-signing-minimum-length';
 const APP_URL = 'https://news-digest.example.com';
 const APP_ORIGIN = 'https://news-digest.example.com';
 
+// CF-012 — readArticleId now requires a 26-char Crockford-base32 ULID.
+// The earlier `art-N` test aliases tripped the format check on every
+// star request; replace them with deterministic ULID stand-ins. Each
+// alias is one stable 26-char value so per-test assertions on the
+// inserted article_id continue to read naturally.
+const ART_1  = '01ARZ3NDEKTSV4RRFFQ69G5FA1';
+const ART_7  = '01ARZ3NDEKTSV4RRFFQ69G5FA7';
+const ART_42 = '01ARZ3NDEKTSV4RRFFQ69G5F42';
+const ART_99 = '01ARZ3NDEKTSV4RRFFQ69G5F99';
+
 interface UserRow {
   id: string;
   email: string;
@@ -143,7 +153,7 @@ async function starRequest(
     cookie?: string | null;
   } = {},
 ): Promise<Request> {
-  const articleId = options.articleId ?? 'art-1';
+  const articleId = options.articleId ?? ART_1;
   const headers = new Headers({ 'Content-Type': 'application/json' });
   if (options.origin !== null && options.origin !== undefined) {
     headers.set('Origin', options.origin);
@@ -172,26 +182,26 @@ describe('POST/DELETE /api/articles/:id/star — REQ-STAR-001', () => {
 
     // First POST — should insert.
     const req1 = await starRequest('POST', {
-      articleId: 'art-42',
+      articleId: ART_42,
       origin: APP_ORIGIN,
       cookie,
     });
     const res1 = await POST(
-      makeContext(req1, makeEnv(db), 'art-42') as never,
+      makeContext(req1, makeEnv(db), ART_42) as never,
     );
     expect(res1.status).toBe(200);
     const body1 = (await res1.json()) as { starred: boolean };
     expect(body1.starred).toBe(true);
-    expect(stars.has('user-1:art-42')).toBe(true);
+    expect(stars.has(`user-1:${ART_42}`)).toBe(true);
 
     // Second POST — idempotent, still 200, still one row.
     const req2 = await starRequest('POST', {
-      articleId: 'art-42',
+      articleId: ART_42,
       origin: APP_ORIGIN,
       cookie,
     });
     const res2 = await POST(
-      makeContext(req2, makeEnv(db), 'art-42') as never,
+      makeContext(req2, makeEnv(db), ART_42) as never,
     );
     expect(res2.status).toBe(200);
     const body2 = (await res2.json()) as { starred: boolean };
@@ -213,35 +223,35 @@ describe('POST/DELETE /api/articles/:id/star — REQ-STAR-001', () => {
 
     // Seed a star row.
     const postReq = await starRequest('POST', {
-      articleId: 'art-7',
+      articleId: ART_7,
       origin: APP_ORIGIN,
       cookie,
     });
-    await POST(makeContext(postReq, makeEnv(db), 'art-7') as never);
-    expect(stars.has('user-1:art-7')).toBe(true);
+    await POST(makeContext(postReq, makeEnv(db), ART_7) as never);
+    expect(stars.has(`user-1:${ART_7}`)).toBe(true);
 
     // First DELETE removes it.
     const del1 = await starRequest('DELETE', {
-      articleId: 'art-7',
+      articleId: ART_7,
       origin: APP_ORIGIN,
       cookie,
     });
     const res1 = await DELETE(
-      makeContext(del1, makeEnv(db), 'art-7') as never,
+      makeContext(del1, makeEnv(db), ART_7) as never,
     );
     expect(res1.status).toBe(200);
     const body1 = (await res1.json()) as { starred: boolean };
     expect(body1.starred).toBe(false);
-    expect(stars.has('user-1:art-7')).toBe(false);
+    expect(stars.has(`user-1:${ART_7}`)).toBe(false);
 
     // Second DELETE is a no-op — still 200, no throw.
     const del2 = await starRequest('DELETE', {
-      articleId: 'art-7',
+      articleId: ART_7,
       origin: APP_ORIGIN,
       cookie,
     });
     const res2 = await DELETE(
-      makeContext(del2, makeEnv(db), 'art-7') as never,
+      makeContext(del2, makeEnv(db), ART_7) as never,
     );
     expect(res2.status).toBe(200);
     const body2 = (await res2.json()) as { starred: boolean };
@@ -254,34 +264,34 @@ describe('POST/DELETE /api/articles/:id/star — REQ-STAR-001', () => {
 
     // Missing Origin header → 403.
     const reqMissing = await starRequest('POST', {
-      articleId: 'art-1',
+      articleId: ART_1,
       origin: null,
       cookie,
     });
     const resMissing = await POST(
-      makeContext(reqMissing, makeEnv(db), 'art-1') as never,
+      makeContext(reqMissing, makeEnv(db), ART_1) as never,
     );
     expect(resMissing.status).toBe(403);
 
     // Wrong Origin header → 403.
     const reqWrong = await starRequest('POST', {
-      articleId: 'art-1',
+      articleId: ART_1,
       origin: 'https://attacker.example.com',
       cookie,
     });
     const resWrong = await POST(
-      makeContext(reqWrong, makeEnv(db), 'art-1') as never,
+      makeContext(reqWrong, makeEnv(db), ART_1) as never,
     );
     expect(resWrong.status).toBe(403);
 
     // DELETE is equally guarded.
     const reqDel = await starRequest('DELETE', {
-      articleId: 'art-1',
+      articleId: ART_1,
       origin: 'https://attacker.example.com',
       cookie,
     });
     const resDel = await DELETE(
-      makeContext(reqDel, makeEnv(db), 'art-1') as never,
+      makeContext(reqDel, makeEnv(db), ART_1) as never,
     );
     expect(resDel.status).toBe(403);
 
@@ -293,22 +303,22 @@ describe('POST/DELETE /api/articles/:id/star — REQ-STAR-001', () => {
     const { db, stars } = makeDb(userRow());
 
     const reqPost = await starRequest('POST', {
-      articleId: 'art-1',
+      articleId: ART_1,
       origin: APP_ORIGIN,
       cookie: null,
     });
     const resPost = await POST(
-      makeContext(reqPost, makeEnv(db), 'art-1') as never,
+      makeContext(reqPost, makeEnv(db), ART_1) as never,
     );
     expect(resPost.status).toBe(401);
 
     const reqDel = await starRequest('DELETE', {
-      articleId: 'art-1',
+      articleId: ART_1,
       origin: APP_ORIGIN,
       cookie: null,
     });
     const resDel = await DELETE(
-      makeContext(reqDel, makeEnv(db), 'art-1') as never,
+      makeContext(reqDel, makeEnv(db), ART_1) as never,
     );
     expect(resDel.status).toBe(401);
 
@@ -368,29 +378,29 @@ describe('POST/DELETE /api/articles/:id/star — REQ-STAR-001', () => {
     // User A stars art-99.
     const cookieA = await sessionCookieFor('user-A');
     const postA = await starRequest('POST', {
-      articleId: 'art-99',
+      articleId: ART_99,
       origin: APP_ORIGIN,
       cookie: cookieA,
     });
-    const resA = await POST(makeContext(postA, makeEnv(db), 'art-99') as never);
+    const resA = await POST(makeContext(postA, makeEnv(db), ART_99) as never);
     expect(resA.status).toBe(200);
-    expect(stars.has('user-A:art-99')).toBe(true);
-    expect(stars.has('user-B:art-99')).toBe(false);
+    expect(stars.has(`user-A:${ART_99}`)).toBe(true);
+    expect(stars.has(`user-B:${ART_99}`)).toBe(false);
 
     // User B DELETEs art-99 — this targets user B's own star row
     // (none exists), so user A's row must still be intact.
     const cookieB = await sessionCookieFor('user-B');
     const delB = await starRequest('DELETE', {
-      articleId: 'art-99',
+      articleId: ART_99,
       origin: APP_ORIGIN,
       cookie: cookieB,
     });
     const resB = await DELETE(
-      makeContext(delB, makeEnv(db), 'art-99') as never,
+      makeContext(delB, makeEnv(db), ART_99) as never,
     );
     expect(resB.status).toBe(200);
-    expect(stars.has('user-A:art-99')).toBe(true);
-    expect(stars.has('user-B:art-99')).toBe(false);
+    expect(stars.has(`user-A:${ART_99}`)).toBe(true);
+    expect(stars.has(`user-B:${ART_99}`)).toBe(false);
 
     // Also verify the DELETE bound user-B (not user-A) — the handler
     // must never let a user DELETE another user's star row via path
@@ -400,7 +410,7 @@ describe('POST/DELETE /api/articles/:id/star — REQ-STAR-001', () => {
     );
     expect(deletes).toHaveLength(1);
     expect(deletes[0]?.params[0]).toBe('user-B');
-    expect(deletes[0]?.params[1]).toBe('art-99');
+    expect(deletes[0]?.params[1]).toBe(ART_99);
   });
 
   it('REQ-AUTH-001 AC 9 / CF-028: returns 429 when the per-user star bucket is exhausted', async () => {
@@ -419,11 +429,11 @@ describe('POST/DELETE /api/articles/:id/star — REQ-STAR-001', () => {
 
     const cookie = await sessionCookieFor('user-1');
     const req = await starRequest('POST', {
-      articleId: 'art-1',
+      articleId: ART_1,
       origin: APP_ORIGIN,
       cookie,
     });
-    const res = await POST(makeContext(req, env, 'art-1') as never);
+    const res = await POST(makeContext(req, env, ART_1) as never);
     expect(res.status).toBe(429);
     expect(res.headers.get('Retry-After')).not.toBeNull();
   });

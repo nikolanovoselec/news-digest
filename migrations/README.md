@@ -7,10 +7,13 @@ D1 schema is rebuilt from scratch by every migration in this folder, applied in 
 The current live schema is the result of `0003_global_feed.sql` redesigning
 the original 0001/0002 shape into the global-feed shape. CF-020 originally
 proposed deleting 0001 + 0002 as redundant, but the test fixtures'
-`applyD1Migrations` walks the entire folder in order: 0003's `DROP TABLE`
-statements assume the 0001 and 0002 tables exist before being dropped. The
-0001/0002 files are kept verbatim as the starting state of every fresh
-test pool / CI run.
+`applyD1Migrations` walks the entire folder in order and 0003's recreated
+tables (article_stars, article_reads) carry `REFERENCES users(id)` foreign
+keys. The `users` table is created by 0001; without it 0003's table
+creation errors at the FK declaration. Migration 0002 likewise carries an
+`ALTER TABLE articles` that fails if 0001's `articles` table is absent.
+The 0001/0002 files are kept verbatim as the FK-base of every fresh test
+pool / CI run.
 
 REQ comments in `0003_global_feed.sql` and onward describe the **live**
 schema. Spec changes that touch these tables expect the matching SQL to
