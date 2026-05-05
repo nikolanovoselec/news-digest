@@ -117,7 +117,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 2. GitHub → Actions → "Deploy Integration" → "Run workflow" → green button.
 3. The branch dropdown in the dispatch dialog is irrelevant — the workflow always pulls `develop`'s current HEAD.
 4. ~3 minutes for first-deploy (resources provisioned), ~2 minutes for subsequent deploys.
-5. Smoke at the URL you set in `vars.APP_URL` (or the `*.workers.dev` URL the deploy log prints). The integration smoke step is **informational only** — any HTTP response (including `401`/`403` from a Cloudflare Access perimeter, redirects, or a `5xx` regression) is reported in the workflow log; only `5xx` responses fail the workflow. The `wrangler deploy` step is the authoritative success signal.
+5. Smoke at the URL you set in `vars.APP_URL` (or the `*.workers.dev` URL the deploy log prints). The smoke step sends a real User-Agent (bypasses Cloudflare bot management) and asserts the response body contains the landing-page marker `"News Digest"`. Pass: `200` + marker found. Soft-fail (tries next URL): `403` (CF bot challenge or Access perimeter). Hard-fail: `5xx`, `200` without the marker, or any other status. The `wrangler deploy` step remains the authoritative success signal.
 
 **Triggering a scrape on integration** (since crons are off):
 
@@ -172,8 +172,10 @@ A handful of operator endpoints drive LLM calls or queue work on demand — budg
 
 | Layer | Role | Implementation |
 |---|---|---|
-| **Worker-side gate** (`src/middleware/admin-auth.ts`) | **Security boundary.** Always enforced; sufficient on its own. | Baseline (always): valid Worker session cookie + session email matches `ADMIN_EMAIL` (case-insensitive). Optional perimeter (Layer 0, AD29): when `CF_ACCESS_AUD` is set, additionally validates a Cloudflare Access assertion's `aud` claim before the baseline runs. Returns at the first failing layer with no observable side effect. Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8. |
-| **Cloudflare Access** (zone-level) | **Optional UX + perimeter layer.** When bound, redirects unauthenticated browsers to the Access login page instead of returning a bare 403, and the Worker gate enforces an `aud` match for defence-in-depth. | Operator-configured at the zone; not required for the Worker gate to function. Forks and integration deploys without Access bound rely on the baseline Worker gate alone (AD29). |
+| **Worker-side gate** (`src/middleware/admin-auth.ts`) | **Security boundary.** Always enforced; sufficient on its own. | Baseline: session cookie + `ADMIN_EMAIL` match. Optional Layer 0 (AD29): `aud`-claim check when `CF_ACCESS_AUD` is set. Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8. |
+| **Cloudflare Access** (zone-level) | **Optional UX + perimeter layer.** When bound, redirects unauthenticated browsers to the Access login page. | Not required for the Worker gate to function. Forks and integration deploys without Access bound use the baseline Worker gate alone (AD29). |
+
+The Worker gate enforces checks in order: when `CF_ACCESS_AUD` is set, the request must carry a Cloudflare Access assertion whose `aud` claim matches before the baseline session check runs; returns at the first failing layer with no observable side effect.
 
 ### Setting `CF_ACCESS_AUD` and the `*.workers.dev` perimeter (production)
 
