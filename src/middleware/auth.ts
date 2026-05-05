@@ -81,6 +81,11 @@ export function buildClearSessionCookie(): string {
   return `${SESSION_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
 }
 
+// Re-export so callers that already pull session-cookie helpers from
+// auth.ts can also wipe the refresh cookie without an extra import path.
+// CF-028 needs this on the account-deletion path.
+export { buildClearRefreshCookie };
+
 /**
  * Result of {@link loadSession}. Always non-null; auth failure is
  * signalled by `user === null`. `cookiesToSet` is the list of

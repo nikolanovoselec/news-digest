@@ -5,6 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DELETE, POST } from '~/pages/api/auth/account';
 import { SESSION_COOKIE_NAME } from '~/middleware/auth';
+import { REFRESH_TOKEN_COOKIE_NAME } from '~/lib/refresh-tokens';
 import { signSession } from '~/lib/session-jwt';
 
 /** Collect every Set-Cookie value from a Response. */
@@ -262,7 +263,7 @@ describe('DELETE /api/auth/account', () => {
     );
     const refreshClear = cookies.find(
       (c) =>
-        c.startsWith('__Host-news_digest_refresh=') &&
+        c.startsWith(`${REFRESH_TOKEN_COOKIE_NAME}=`) &&
         c.includes('Max-Age=0'),
     );
     expect(sessionClear).toBeDefined();
