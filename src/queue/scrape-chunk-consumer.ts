@@ -51,7 +51,7 @@ import { splitIntoParagraphs } from '~/lib/paragraph-split';
 import { FALLBACK_MODEL_ID } from '~/lib/models';
 import { runJsonWithFallback, previewRawResponse, asAiBinding } from '~/lib/llm-json';
 import { addChunkStats, finishRun } from '~/lib/scrape-run';
-import { recordChunkCompletion } from '~/lib/articles-repo';
+import { recordChunkCompletion, countChunkCompletions } from '~/lib/articles-repo';
 import { generateUlid } from '~/lib/ulid';
 import { applyForeignKeysPragma } from '~/lib/db';
 import { log } from '~/lib/log';
@@ -656,13 +656,7 @@ async function recordChunkCompletionAndCheckFinalize(
     body.chunk_index,
   );
 
-  const completedRow = await env.DB
-    .prepare(
-      'SELECT COUNT(*) AS done FROM scrape_chunk_completions WHERE scrape_run_id = ?1',
-    )
-    .bind(body.scrape_run_id)
-    .first<{ done: number }>();
-  const completedCount = completedRow?.done ?? 0;
+  const completedCount = await countChunkCompletions(env.DB, body.scrape_run_id);
 
   if (completedCount >= body.total_chunks) {
     await finishRun(env.DB, body.scrape_run_id, 'ready');

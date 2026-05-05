@@ -7,17 +7,24 @@
 // support (RSS pubDate, Atom published/updated, JSON Feed
 // date_published) + the fallback behaviour when the feed omits or
 // mangles the date.
+//
+// CF-022: GENERIC_SOURCES was removed from sources.ts. This test now
+// accesses the RSS and Atom parsers via `adaptersForDiscoveredFeeds`
+// with synthetic feed descriptors, which exercises the same code paths
+// (both ultimately call `extractRssItems` / `entryToHeadline`).
 
 import { describe, it, expect } from 'vitest';
-import {
-  GENERIC_SOURCES,
-  adaptersForDiscoveredFeeds,
-} from '~/lib/sources';
+import { adaptersForDiscoveredFeeds } from '~/lib/sources';
 
-function extractorFor(name: string) {
-  const s = GENERIC_SOURCES.find((s) => s.name === name);
-  if (s === undefined) throw new Error(`generic source '${name}' not found`);
-  return s.extract;
+/** Build an adapter that drives extractRssItems (RSS/Atom shapes). */
+function rssExtractor() {
+  const adapters = adaptersForDiscoveredFeeds(
+    [{ name: 'synthetic-rss', url: 'https://example.com/rss', kind: 'rss' }],
+    { trusted: true },
+  );
+  const a = adapters[0];
+  if (a === undefined) throw new Error('synthetic RSS adapter not built');
+  return a.extract;
 }
 
 /** Build a JSON-Feed 1.1 discovered-source adapter via the public
@@ -41,7 +48,7 @@ function jsonFeedExtractor(): (parsed: unknown) => ReturnType<
 }
 
 describe('RSS pubDate extraction — regression for stale ingest-time stamp', () => {
-  const extract = extractorFor('googlenews'); // RSS adapter
+  const extract = rssExtractor();
 
   it('parses RFC 2822 pubDate into a unix-seconds published_at', () => {
     const parsed = {
@@ -163,7 +170,7 @@ describe('RSS pubDate extraction — regression for stale ingest-time stamp', ()
 });
 
 describe('Atom feed extraction — <published> / <updated>', () => {
-  const extract = extractorFor('googlenews');
+  const extract = rssExtractor();
 
   it('parses Atom <published> into published_at', () => {
     // CF-071: the parser is configured with `attributeNamePrefix: ''`

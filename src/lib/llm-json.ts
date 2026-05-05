@@ -38,6 +38,34 @@ import {
   type AIRunResponse,
 } from '~/lib/generate';
 
+// CF-052 — rolling-window fallback counter. Each entry is a unix-ms
+// timestamp of when a fallback fired. Entries older than 5 minutes
+// are pruned on every fallback invocation. When the window contains
+// ≥10 entries the circuit-breaker log fires once (alert-only; no
+// automatic action in v1). Workers are single-threaded so mutation
+// here is safe without a mutex.
+const CIRCUIT_BREAKER_WINDOW_MS = 5 * 60 * 1_000; // 5 minutes
+const CIRCUIT_BREAKER_THRESHOLD = 10;
+const fallbackTimestamps: number[] = [];
+
+function recordFallbackAndMaybeOpenCircuit(primaryModel: string, fallbackModel: string): void {
+  const now = Date.now();
+  // Prune timestamps outside the rolling window.
+  const cutoff = now - CIRCUIT_BREAKER_WINDOW_MS;
+  while (fallbackTimestamps.length > 0 && (fallbackTimestamps[0] ?? 0) < cutoff) {
+    fallbackTimestamps.shift();
+  }
+  fallbackTimestamps.push(now);
+  if (fallbackTimestamps.length >= CIRCUIT_BREAKER_THRESHOLD) {
+    log('error', 'llm.circuit_breaker_open', {
+      fallbacks_in_window: fallbackTimestamps.length,
+      window_ms: CIRCUIT_BREAKER_WINDOW_MS,
+      primary_model: primaryModel,
+      fallback_model: fallbackModel,
+    });
+  }
+}
+
 /** Minimal Workers-AI binding shape. We intentionally do not import
  *  the platform-typed `Ai` here so this helper is trivial to mock. */
 export interface AiBinding {
@@ -143,9 +171,7 @@ export async function runJsonWithFallback<T>(
   // CF-022 — emit a structured log every time fallback fires so the
   // operator can `wrangler tail | grep llm.fallback_invoked` and spot
   // a degraded primary BEFORE the cost spike of full primary+fallback
-  // tokens accumulates over many ticks. v1 is alert-only; a future
-  // refactor can add a circuit-breaker once the alert cadence is
-  // understood in production.
+  // tokens accumulates over many ticks.
   log('warn', 'llm.fallback_invoked', {
     primary_model: primaryModel,
     fallback_model: fallbackModel,
@@ -153,6 +179,10 @@ export async function runJsonWithFallback<T>(
     wasted_tokens_out: primaryTokensOut,
     wasted_cost_usd: primaryCostUsd,
   });
+
+  // CF-052 — rolling-window circuit-breaker alert. Fires when ≥10
+  // fallbacks occur in a 5-minute window; v1 is alert-only.
+  recordFallbackAndMaybeOpenCircuit(primaryModel, fallbackModel);
 
   const fallbackResult = (await options.ai.run(fallbackModel, options.params)) as AIRunResponse;
   const fallbackRaw = extractResponsePayload(fallbackResult);

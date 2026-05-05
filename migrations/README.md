@@ -2,16 +2,19 @@
 
 D1 schema is rebuilt from scratch by every migration in this folder, applied in lexical order. The cron-driven workflow reapplies them on every CI deploy via `wrangler d1 migrations apply`.
 
-## Historical context (CF-010)
+## Historical context (CF-010 / CF-020)
 
-The current live schema effectively starts at **migration 0003**. Migrations 0001–0002 describe a **pre-launch schema** (per-user digest jobs, tag-keyed columns, separate hashtag table) that was redesigned before the product reached real users.
+The current live schema starts at **migration 0003**. Migrations 0001–0002
+described a pre-launch schema (per-user digest jobs, tag-keyed columns,
+separate hashtag table) that was redesigned before the product reached real
+users and have been removed (CF-020). Migration 0003 (`0003_global_feed.sql`)
+was already destructive — it `DROP`s every table from the 0001–0002 era
+and recreates them in the global-feed shape — so removing the squashed
+files has no effect on any deployment.
 
-Migration 0003 (`0003_global_feed.sql`) is destructive: it `DROP`s every table touched by 0001–0002 and recreates them in the global-feed shape (one shared scrape pool, `articles.canonical_url` as the dedup key, JSON arrays for `details_json`/`tags_json`, `article_sources`/`article_tags`/`article_reads`/`article_stars` as the live child tables).
-
-What this means for REQ annotations:
-
-- REQ comments inside `0001_initial.sql` and `0002_article_tags.sql` are **historical** — those columns and tables were superseded by 0003 and never shipped. Don't edit those headers; the file's value is the migration history, not the contract.
-- REQ comments in `0003_global_feed.sql` and onward describe the **live** schema. Spec changes that touch these tables expect the matching SQL to live here.
+REQ comments in `0003_global_feed.sql` and onward describe the **live**
+schema. Spec changes that touch these tables expect the matching SQL to
+live here.
 
 ## Migration index (live)
 

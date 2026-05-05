@@ -33,6 +33,7 @@ import { clusterByCanonical, type Candidate } from '~/lib/dedupe';
 import {
   loadExistingCanonicalToIdMap,
   loadExistingCanonicalUrls,
+  updateChunkCount,
 } from '~/lib/articles-repo';
 import { handleBatch } from '~/lib/queue-handler';
 import { finishRun } from '~/lib/scrape-run';
@@ -552,12 +553,10 @@ async function chunkAndEnqueue(
   // Persist total chunk count on the scrape_runs row so the
   // /api/scrape-status endpoint can compute 'X of Y chunks done'
   // for the in-progress UI. Best-effort; a failure here is logged
-  // but doesn't block the fan-out.
+  // but doesn't block the fan-out. CF-021 — uses the repo helper
+  // so all `scrape_runs.chunk_count` writes live in one layer.
   try {
-    await env.DB
-      .prepare('UPDATE scrape_runs SET chunk_count = ?1 WHERE id = ?2')
-      .bind(totalChunks, scrape_run_id)
-      .run();
+    await updateChunkCount(env.DB, scrape_run_id, totalChunks);
   } catch (err) {
     log('warn', 'digest.generation', {
       status: 'coordinator_chunk_count_update_failed',

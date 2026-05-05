@@ -67,7 +67,11 @@ export type LogEvent =
   // model after the primary's parse failed. Operators grep this in
   // wrangler tail to spot a degraded primary BEFORE the per-tick cost
   // spike compounds.
-  | 'llm.fallback_invoked';
+  | 'llm.fallback_invoked'
+  // CF-052 — emitted when ≥10 fallbacks occur within a 5-minute
+  // rolling window. v1 is alert-only; the operator decides whether
+  // to flip a feature flag or swap the primary model manually.
+  | 'llm.circuit_breaker_open';
 
 /** Shape of every emitted log line. */
 export interface LogRecord {

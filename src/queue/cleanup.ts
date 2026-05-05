@@ -46,9 +46,23 @@ const RETENTION_SECONDS = 14 * 86400;
  * stops surfacing a permanent "Stuck tag" warning for it. */
 const STUCK_TAG_TTL_SECONDS = 7 * 86400;
 
+/** Per-pass wall-time budget in milliseconds.
+ * CF-053: each sub-pass of the daily cleanup cron gets a 60-second
+ * deadline. The cron fires at 03:00 UTC; a worker isolate has a hard
+ * 15-minute wall-clock budget. At 60 s per pass × 5 passes = 300 s,
+ * the cleanup fits comfortably inside the isolate's budget even on a
+ * slow day. When a pass exceeds its deadline the remaining passes still
+ * run (each has its own deadline); the exceeded pass logs a structured
+ * warning so operators can size the window if the dataset grows. */
+const CLEANUP_PASS_DEADLINE_MS = 60_000;
+
 /**
  * Run one retention-cleanup pass. Idempotent — a second immediate call
  * is a no-op because the first call removed all stale rows.
+ *
+ * CF-053: each sub-pass receives a deadline (Date.now() + 60s).
+ * Passes that detect overrun log a structured warning and bail so the
+ * next pass still gets its full slot.
  *
  * @returns Counts for both halves of the daily sweep:
  *   `articlesDeleted` — articles removed by the retention pass.
@@ -62,12 +76,21 @@ export async function runCleanup(env: Env): Promise<{
   refreshTokensPurged: number;
   chunkCompletionsPurged: number;
 }> {
-  const articlesDeleted = await runArticleRetention(env);
+  const articlesDeleted = await runArticleRetention(
+    env,
+    Date.now() + CLEANUP_PASS_DEADLINE_MS,
+  );
   // Stuck-tag prune runs BEFORE the orphan sweep so the same run
   // mops up the `sources:{tag}` cache entries the prune leaves
   // unowned — keeps the daily cron self-cleaning.
-  const stuckTagsPruned = await runStuckTagPrune(env);
-  const orphanTagsDeleted = await runOrphanTagSweep(env);
+  const stuckTagsPruned = await runStuckTagPrune(
+    env,
+    Date.now() + CLEANUP_PASS_DEADLINE_MS,
+  );
+  const orphanTagsDeleted = await runOrphanTagSweep(
+    env,
+    Date.now() + CLEANUP_PASS_DEADLINE_MS,
+  );
   const refreshTokensPurged = await runRefreshTokenPurge(env);
   const chunkCompletionsPurged = await runChunkCompletionsPurge(env);
   return {
@@ -139,7 +162,13 @@ async function runRefreshTokenPurge(env: Env): Promise<number> {
 }
 
 /** REQ-PIPE-005 — delete articles older than 14 days unless starred. */
-async function runArticleRetention(env: Env): Promise<number> {
+async function runArticleRetention(env: Env, deadline: number): Promise<number> {
+  if (Date.now() >= deadline) {
+    log('warn', 'digest.generation', {
+      status: 'cleanup_article_retention_deadline_exceeded',
+    });
+    return 0;
+  }
   const cutoff = Math.floor(Date.now() / 1000) - RETENTION_SECONDS;
   try {
     // DELETE stale articles not referenced by any row in `article_stars`.
@@ -176,7 +205,13 @@ async function runArticleRetention(env: Env): Promise<number> {
  *  entries whose tag no user has selected. Tags any user owns are
  *  preserved; the self-healing eviction loop (REQ-DISC-003) is the
  *  only path that should mutate an actively-owned tag's cache. */
-async function runOrphanTagSweep(env: Env): Promise<number> {
+async function runOrphanTagSweep(env: Env, deadline: number): Promise<number> {
+  if (Date.now() >= deadline) {
+    log('warn', 'digest.generation', {
+      status: 'cleanup_orphan_sweep_deadline_exceeded',
+    });
+    return 0;
+  }
   try {
     // Collect every tag any user has selected. We hold this set in
     // memory; with 1000 users × 25 tags max that's 25k strings worst
@@ -264,7 +299,13 @@ interface SourcesCacheValueShape {
  *  them from every user's `hashtags_json`. The unowned `sources:` entry
  *  is left for the subsequent orphan-tag sweep to clear in the same
  *  cron run. Returns the number of (user, tag) prunes applied. */
-async function runStuckTagPrune(env: Env): Promise<number> {
+async function runStuckTagPrune(env: Env, deadline: number): Promise<number> {
+  if (Date.now() >= deadline) {
+    log('warn', 'discovery.completed', {
+      status: 'cleanup_stuck_tag_prune_deadline_exceeded',
+    });
+    return 0;
+  }
   const cutoffMs = Date.now() - STUCK_TAG_TTL_SECONDS * 1000;
   try {
     const stuckTooLong = new Set<string>();

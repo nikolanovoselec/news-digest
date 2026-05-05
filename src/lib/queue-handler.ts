@@ -61,25 +61,18 @@ interface BatchHandlerOptions<TBody> {
   maxAttempts?: number;
 }
 
-interface QueueMessage<TBody> {
-  readonly body: TBody;
-  readonly attempts: number;
-  ack: () => void;
-  retry: () => void;
-}
-
-interface QueueBatch<TBody> {
-  // Cloudflare's MessageBatch types `messages` as a readonly array of
-  // readonly messages; keeping our shape variance-compatible avoids
-  // forcing every consumer to widen with `as unknown as ...`.
-  readonly messages: readonly QueueMessage<TBody>[];
-}
+// CF-055 — use Cloudflare's platform types instead of a hand-rolled
+// duplicate. `MessageBatch<TBody>` from `@cloudflare/workers-types`
+// is structurally identical to our old `QueueBatch<TBody>` but
+// removes one drift vector: if the platform adds fields (e.g. a
+// `retryAll()` method) future callers can use them immediately
+// without patching the local interface first.
 
 /** Wrap a per-message processor in the standard queue retry envelope:
  *  ack on success; on throw, log + (optional terminal-failure hook on
  *  attempts == max) + retry. */
 export async function handleBatch<TBody>(
-  batch: QueueBatch<TBody>,
+  batch: MessageBatch<TBody>,
   env: Env,
   opts: BatchHandlerOptions<TBody>,
 ): Promise<void> {
