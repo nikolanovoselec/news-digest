@@ -58,115 +58,15 @@ export interface SourceAdapter {
   extract: (parsed: unknown) => Headline[];
 }
 
-// ---------- Generic sources ----------------------------------------------
-
-/** `tag` is already lowercase, [a-z0-9-]+; percent-encode for safety. */
-function q(tag: string): string {
-  return encodeURIComponent(tag);
-}
-
-/** Hacker News Algolia search — returns newest stories matching the query. */
-const HACKER_NEWS: SourceAdapter = {
-  name: 'hackernews',
-  kind: 'json',
-  url: (tag) =>
-    `https://hn.algolia.com/api/v1/search_by_date?query=${q(tag)}&tags=story&hitsPerPage=30`,
-  extract: (parsed) => {
-    if (!isRecord(parsed)) return [];
-    const hits = parsed['hits'];
-    if (!Array.isArray(hits)) return [];
-    const out: Headline[] = [];
-    for (const hit of hits) {
-      if (!isRecord(hit)) continue;
-      const title = asString(hit['title']) ?? asString(hit['story_title']);
-      const url =
-        asString(hit['url']) ??
-        (typeof hit['objectID'] === 'string'
-          ? `https://news.ycombinator.com/item?id=${hit['objectID']}`
-          : null);
-      if (title === null || url === null) continue;
-      // HN Algolia returns `story_text` for self-posts (Ask HN etc.)
-      // and `_highlightResult.story_text.value` with HTML matches.
-      // Use the plain `story_text` when available.
-      const story = asString(hit['story_text']);
-      const snippet =
-        story !== null && story.length >= 40
-          ? htmlSnippetToText(story)
-          : null;
-      out.push({
-        title,
-        url,
-        source_name: 'hackernews',
-        ...definedProp('snippet', snippet),
-      });
-    }
-    return out;
-  },
-};
-
-/** Google News RSS — top headlines for the past day. */
-const GOOGLE_NEWS: SourceAdapter = {
-  name: 'googlenews',
-  kind: 'rss',
-  url: (tag) =>
-    `https://news.google.com/rss/search?q=${q(tag)}+when%3A1d&hl=en-US&gl=US&ceid=US:en`,
-  extract: (parsed) => extractRssItems(parsed, 'googlenews'),
-};
-
-/** Reddit search — top posts over the past day. Requires a UA header. */
-const REDDIT: SourceAdapter = {
-  name: 'reddit',
-  kind: 'json',
-  headers: { 'User-Agent': 'news-digest/1.0' },
-  url: (tag) =>
-    `https://www.reddit.com/search.json?q=${q(tag)}&t=day&sort=top&limit=25`,
-  extract: (parsed) => {
-    if (!isRecord(parsed)) return [];
-    const data = parsed['data'];
-    if (!isRecord(data)) return [];
-    const children = data['children'];
-    if (!Array.isArray(children)) return [];
-    const out: Headline[] = [];
-    for (const child of children) {
-      if (!isRecord(child)) continue;
-      const d = child['data'];
-      if (!isRecord(d)) continue;
-      const title = asString(d['title']);
-      // Prefer the external URL posted to reddit; fall back to the
-      // reddit thread itself for self-posts.
-      const externalUrl = asString(d['url']) ?? asString(d['url_overridden_by_dest']);
-      const permalink = asString(d['permalink']);
-      const url =
-        externalUrl !== null && !externalUrl.startsWith('/r/')
-          ? externalUrl
-          : permalink !== null
-            ? `https://www.reddit.com${permalink}`
-            : null;
-      if (title === null || url === null) continue;
-      // Reddit has `selftext` (self-posts) and `title` itself can
-      // be the whole post. Prefer selftext when long enough.
-      const selftext = asString(d['selftext']);
-      const snippet =
-        selftext !== null && selftext.length >= 40
-          ? htmlSnippetToText(selftext)
-          : null;
-      out.push({
-        title,
-        url,
-        source_name: 'reddit',
-        ...definedProp('snippet', snippet),
-      });
-    }
-    return out;
-  },
-};
-
-// CF-022: GENERIC_SOURCES and fanOutForTags were removed here.
-// Production has used CURATED_SOURCES + discovered-tag KV entries since
-// the 2026-04-23 global-feed rework. The three adapters (HACKER_NEWS,
-// GOOGLE_NEWS, REDDIT) remain in this file as module-private constants
-// so their extract() logic continues to serve curated-source entries
-// that resolve through adaptersForDiscoveredFeeds.
+// CF-022 / E5 — `GENERIC_SOURCES`, `fanOutForTags`, and the three
+// per-source adapters (HACKER_NEWS, GOOGLE_NEWS, REDDIT) were removed
+// alongside the 2026-04-23 global-feed rework. Production resolves
+// every per-tag feed through `adaptersForDiscoveredFeeds` (below),
+// which builds adapters directly from `DiscoveredFeed` records held
+// in KV `sources:{tag}`. The three Algolia/Google/Reddit adapters
+// were never referenced by `adaptersForDiscoveredFeeds` and were
+// pure dead weight after the rework — code-reviewer flagged them
+// as unused-variable lint warnings under `--deny-warnings`.
 
 // ---------- Fetch one source for one tag ---------------------------------
 

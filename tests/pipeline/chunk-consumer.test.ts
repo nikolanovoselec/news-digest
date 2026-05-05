@@ -975,13 +975,16 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     expect(articleInserts[0]!.params).not.toContain('Hi.');
   });
 
-  // CF-041 — REQ-PIPE-002 AC4: article with tags:[] is KEPT (treated as
-  // untagged), not dropped. Only articles outside the allowlist are dropped.
-  it('REQ-PIPE-002 AC4 (CF-041): LLM article with tags:[] is kept and treated as untagged', async () => {
+  // CF-041 - REQ-PIPE-002 AC4: an article that ends up with zero valid
+  // tags is DROPPED. The chunk consumer's validateAndSanitizeArticle
+  // returns null when the post-allowlist tag set is empty, which keeps
+  // article_tags rows useful for downstream filtering and stops the
+  // pool getting polluted with un-routable rows.
+  it('REQ-PIPE-002 AC4 (CF-041): LLM article with tags:[] is dropped', async () => {
     const aiResponse = {
       response: JSON.stringify({
         articles: [
-          { index: 0, title: 'Zero-tag article — kept as untagged', details: LONG_BODY, tags: [] },
+          { index: 0, title: 'Zero-tag article should be dropped', details: LONG_BODY, tags: [] },
         ],
         dedup_groups: [],
       }),
@@ -991,27 +994,12 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     const { kv } = makeKv({ chunksRemaining: '1' });
     const env = makeEnv(db, kv, aiResponse);
     await processOneChunk(env, makeChunk());
-    // The article is inserted (kept) — tags:[] means "no allowlisted
-    // tags found", which is treated as untagged, not as a bad-tags-only
-    // article. The AC says: "an article that ends up with zero valid
-    // tags is dropped" — but tags:[] means the LLM intentionally returned
-    // no tags (different from returning all invalid tags).
-    //
-    // NOTE: if the implementation drops zero-tag articles, this test will
-    // fail and should be updated to match the actual spec intent. The test
-    // exists to make the behaviour explicit rather than implicit.
     const articleInserts = records.filter(
       (r) =>
         r.via === 'batch' &&
         r.sql.startsWith('INSERT OR IGNORE INTO articles'),
     );
-    // Either 1 (kept) or 0 (dropped) — this test pins the CURRENT behaviour
-    // so any change is an explicit decision, not a silent regression.
-    expect(articleInserts.length).toBeGreaterThanOrEqual(0);
-    // The title must be present in inserts if the article was kept.
-    if (articleInserts.length > 0) {
-      expect(articleInserts[0]!.params).toContain('Zero-tag article — kept as untagged');
-    }
+    expect(articleInserts).toHaveLength(0);
   });
 
   // CF-042 — REQ-PIPE-008 AC9b: two concurrent recordChunkCompletion

@@ -99,21 +99,25 @@ async function kickCoordinator(env: Env): Promise<{ run_id: string; reused: bool
       });
       return { run_id: existing.id, reused: true };
     }
-    // No recent-running row found AND we lost the claim race — this
+    // No recent-running row found AND we lost the claim race - this
     // can happen if the winning run finished within the same second.
     // Retry the claim once with a fresh ULID; if that also fails,
     // surface the error so the caller can show a graceful notice.
-    const retryClaim = await tryClaimDispatch(env, generateUlid());
+    // The DB row carries `retryRunId`; the queue message and HTTP
+    // response MUST use the SAME id so the coordinator's CAS guard
+    // matches it on first dispatch (the original `candidate_run_id`
+    // never landed in scrape_runs and would point at a phantom row).
+    const retryRunId = generateUlid();
+    const retryClaim = await tryClaimDispatch(env, retryRunId);
     if (!retryClaim.claimed) {
       throw new Error('force_refresh_claim_lost_after_retry');
     }
-    // Fall through with the original ULID — the retry won.
-    await env.SCRAPE_COORDINATOR.send({ scrape_run_id: candidate_run_id });
+    await env.SCRAPE_COORDINATOR.send({ scrape_run_id: retryRunId });
     log('info', 'digest.generation', {
       status: 'force_refresh_dispatched',
-      scrape_run_id: candidate_run_id,
+      scrape_run_id: retryRunId,
     });
-    return { run_id: candidate_run_id, reused: false };
+    return { run_id: retryRunId, reused: false };
   }
   await env.SCRAPE_COORDINATOR.send({ scrape_run_id: candidate_run_id });
   log('info', 'digest.generation', {

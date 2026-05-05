@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: npm install --no-fund --no-audit
 
-      # CF-048 — audit the production-dep tree at TWO levels:
+      # CF-048 / AD28 — audit the production-dep tree at TWO levels:
       #   - HIGH+: visible in CI logs (continue-on-error) so operators
       #     see Dependabot triage candidates on every push without
       #     blocking the build on transitive-only CVEs.
@@ -44,9 +44,10 @@ jobs:
       # at build/dev time only; the deployed Workers bundle runs on
       # workerd which uses its own fetch, NOT undici. A HIGH undici
       # CVE in node_modules has no production attack surface but
-      # would block every PR. The dedicated Dependabot PRs (#173,
-      # #174 against this repo) are the right resolution channel for
-      # those transitives — the workflow steps surface the data.
+      # would block every PR. The repo's Dependabot channel resolves
+      # those transitives over time. AD28 records why HIGH does not
+      # block; do not re-tighten without checking transitive scope
+      # against workerd runtime first.
       - name: npm audit (production deps, high+ - advisory only)
         run: npm audit --omit=dev --audit-level=high
         continue-on-error: true

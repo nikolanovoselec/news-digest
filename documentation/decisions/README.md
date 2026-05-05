@@ -41,6 +41,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD25 | Cloudflare Access JWT signature unverified server-side; trust Access edge | Security | 2026-05-05 |
 | AD26 | REQUIREMENTS.md preserved as historical artefact | Documentation | 2026-05-05 |
 | AD27 | All KV writers route through `src/lib/kv/<family>.ts` helpers | Storage | 2026-05-05 |
+| AD28 | npm audit gating: HIGH advisory, CRITICAL blocking | Operations | 2026-05-05 |
 
 ---
 
@@ -726,6 +727,33 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - Existing files `src/lib/feed-health.ts`, `src/lib/headline-cache.ts`, `src/lib/sources-cache.ts`, and `src/lib/rate-limit.ts` are already compliant; they predate this ADR and serve the same pattern.
 
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-DISC-001](../../sdd/discovery.md#req-disc-001-llm-assisted-source-discovery-for-per-tag-feeds)
+
+---
+
+### AD28: npm audit gating split — HIGH advisory, CRITICAL blocking
+
+**Status:** Accepted (2026-05-05)
+**Overrides:** spec-finding:CF-048
+
+**Decision:** The CI `npm audit` step runs at TWO levels: HIGH+ as advisory (`continue-on-error: true`), CRITICAL+ as blocking. Do NOT tighten HIGH+ to blocking without first confirming none of the flagged transitives reach the workerd runtime.
+
+**Context:** CF-048 originally proposed tightening the gate to HIGH+ blocking on the production-dep tree (`npm audit --omit=dev --audit-level=high`). The first push that landed the tightening tripped on transitive CVEs in `undici` (pulled by `@astrojs/cloudflare` -> `miniflare` -> `wrangler`). Those transitives are build/dev-time tooling: they ship in `node_modules` but never reach the deployed Workers bundle, which runs on workerd's own fetch implementation. Blocking HIGH would force every PR to wait on Dependabot major-version bumps with breaking-change risk, while delivering no production-runtime risk reduction.
+
+**Alternatives considered:**
+
+- **HIGH+ blocking (the original CF-048 proposal).** Rejected — see Context. Blocks unrelated PRs on transitive build-tool CVEs.
+- **HIGH+ blocking with an `npm overrides` allowlist.** Rejected — `npm audit` does not honour package overrides as exclusions; the tooling does not support a clean "ignore these transitives" path.
+- **Migrate to a different audit tool (Snyk, Dependabot CLI, etc.).** Rejected for now — npm audit is good enough at the current scale; the dual-level split surfaces the data without over-engineering.
+
+**Rationale:** Workers runtime exposure is what matters; the workerd binary does not include `undici`/`miniflare`/`wrangler`. Surfacing HIGH advisories in CI logs lets operators triage the Dependabot channel without coupling unrelated PR merges to dependency major-version bumps. CRITICAL blocking remains the red line.
+
+**Consequences:**
+
+- HIGH+ npm-audit findings are visible in every CI run but do not block merges. Operators are expected to engage Dependabot PRs as the resolution channel.
+- Future CRITICAL CVEs on the production-runtime path WILL block. The threshold is calibrated for runtime exposure, not headline severity.
+- Re-tightening HIGH+ to blocking requires either (a) eliminating all transitive build-tool CVEs from the dep tree, OR (b) adopting a tool with finer-grained scoping than `npm audit`.
+
+**Related requirements:** none (operational policy; no REQ binding).
 
 ---
 

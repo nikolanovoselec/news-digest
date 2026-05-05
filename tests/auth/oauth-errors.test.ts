@@ -55,17 +55,29 @@ describe('mapOAuthError', () => {
   });
 });
 
-describe('OAUTH_ERROR_CODES membership (replaces isKnownOAuthErrorCode — CF-060)', () => {
-  it('REQ-AUTH-004: all four allowlisted codes are in the array', () => {
-    for (const code of OAUTH_ERROR_CODES) {
-      expect(
-        (OAUTH_ERROR_CODES as readonly string[]).includes(code),
-      ).toBe(true);
-    }
+describe('OAUTH_ERROR_CODES allowlist contract (CF-060)', () => {
+  it('REQ-AUTH-004: contains exactly the four codes the landing page renders', () => {
+    // Pin the entire array shape and length, not "every member is its
+    // own member" (which is JS array semantics, not contract). If a
+    // future commit adds or drops an entry, this fails with a clear
+    // diff — and the landing-page renderer below depends on the same
+    // four-string set for its switch statement.
+    expect([...OAUTH_ERROR_CODES]).toEqual([
+      'oauth_error',
+      'invalid_state',
+      'no_verified_email',
+      'token_exchange_failed',
+    ]);
   });
 
-  it('REQ-AUTH-004: non-allowlisted strings and non-strings are not members', () => {
-    expect((OAUTH_ERROR_CODES as readonly string[]).includes('nope')).toBe(false);
-    expect((OAUTH_ERROR_CODES as readonly string[]).includes('')).toBe(false);
+  it('REQ-AUTH-004: every code maps round-trip through mapOAuthError', () => {
+    // Real-world contract: if a provider returns one of these codes
+    // verbatim, mapOAuthError must echo it back unchanged (so the
+    // landing page can route to the right copy). This exercises the
+    // allowlist + mapper together, instead of testing array membership
+    // in isolation.
+    for (const code of OAUTH_ERROR_CODES) {
+      expect(mapOAuthError(code)).toBe(code);
+    }
   });
 });
