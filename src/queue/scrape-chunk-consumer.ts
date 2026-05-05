@@ -273,10 +273,22 @@ export async function processOneChunk(
  * coordinator's execution budget is not blown by 500+ HTTP fetches before
  * it can enqueue chunks. Each chunk only fetches its own ~100 URLs.
  */
+/** Shape of one candidate after the body-fetch pass; matches the
+ *  `processChunkUserPrompt` parameter so the prompt builder can be
+ *  invoked without a cast. */
+interface PromptCandidate {
+  index: number;
+  title: string;
+  url: string;
+  source_name: string;
+  published_at: number;
+  body_snippet?: string;
+}
+
 async function fetchAndBuildPromptCandidates(
   env: Env,
   body: ChunkJobMessage,
-): Promise<{ promptCandidates: object[] }> {
+): Promise<{ promptCandidates: PromptCandidate[] }> {
   const SNIPPET_FLOOR = 400;
   const urlsToFetch: string[] = [];
   for (const c of body.candidates) {
@@ -341,7 +353,7 @@ async function fetchAndBuildPromptCandidates(
 async function runChunkLLM(
   env: Env,
   body: ChunkJobMessage,
-  promptCandidates: object[],
+  promptCandidates: PromptCandidate[],
   allowedTags: string[],
 ): Promise<{
   // Narrow to the `ok: true` branch — the helper throws on the
