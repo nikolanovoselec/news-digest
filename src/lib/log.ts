@@ -59,6 +59,7 @@ export type LogEvent =
   | 'auth.refresh.purge_completed'
   | 'auth.refresh.purge_failed'
   | 'auth.refresh.rate_limited'
+  | 'auth.refresh.over_bump'
   | 'auth.logout.refresh_revoke_failed'
   | 'auth.logout.sv_bump_failed'
   | 'rate.limit.kv_error'

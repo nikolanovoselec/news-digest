@@ -46,7 +46,7 @@ import {
   oauthStateCookieName,
   buildClearOAuthStateCookie,
 } from './login';
-import { readCookie, timingSafeEqualHmac } from '~/lib/crypto';
+import { readCookie, verifyHmacSignature } from '~/lib/crypto';
 import { enforceRateLimit, rateLimitResponse, clientIp, RATE_LIMIT_RULES } from '~/lib/rate-limit';
 
 interface TokenResponse {
@@ -112,9 +112,11 @@ function htmlAttrEscape(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
-// `timingSafeEqualHmac` is imported from `~/lib/crypto` (CF-005 —
+// `verifyHmacSignature` is imported from `~/lib/crypto` (CF-005 —
 // previously open-coded here as a JS XOR loop, with two more
-// duplicates in dev/login.ts and dev/trigger-scrape.ts). The HMAC
+// duplicates in dev/login.ts and dev/trigger-scrape.ts; renamed in
+// CF-014 from `timingSafeEqualHmac` to make the
+// "expected first, candidate second" convention explicit). The HMAC
 // pattern is constant-time by Web Crypto spec.
 
 /**
@@ -229,7 +231,7 @@ export async function GET(context: APIContext): Promise<Response> {
     queryState !== '' &&
     cookieState !== null &&
     cookieState !== '' &&
-    (await timingSafeEqualHmac(queryState, cookieState, env.OAUTH_JWT_SECRET));
+    (await verifyHmacSignature(cookieState, queryState, env.OAUTH_JWT_SECRET));
   if (!statesMatch) {
     log('warn', 'auth.callback.invalid_state', {
       provider: provider.name,

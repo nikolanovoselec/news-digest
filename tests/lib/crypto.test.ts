@@ -8,7 +8,7 @@ import {
   base64UrlEncode,
   base64UrlDecode,
   readCookie,
-  timingSafeEqualHmac,
+  verifyHmacSignature,
 } from '~/lib/crypto';
 
 const SECRET = 'test-secret-for-hmac-sha256-comparison-padding';
@@ -54,27 +54,27 @@ describe('readCookie', () => {
   });
 });
 
-describe('timingSafeEqualHmac', () => {
+describe('verifyHmacSignature', () => {
   it('CF-005: returns true for identical strings', async () => {
-    expect(await timingSafeEqualHmac('hello', 'hello', SECRET)).toBe(true);
+    expect(await verifyHmacSignature('hello', 'hello', SECRET)).toBe(true);
   });
 
   it('CF-005: returns false for different strings of equal length', async () => {
-    expect(await timingSafeEqualHmac('aaaa', 'bbbb', SECRET)).toBe(false);
+    expect(await verifyHmacSignature('aaaa', 'bbbb', SECRET)).toBe(false);
   });
 
   it('CF-005: returns false for different strings of different length', async () => {
-    expect(await timingSafeEqualHmac('aaa', 'aaaaaa', SECRET)).toBe(false);
+    expect(await verifyHmacSignature('aaa', 'aaaaaa', SECRET)).toBe(false);
   });
 
   it('CF-005: returns false for empty strings (defends against empty-cookie false-positive)', async () => {
-    expect(await timingSafeEqualHmac('', '', SECRET)).toBe(false);
-    expect(await timingSafeEqualHmac('a', '', SECRET)).toBe(false);
-    expect(await timingSafeEqualHmac('', 'a', SECRET)).toBe(false);
+    expect(await verifyHmacSignature('', '', SECRET)).toBe(false);
+    expect(await verifyHmacSignature('a', '', SECRET)).toBe(false);
+    expect(await verifyHmacSignature('', 'a', SECRET)).toBe(false);
   });
 
   it('CF-005: returns true for high-entropy OAuth-state-style nonces when equal', async () => {
     const state = 'aGVsbG8td29ybGQtdGhpcy1pcy1hLXJhbmRvbS1ub25jZQ';
-    expect(await timingSafeEqualHmac(state, state, SECRET)).toBe(true);
+    expect(await verifyHmacSignature(state, state, SECRET)).toBe(true);
   });
 });

@@ -33,6 +33,11 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD17 | Reject `dedupe-groups.ts` extraction; finalize within-group dedup is downstream-gated | Architecture | 2026-05-04 |
 | AD18 | Reject `deferred-candidates.ts`; chunk-overflow drop path stays log-only until volume justifies persistence | Architecture | 2026-05-04 |
 | AD19 | Reject `tag-railing-flip-core.ts`; FLIP measurements are not separable from DOM and are tested via Playwright | Testing | 2026-05-04 |
+| AD22 | SSRF defence relies on Workers network sandbox; static IP allowlist is best-effort only | Security | 2026-05-05 |
+| AD23 | Auth-rate-limit fail-closed without WAF backstop | Security | 2026-05-05 |
+| AD24 | Single OAUTH_JWT_SECRET for both session signing and CSRF state | Security | 2026-05-05 |
+| AD25 | Cloudflare Access JWT signature unverified server-side; trust Access edge | Security | 2026-05-05 |
+| AD26 | REQUIREMENTS.md preserved as historical artefact | Documentation | 2026-05-05 |
 
 ---
 
@@ -568,6 +573,128 @@ PR #185 attempted to compensate with `margin-top: -0.3em`. The user reported thi
 - The CSS comment block in `[slug].astro` notes the trap so the next reviewer doesn't try the same `margin-top` adjustment again.
 
 **Related requirements:** [REQ-READ-002](../../sdd/reading.md#req-read-002)
+
+---
+
+### AD22: SSRF defence relies on Workers network sandbox; static IP allowlist is best-effort only
+
+**Status:** Accepted (2026-05-05)
+
+**Decision:** Accept the residual DNS-rebinding risk in the server-side article-body fetch path. Rely on the Cloudflare Workers network sandbox, which already blocks the meaningful exfiltration paths (private IP ranges, link-local, metadata endpoints) at the platform layer. Maintain the static hostname/IP denial list (including `metadata` and `169.254.169.254` literals) as defence in depth.
+
+**Context:** `isUrlSafe()` in `src/lib/ssrf.ts` performs a static hostname/IP-literal check at request time. Between this check and the actual fetch, DNS resolution can flip (DNS rebinding) so that a hostname which passed validation later resolves to a private/loopback address. The Workers runtime, however, does not provide hooks to pin the resolved IP across the validation→fetch boundary. A bareword `metadata` hostname (no dot) is also not currently blocked by the existing literal list.
+
+**Alternatives considered:**
+- **Resolution pinning at the platform layer.** Would close the rebinding window entirely; not exposed by the Workers runtime today.
+- **Outbound proxy with a curated egress allowlist.** Hard pin, but trades the SSRF surface for an availability dependency on the proxy, plus operational complexity that does not match the threat model.
+- **Drop the static check entirely and rely solely on the platform sandbox.** Loses the defence-in-depth signal that a request asked for `169.254.169.254` literally — useful in logs even if the platform would have blocked the fetch anyway.
+
+**Rationale:** Workers runtime sandbox already blocks the meaningful exfiltration paths. A static IP allowlist is best-effort defence-in-depth only; full DNS-rebinding mitigation requires runtime resolution pinning that the Workers platform does not expose. The cost of building a partial mitigation (e.g., a fetch wrapper that re-resolves immediately before fetch) does not justify the marginal risk reduction given the platform-level guarantees.
+
+**Consequences:**
+- SSRF defence is layered (static check + platform sandbox) rather than fully resolution-pinned.
+- If Cloudflare ever loosens the runtime sandbox (e.g., allows outbound connections to RFC1918 ranges from a Worker), this decision MUST be revisited — the static check alone is not sufficient.
+- Documented residual risk surfaces in `sdd/security.md` (or the equivalent threat-model doc when bootstrapped).
+- The `metadata` bareword and any future single-label hostnames that resolve to sensitive infrastructure should be added to the literal denial list as they surface.
+
+**Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) AC 8
+
+---
+
+### AD23: Auth-rate-limit fail-closed without WAF backstop
+
+**Status:** Accepted (2026-05-05)
+
+**Decision:** KV-backed auth rate limits (AUTH_LOGIN, AUTH_CALLBACK in `src/lib/rate-limit.ts`) fail CLOSED (`failClosed: true`) on KV error — auth requests are denied during a KV outage rather than admitted unrestricted. The Cloudflare WAF zone-level backstop is deliberately OUT OF SCOPE for this iteration.
+
+**Context:** AUTH_LOGIN (10/min/IP) and AUTH_CALLBACK (20/min/IP) rate limits are enforced via KV counters. Two design choices arose: (a) what to do when KV itself is unavailable, and (b) whether to add a Cloudflare WAF zone-level backstop independent of KV. A WAF zone-level rate limit would be a hardware-layer backstop independent of KV.
+
+**Alternatives considered:**
+- **Fail-open on KV error.** Previous behaviour. Removes the auth rate limit on the OAuth code-exchange path during a KV outage — unacceptable given the brute-force exposure window.
+- **Add a Cloudflare WAF zone-level rate-limit backstop in addition to fail-closed KV.** Stronger defence in depth; rejected for this iteration on cost/operational grounds (WAF rule maintenance, per-zone configuration drift across environments).
+- **Move rate-limit counters to D1.** Stronger consistency than KV but introduces D1 write pressure on every auth request. Rejected as disproportionate to the threat.
+
+**Rationale:** A WAF zone-level rate limit would be a hardware-layer backstop independent of KV. It is deliberately out of scope for this iteration: the cost/operational complexity of maintaining WAF rules is judged higher than the residual risk of relying solely on the KV-backed limit (which now fails closed). Failing closed during KV outages is preferred over silent removal of brute-force protection.
+
+**Consequences:**
+- Brief KV outages may surface as auth-login 429s for end users — preferred over silent removal of brute-force protection.
+- No WAF rules are maintained, so the entire auth-throttle contract depends on the worker reaching KV. If a future incident shows this failure mode is operationally unacceptable, revisit by adding the WAF layer.
+- The fail-closed flag is set per-rate-limiter and is auditable in source — any new rate limit added to the auth path SHOULD inherit `failClosed: true` and reference this ADR.
+
+**Related requirements:** [REQ-AUTH-001](../../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-003](../../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
+
+---
+
+### AD24: Single OAUTH_JWT_SECRET for both session signing and CSRF state
+
+**Status:** Accepted (2026-05-05)
+
+**Decision:** Deliberately reuse `OAUTH_JWT_SECRET` for both session JWT signing and CSRF-state HMAC. Do not derive a separate sub-key via HKDF. Both consumers run inside the same trust boundary; the threat model does not include attacks that disclose one purpose's key without the other.
+
+**Context:** `verifyHmacSignature` (renamed from `timingSafeEqualHmac` in CF-014) in `src/lib/crypto.ts` is used for CSRF-state validation in OAuth callback handling (`src/pages/api/auth/[provider]/callback.ts:232`, `src/pages/api/dev/login.ts:70`, `src/pages/api/dev/trigger-scrape.ts:59`) and reuses `OAUTH_JWT_SECRET` — the same key that signs session JWTs. Standard cryptographic guidance is to derive distinct sub-keys per purpose via HKDF.
+
+**Alternatives considered:**
+- **HKDF-derive a separate sub-key per purpose** (`OAUTH_JWT_SECRET` → `session-signing-key` and `csrf-state-key` via HKDF-SHA256 with distinct `info` strings). Strict cryptographic best practice; rejected because the threat model does not justify the operational surface (key-derivation code path, cache, rotation semantics).
+- **Introduce a separate `CSRF_STATE_SECRET` env var.** Doubles the rotation surface for the same trust boundary. Rejected.
+- **Leave the API as-is and document only.** What was previously implicit. Rejected because the next reviewer reaches for HKDF-derive without reading this rationale.
+
+**Rationale:** Both consumers run inside the same trust boundary (the worker) and the threat model does not include partial-secret-disclosure attacks where a session-signing key leaks but the CSRF-state key does not. Avoiding HKDF derivation keeps the key-management surface to a single rotated secret. Operational simplicity (one secret to rotate) outweighs the textbook key-separation principle given this threat model.
+
+**Consequences:**
+- Single secret to rotate (operational simplicity).
+- If a future threat model surfaces (e.g., a side-channel that leaks the CSRF-state HMAC computation but not the JWT signing path, or a partial-disclosure crypto bug in the underlying primitive), this decision must be revisited and a HKDF-derived sub-key introduced.
+- The `verifyHmacSignature` rename (from `timingSafeEqualHmac`) was the CF-014 cleanup — the function is constant-time string equality via HMAC, symmetric in result for both arguments. The rename plus a `(expected, candidate, secret)` argument convention removes the misleading "argument-order is load-bearing" framing of the prior name. Orthogonal to the key-reuse decision recorded here.
+
+**Related requirements:** [REQ-AUTH-001](../../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-003](../../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
+
+---
+
+### AD25: Cloudflare Access JWT signature unverified server-side; trust Access edge
+
+**Status:** Accepted (2026-05-05)
+
+**Decision:** Rely on the platform guarantee that requests reaching the worker have already passed Cloudflare Access verification when `CF_ACCESS_AUD` is set. Skip in-worker JWT signature validation in `decodeAccessJwt` (`src/middleware/admin-auth.ts:49-68`).
+
+**Context:** Admin endpoints are protected by Cloudflare Access. Requests arriving at the worker carry a `Cf-Access-Jwt-Assertion` header. The worker's `decodeAccessJwt` parses claims (`sub`, `email`, `aud`) without verifying the signature. Cloudflare Access verifies the JWT at the edge before requests reach the worker; re-verifying inside the worker (e.g., via JWKS) duplicates work without changing the security posture, provided the worker is properly bound to a custom domain with `workers_dev = false` and `CF_ACCESS_AUD` configured.
+
+**Alternatives considered:**
+- **JWKS-based signature verification inside the worker.** Strict defence-in-depth; requires fetching/caching Cloudflare's JWKS, periodic refresh, and key-rotation handling. Rejected as duplicative of the edge verification.
+- **Drop the `aud` check and rely entirely on the edge.** Loses the audience-binding signal that catches misconfigured deployments where Access is bound to a different application. Rejected — the `aud` check is a cheap deployment-misconfiguration tripwire even without signature verification.
+- **Verify signature only when `CF_ACCESS_AUD` is unset (fail-loud configuration error).** More complex than just refusing to start; rejected in favour of treating `CF_ACCESS_AUD` as a hard deployment requirement.
+
+**Rationale:** Cloudflare Access verifies the JWT at the edge before requests reach the worker. Re-verifying inside the worker (e.g., via JWKS) duplicates work without changing the security posture, provided the worker is properly bound to a custom domain with `workers_dev = false` and `CF_ACCESS_AUD` configured. The deployment configuration itself is the security boundary — the alternative (in-worker JWKS verification) does not strengthen the posture if the deployment is correct, and does not save the deployment if it is misconfigured (an attacker reaching `*.workers.dev` directly would also have a fresh JWT-forging window if the audience check is the only gate).
+
+**Consequences:**
+- Operational deployment checklist must include: `CF_ACCESS_AUD` is set, `workers_dev = false`, and the Access policy is bound to the custom domain.
+- If `*.workers.dev` is ever re-enabled, or `CF_ACCESS_AUD` is unset, an attacker could forge the header and bypass admin auth — making the deployment configuration itself a security boundary.
+- `documentation/deployment.md` (or the equivalent runbook) MUST document the `workers_dev = false` + `CF_ACCESS_AUD` requirement as a hard precondition for production rollout.
+- Future hardening could add JWKS-based verification as defence in depth; revisit if the deployment-configuration boundary proves operationally fragile (e.g., a rollback accidentally re-enables `*.workers.dev`).
+
+**Related requirements:** [REQ-OPS-006](../../sdd/observability.md#req-ops-006-integration-deployment-target)
+
+---
+
+### AD26: REQUIREMENTS.md preserved as historical artefact
+
+**Status:** Accepted (2026-05-05)
+
+**Decision:** Do NOT delete `REQUIREMENTS.md` at the project root. Preserve it as a snapshot of the project's original intent. Keep it out of the active doc graph (no cross-references from `documentation/` or `sdd/`) but available at the repo root for historical reference.
+
+**Context:** `REQUIREMENTS.md` at the project root predates the SDD bootstrap and describes an earlier product direction (per-user digest, GitHub-only auth, user-selectable model). The current spec lives in `sdd/`. The file's self-deprecating header acknowledges its stale status but the content is otherwise intact.
+
+**Alternatives considered:**
+- **Delete the file.** Loses the snapshot of the project's original direction; git history preserves it but root-level discoverability is gone for newcomers reviewing the repo's evolution.
+- **Merge into `sdd/README.md` "Out of Scope" section.** Would dilute the active spec with content that no longer maps to active REQs and forces a structural reframing of historical prose into REQ-ish bullets.
+- **Move to `documentation/history/REQUIREMENTS.md`.** Reasonable, but couples a historical snapshot to the active doc tree and risks doc-discipline budget enforcement firing on prose that is intentionally frozen.
+
+**Rationale:** Preserve as a historical artefact of the project's original direction. Deletion would lose the snapshot; merging into `sdd/README.md` "Out of Scope" would dilute the spec with content that no longer maps to active REQs. Keeping it at the repo root, out of the active doc graph, gives newcomers a discoverable artefact while preventing it from contaminating the live spec or doc-discipline checks.
+
+**Consequences:**
+- Repo root carries one informational file that newcomers may discover and need context for. The self-deprecating header on the file itself plus this AD provide that context.
+- The file is NOT auto-updated, NOT linked from indexes, and is excluded from doc-discipline budget checks.
+- If a future contributor proposes "cleaning up" the root by deleting `REQUIREMENTS.md`, this ADR is the artefact that records the decision to keep it.
+
+**Related requirements:** none (historical artefact, no active REQ binding).
 
 ---
 

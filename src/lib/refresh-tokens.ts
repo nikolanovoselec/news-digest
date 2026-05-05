@@ -29,6 +29,7 @@
 // seconds apart.
 
 import { hexEncode } from '~/lib/crypto';
+import { log } from '~/lib/log';
 
 export const REFRESH_TOKEN_COOKIE_NAME = '__Host-news_digest_refresh';
 export const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
@@ -351,17 +352,41 @@ export async function revokeAllForUser(
   userId: string,
   now: number = Math.floor(Date.now() / 1000),
 ): Promise<void> {
+  // CF-029 — capture the prior `session_version` so we can detect a
+  // cross-isolate over-bump (two concurrent revokeAllForUser calls
+  // BOTH passing the EXISTS gate and BOTH incrementing). The bump is
+  // bounded by the per-IP/per-user rate limit at the call sites, but
+  // observability matters because a high over-bump rate would
+  // indicate either a hot-keyed attacker or a stuck-retry loop.
+  let priorVersion: number | null = null;
+  try {
+    const row = await db
+      .prepare('SELECT session_version FROM users WHERE id = ?1')
+      .bind(userId)
+      .first<{ session_version: number }>();
+    priorVersion = row?.session_version ?? null;
+  } catch {
+    // Read failure is not load-bearing: the over-bump observability
+    // is best-effort. Continue with the revoke + bump regardless.
+  }
+
   await db.batch([
     db
       .prepare(
         `UPDATE refresh_tokens SET revoked_at = ?2 WHERE user_id = ?1 AND revoked_at IS NULL`,
       )
       .bind(userId, now),
-    // EXISTS sees the rows the previous statement just flipped (since
-    // the batch executes statements in order against the same logical
-    // snapshot). The bump fires only when the revoke actually had
-    // work to do — no spurious session_version churn on dead-cookie
-    // replays, no preempt-window where tokens revoked but JWTs valid.
+    // CF-030 — EXISTS sees rows whose `revoked_at` matches `?2`
+    // (this call's `now`). Within a single isolate's batch, those are
+    // the rows the previous UPDATE just flipped. ACROSS isolates that
+    // both call within the same second, the predicate ALSO matches
+    // rows the OTHER isolate flipped — that's the cross-isolate
+    // over-bump documented in the function-level comment above and
+    // observed via `auth.refresh.over_bump` (CF-029). Either way, the
+    // bump fires only when at least ONE legitimate revocation
+    // happened at this timestamp, which is the contract the call
+    // sites depend on (no churn on dead-cookie replays, no
+    // preempt-window where tokens revoked but JWTs valid).
     db
       .prepare(
         `UPDATE users SET session_version = session_version + 1
@@ -373,6 +398,32 @@ export async function revokeAllForUser(
       )
       .bind(userId, now),
   ]);
+
+  // CF-029 — emit a warn whenever the post-bump version exceeds
+  // priorVersion + 1. Single-isolate execution always lands at
+  // exactly priorVersion + 1; anything higher means a concurrent
+  // isolate also bumped between our prior-read and our batch. Same
+  // bound applies as the rate-limit comment above; this just makes
+  // it observable without trawling D1 directly.
+  if (priorVersion !== null) {
+    try {
+      const after = await db
+        .prepare('SELECT session_version FROM users WHERE id = ?1')
+        .bind(userId)
+        .first<{ session_version: number }>();
+      const newVersion = after?.session_version ?? priorVersion;
+      if (newVersion > priorVersion + 1) {
+        log('warn', 'auth.refresh.over_bump', {
+          user_id: userId,
+          prior_version: priorVersion,
+          new_version: newVersion,
+        });
+      }
+    } catch {
+      // Same fail-open semantics: missing the after-read just means
+      // this particular bump goes unlogged; behaviour unchanged.
+    }
+  }
 }
 
 /**

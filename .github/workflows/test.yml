@@ -33,25 +33,17 @@ jobs:
       - name: Install dependencies
         run: npm install --no-fund --no-audit
 
-      # Audit the production-dep tree. `--omit=dev` excludes top-level
-      # devDependencies, but the @astrojs/cloudflare adapter (production)
-      # transitively pulls in miniflare/wrangler/undici (build-time
-      # tooling that never reaches the deployed Worker bundle running
-      # on workerd). Those transitives generate the bulk of the HIGH
-      # findings, so we gate on CRITICAL only — the worst class still
-      # blocks the build, and HIGH+ findings remain visible in the logs
-      # for operators to triage via Dependabot. Tightening to HIGH+
-      # would block on transitive-only CVEs that have no production
-      # path; that's the failure mode of the previous advisory-only
-      # configuration we just fixed.
-      # Advisory-only HIGH+ surface so operators see the full list per
-      # push and can drive Dependabot triage without the build failing
-      # on transitive build-tool CVEs.
-      - name: npm audit (production deps, high+ — advisory only)
+      # CF-048 — block the build on production HIGH+ CVEs. `--omit=dev`
+      # excludes top-level devDependencies; @astrojs/cloudflare
+      # (production) transitively pulls miniflare/wrangler/undici, but
+      # those build-time tooling CVEs DO need a triage path even though
+      # the deployed worker bundle running on workerd never executes
+      # them — Dependabot is the right channel and this gate forces the
+      # operator to engage it instead of letting CVEs accumulate
+      # silently. The earlier "HIGH+ advisory-only" pass was the
+      # failure mode CF-048 flagged.
+      - name: npm audit (production deps, high+ — blocking)
         run: npm audit --omit=dev --audit-level=high
-        continue-on-error: true
-      - name: npm audit (production deps, critical+ — blocking)
-        run: npm audit --omit=dev --audit-level=critical
 
       - name: Lint
         run: npm run lint

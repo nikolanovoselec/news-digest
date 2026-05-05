@@ -174,15 +174,23 @@ export function clientIp(request: Request): string {
 /** Pre-baked rules for the routes PR1 enforces. Add new rules here so
  *  the per-route limits are reviewable in one file. */
 export const RATE_LIMIT_RULES = {
+  // CF-013 / AD23 — fail-closed on KV outage so a KV degradation cannot
+  // silently lift the auth-flow rate cap. The OAuth code-exchange path
+  // is unauthenticated until callback completes, so an attacker who
+  // can drive KV failures (or just exploits a partial outage window)
+  // would otherwise get unbounded /api/auth/login attempts. AD23
+  // captures the explicit choice not to add a Cloudflare WAF backstop.
   AUTH_LOGIN: {
     routeClass: 'auth_login',
     limit: 10,
     windowSec: 60,
+    failClosed: true,
   },
   AUTH_CALLBACK: {
     routeClass: 'auth_callback',
     limit: 20,
     windowSec: 60,
+    failClosed: true,
   },
   ARTICLE_STAR: {
     routeClass: 'article_star',

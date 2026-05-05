@@ -19,6 +19,15 @@ import { requireStrongJwtSecret } from '~/lib/jwt-secret';
  *  lifting of "stay signed in for a month". */
 const DEFAULT_TTL_SECONDS = 5 * 60;
 
+/** CF-049 — clock-skew tolerance on `exp` validation. Sixty seconds
+ *  matches the existing Google-OAuth `nbf` tolerance and absorbs the
+ *  one-shot edge where the issuing isolate's clock and the verifying
+ *  isolate's clock disagree by a few hundred milliseconds (Cloudflare
+ *  guarantees ±1 s within a region). Without this, a session minted at
+ *  exactly `now=t` can fail verification on a peer isolate whose clock
+ *  is `t-0.5s` if the JWT happens to land within the same second. */
+export const JWT_CLOCK_SKEW_SECONDS = 60;
+
 const HEADER_B64 = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
   .replace(/=/g, '')
   .replace(/\+/g, '-')
@@ -136,8 +145,11 @@ export async function verifySession(
   if (!isSessionClaims(payload)) return null;
 
   // Expiry check (verifySession is the one gate that enforces it).
+  // CF-049 — apply JWT_CLOCK_SKEW_SECONDS so a JWT whose `exp` lands
+  // within the skew window of `now` is still accepted. Mirrors the
+  // Google `nbf` tolerance pattern.
   const now = Math.floor(Date.now() / 1000);
-  if (payload.exp <= now) return null;
+  if (payload.exp + JWT_CLOCK_SKEW_SECONDS <= now) return null;
 
   return payload;
 }
