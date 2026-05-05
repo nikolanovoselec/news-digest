@@ -58,15 +58,26 @@ import { SNIPPET_FLOOR } from '~/queue/scrape-chunk-consumer';
  * single 800-candidate chunk that times out the consumer. Was 50
  * fixed-size; 100 as a ceiling lets short-snippet days pack
  * efficiently while the budget rule keeps long-essay days safe. */
-// Reduced from 100 → 60 on 2026-05-05: a 87-candidate chunk repeatedly
-// hit `AiError: 3046: Request timeout` against the default Gemma 4
-// model. Workers AI inference time grows superlinearly in prompt size,
-// and the default model's 256K context isn't the binding constraint
-// — wall-clock timeout is. 60 is a safe upper bound that keeps
-// 188-candidate days at 4 chunks (vs 2-3 at 100) without bloating
-// queue traffic; budget-aware packing still chunks earlier on
-// long-essay days.
-const MAX_CANDIDATES_PER_CHUNK = 60;
+// Reduced from 100 → 25 on 2026-05-05 after observing two regressions
+// at the 60-candidate size on integration:
+//   1. The default Gemma 4 primary model timed out (`AiError: 3046:
+//      Request timeout`) on every 60-candidate chunk — Workers AI
+//      inference time grows superlinearly in prompt size and the
+//      256K context isn't the binding constraint, wall-clock is.
+//   2. The fallback gpt-oss-120b refused 60-candidate chunks with
+//      "creating 60 individual summaries exceeds the practical limits
+//      of this interaction" and returned 0 usable articles, OR
+//      returned 1-2 short summaries that title-overlap-dropped
+//      against 60 input candidates.
+// A residual 5-candidate chunk in the same run produced 3 articles
+// with `alignment_mode: echoed_index` (60% yield), confirming both
+// models handle small batches correctly.
+//
+// 25 is a conservative size where the Gemma 4 primary completes
+// inside the timeout AND the fallback model treats the request as a
+// reasonable batch. 188-candidate days now pack into ~8 chunks (vs
+// 4 at 60) — more queue traffic but every chunk completes.
+const MAX_CANDIDATES_PER_CHUNK = 25;
 
 /** Greedy chunk-packer character budget. The chunk consumer falls back
  * to gpt-oss-120b on malformed-JSON retry; that fallback's 128K context
