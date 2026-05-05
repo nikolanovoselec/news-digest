@@ -55,17 +55,21 @@ import ThemeIcon from '~/components/ThemeIcon.astro';
     }
   }
 
-  .header-theme-toggle__icon {
+  /* CF-059 makes the icon <span> a child-component-rendered element;
+     Astro scopes the parent's CSS but not classes passed via props,
+     so these rules must be marked :global to match the bare class
+     names the child receives. Without this, both icons render. */
+  :global(.header-theme-toggle__icon) {
     display: none;
     line-height: 0;
   }
-  /* Light theme → show moon (click = go dark). Dark theme → show sun
+  /* Light theme = show moon (click = go dark). Dark theme = show sun
      (click = go light). Pure CSS swap keyed off the [data-theme]
      attribute on <html>. */
-  :global([data-theme='light']) .header-theme-toggle__icon--moon {
+  :global([data-theme='light'] .header-theme-toggle__icon--moon) {
     display: inline-flex;
   }
-  :global([data-theme='dark']) .header-theme-toggle__icon--sun {
+  :global([data-theme='dark'] .header-theme-toggle__icon--sun) {
     display: inline-flex;
   }
 
