@@ -21,6 +21,16 @@ describe('OAUTH_ERROR_CODES', () => {
       'oauth_error',
     ]);
   });
+
+  it('REQ-AUTH-004: every code round-trips through mapOAuthError unchanged (CF-060)', () => {
+    // Real-world contract: a provider returning one of these codes
+    // verbatim must echo back unchanged so the landing page can route
+    // to the right copy. Exercises the allowlist + mapper together
+    // instead of testing array membership in isolation.
+    for (const code of OAUTH_ERROR_CODES) {
+      expect(mapOAuthError(code)).toBe(code);
+    }
+  });
 });
 
 describe('mapOAuthError', () => {
@@ -55,29 +65,3 @@ describe('mapOAuthError', () => {
   });
 });
 
-describe('OAUTH_ERROR_CODES allowlist contract (CF-060)', () => {
-  it('REQ-AUTH-004: contains exactly the four codes the landing page renders', () => {
-    // Pin the entire array shape and length, not "every member is its
-    // own member" (which is JS array semantics, not contract). If a
-    // future commit adds or drops an entry, this fails with a clear
-    // diff — and the landing-page renderer below depends on the same
-    // four-string set for its switch statement.
-    expect([...OAUTH_ERROR_CODES]).toEqual([
-      'oauth_error',
-      'invalid_state',
-      'no_verified_email',
-      'token_exchange_failed',
-    ]);
-  });
-
-  it('REQ-AUTH-004: every code maps round-trip through mapOAuthError', () => {
-    // Real-world contract: if a provider returns one of these codes
-    // verbatim, mapOAuthError must echo it back unchanged (so the
-    // landing page can route to the right copy). This exercises the
-    // allowlist + mapper together, instead of testing array membership
-    // in isolation.
-    for (const code of OAUTH_ERROR_CODES) {
-      expect(mapOAuthError(code)).toBe(code);
-    }
-  });
-});
