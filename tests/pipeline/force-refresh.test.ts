@@ -6,7 +6,7 @@
 //   - REQ-AUTH-001 AC 8 admin gate: missing session → 401, non-admin
 //     email → 403, missing Cf-Access-Jwt-Assertion → 401 only when
 //     CF_ACCESS_AUD is configured (CF Access is opt-in additive
-//     perimeter; AD27 captures the rationale).
+//     perimeter; AD29 captures the rationale).
 //   - POST rejects missing/foreign Origin (REQ-AUTH-003 CSRF defence)
 //   - REQ-OPS-005 AC 1+2: POST and GET both kick startRun + SCRAPE_COORDINATOR.send.
 //   - REQ-OPS-005 AC 4: POST happy path returns 303, GET with Accept JSON returns 200 JSON.
