@@ -15,9 +15,9 @@ import {
 } from '~/lib/prompts';
 
 describe('LLM param sets — REQ-PIPE-002 / REQ-PIPE-008 / REQ-DISC-001 (CF-023)', () => {
-  it('CHUNK_LLM_PARAMS uses the full 128K context window for multi-article output', () => {
+  it('CHUNK_LLM_PARAMS reserves 32K output, leaving room for ~96K input on the 128K-context default model', () => {
     expect(CHUNK_LLM_PARAMS.temperature).toBe(0.6);
-    expect(CHUNK_LLM_PARAMS.max_tokens).toBe(128_000);
+    expect(CHUNK_LLM_PARAMS.max_tokens).toBe(32_000);
     expect(CHUNK_LLM_PARAMS.response_format.type).toBe('json_object');
   });
   it('FINALIZE_LLM_PARAMS is the small-payload variant (4K tokens) for dedup_groups output', () => {
@@ -279,12 +279,13 @@ describe('PROCESS_CHUNK_SYSTEM + processChunkUserPrompt — REQ-PIPE-002', () =>
     expect(fenceRuns.length).toBe(4);
   });
 
-  it('REQ-PIPE-002: body_snippet is hard-capped at 2000 chars in the prompt builder', () => {
+  it('REQ-PIPE-002: body_snippet is hard-capped at 16000 chars in the prompt builder (defense-in-depth above the 15K upstream SNIPPET_CAP)', () => {
     // CF-013 — even when upstream fetchArticleBody truncates, the
     // prompt builder applies its own cap so a future code path that
     // forgets to truncate cannot blow the prompt token budget. The
-    // ellipsis suffix proves the cap fired.
-    const giant = 'A'.repeat(5000);
+    // ellipsis suffix proves the cap fired. Sized strictly above
+    // SNIPPET_CAP (15000) so this layered cap remains meaningful.
+    const giant = 'A'.repeat(20000);
     const candidates = [
       {
         index: 0,
@@ -298,8 +299,32 @@ describe('PROCESS_CHUNK_SYSTEM + processChunkUserPrompt — REQ-PIPE-002', () =>
     const prompt = processChunkUserPrompt(candidates, ['cloudflare']);
     expect(prompt).not.toContain(giant);
     expect(prompt).toContain('…');
-    expect(prompt).toContain('A'.repeat(2000));
-    expect(prompt).not.toContain('A'.repeat(2001));
+    expect(prompt).toContain('A'.repeat(16000));
+    expect(prompt).not.toContain('A'.repeat(16001));
+  });
+
+  it('REQ-PIPE-002: a 14K-char body_snippet round-trips intact through the prompt builder (long-form essays not clipped)', () => {
+    // The point of raising the cap from 2K to 16K: full-length essay
+    // bodies (~12K-14K chars after extraction) must reach the LLM
+    // without truncation, otherwise the model only sees the article
+    // preamble and produces generic, ungrounded summaries.
+    const longBody = 'X'.repeat(14000);
+    const candidates = [
+      {
+        index: 0,
+        title: 'Long-form essay',
+        url: 'https://example.com',
+        source_name: 'Example',
+        published_at: 1_700_000_000,
+        body_snippet: longBody,
+      },
+    ];
+    const prompt = processChunkUserPrompt(candidates, ['cloudflare']);
+    expect(prompt).toContain(longBody);
+    expect(prompt.indexOf(longBody)).toBeGreaterThan(-1);
+    // No ellipsis injected for a body within the cap.
+    const ellipsisAfterBody = prompt.indexOf('…', prompt.indexOf(longBody));
+    expect(ellipsisAfterBody).toBe(-1);
   });
 });
 

@@ -33,16 +33,21 @@ const LLM_BASE_PARAMS = {
 } as const;
 
 /**
- * Chunk-prompt budget — set to the model's full 128K context. The
- * earlier 50K reservation was a noisy safety floor; gpt-oss-120b
- * accepts up to its context window and the actual output stays at
- * ~14K (50 articles × 200-word summaries + JSON overhead). Pushing
- * the ceiling up costs nothing on inference and removes any risk
- * that a long-form essay run with raised snippet caps clips early.
+ * Chunk-prompt OUTPUT budget. gpt-oss-120b context is 128K and
+ * `max_tokens` reserves output capacity against that window —
+ * `prompt_tokens + max_tokens ≤ 128K` is enforced runtime-side.
+ * Observed chunk output is ~14K tokens (50 articles × 200-word
+ * summaries + JSON overhead); 32K gives ~2x headroom for an over-
+ * eager run while leaving ~96K for input snippets. The coordinator's
+ * greedy chunk packer (`scrape-coordinator.ts:CHUNK_INPUT_CHARS_BUDGET`)
+ * keeps total input chars within that 96K-token envelope. The chunk
+ * consumer always uses `DEFAULT_MODEL_ID` / `FALLBACK_MODEL_ID` —
+ * user-selected budget models in `MODELS` are never wired here, so
+ * smaller-context models do not constrain this value.
  */
 export const CHUNK_LLM_PARAMS = {
   ...LLM_BASE_PARAMS,
-  max_tokens: 128_000,
+  max_tokens: 32_000,
 } as const;
 
 /**
@@ -169,7 +174,11 @@ Examples (assume the tag is in the allowlist):
 const TITLE_MAX_CHARS = 300;
 const SOURCE_NAME_MAX_CHARS = 100;
 const URL_MAX_CHARS = 1000;
-const BODY_SNIPPET_MAX_CHARS = 15000;
+// Sized strictly above the upstream `SNIPPET_CAP` (15000 in
+// article-fetch.ts) so this layered cap remains meaningful — an
+// upstream regression that produced a 30K-char snippet would still
+// be clamped here. Defense-in-depth, per CF-013.
+const BODY_SNIPPET_MAX_CHARS = 16000;
 const DETAILS_MAX_CHARS = 4000;
 
 function sanitizePromptField(value: string, maxChars: number): string {

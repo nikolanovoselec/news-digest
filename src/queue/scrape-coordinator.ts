@@ -50,18 +50,53 @@ import {
 } from '~/lib/sources-cache';
 import { setChunksRemaining } from '~/lib/kv/chunks-remaining';
 
-/** Max candidates per chunk. Matches the LLM's ~8K input-token budget
- * at the gpt-oss-20b default: ~50 candidate headlines per chunk
- * leaves per-article budget at ~800 output tokens (enough for the
- * 150-200-word prompt contract at ~280 toks/article + JSON
- * overhead), plus headroom for PROCESS_CHUNK_SYSTEM. Was 100 at
- * Gemma; 50 at gpt-oss-20b gives more per-article breathing
- * room without exploding the chunk count. The chunk size isn't
- * the primary lever on output length — the INPUT snippet length
- * is. A model with 300 chars of source material can't honestly
- * write 200 words regardless of how much output budget you give
- * it. Body-fetch quality matters more than chunk count. */
-const CHUNK_SIZE = 50;
+/** Hard ceiling on candidates per chunk. The greedy packer below
+ * usually fills a chunk to its character budget long before this
+ * hits, but the count cap protects against a flood of thin-snippet
+ * candidates (e.g. all-Google-News, ~400 chars each) producing a
+ * single 800-candidate chunk that times out the consumer. Was 50
+ * fixed-size; 100 as a ceiling lets short-snippet days pack
+ * efficiently while the budget rule keeps long-essay days safe. */
+const MAX_CANDIDATES_PER_CHUNK = 100;
+
+/** Greedy chunk-packer character budget. gpt-oss-120b context is
+ * 128K tokens, of which CHUNK_LLM_PARAMS.max_tokens reserves 32K for
+ * output. That leaves ~96K tokens for the input prompt. Reserving
+ * ~5K for the system prompt + per-candidate framing overhead leaves
+ * ~91K tokens for snippet content. At ~3.5 chars/token for English
+ * prose that's ~318K chars; we round down to 280K for safety margin
+ * against estimator drift on non-English snippets and JSON-escape
+ * inflation. The chunk consumer is downstream of this cap — its
+ * own per-field BODY_SNIPPET_MAX_CHARS (16K) is the per-candidate
+ * ceiling, but a chunk full of those would still fit by design. */
+const CHUNK_INPUT_CHARS_BUDGET = 280_000;
+
+/** Per-candidate framing overhead in the user prompt — the
+ * `[N] title`, `source: ...`, `url: ...`, `published_at: ...`
+ * lines plus newlines. Added to each candidate's snippet length
+ * when estimating its contribution to the chunk's char budget. */
+const PER_CANDIDATE_OVERHEAD_CHARS = 400;
+
+/** Median post-fetch body length when the feed snippet is below
+ * the chunk-consumer's SNIPPET_FLOOR (400 chars) and a body fetch
+ * fires. Used as the estimator's lower-bound for candidates whose
+ * actual body size the coordinator doesn't know yet — body fetch
+ * happens later, in the chunk consumer. Conservative under-estimate
+ * is preferred (over-pack a little) over over-estimate (waste budget
+ * on chunks that end up half-empty post-fetch). */
+const ESTIMATED_BODY_FETCH_CHARS = 3_000;
+
+/** Estimate the per-candidate char cost the chunk's prompt will
+ * incur. When a feed snippet is already attached and large enough
+ * (≥ SNIPPET_FLOOR), the chunk consumer skips its own body fetch
+ * and the snippet length is the actual cost. Otherwise the consumer
+ * will fetch and the body could be anywhere between 0 and SNIPPET_CAP
+ * (15K); we use ESTIMATED_BODY_FETCH_CHARS as the median guess. */
+function estimateCandidateChars(c: ChunkCandidate): number {
+  const snippet = c.body_snippet ?? '';
+  const bodyChars = snippet.length >= 400 ? snippet.length : ESTIMATED_BODY_FETCH_CHARS;
+  return bodyChars + PER_CANDIDATE_OVERHEAD_CHARS;
+}
 
 /** 10-worker semaphore cap for the coordinator's fetch fan-out.
  * The curated registry (~50 entries) plus discovered-tag feeds can
@@ -584,10 +619,30 @@ async function chunkAndEnqueue(
   survivorCount: number,
   scrape_run_id: string,
 ): Promise<void> {
+  // Greedy budget-aware packing. Each candidate's char cost is
+  // estimated (snippet length when known, otherwise the median post-
+  // fetch body length); a chunk fills until the next candidate would
+  // push it past CHUNK_INPUT_CHARS_BUDGET, then a new chunk starts.
+  // MAX_CANDIDATES_PER_CHUNK is the defensive ceiling for thin-snippet
+  // floods. Replaces the prior fixed-50 slicing which under-packed
+  // short-snippet days and could overflow the context on long-essay
+  // days after the snippet cap was raised to 15K.
   const chunks: ChunkCandidate[][] = [];
-  for (let i = 0; i < chunkCandidates.length; i += CHUNK_SIZE) {
-    chunks.push(chunkCandidates.slice(i, i + CHUNK_SIZE));
+  let current: ChunkCandidate[] = [];
+  let currentChars = 0;
+  for (const candidate of chunkCandidates) {
+    const cost = estimateCandidateChars(candidate);
+    const wouldExceedBudget = currentChars + cost > CHUNK_INPUT_CHARS_BUDGET;
+    const wouldExceedCount = current.length >= MAX_CANDIDATES_PER_CHUNK;
+    if (current.length > 0 && (wouldExceedBudget || wouldExceedCount)) {
+      chunks.push(current);
+      current = [];
+      currentChars = 0;
+    }
+    current.push(candidate);
+    currentChars += cost;
   }
+  if (current.length > 0) chunks.push(current);
   // Hard cap: a discovered-tag explosion can't expand the per-tick LLM
   // fan-out past MAX_CHUNKS_PER_TICK. Any excess is deferred to the next
   // 4-hour tick (the existing-URL filter keeps tick-N+1 from re-processing
