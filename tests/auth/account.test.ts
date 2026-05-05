@@ -451,7 +451,7 @@ describe('POST /api/auth/account — native form path', () => {
     expect(
       cookies.find(
         (c) =>
-          c.startsWith('__Host-news_digest_refresh=') &&
+          c.startsWith(`${REFRESH_TOKEN_COOKIE_NAME}=`) &&
           c.includes('Max-Age=0'),
       ),
     ).toBeDefined();

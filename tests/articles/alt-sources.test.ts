@@ -32,7 +32,7 @@ describe('AltSourcesModal — REQ-READ-002', () => {
     expect(modalSource).toContain('data-primary');
     expect(modalSource).toMatch(/aria-label="primary source"/);
     expect(modalSource).toContain('{primarySourceName}');
-    expect(modalSource).toContain('href={primarySourceUrl}');
+    expect(modalSource).toContain('href={safeHref(primarySourceUrl)}');
   });
 
   it('REQ-READ-002: each <li> has the source name and a <time> element with published_at', () => {
