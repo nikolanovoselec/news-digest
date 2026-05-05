@@ -2,21 +2,29 @@
 
 D1 schema is rebuilt from scratch by every migration in this folder, applied in lexical order. The cron-driven workflow reapplies them on every CI deploy via `wrangler d1 migrations apply`.
 
-## Historical context (CF-010)
+## Historical context (CF-020 reverted)
 
-The current live schema effectively starts at **migration 0003**. Migrations 0001–0002 describe a **pre-launch schema** (per-user digest jobs, tag-keyed columns, separate hashtag table) that was redesigned before the product reached real users.
+The current live schema is the result of `0003_global_feed.sql` redesigning
+the original 0001/0002 shape into the global-feed shape. CF-020 originally
+proposed deleting 0001 + 0002 as redundant, but the test fixtures'
+`applyD1Migrations` walks the entire folder in order and 0003's recreated
+tables (article_stars, article_reads) carry `REFERENCES users(id)` foreign
+keys. The `users` table is created by 0001; without it 0003's table
+creation errors at the FK declaration. Migration 0002 likewise carries an
+`ALTER TABLE articles` that fails if 0001's `articles` table is absent.
+The 0001/0002 files are kept verbatim as the FK-base of every fresh test
+pool / CI run.
 
-Migration 0003 (`0003_global_feed.sql`) is destructive: it `DROP`s every table touched by 0001–0002 and recreates them in the global-feed shape (one shared scrape pool, `articles.canonical_url` as the dedup key, JSON arrays for `details_json`/`tags_json`, `article_sources`/`article_tags`/`article_reads`/`article_stars` as the live child tables).
+REQ comments in `0003_global_feed.sql` and onward describe the **live**
+schema. Spec changes that touch these tables expect the matching SQL to
+live here.
 
-What this means for REQ annotations:
-
-- REQ comments inside `0001_initial.sql` and `0002_article_tags.sql` are **historical** — those columns and tables were superseded by 0003 and never shipped. Don't edit those headers; the file's value is the migration history, not the contract.
-- REQ comments in `0003_global_feed.sql` and onward describe the **live** schema. Spec changes that touch these tables expect the matching SQL to live here.
-
-## Migration index (live)
+## Migration index
 
 | # | File | Purpose |
 |---|---|---|
+| 0001 | `0001_initial.sql` | Pre-launch initial schema; live at the start of every replay because 0003 expects these tables to exist before its DROP statements run |
+| 0002 | `0002_article_tags.sql` | Pre-launch tag columns; same replay invariant as 0001 |
 | 0003 | `0003_global_feed.sql` | Drops and recreates the live schema in the global-feed shape (REQ-PIPE-*, REQ-READ-*, REQ-HIST-*, REQ-STAR-*) |
 | 0004 | `0004_system_user.sql` | System-owned `users` row used as the `user_id` foreign key on system-discovered tag rows |
 | 0005 | `0005_auth_links.sql` | Email-claim history for accounts that link a second OAuth provider |

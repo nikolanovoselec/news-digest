@@ -27,6 +27,7 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
+import { escapeHtml } from '~/lib/email-html';
 import { signSession } from '~/lib/session-jwt';
 import { mapOAuthError, type OAuthErrorCode } from '~/lib/oauth-errors';
 import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
@@ -46,7 +47,7 @@ import {
   oauthStateCookieName,
   buildClearOAuthStateCookie,
 } from './login';
-import { readCookie, timingSafeEqualHmac } from '~/lib/crypto';
+import { readCookie, verifyHmacSignature } from '~/lib/crypto';
 import { enforceRateLimit, rateLimitResponse, clientIp, RATE_LIMIT_RULES } from '~/lib/rate-limit';
 
 interface TokenResponse {
@@ -56,14 +57,9 @@ interface TokenResponse {
   error_description?: string;
 }
 
-/** Shape of the existing users row we consult on re-login. */
-interface ExistingUserRow {
-  id: string;
-  tz: string;
-  session_version: number;
-  digest_hour: number | null;
-  hashtags_json: string | null;
-}
+// CF-028: ExistingUserRow shared via auth-types.ts so the callback and
+// the auth middleware stay in sync when the users SELECT changes.
+import { type ExistingUserRow } from '~/lib/auth-types';
 
 // `readCookie` is imported from `~/lib/crypto` (CF-005 — was duplicated
 // here, in `auth/logout.ts`, and in `middleware/auth.ts`).
@@ -86,6 +82,34 @@ function errorRedirect(
 }
 
 /**
+ * CF-025 — shared helper that logs an auth.callback.failed event, clears
+ * the OAuth state cookie, and issues a 303 redirect to the error landing
+ * page. Replaces 6 near-identical blocks in the callback handler.
+ *
+ * @param origin     The request origin (scheme + host) for the redirect target.
+ * @param code       The sanitised {@link OAuthErrorCode} to surface in `?error=`.
+ * @param clearState The `Set-Cookie` string that clears the state cookie.
+ * @param provider   The provider name appended as `?provider=` for UI messaging.
+ * @param debugCtx   Fields merged into the log record (never surfaced to users).
+ */
+function respondError(
+  origin: string,
+  code: OAuthErrorCode,
+  clearState: string,
+  provider: string,
+  debugCtx: Record<string, unknown>,
+): Response {
+  log('error', 'auth.callback.failed', {
+    provider,
+    error_code: code,
+    ...debugCtx,
+  });
+  const headers = new Headers();
+  headers.append('Set-Cookie', clearState);
+  return errorRedirect(origin, code, headers, 303, provider);
+}
+
+/**
  * Build a 403 response for state mismatch — the user agent should not
  * follow a redirect in this case because the CSRF invariant already
  * failed once; 403 forces the user to re-initiate.
@@ -95,7 +119,7 @@ function invalidStateResponse(origin: string, extraHeaders: Headers): Response {
   const target = `${origin}/?error=invalid_state`;
   headers.set('Location', target);
   headers.set('Content-Type', 'text/html; charset=utf-8');
-  const safeTarget = htmlAttrEscape(target);
+  const safeTarget = escapeHtml(target);
   const body = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Sign-in incomplete</title>
 <meta http-equiv="refresh" content="0;url=${safeTarget}"></head>
@@ -103,18 +127,15 @@ function invalidStateResponse(origin: string, extraHeaders: Headers): Response {
   return new Response(body, { status: 403, headers });
 }
 
-function htmlAttrEscape(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+// CF-032: htmlAttrEscape removed — replaced by the project's shared
+// `escapeHtml` from `~/lib/email-html`, which covers the same five
+// special characters and is already used by the email renderer.
 
-// `timingSafeEqualHmac` is imported from `~/lib/crypto` (CF-005 —
+// `verifyHmacSignature` is imported from `~/lib/crypto` (CF-005 —
 // previously open-coded here as a JS XOR loop, with two more
-// duplicates in dev/login.ts and dev/trigger-scrape.ts). The HMAC
+// duplicates in dev/login.ts and dev/trigger-scrape.ts; renamed in
+// CF-014 from `timingSafeEqualHmac` to make the
+// "expected first, candidate second" convention explicit). The HMAC
 // pattern is constant-time by Web Crypto spec.
 
 /**
@@ -229,7 +250,7 @@ export async function GET(context: APIContext): Promise<Response> {
     queryState !== '' &&
     cookieState !== null &&
     cookieState !== '' &&
-    (await timingSafeEqualHmac(queryState, cookieState, env.OAUTH_JWT_SECRET));
+    (await verifyHmacSignature(cookieState, queryState, env.OAUTH_JWT_SECRET));
   if (!statesMatch) {
     log('warn', 'auth.callback.invalid_state', {
       provider: provider.name,
@@ -268,26 +289,16 @@ export async function GET(context: APIContext): Promise<Response> {
       redirectUri,
     );
     if (typeof tokenData.access_token !== 'string' || tokenData.access_token === '') {
-      log('error', 'auth.callback.failed', {
-        provider: provider.name,
-        error_code: 'oauth_error',
+      return respondError(origin, 'oauth_error', clearState, provider.name, {
         detail: String(
           `token_exchange: ${tokenData.error ?? 'unknown'} ${tokenData.error_description ?? ''}`,
         ).slice(0, 500),
       });
-      const headers = new Headers();
-      headers.append('Set-Cookie', clearState);
-      return errorRedirect(origin, 'oauth_error', headers, 303, provider.name);
     }
   } catch (err) {
-    log('error', 'auth.callback.failed', {
-      provider: provider.name,
-      error_code: 'oauth_error',
+    return respondError(origin, 'oauth_error', clearState, provider.name, {
       detail: String(err).slice(0, 500),
     });
-    const headers = new Headers();
-    headers.append('Set-Cookie', clearState);
-    return errorRedirect(origin, 'oauth_error', headers, 303, provider.name);
   }
 
   // 4. Provider-specific profile fetch.
@@ -302,14 +313,9 @@ export async function GET(context: APIContext): Promise<Response> {
       clientId: creds.clientId,
     });
   } catch (err) {
-    log('error', 'auth.callback.failed', {
-      provider: provider.name,
-      error_code: 'oauth_error',
+    return respondError(origin, 'oauth_error', clearState, provider.name, {
       detail: String(err).slice(0, 500),
     });
-    const headers = new Headers();
-    headers.append('Set-Cookie', clearState);
-    return errorRedirect(origin, 'oauth_error', headers, 303, provider.name);
   }
 
   if (profile.email === null) {
@@ -397,15 +403,10 @@ export async function GET(context: APIContext): Promise<Response> {
       .bind(userId)
       .first<ExistingUserRow>();
   } catch (err) {
-    log('error', 'auth.callback.failed', {
-      provider: provider.name,
+    return respondError(origin, 'oauth_error', clearState, provider.name, {
       user_id: fallbackUserId,
-      error_code: 'oauth_error',
       detail: String(err).slice(0, 500),
     });
-    const headers = new Headers();
-    headers.append('Set-Cookie', clearState);
-    return errorRedirect(origin, 'oauth_error', headers, 303, provider.name);
   }
 
   let sessionVersion: number;
@@ -449,15 +450,10 @@ export async function GET(context: APIContext): Promise<Response> {
         (row.hashtags_json === null || row.hashtags_json === '');
     }
   } catch (err) {
-    log('error', 'auth.callback.failed', {
-      provider: provider.name,
+    return respondError(origin, 'oauth_error', clearState, provider.name, {
       user_id: userId,
-      error_code: 'oauth_error',
       detail: String(err).slice(0, 500),
     });
-    const headers = new Headers();
-    headers.append('Set-Cookie', clearState);
-    return errorRedirect(origin, 'oauth_error', headers, 303, provider.name);
   }
 
   // 6. Mint session JWT. The `ghl` claim name is preserved for backward

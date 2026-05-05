@@ -46,6 +46,7 @@ import { requireSession } from '~/middleware/auth';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { parseJsonStringArray } from '~/lib/json-string-array';
+import { clearDiscoveryFailure } from '~/lib/kv/discovery-failures';
 
 interface RetryBody {
   tag?: unknown;
@@ -160,7 +161,7 @@ export async function POST(context: APIContext): Promise<Response> {
 
   try {
     await env.KV.delete(`sources:${tag}`);
-    await env.KV.delete(`discovery_failures:${tag}`);
+    await clearDiscoveryFailure(env.KV, tag);
     await env.DB.prepare(
       'INSERT OR IGNORE INTO pending_discoveries (user_id, tag, added_at) VALUES (?1, ?2, ?3)',
     )

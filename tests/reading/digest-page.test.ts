@@ -13,13 +13,9 @@ import digestPageSource from '../../src/pages/digest.astro?raw';
 import digestCardSource from '../../src/components/DigestCard.astro?raw';
 
 describe('digest.astro — REQ-READ-001 grid', () => {
-  it('REQ-READ-001: implements REQ-READ-001 marker is present', () => {
-    expect(digestPageSource).toContain('REQ-READ-001');
-  });
-
-  it('REQ-READ-001: implements REQ-READ-005 marker is present', () => {
-    expect(digestPageSource).toContain('REQ-READ-005');
-  });
+  // CF-033: REQ-ID presence theater assertions removed. The
+  // scripts/check-req-backlinks.mjs CI gate enforces annotation
+  // presence; duplicating that check here is text-matching theater.
 
   it('REQ-READ-001: responsive grid uses 1/2/3 columns at 640/768/1024 breakpoints', () => {
     expect(digestPageSource).toMatch(/grid-template-columns:\s*1fr/);

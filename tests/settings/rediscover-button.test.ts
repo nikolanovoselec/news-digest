@@ -55,10 +55,7 @@ describe('settings.astro Discover-missing-sources button — REQ-DISC-004', () =
     expect(settingsPage).toContain("'count'");
   });
 
-  it('REQ-DISC-004: settings.astro annotates itself with the REQ id', () => {
-    // Spec-reviewer greps for the annotation to link code → REQ.
-    expect(settingsPage).toContain('REQ-DISC-004');
-  });
+  // CF-033: REQ-DISC-004 annotation theater removed — CI gate covers it.
 
   it('REQ-DISC-006: stuck-tag list renders the actual hashtag names (not just a count)', () => {
     // The user must see WHICH tags are stuck — not just "1 tag has no

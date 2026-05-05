@@ -36,16 +36,16 @@ import {
   FEED_MAX_BODY_BYTES,
 } from '~/lib/fetch-policy';
 import { hasCuratedSource } from '~/lib/curated-sources';
+import {
+  recordDiscoveryFailure,
+  clearDiscoveryFailure,
+} from '~/lib/kv/discovery-failures';
 
-const FETCH_TIMEOUT_MS = FEED_FETCH_TIMEOUT_MS;
-const MAX_BODY_BYTES = FEED_MAX_BODY_BYTES;
+// CF-056: use the imported names directly instead of local re-aliases.
 /** Evict after 2 consecutive discovery failures. Mirrors the per-feed
  * eviction threshold in REQ-DISC-003 AC 2 applied at the tag level:
  * two attempts without a usable feed and the tag is parked. */
 const CONSECUTIVE_FAILURE_LIMIT = 2;
-/** 7-day TTL for failure counters to prevent unbounded KV growth. */
-const FAILURE_COUNTER_TTL_SECONDS = 7 * 24 * 60 * 60;
-
 /** Shape the Workers AI response is expected to conform to. */
 interface LLMDiscoveryPayload {
   feeds?: Array<{
@@ -186,7 +186,7 @@ export async function validateFeedUrl(
     response = await fetch(url, {
       method: 'GET',
       headers: { 'User-Agent': 'news-digest-discovery' },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(FEED_FETCH_TIMEOUT_MS),
       redirect: 'follow',
     });
   } catch {
@@ -210,7 +210,7 @@ export async function validateFeedUrl(
   let body: string;
   try {
     const text = await response.text();
-    if (text.length > MAX_BODY_BYTES) {
+    if (text.length > FEED_MAX_BODY_BYTES) {
       return false;
     }
     body = text;
@@ -391,7 +391,10 @@ export async function processPendingDiscoveries(
     .bind(limit)
     .all<{ tag: string }>();
 
-  const tags = (rows.results ?? []).map((r) => r.tag).filter((t) => typeof t === 'string' && t !== '');
+  // Apply limit client-side as a belt-and-suspenders guard. The SQL
+  // LIMIT clause is authoritative, but test mocks that return all rows
+  // regardless of the bound parameter would otherwise bypass the cap.
+  const tags = (rows.results ?? []).map((r) => r.tag).filter((t) => typeof t === 'string' && t !== '').slice(0, limit);
 
   for (const tag of tags) {
     // REQ-DISC-001 AC 1 — discovery is short-circuited for tags covered
@@ -421,7 +424,7 @@ export async function processPendingDiscoveries(
           discovered_at: Date.now(),
         };
         await writeSourcesCache(env.KV, tag, cacheValue);
-        await env.KV.delete(`discovery_failures:${tag}`);
+        await clearDiscoveryFailure(env.KV, tag);
         await env.DB.prepare('DELETE FROM pending_discoveries WHERE tag = ?1')
           .bind(tag)
           .run();
@@ -448,7 +451,7 @@ export async function processPendingDiscoveries(
           discovered_at: Date.now(),
         };
         await writeSourcesCache(env.KV, tag, emptyCache);
-        await env.KV.delete(`discovery_failures:${tag}`);
+        await clearDiscoveryFailure(env.KV, tag);
         await env.DB.prepare('DELETE FROM pending_discoveries WHERE tag = ?1')
           .bind(tag)
           .run();
@@ -459,9 +462,7 @@ export async function processPendingDiscoveries(
           failure_count: nextCount,
         });
       } else {
-        await env.KV.put(`discovery_failures:${tag}`, String(nextCount), {
-          expirationTtl: FAILURE_COUNTER_TTL_SECONDS,
-        });
+        await recordDiscoveryFailure(env.KV, tag, nextCount);
         failed.push(tag);
         log('warn', 'discovery.completed', {
           tag,

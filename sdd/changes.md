@@ -6,6 +6,12 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are archived in [`changes-archive-2026-04.md`](changes-archive-2026-04.md).
 
+## 2026-05-05
+
+- REQ-PIPE-001 AC8 reworded: "coordinator fetches the article body" changed to "pipeline fetches the article body" — the chunk consumer, not the coordinator, performs the body-fetch step; the AC now names the actor correctly without changing the observable contract.
+- REQ-OPS-003 AC1 reworded: the CSP requirement now uses user-observable language ("restricts script execution to same-origin, blocks inline event handlers") with the literal directive value moved to documentation/security.md.
+- REQ-DES-001 AC1 and REQ-DES-003 AC1 reworded: implementation details (exact font-stack strings, pixel sizes, cubic-bezier value) moved to documentation/architecture.md design-system section; the ACs now describe the observable outcome (5 type sizes, single easing curve, system fonts only).
+
 ## 2026-05-04
 
 - REQ-STAR-001 AC 1 broadened and AC 6 added: the spec now names every card surface that exposes a star toggle (dashboard, article detail, starred page, history day-expansions and search results) and requires each card to render its initial starred / unstarred state on first paint, so an article starred elsewhere shows up filled on `/history` without needing a hard refresh.

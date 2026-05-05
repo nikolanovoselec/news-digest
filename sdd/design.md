@@ -11,7 +11,7 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. Typography uses two system-only font stacks: a sans stack (`-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif`) for body and UI chrome, and an editorial serif stack (`Charter, "Iowan Old Style", Georgia, "Noto Serif", "Source Serif Pro", serif`) for article titles and other long-form reading surfaces. Five sizes (12, 14, 16, 20, 32 px) and two weights (400 body, 600 headings and labels) apply to both stacks; no webfont is downloaded.
+1. The type scale provides 5 sizes from caption to display and 2 weights (body and heading); only system fonts are used — no webfont download is required. The exact font stacks and size values are documented in `documentation/architecture.md` (design-system section).
 2. The palette is restricted to neutral grays with a single accent color per theme; no decorative gradients or drop shadows appear on steady-state UI surfaces. Motion-driven gradients required by another REQ (e.g., transient progress affordances) are exempt.
 3. Inputs render with a minimum 16 px font size to prevent iOS zoom-on-focus.
 4. Every interactive element shows a visible focus ring on keyboard focus.
@@ -55,7 +55,7 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. A single easing curve `cubic-bezier(0.22, 1, 0.36, 1)` is used everywhere; durations are 150 ms (micro interactions), 250 ms (components), 400 ms (page transitions).
+1. A single easing curve is used everywhere; durations are 150 ms (micro interactions), 250 ms (components), 400 ms (page transitions). The exact curve and token names are documented in `documentation/architecture.md` (design-system section).
 2. Astro View Transitions handle route changes with a 250 ms cross-fade by default.
 3. The digest card → article detail route uses the View Transitions shared-element morph so the card expands into the detail view.
 4. All motion is wrapped in `@media (prefers-reduced-motion: no-preference)`; under `reduce`, transitions collapse to instant state changes.

@@ -1,7 +1,7 @@
 // Tests for src/lib/session-jwt.ts — REQ-AUTH-002 (session cookie + instant revocation).
 // Verifies HMAC-SHA256 JWT sign/verify, expiry, tampering, and refresh threshold.
 import { describe, it, expect } from 'vitest';
-import { signSession, verifySession, type SessionClaims } from '~/lib/session-jwt';
+import { signSession, verifySession, JWT_CLOCK_SKEW_SECONDS, type SessionClaims } from '~/lib/session-jwt';
 
 const SECRET = 'test-secret-key-for-hmac-sha256-signing-minimum-length';
 
@@ -58,8 +58,13 @@ describe('session-jwt', () => {
 
   describe('verifySession', () => {
     it('REQ-AUTH-002: returns null for expired token', async () => {
-      // Negative TTL produces an already-expired token.
-      const token = await signSession(baseClaims, SECRET, -1);
+      // TTL must exceed the clock-skew tolerance (JWT_CLOCK_SKEW_SECONDS)
+      // so the token is still rejected after the skew window is applied.
+      // CF-049 added a 60-second skew allowance; a TTL of -1 produces
+      // exp = now - 1, which satisfies (exp + 60 > now) and would
+      // incorrectly pass. Use -(JWT_CLOCK_SKEW_SECONDS + 1) to produce
+      // a token that is definitely beyond the tolerance window.
+      const token = await signSession(baseClaims, SECRET, -(JWT_CLOCK_SKEW_SECONDS + 1));
       const claims = await verifySession(token, SECRET);
       expect(claims).toBeNull();
     });

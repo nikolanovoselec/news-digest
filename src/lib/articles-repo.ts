@@ -74,6 +74,49 @@ export async function loadExistingCanonicalUrls(
   return new Set(map.keys());
 }
 
+/**
+ * Update the `chunk_count` column on a scrape_runs row. Called by the
+ * coordinator (Step 8) after the real chunk count is known. Best-effort —
+ * a failure is logged by the caller, not this helper.
+ *
+ * CF-021 — extracted from scrape-coordinator.ts so all writes to
+ * `scrape_runs.chunk_count` (the CAS sentinel in Step 0, the real count
+ * here, and the cascade test fixtures) live alongside the other article-
+ * domain SQL.
+ */
+export async function updateChunkCount(
+  db: D1Database,
+  scrapeRunId: string,
+  chunkCount: number,
+): Promise<void> {
+  await db
+    .prepare('UPDATE scrape_runs SET chunk_count = ?1 WHERE id = ?2')
+    .bind(chunkCount, scrapeRunId)
+    .run();
+}
+
+/**
+ * Count how many chunk-completion rows exist for a given scrape run.
+ * Used by the chunk consumer to determine whether the last chunk has
+ * arrived (completedCount >= total_chunks).
+ *
+ * CF-021 — extracted from scrape-chunk-consumer.ts so the
+ * `scrape_chunk_completions` read-path lives in the same layer as the
+ * write-path (`recordChunkCompletion`).
+ */
+export async function countChunkCompletions(
+  db: D1Database,
+  scrapeRunId: string,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      'SELECT COUNT(*) AS done FROM scrape_chunk_completions WHERE scrape_run_id = ?1',
+    )
+    .bind(scrapeRunId)
+    .first<{ done: number }>();
+  return row?.done ?? 0;
+}
+
 /** Record one chunk's completion in `scrape_chunk_completions`. Returns
  * true when this call won the INSERT race (the row didn't already
  * exist), false when the chunk had already been recorded by a prior

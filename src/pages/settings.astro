@@ -11,7 +11,10 @@
 
 import type { APIContext } from 'astro';
 import Base from '~/layouts/Base.astro';
-import ModelSelect from '~/components/ModelSelect.astro';
+// CF-057: ModelSelect import removed — showModelSelect is permanently false
+// (REQ-SET-004: model selection UI hidden while the global pipeline runs on
+// a single default model). Re-enable by restoring this import and flipping
+// showModelSelect below. The stored model_id column is preserved.
 import InstallPrompt from '~/components/InstallPrompt.astro';
 import StatsWidget from '~/components/StatsWidget.astro';
 import { loadSessionForPage } from '~/middleware/auth';
@@ -145,12 +148,7 @@ const tzOptions: string[] = canonicalTzList.includes(tzValue)
 const currentModelId = user.model_id ?? DEFAULT_MODEL_ID;
 const emailEnabled = user.email_enabled === 1;
 
-// REQ-SET-004 — ModelSelect is hidden while the global pipeline runs on
-// a single default model. The stored `model_id` preference is still
-// persisted by /api/settings (see the PUT handler there) so flipping
-// `showModelSelect` back to `true` is a one-line re-enable without a
-// schema change. `currentModelId` is preserved above for the same reason.
-const showModelSelect = false;
+// CF-057: showModelSelect constant removed. See import comment above.
 
 // Parse the user's current hashtag list so we can compute which of
 // the Restore / Delete buttons to surface. Corrupt JSON or a
@@ -340,26 +338,15 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
             ))}
           </select>
         </label>
-        {showModelSelect ? (
-          <label class="settings__field">
-            {/* Implements REQ-SET-004 — hidden while the global pipeline
-                runs on a single default model. Kept here so re-enabling
-                is a one-line flip of `showModelSelect`. */}
-            <span class="settings__field-label">Model</span>
-            <ModelSelect selected={currentModelId} />
-          </label>
-        ) : (
-          /* Implements REQ-SET-004 — stored preference survives across
-             UI toggles. Hidden input carries the current model_id so
-             the PUT handler (which still validates and persists the
-             field) receives the round-tripped value. */
-          <input
-            type="hidden"
-            name="model_id"
-            data-model-id-fallback
-            value={currentModelId}
-          />
-        )}
+        {/* CF-057: ModelSelect branch removed. REQ-SET-004 stored preference
+            survives — the hidden input round-trips model_id so the PUT
+            handler (which validates and persists it) always receives a value. */}
+        <input
+          type="hidden"
+          name="model_id"
+          data-model-id-fallback
+          value={currentModelId}
+        />
         <label class="settings__toggle">
           <input
             type="checkbox"

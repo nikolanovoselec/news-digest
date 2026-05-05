@@ -20,9 +20,7 @@ import historyPageSource from '../../src/pages/history.astro?raw';
 import userMenuSource from '../../src/components/UserMenu.astro?raw';
 
 describe('history.astro — REQ-HIST-001', () => {
-  it('REQ-HIST-001: Implements REQ-HIST-001 marker is present', () => {
-    expect(historyPageSource).toContain('REQ-HIST-001');
-  });
+  // CF-033: REQ-ID presence theater removed — CI gate covers annotations.
 
   it('REQ-HIST-001: renders a day-grouped list (not a flat per-digest list)', () => {
     // The day-grouped layout iterates `visibleDays.map((day) => ...)`
@@ -177,5 +175,14 @@ describe('history.astro — REQ-HIST-001', () => {
     expect(historyPageSource).toMatch(/<details[^>]*open=\{isFocused\}/);
     // The search input is conditional on !isFocused.
     expect(historyPageSource).toMatch(/\{!isFocused\s*&&\s*\(/);
+  });
+
+  it('REQ-HIST-001 AC5: URL state is written on chip-click via replaceState or similar', () => {
+    // The chip-click handler must reflect the active tag in the URL so
+    // the user can share or deep-link a filtered view. We assert that
+    // history.replaceState (or pushState) is called.
+    expect(historyPageSource).toMatch(
+      /replaceState|pushState/,
+    );
   });
 });

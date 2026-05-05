@@ -85,10 +85,13 @@ describe('enforceRateLimit', () => {
   });
 
   it('CF-028: fails open on KV.get error (broken counter must not lock users out)', async () => {
+    // ARTICLE_STAR has no failClosed flag — a KV outage must NOT deny.
+    // AUTH_LOGIN was changed to failClosed:true (AD23), so this test
+    // uses a genuinely fail-open rule to verify the default code path.
     const env = makeKv({ get: vi.fn().mockRejectedValue(new Error('kv down')) });
     const result = await enforceRateLimit(
       env as unknown as { KV: KVNamespace },
-      RATE_LIMIT_RULES.AUTH_LOGIN,
+      RATE_LIMIT_RULES.ARTICLE_STAR,
       'ip:1.2.3.4',
     );
     expect(result.ok).toBe(true);
@@ -140,13 +143,16 @@ describe('enforceRateLimit', () => {
   });
 
   it('REQ-AUTH-001 AC 9: KV.put error on a fail-open rule still permits the request (preserves prior behavior)', async () => {
+    // ARTICLE_STAR has no failClosed flag — a KV.put outage must NOT deny.
+    // AUTH_LOGIN was changed to failClosed:true (AD23), so this test uses
+    // ARTICLE_STAR to verify the fail-open KV.put path still works.
     const env = makeKv({
       get: vi.fn().mockResolvedValue(null),
       put: vi.fn().mockRejectedValue(new Error('kv put down')),
     });
     const result = await enforceRateLimit(
       env as unknown as { KV: KVNamespace },
-      RATE_LIMIT_RULES.AUTH_LOGIN,
+      RATE_LIMIT_RULES.ARTICLE_STAR,
       'ip:1.2.3.4',
     );
     expect(result.ok).toBe(true);

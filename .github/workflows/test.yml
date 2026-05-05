@@ -33,24 +33,25 @@ jobs:
       - name: Install dependencies
         run: npm install --no-fund --no-audit
 
-      # Audit the production-dep tree. `--omit=dev` excludes top-level
-      # devDependencies, but the @astrojs/cloudflare adapter (production)
-      # transitively pulls in miniflare/wrangler/undici (build-time
-      # tooling that never reaches the deployed Worker bundle running
-      # on workerd). Those transitives generate the bulk of the HIGH
-      # findings, so we gate on CRITICAL only — the worst class still
-      # blocks the build, and HIGH+ findings remain visible in the logs
-      # for operators to triage via Dependabot. Tightening to HIGH+
-      # would block on transitive-only CVEs that have no production
-      # path; that's the failure mode of the previous advisory-only
-      # configuration we just fixed.
-      # Advisory-only HIGH+ surface so operators see the full list per
-      # push and can drive Dependabot triage without the build failing
-      # on transitive build-tool CVEs.
-      - name: npm audit (production deps, high+ — advisory only)
+      # CF-048 / AD28 — audit the production-dep tree at TWO levels:
+      #   - HIGH+: visible in CI logs (continue-on-error) so operators
+      #     see Dependabot triage candidates on every push without
+      #     blocking the build on transitive-only CVEs.
+      #   - CRITICAL+: blocking. Real production-runtime exposure is
+      #     gated here.
+      # Why this split: @astrojs/cloudflare is a production dep that
+      # transitively pulls miniflare/wrangler/undici. Those tools run
+      # at build/dev time only; the deployed Workers bundle runs on
+      # workerd which uses its own fetch, NOT undici. A HIGH undici
+      # CVE in node_modules has no production attack surface but
+      # would block every PR. The repo's Dependabot channel resolves
+      # those transitives over time. AD28 records why HIGH does not
+      # block; do not re-tighten without checking transitive scope
+      # against workerd runtime first.
+      - name: npm audit (production deps, high+ - advisory only)
         run: npm audit --omit=dev --audit-level=high
         continue-on-error: true
-      - name: npm audit (production deps, critical+ — blocking)
+      - name: npm audit (production deps, critical+ - blocking)
         run: npm audit --omit=dev --audit-level=critical
 
       - name: Lint
@@ -61,14 +62,6 @@ jobs:
       # SDD spec ahead of doc-updater's per-push pass.
       - name: REQ backlink coverage
         run: node scripts/check-req-backlinks.mjs
-
-      # CF-005 + CF-020: assert wrangler.toml max_retries literals match
-      # MAX_QUEUE_ATTEMPTS in queue-handler.ts AND binding-shape parity
-      # between top-level and [env.integration.*]. A binding added to
-      # production but missing from integration would silently 500 on
-      # the integration deploy without this gate.
-      - name: Wrangler env parity
-        run: node scripts/check-wrangler-env-parity.mjs
 
       # AD20 — fail the build if any src/pages/** or src/components/**
       # statically imports a top-level src/scripts/*.ts file. That

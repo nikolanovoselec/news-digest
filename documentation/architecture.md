@@ -182,8 +182,8 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 | `src/queue/scrape-chunk-consumer.ts` | Per-chunk LLM call, dedup, atomic completion gate, finalize handoff | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
 | `src/queue/scrape-finalize-consumer.ts` | Finalize pass (cross-chunk semantic dedup) — LLM prompt uses title + full article body; source name dropped as non-signal. Upfront SELECT short-circuits redelivery before the LLM call when `finalize_recorded` is already set. Cost recorded atomically via `finalize_recorded` gate (migration 0010) regardless of merge count | [REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) |
 | `src/queue/cleanup.ts` | Daily 3-pass cleanup: retention, stuck-tag prune, orphan-tag KV sweep | [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-DISC-006](../sdd/discovery.md#req-disc-006-stuck-tag-retention), [REQ-PIPE-007](../sdd/generation.md#req-pipe-007-orphan-tag-source-cleanup) |
-| `migrations/0001_initial.sql` | Pre-launch initial schema (superseded by 0003 — tables DROP'd on fresh install; preserved for migration history only) | (historical) |
-| `migrations/0002_article_tags.sql` | Pre-launch tag columns (superseded by 0003 — same DROP-and-recreate; preserved for migration history only) | (historical) |
+| `migrations/0001_initial.sql` | Pre-launch initial schema. Creates `users`, which 0003's article_stars / article_reads tables reference via FK; replaying 0003 against an empty schema fails at FK declaration without it | (FK base) |
+| `migrations/0002_article_tags.sql` | Pre-launch `ALTER TABLE articles ADD COLUMN tags_json`; depends on 0001's `articles` table existing first | (FK base) |
 | `migrations/0003_global_feed.sql` | Global-feed rework — DROPs pre-launch tables and recreates the canonical schema: articles, tags, sources, stars, reads, scrape_runs (gains `chunk_count`, `finalize_enqueued` via 0008, `finalize_recorded` via 0010 in later migrations) | (foundational) |
 | `migrations/0004_system_user.sql` | `__system__` sentinel user | (schema) |
 | `migrations/0005_auth_links.sql` | Cross-provider account dedup table | [REQ-AUTH-007](../sdd/authentication.md#req-auth-007-cross-provider-account-dedup) |
@@ -235,13 +235,7 @@ Finalize consumer
 
 ### 5.2 Operator force-refresh
 
-Implements [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint). See [`api-reference.md — POST /api/admin/force-refresh`](api-reference.md#post-apiadminforce-refresh-also-get) for the full request/response contract.
-
-```
-POST /api/admin/force-refresh   (or GET, gated by Cloudflare Access)
-  └─ If a 'running' scrape_runs row is < 120 s old: reuse run_id
-     Otherwise: INSERT scrape_runs, send SCRAPE_COORDINATOR
-```
+Implements [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint). The endpoint reuses an in-progress run when one exists within the last two minutes; otherwise it starts a fresh coordinator dispatch — same data flow as the 4-hour cron. See [`api-reference.md — POST /api/admin/force-refresh`](api-reference.md#post-apiadminforce-refresh-also-get) for the full request/response contract.
 
 ### 5.3 Daily retention (03:00 UTC)
 
@@ -316,6 +310,35 @@ The `is:inline` attribute prevents Astro from re-bundling the file. `scripts/bui
 Replaces the prior hand-maintained `SKIP` set in `build-client-scripts.mjs` (CF-023).
 
 **Critical constraint:** a Pattern B script MUST NOT also be statically imported by any Astro page or component. Doing so causes Vite to bundle the entire module — including its auto-wire IIFE — into the page's `_astro/*.js` chunk. Both module instances share `document` but have independent closure state, so any listener-idempotency flag in module scope fails to deduplicate across the two evaluations. Idempotency tokens for scripts in this situation must live on `window`. See [AD20](decisions/README.md#ad20-idempotency-tokens-for-client-scripts-loaded-both-as-pattern-b-iife-and-via-page-level-import-must-live-on-window) for the full decision record and the CI gate that enforces this constraint.
+
+---
+
+## Design System Tokens (REQ-DES-001, REQ-DES-003)
+
+CSS custom properties declared in `src/styles/global.css` and consumed throughout the component tree.
+
+### Type scale
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--text-xs` | 12 px | Captions, metadata |
+| `--text-sm` | 14 px | Secondary body, labels |
+| `--text-base` | 16 px | Primary body |
+| `--text-lg` | 20 px | Card titles, section headers |
+| `--text-2xl` | 32 px | Display (article detail heading) |
+
+Font stacks: sans `(-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif)` for body/UI; serif `(Charter, "Iowan Old Style", Georgia, "Noto Serif", "Source Serif Pro", serif)` for article titles. No webfont download.
+
+Weights: 400 (body), 600 (headings and labels).
+
+### Motion tokens
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--ease` | `cubic-bezier(0.22, 1, 0.36, 1)` | All transitions |
+| `--duration-fast` | 150 ms | Micro-interactions (hover, press) |
+| `--duration-base` | 250 ms | Component transitions, View Transitions |
+| `--duration-slow` | 400 ms | Page-level transitions |
 
 ---
 

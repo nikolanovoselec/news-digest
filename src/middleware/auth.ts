@@ -116,6 +116,37 @@ function unauthenticated(clearCookies: boolean): LoadSessionResult {
   };
 }
 
+/**
+ * Mint a fresh access JWT and return a {@link LoadSessionResult}.
+ *
+ * Consolidates the three duplicated sign+return patterns in {@link loadSession}:
+ *  - grace-branch concurrent collision (cookiesToSet = [session])
+ *  - rotation-lost-race (cookiesToSet = [session])
+ *  - successful rotation (cookiesToSet = [session, refresh])
+ *
+ * `extraCookies` carries the new refresh cookie for the successful-rotation
+ * case; the other two cases pass an empty array.
+ */
+async function mintSessionResult(
+  userRow: UserRow,
+  jwtSecret: string,
+  extraCookies: string[] = [],
+): Promise<LoadSessionResult> {
+  const fresh = await signSession(
+    {
+      sub: userRow.id,
+      email: userRow.email,
+      ghl: userRow.gh_login,
+      sv: userRow.session_version,
+    },
+    jwtSecret,
+  );
+  return {
+    user: toAuthenticatedUser(userRow),
+    cookiesToSet: [buildSessionCookie(fresh), ...extraCookies],
+  };
+}
+
 async function loadUserById(
   db: D1Database,
   userId: string,
@@ -305,15 +336,6 @@ export async function loadSession(
         }
         const userRow = await loadUserById(db, refreshRow.user_id);
         if (userRow === null) return unauthenticated(true);
-        const fresh = await signSession(
-          {
-            sub: userRow.id,
-            email: userRow.email,
-            ghl: userRow.gh_login,
-            sv: userRow.session_version,
-          },
-          jwtSecret,
-        );
         log('info', 'auth.refresh.concurrent_collision', {
           user_id: userRow.id,
           revoked_token_id: refreshRow.id,
@@ -324,10 +346,7 @@ export async function loadSession(
         // client's stale revoked cookie keeps working for the rest
         // of the grace window; their next refresh after the winner's
         // Set-Cookie lands will pick up the winner's value.
-        return {
-          user: toAuthenticatedUser(userRow),
-          cookiesToSet: [buildSessionCookie(fresh)],
-        };
+        return mintSessionResult(userRow, jwtSecret);
       }
     }
     // Outside grace window OR no surviving child — treat as theft.
@@ -410,34 +429,12 @@ export async function loadSession(
   // access JWT (per the grace-window branch above). The client's
   // stale cookie remains valid until the winner's Set-Cookie lands.
   if (rotated === null) {
-    const fresh = await signSession(
-      {
-        sub: userRow.id,
-        email: userRow.email,
-        ghl: userRow.gh_login,
-        sv: userRow.session_version,
-      },
-      jwtSecret,
-    );
     log('info', 'auth.refresh.concurrent_lost_race', {
       user_id: userRow.id,
       refresh_token_id: refreshRow.id,
     });
-    return {
-      user: toAuthenticatedUser(userRow),
-      cookiesToSet: [buildSessionCookie(fresh)],
-    };
+    return mintSessionResult(userRow, jwtSecret);
   }
-
-  const fresh = await signSession(
-    {
-      sub: userRow.id,
-      email: userRow.email,
-      ghl: userRow.gh_login,
-      sv: userRow.session_version,
-    },
-    jwtSecret,
-  );
 
   log('info', 'auth.refresh.rotated', {
     user_id: userRow.id,
@@ -445,13 +442,7 @@ export async function loadSession(
     parent_id: refreshRow.id,
   });
 
-  return {
-    user: toAuthenticatedUser(userRow),
-    cookiesToSet: [
-      buildSessionCookie(fresh),
-      buildRefreshCookie(rotated.value),
-    ],
-  };
+  return mintSessionResult(userRow, jwtSecret, [buildRefreshCookie(rotated.value)]);
 }
 
 /**

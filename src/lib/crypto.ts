@@ -48,22 +48,36 @@ export function base64UrlDecode(input: string): Uint8Array {
 /**
  * Constant-time string equality via HMAC-SHA256.
  *
- * The verifier signs `b` with `secret` and asks the runtime to
- * `crypto.subtle.verify` that signature against `a`. `subtle.verify`
- * is constant-time by Web Crypto spec, so timing leakage is bounded
- * by the key-import + sign duration — neither of which depends on
- * the prefix of `a` matching the prefix of `b`.
+ * The implementation signs `candidate` with `secret`, then asks the
+ * runtime to `crypto.subtle.verify` that signature against
+ * `enc.encode(expected)`. Because HMAC-SHA256 is collision-resistant,
+ * `verify` returns true iff `expected === candidate` byte-for-byte —
+ * so the function IS a constant-time equality check despite its
+ * sign/verify shape.
+ *
+ * **Argument convention (CF-014 / AD24):** put the server-trusted
+ * value first (`expected`) and the caller-supplied / cookie-echoed
+ * value second (`candidate`). The implementation is symmetric — order
+ * does not change the boolean result — but the convention keeps call
+ * sites readable and aligns with the broader "compare(known, unknown)"
+ * security idiom. The single OAUTH_JWT_SECRET reuse for both session
+ * signing and CSRF state HMAC is documented in AD24 and intentional.
+ *
+ * `subtle.verify` is constant-time by Web Crypto spec, so timing
+ * leakage is bounded by the key-import + sign duration — neither of
+ * which depends on the prefix of `expected` matching the prefix of
+ * the freshly-derived MAC.
  *
  * Returns false for empty inputs (defends against the empty-cookie
  * vs empty-state false-positive: an attacker who can omit both is
  * not authenticated).
  */
-export async function timingSafeEqualHmac(
-  a: string,
-  b: string,
+export async function verifyHmacSignature(
+  expected: string,
+  candidate: string,
   secret: string,
 ): Promise<boolean> {
-  if (a === '' || b === '') return false;
+  if (expected === '' || candidate === '') return false;
   let key: CryptoKey;
   try {
     key = await crypto.subtle.importKey(
@@ -76,9 +90,9 @@ export async function timingSafeEqualHmac(
   } catch {
     return false;
   }
-  let expected: ArrayBuffer;
+  let candidateMac: ArrayBuffer;
   try {
-    expected = await crypto.subtle.sign('HMAC', key, enc.encode(b));
+    candidateMac = await crypto.subtle.sign('HMAC', key, enc.encode(candidate));
   } catch {
     return false;
   }
@@ -86,8 +100,8 @@ export async function timingSafeEqualHmac(
     return await crypto.subtle.verify(
       'HMAC',
       key,
-      expected,
-      enc.encode(a),
+      candidateMac,
+      enc.encode(expected),
     );
   } catch {
     return false;

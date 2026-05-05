@@ -86,7 +86,9 @@ function makeDb(fixture: DbFixture, userRow: AdminSessionFixture['userRow'] = AD
       params: bound,
       first: vi.fn().mockImplementation(async () => {
         fixture.calls.push({ sql, params: [...bound], verb: 'first' });
-        if (sql.includes('FROM scrape_runs')) {
+        // findRecentRunningRun SELECT — distinct from the INSERT because
+        // it starts with SELECT, not INSERT.
+        if (sql.trimStart().startsWith('SELECT') && sql.includes('FROM scrape_runs')) {
           return fixture.recentRun ?? null;
         }
         if (sql.includes('FROM users')) {
@@ -96,6 +98,14 @@ function makeDb(fixture: DbFixture, userRow: AdminSessionFixture['userRow'] = AD
       }),
       run: vi.fn().mockImplementation(async () => {
         fixture.calls.push({ sql, params: [...bound], verb: 'run' });
+        // tryClaimDispatch — INSERT INTO scrape_runs ... WHERE NOT EXISTS.
+        // Simulate D1 atomics: if a recent running row exists, the WHERE
+        // NOT EXISTS predicate is false → changes === 0 (claim lost).
+        // Otherwise the INSERT lands → changes === 1 (claim won).
+        if (sql.trimStart().startsWith('INSERT INTO scrape_runs')) {
+          const changes = fixture.recentRun != null ? 0 : 1;
+          return { success: true, meta: { changes } };
+        }
         return { success: true, meta: { changes: 1 } };
       }),
     };
@@ -253,14 +263,19 @@ describe('POST /api/admin/force-refresh', () => {
     // An INSERT INTO scrape_runs happened with chunk_count=0 (NOT NULL
     // schema — see src/lib/scrape-run.ts). Regression guard for the
     // NULL-binding bug that was fixed in dc65bf0.
+    // CF-003: the INSERT is now an atomic INSERT … WHERE NOT EXISTS;
+    // chunk_count 0 is still a literal in the SQL; params are
+    // (id, model_id, started_at, cutoff) — 4 values.
     const insert = fixture.calls.find(
       (c) => c.sql.includes('INSERT INTO scrape_runs') && c.verb === 'run',
     );
     expect(insert).toBeDefined();
-    // Param order: id, model_id, started_at. CF-021 dropped chunk_count
-    // from the seed; the SQL writes a literal 0.
-    expect(insert!.sql).toMatch(/'running',\s*0\s*\)/);
-    expect(insert!.params).toHaveLength(3);
+    // SQL contains literal 'running' and 0 values; the WHERE NOT EXISTS
+    // clause follows so `0` is not immediately followed by `)`.
+    expect(insert!.sql).toMatch(/'running',\s*0/);
+    expect(insert!.sql).toMatch(/WHERE NOT EXISTS/);
+    // 4 bound params: id, model_id, started_at, cutoff.
+    expect(insert!.params).toHaveLength(4);
     // Queue received exactly one coordinator message with the run id.
     expect(qsent).toHaveLength(1);
     expect((qsent[0] as { scrape_run_id: string }).scrape_run_id).toMatch(
@@ -288,12 +303,15 @@ describe('POST /api/admin/force-refresh', () => {
     expect(res.headers.get('Location')).toMatch(
       /force_refresh=reused&run_id=already-running-id/,
     );
-    // Crucially: no INSERT, no queue send.
-    const insert = fixture.calls.find(
+    // CF-003: the claim is an atomic INSERT … WHERE NOT EXISTS.
+    // When a recent run exists, the INSERT returns changes === 0 (lost
+    // the claim race) — it executed but wrote nothing. No second scrape
+    // row is created and no coordinator message is enqueued.
+    const claim = fixture.calls.find(
       (c) => c.sql.includes('INSERT INTO scrape_runs') && c.verb === 'run',
     );
-    expect(insert).toBeUndefined();
-    expect(qsent).toHaveLength(0);
+    expect(claim).toBeDefined(); // INSERT attempted
+    expect(qsent).toHaveLength(0); // but no message enqueued
   });
 });
 
@@ -337,12 +355,13 @@ describe('GET /api/admin/force-refresh', () => {
     };
     expect(body.reused).toBe(true);
     expect(body.scrape_run_id).toBe('reused-run-id');
-    // No new INSERT, no new queue send.
-    const insert = fixture.calls.find(
+    // CF-003: claim INSERT attempted but returned changes === 0 (claim lost).
+    // No new scrape row written, no queue send.
+    const claim = fixture.calls.find(
       (c) => c.sql.includes('INSERT INTO scrape_runs') && c.verb === 'run',
     );
-    expect(insert).toBeUndefined();
-    expect(qsent).toHaveLength(0);
+    expect(claim).toBeDefined(); // INSERT attempted
+    expect(qsent).toHaveLength(0); // but no message enqueued
   });
 
   it('GET browser deny: non-admin session is redirected to /settings?force_refresh=denied (no raw 403 body)', async () => {
@@ -390,7 +409,11 @@ describe('GET /api/admin/force-refresh', () => {
 });
 
 describe('reuse-window SQL contract', () => {
-  it('queries scrape_runs for status=running started within 120s of now', async () => {
+  it('tryClaimDispatch INSERT embeds status=running and started_at cutoff within 120s of now', async () => {
+    // CF-003: the reuse-window check is now an atomic INSERT ... WHERE
+    // NOT EXISTS rather than a separate SELECT. The INSERT's WHERE NOT
+    // EXISTS subquery carries the status + started_at guard; the bound
+    // cutoff param is the fourth argument (index 3).
     const now = Math.floor(Date.now() / 1000);
     const fixture: DbFixture = { calls: [] };
     const db = makeDb(fixture);
@@ -398,15 +421,14 @@ describe('reuse-window SQL contract', () => {
     const req = await refreshRequest('GET');
     await GET(makeContext(req, makeEnv(db, queue)) as never);
 
-    const recent = fixture.calls.find(
-      (c) => c.sql.includes('FROM scrape_runs') && c.verb === 'first',
+    const claim = fixture.calls.find(
+      (c) => c.sql.includes('INSERT INTO scrape_runs') && c.verb === 'run',
     );
-    expect(recent).toBeDefined();
-    expect(recent!.sql).toMatch(/status\s*=\s*'running'/);
-    expect(recent!.sql).toMatch(/started_at\s*>=\s*\?1/);
-    // The bound cutoff must be (now - 120) ± a few seconds to absorb
-    // clock drift between the test and the helper's Date.now().
-    const cutoff = recent!.params[0] as number;
+    expect(claim).toBeDefined();
+    expect(claim!.sql).toMatch(/status\s*=\s*'running'/);
+    expect(claim!.sql).toMatch(/started_at\s*>=\s*\?4/);
+    // The fourth bound param is the cutoff: (now - 120) ± a few seconds.
+    const cutoff = claim!.params[3] as number;
     expect(cutoff).toBeGreaterThanOrEqual(now - 125);
     expect(cutoff).toBeLessThanOrEqual(now - 115);
   });

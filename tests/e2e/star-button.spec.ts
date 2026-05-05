@@ -36,11 +36,17 @@ function hasAuthCookies(): boolean {
   }
 }
 
+// CF-043: replaced silent test.skip with an explicit fail so CI surfaces
+// missing PLAYWRIGHT_DEV_BYPASS_TOKEN as a real failure rather than
+// silently passing with zero assertions. A run with no assertions is the
+// worst failure mode — it looks green while testing nothing.
 test.beforeAll(() => {
-  test.skip(
-    !hasAuthCookies(),
-    'PLAYWRIGHT_DEV_BYPASS_TOKEN not set — global-setup wrote an empty storageState.',
-  );
+  if (!hasAuthCookies()) {
+    throw new Error(
+      'PLAYWRIGHT_DEV_BYPASS_TOKEN is required for E2E tests. ' +
+        'Set the secret and re-run. global-setup must write a non-empty storageState.',
+    );
+  }
 });
 
 test.describe('REQ-STAR-001 star toggle on /digest (live)', () => {

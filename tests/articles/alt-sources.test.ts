@@ -16,9 +16,7 @@ import modalSource from '../../src/components/AltSourcesModal.astro?raw';
 import modalScript from '../../src/scripts/alt-sources-modal.ts?raw';
 
 describe('AltSourcesModal — REQ-READ-002', () => {
-  it('REQ-READ-002: declares it implements REQ-READ-002', () => {
-    expect(modalSource).toContain('REQ-READ-002');
-  });
+  // CF-033: REQ-ID presence theater removed — CI gate covers annotations.
 
   it('REQ-READ-002: renders a <dialog> element with a list item per alt source', () => {
     // Native <dialog> gives us Escape-to-close + focus-trap + backdrop

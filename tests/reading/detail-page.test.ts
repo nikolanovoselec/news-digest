@@ -18,10 +18,7 @@ import detailSource from '../../src/pages/digest/[id]/[slug].astro?raw';
 import articleDetailScript from '../../src/scripts/article-detail.ts?raw';
 
 describe('detail page source contract — REQ-READ-002', () => {
-  it('REQ-READ-002: declares it implements REQ-READ-002 and REQ-READ-003', () => {
-    expect(detailSource).toContain('REQ-READ-002');
-    expect(detailSource).toContain('REQ-READ-003');
-  });
+  // CF-033: REQ-ID presence theater removed — CI gate covers annotations.
 
   it('REQ-READ-002: renders each details entry as a <p> paragraph', () => {
     // Editorial prose layout (drop cap + 62ch measure) requires real

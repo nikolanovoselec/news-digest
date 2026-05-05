@@ -1,3 +1,4 @@
+// Implements REQ-AUTH-001
 // DEV-ONLY auth bypass. Gated by the `DEV_BYPASS_TOKEN` Worker secret —
 // if unset, the endpoint returns 404 and is effectively disabled.
 //
@@ -26,7 +27,7 @@ import type { APIContext } from 'astro';
 import { signSession } from '~/lib/session-jwt';
 import { buildSessionCookie } from '~/middleware/auth';
 import { E2E_USER_ID } from '~/lib/system-user';
-import { timingSafeEqualHmac } from '~/lib/crypto';
+import { verifyHmacSignature } from '~/lib/crypto';
 import { checkDevEndpointOrigin } from '~/middleware/origin-check';
 import {
   buildRefreshCookie,
@@ -38,8 +39,9 @@ interface BypassEnv {
   DEV_BYPASS_USER_ID?: string;
 }
 
-// `timingSafeEqualHmac` is imported from `~/lib/crypto` (CF-005 — was
-// open-coded as a JS XOR loop here and in dev/trigger-scrape.ts).
+// `verifyHmacSignature` is imported from `~/lib/crypto` (CF-005 — was
+// open-coded as a JS XOR loop here and in dev/trigger-scrape.ts;
+// renamed in CF-014 from `timingSafeEqualHmac`).
 
 export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env as typeof context.locals.runtime.env &
@@ -67,7 +69,7 @@ export async function POST(context: APIContext): Promise<Response> {
   const match = /^Bearer\s+(.+)$/i.exec(auth);
   if (
     match === null ||
-    !(await timingSafeEqualHmac(match[1] ?? '', bypass, env.OAUTH_JWT_SECRET))
+    !(await verifyHmacSignature(bypass, match[1] ?? '', env.OAUTH_JWT_SECRET))
   ) {
     return new Response(null, { status: 404 });
   }

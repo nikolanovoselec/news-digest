@@ -446,6 +446,37 @@ describe('scrape-coordinator — REQ-PIPE-001', () => {
     expect(restamp).toBeUndefined();
   });
 
+  it('REQ-PIPE-001 AC7 (CF-040): item with null pubDate is kept, NOT treated as stale', async () => {
+    // A missing pubDate falls back to ingestion time so it always
+    // passes the freshness filter. It must NOT be dropped just because
+    // the parsed date field is absent — that would silently blackhole
+    // feeds that don't emit <pubDate> (many legitimate blogs).
+    const rss =
+      `<rss><channel>` +
+      `<item><title>No pubdate</title><link>https://feed0.example.com/no-pubdate</link></item>` +
+      `</channel></rss>`;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(rss, {
+          status: 200,
+          headers: { 'content-type': 'application/rss+xml' },
+        }),
+      ),
+    );
+    const { db } = makeDb();
+    const { kv } = makeKv();
+    const { queue, sends } = makeChunksQueue();
+    const env = makeEnv(db, kv, queue);
+    await runCoordinator(env, { scrape_run_id: 'run-ac7-null-pubdate' });
+
+    // The item must survive into a chunk message — not be dropped.
+    const allCandidates = (sends as Array<{ candidates: Array<{ title: string }> }>)
+      .flatMap((m) => m.candidates);
+    const found = allCandidates.find((c) => c.title === 'No pubdate');
+    expect(found).toBeDefined();
+  });
+
   it('REQ-PIPE-001: when pool is empty, finishRun(ready) is called immediately', async () => {
     stubFetchEmpty();
     const { db, records } = makeDb();

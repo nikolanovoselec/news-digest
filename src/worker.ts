@@ -57,34 +57,26 @@ import { dispatchDailyEmails } from '~/lib/email-dispatch';
  * and downstream LLM call per tag. */
 const DISCOVERY_BATCH_LIMIT = 3;
 
-/**
- * Cron dispatcher. Branches on `controller.cron` so each cron line has
- * its own code path. Branch failures log and return so one bad cron
- * doesn't poison the others — each firing is independent.
- */
-export async function scheduled(
-  controller: ScheduledController,
-  env: Env,
-  ctx: ExecutionContext,
-): Promise<void> {
-  if (controller.cron === '0 */4 * * *') {
+/** CF-051 — lookup table replacing the if/else cron-string equality
+ * chain. Adding a new cron line means adding one row here, not
+ * threading another else-if through the dispatcher. Each handler is
+ * wrapped in an async closure so the dispatcher can await it uniformly.
+ *
+ * Handlers run inside try/catch at the table level (see `scheduled`)
+ * so one bad cron never poisons the others. */
+const CRON_HANDLERS: Record<
+  string,
+  (env: Env, ctx: ExecutionContext) => Promise<void>
+> = {
+  '0 */4 * * *': async (env, ctx) => {
     await handleScrapeTick(env, ctx);
-    return;
-  }
-  if (controller.cron === '0 3 * * *') {
-    try {
-      await runCleanup(env);
-    } catch (err) {
-      log('error', 'digest.generation', {
-        status: 'cleanup_failed',
-        detail: String(err).slice(0, 500),
-      });
-    }
-    return;
-  }
-  if (controller.cron === '*/5 * * * *') {
+  },
+  '0 3 * * *': async (env) => {
+    await runCleanup(env);
+  },
+  '*/5 * * * *': async (env) => {
     // Discovery drain — failures here must not block the email
-    // dispatcher. Mirrored pattern: try/catch around each branch.
+    // dispatcher. Mirrored pattern: try/catch around each sub-step.
     try {
       await processPendingDiscoveries(env, DISCOVERY_BATCH_LIMIT);
     } catch (err) {
@@ -103,13 +95,37 @@ export async function scheduled(
         error: String(err).slice(0, 500),
       });
     }
+  },
+};
+
+/**
+ * Cron dispatcher. Looks up `controller.cron` in {@link CRON_HANDLERS}
+ * and calls the matching handler. Unknown cron strings log a warning.
+ * Each handler runs inside its own try/catch so one failing cron does
+ * not poison the others.
+ */
+export async function scheduled(
+  controller: ScheduledController,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<void> {
+  const handler = CRON_HANDLERS[controller.cron];
+  if (handler === undefined) {
+    log('warn', 'digest.generation', {
+      status: 'unknown_cron',
+      cron: controller.cron,
+    });
     return;
   }
-
-  log('warn', 'digest.generation', {
-    status: 'unknown_cron',
-    cron: controller.cron,
-  });
+  try {
+    await handler(env, ctx);
+  } catch (err) {
+    log('error', 'digest.generation', {
+      status: 'cron_handler_failed',
+      cron: controller.cron,
+      detail: String(err).slice(0, 500),
+    });
+  }
 }
 
 /**

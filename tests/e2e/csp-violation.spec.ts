@@ -37,11 +37,14 @@ function hasAuthCookies(): boolean {
   }
 }
 
+// CF-043: explicit fail instead of silent skip.
 test.beforeAll(() => {
-  test.skip(
-    !hasAuthCookies(),
-    'PLAYWRIGHT_DEV_BYPASS_TOKEN not set — global-setup wrote an empty storageState.',
-  );
+  if (!hasAuthCookies()) {
+    throw new Error(
+      'PLAYWRIGHT_DEV_BYPASS_TOKEN is required for E2E tests. ' +
+        'Set the secret and re-run. global-setup must write a non-empty storageState.',
+    );
+  }
 });
 
 test.describe('REQ-OPS-003 CSP violation gate', () => {

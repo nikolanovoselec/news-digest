@@ -974,4 +974,115 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     expect(articleInserts[0]!.params).toContain('Headline OK — within sanity bounds');
     expect(articleInserts[0]!.params).not.toContain('Hi.');
   });
+
+  // CF-041 - REQ-PIPE-002 AC4: an article that ends up with zero valid
+  // tags is DROPPED. The chunk consumer's validateAndSanitizeArticle
+  // returns null when the post-allowlist tag set is empty, which keeps
+  // article_tags rows useful for downstream filtering and stops the
+  // pool getting polluted with un-routable rows.
+  it('REQ-PIPE-002 AC4 (CF-041): LLM article with tags:[] is dropped', async () => {
+    const aiResponse = {
+      response: JSON.stringify({
+        articles: [
+          { index: 0, title: 'Zero-tag article should be dropped', details: LONG_BODY, tags: [] },
+        ],
+        dedup_groups: [],
+      }),
+      usage: { input_tokens: 10, output_tokens: 10 },
+    };
+    const { db, records } = makeDb();
+    const { kv } = makeKv({ chunksRemaining: '1' });
+    const env = makeEnv(db, kv, aiResponse);
+    await processOneChunk(env, makeChunk());
+    const articleInserts = records.filter(
+      (r) =>
+        r.via === 'batch' &&
+        r.sql.startsWith('INSERT OR IGNORE INTO articles'),
+    );
+    expect(articleInserts).toHaveLength(0);
+  });
+
+  // CF-042 — REQ-PIPE-008 AC9b: two concurrent recordChunkCompletion
+  // calls for the same (scrape_run_id, chunk_index) — exactly one returns
+  // true, one returns false.
+  it('REQ-PIPE-008 AC9b (CF-042): concurrent recordChunkCompletion: one wins, one loses', async () => {
+    // Import the repository helper directly — this test targets the
+    // atomicity contract of INSERT OR IGNORE at the helper level, not
+    // the chunk consumer's higher-level logic.
+    const { recordChunkCompletion } = await import('~/lib/articles-repo');
+
+    // Build a D1 stub where the first call returns changes=1 and the
+    // second (same key) returns changes=0, mirroring D1's PK uniqueness.
+    const completedKeys = new Set<string>();
+    const db = {
+      prepare: vi.fn().mockImplementation((sql: string) => ({
+        bind: (...params: unknown[]) => ({
+          run: vi.fn().mockImplementation(async () => {
+            if (sql.startsWith('INSERT OR IGNORE INTO scrape_chunk_completions')) {
+              const key = `${String(params[0])}:${String(params[1])}`;
+              const alreadyHad = completedKeys.has(key);
+              if (!alreadyHad) completedKeys.add(key);
+              return { meta: { changes: alreadyHad ? 0 : 1 } };
+            }
+            return { meta: { changes: 1 } };
+          }),
+        }),
+      })),
+    } as unknown as D1Database;
+
+    // Two concurrent calls for the same run+chunk.
+    const [result1, result2] = await Promise.all([
+      recordChunkCompletion(db, 'run-concurrent', 0),
+      recordChunkCompletion(db, 'run-concurrent', 0),
+    ]);
+
+    // Exactly one winner (changes=1) and one loser (changes=0).
+    const winners = [result1, result2].filter(Boolean).length;
+    const losers = [result1, result2].filter((r) => !r).length;
+    expect(winners).toBe(1);
+    expect(losers).toBe(1);
+  });
+
+  // CF-047 — REQ-PIPE-002 AC7 boundary tests.
+  it('REQ-PIPE-002 AC7 (CF-047): article with out-of-bounds index is dropped', async () => {
+    const aiResponse = {
+      response: JSON.stringify({
+        articles: [
+          { index: 99, title: 'Out of bounds', details: LONG_BODY, tags: ['cloudflare'] },
+        ],
+        dedup_groups: [],
+      }),
+      usage: { input_tokens: 10, output_tokens: 10 },
+    };
+    const { db, records } = makeDb();
+    const { kv } = makeKv({ chunksRemaining: '1' });
+    const env = makeEnv(db, kv, aiResponse);
+    // makeChunk defaults to a 1-candidate chunk (index 0 valid, index 99 invalid).
+    await processOneChunk(env, makeChunk());
+    const articleInserts = records.filter(
+      (r) => r.via === 'batch' && r.sql.startsWith('INSERT OR IGNORE INTO articles'),
+    );
+    // Out-of-bounds index must be dropped — no article insert.
+    expect(articleInserts).toHaveLength(0);
+  });
+
+  it('REQ-PIPE-002 AC7 (CF-047): article with null index is dropped', async () => {
+    const aiResponse = {
+      response: JSON.stringify({
+        articles: [
+          { index: null, title: 'Null index', details: LONG_BODY, tags: ['cloudflare'] },
+        ],
+        dedup_groups: [],
+      }),
+      usage: { input_tokens: 10, output_tokens: 10 },
+    };
+    const { db, records } = makeDb();
+    const { kv } = makeKv({ chunksRemaining: '1' });
+    const env = makeEnv(db, kv, aiResponse);
+    await processOneChunk(env, makeChunk());
+    const articleInserts = records.filter(
+      (r) => r.via === 'batch' && r.sql.startsWith('INSERT OR IGNORE INTO articles'),
+    );
+    expect(articleInserts).toHaveLength(0);
+  });
 });

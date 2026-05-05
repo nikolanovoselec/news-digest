@@ -70,7 +70,5 @@ describe('settings.astro manual tz picker — REQ-SET-007 AC 5', () => {
     expect(settingsPage).toMatch(/data-tz-select[\s\S]*?\.value/);
   });
 
-  it('REQ-SET-007: settings.astro annotates itself with the REQ id', () => {
-    expect(settingsPage).toContain('REQ-SET-007');
-  });
+  // CF-033: REQ-SET-007 annotation theater removed — CI gate covers it.
 });

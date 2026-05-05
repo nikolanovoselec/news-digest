@@ -55,4 +55,10 @@ interface Env {
   // endpoint returns 404.
   DEV_BYPASS_TOKEN?: string;
   DEV_BYPASS_USER_ID?: string;
+
+  // CF-004 — queue retry cap. Sourced from wrangler.toml [vars] /
+  // [env.integration.vars] (string-typed). The runtime parses to int
+  // and falls back to 3 when unset (e.g. unit-test environments that
+  // mock Env directly).
+  QUEUE_MAX_RETRIES?: string;
 }

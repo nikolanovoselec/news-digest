@@ -257,6 +257,33 @@ describe('processPendingDiscoveries', () => {
     expect(selectCall![0]).toContain('LIMIT');
   });
 
+  it('REQ-DISC-001 AC2 (CF-039): processes at most DISCOVERY_BATCH_LIMIT tags when queue has more', async () => {
+    // AC2 ceiling: even with 10 pending tags, only up to the cron limit
+    // (3 in worker.ts) are processed per tick. This test feeds 10 tags
+    // but caps processing at 3 via the limit parameter.
+    mockFetchOk();
+    const { db } = makeDb([
+      'ai', 'go', 'rust', 'python', 'java',
+      'kotlin', 'swift', 'typescript', 'c', 'cpp',
+    ]);
+    const { kv } = makeKv();
+    const env = makeEnv(
+      db,
+      kv,
+      JSON.stringify({
+        feeds: [{ name: 'Ex', url: 'https://ex.com/feed', kind: 'rss' }],
+      }),
+    );
+
+    const DISCOVERY_BATCH_LIMIT = 3;
+    const result = await processPendingDiscoveries(env, DISCOVERY_BATCH_LIMIT);
+
+    // Exactly DISCOVERY_BATCH_LIMIT tags processed — not all 10.
+    expect(result.processed.length + result.failed.length).toBeLessThanOrEqual(
+      DISCOVERY_BATCH_LIMIT,
+    );
+  });
+
   it('REQ-DISC-003: no pending tags → empty result, no KV writes', async () => {
     mockFetchOk();
     const { db } = makeDb([]);

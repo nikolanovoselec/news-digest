@@ -17,35 +17,20 @@
 // land first when the 100-item cap is applied upstream.
 
 import { XMLParser } from 'fast-xml-parser';
-import { canonicalize } from '~/lib/canonical-url';
 import type { DiscoveredFeed, Headline } from '~/lib/types';
 import { isUrlSafe } from '~/lib/ssrf';
 import { readCachedHeadlines, writeCachedHeadlines } from '~/lib/headline-cache';
 import { log } from '~/lib/log';
-import { mapConcurrent } from '~/lib/concurrency';
 import { stripHtmlToText } from '~/lib/html-text';
 import { FEED_FETCH_TIMEOUT_MS as FETCH_TIMEOUT_MS } from '~/lib/fetch-policy';
 import { definedProp } from '~/lib/optional-prop';
-import { preferDirectOverGoogleNews } from '~/lib/prefer-direct-source';
 
-/** Hard-cap returned by `fanOutForTags`. 300 overflowed
- * llama-3.1-8b-instruct-fp8-fast's 30K token context window: ~24K
- * input tokens left no room for the 16K max_output. 100 keeps the
- * input at ~8K so input + output comfortably fits in 30K with
- * headroom. The LLM still picks the top 6 articles — fewer headlines
- * just means a tighter candidate pool, which raises the bar for what
- * gets summarized. */
-const MAX_COMBINED_HEADLINES = 100;
 /** 1 MB cap on the decoded body — NOT the same shape as
  *  `FEED_MAX_BODY_BYTES`: this caps the post-decode character count
  *  passed to the parser, not the raw response byte length. Kept
  *  module-local so a future maintainer doesn't silently switch the
  *  semantic during a fetch-policy "completion" pass. */
 const FETCH_MAX_BYTES = 1_024 * 1_024;
-/** Source-fetch concurrency cap across every {tag × source} pair.
- *  CF-008: renamed from GLOBAL_CONCURRENCY so the constant doesn't
- *  collide with the coordinator's own concurrency cap. */
-const SOURCE_FETCH_CONCURRENCY = 10;
 /** Max items pulled from a discovered (tag-specific) feed per tag. */
 const DISCOVERED_FEED_ITEM_CAP = 20;
 
@@ -73,115 +58,15 @@ export interface SourceAdapter {
   extract: (parsed: unknown) => Headline[];
 }
 
-// ---------- Generic sources ----------------------------------------------
-
-/** `tag` is already lowercase, [a-z0-9-]+; percent-encode for safety. */
-function q(tag: string): string {
-  return encodeURIComponent(tag);
-}
-
-/** Hacker News Algolia search — returns newest stories matching the query. */
-const HACKER_NEWS: SourceAdapter = {
-  name: 'hackernews',
-  kind: 'json',
-  url: (tag) =>
-    `https://hn.algolia.com/api/v1/search_by_date?query=${q(tag)}&tags=story&hitsPerPage=30`,
-  extract: (parsed) => {
-    if (!isRecord(parsed)) return [];
-    const hits = parsed['hits'];
-    if (!Array.isArray(hits)) return [];
-    const out: Headline[] = [];
-    for (const hit of hits) {
-      if (!isRecord(hit)) continue;
-      const title = asString(hit['title']) ?? asString(hit['story_title']);
-      const url =
-        asString(hit['url']) ??
-        (typeof hit['objectID'] === 'string'
-          ? `https://news.ycombinator.com/item?id=${hit['objectID']}`
-          : null);
-      if (title === null || url === null) continue;
-      // HN Algolia returns `story_text` for self-posts (Ask HN etc.)
-      // and `_highlightResult.story_text.value` with HTML matches.
-      // Use the plain `story_text` when available.
-      const story = asString(hit['story_text']);
-      const snippet =
-        story !== null && story.length >= 40
-          ? htmlSnippetToText(story)
-          : null;
-      out.push({
-        title,
-        url,
-        source_name: 'hackernews',
-        ...definedProp('snippet', snippet),
-      });
-    }
-    return out;
-  },
-};
-
-/** Google News RSS — top headlines for the past day. */
-const GOOGLE_NEWS: SourceAdapter = {
-  name: 'googlenews',
-  kind: 'rss',
-  url: (tag) =>
-    `https://news.google.com/rss/search?q=${q(tag)}+when%3A1d&hl=en-US&gl=US&ceid=US:en`,
-  extract: (parsed) => extractRssItems(parsed, 'googlenews'),
-};
-
-/** Reddit search — top posts over the past day. Requires a UA header. */
-const REDDIT: SourceAdapter = {
-  name: 'reddit',
-  kind: 'json',
-  headers: { 'User-Agent': 'news-digest/1.0' },
-  url: (tag) =>
-    `https://www.reddit.com/search.json?q=${q(tag)}&t=day&sort=top&limit=25`,
-  extract: (parsed) => {
-    if (!isRecord(parsed)) return [];
-    const data = parsed['data'];
-    if (!isRecord(data)) return [];
-    const children = data['children'];
-    if (!Array.isArray(children)) return [];
-    const out: Headline[] = [];
-    for (const child of children) {
-      if (!isRecord(child)) continue;
-      const d = child['data'];
-      if (!isRecord(d)) continue;
-      const title = asString(d['title']);
-      // Prefer the external URL posted to reddit; fall back to the
-      // reddit thread itself for self-posts.
-      const externalUrl = asString(d['url']) ?? asString(d['url_overridden_by_dest']);
-      const permalink = asString(d['permalink']);
-      const url =
-        externalUrl !== null && !externalUrl.startsWith('/r/')
-          ? externalUrl
-          : permalink !== null
-            ? `https://www.reddit.com${permalink}`
-            : null;
-      if (title === null || url === null) continue;
-      // Reddit has `selftext` (self-posts) and `title` itself can
-      // be the whole post. Prefer selftext when long enough.
-      const selftext = asString(d['selftext']);
-      const snippet =
-        selftext !== null && selftext.length >= 40
-          ? htmlSnippetToText(selftext)
-          : null;
-      out.push({
-        title,
-        url,
-        source_name: 'reddit',
-        ...definedProp('snippet', snippet),
-      });
-    }
-    return out;
-  },
-};
-
-/** The three generic sources fanned out for every hashtag.
- * @internal — used by tests only since the global-feed rework
- * (2026-04-23) replaced per-tag fan-out with curated registry +
- * discovered-tag KV entries. Kept exported for the test fixture
- * suite (tests/sources/published-at.test.ts, tests/lib/prefer-direct-source.test.ts). */
-export const GENERIC_SOURCES: SourceAdapter[] = [HACKER_NEWS, GOOGLE_NEWS, REDDIT];
+// CF-022 / E5 — `GENERIC_SOURCES`, `fanOutForTags`, and the three
+// per-source adapters (HACKER_NEWS, GOOGLE_NEWS, REDDIT) were removed
+// alongside the 2026-04-23 global-feed rework. Production resolves
+// every per-tag feed through `adaptersForDiscoveredFeeds` (below),
+// which builds adapters directly from `DiscoveredFeed` records held
+// in KV `sources:{tag}`. The three Algolia/Google/Reddit adapters
+// were never referenced by `adaptersForDiscoveredFeeds` and were
+// pure dead weight after the rework — code-reviewer flagged them
+// as unused-variable lint warnings under `--deny-warnings`.
 
 // ---------- Fetch one source for one tag ---------------------------------
 
@@ -222,6 +107,23 @@ export async function fetchFromSourceWithResult(
   }
 
   const url = source.url(tag);
+
+  // CF-023 — defence-in-depth SSRF check on every URL regardless of
+  // whether the source is curated (trusted) or discovered. Curated URLs
+  // are HTTPS-only by invariant so this is a no-cost backstop, not a
+  // runtime gate. A typo or data-layer corruption that sneaks a non-HTTPS
+  // or private-range URL into the curated registry will still be caught
+  // here before it ever reaches the network.
+  if (!isUrlSafe(url)) {
+    log('warn', 'source.fetch.failed', {
+      source: source.name,
+      tag,
+      reason: 'ssrf',
+      url,
+    });
+    return { headlines: [], fetched: false, success: false };
+  }
+
   let response: Response;
   try {
     const init: RequestInit =
@@ -295,108 +197,11 @@ export async function fetchFromSourceWithResult(
   return { headlines, fetched: true, success: true };
 }
 
-// ---------- Fan-out ------------------------------------------------------
-
-/**
- * @internal — used by tests only since the global-feed rework
- * (2026-04-23) replaced per-tag fan-out with the curated registry +
- * discovered-tag KV cache that scrape-coordinator now drives via
- * `fetchAllSources` / `fetchFromSourceWithResult`. Kept exported for
- * the test fixture suite. Production no longer routes through this
- * function.
- *
- * Original fan-out semantics: every {tag × source} combination,
- * respecting a global concurrency cap of 10. `discoveredByTag`
- * provides tag-specific feeds discovered earlier (see `sources:{tag}`
- * in KV); discovered feeds come first so upstream 100-cap truncation
- * keeps them. Returned headlines are deduplicated by canonical URL
- * and truncated to {@link MAX_COMBINED_HEADLINES}.
- */
-export async function fanOutForTags(
-  tags: string[],
-  kv: KVNamespace,
-  discoveredByTag: Map<string, SourceAdapter[]>,
-): Promise<Headline[]> {
-  // Build a job list with tag-specific jobs ahead of generic jobs; the
-  // semaphore preserves submission order for completion ordering too.
-  interface Job {
-    kind: 'discovered' | 'generic';
-    tag: string;
-    source: SourceAdapter;
-  }
-  const jobs: Job[] = [];
-  for (const tag of tags) {
-    const discovered = discoveredByTag.get(tag) ?? [];
-    for (const source of discovered) {
-      jobs.push({ kind: 'discovered', tag, source });
-    }
-  }
-  for (const tag of tags) {
-    for (const source of GENERIC_SOURCES) {
-      jobs.push({ kind: 'generic', tag, source });
-    }
-  }
-
-  // Bounded fan-out across {tag × source} jobs. Results are returned
-  // in input order so the dedup pass below sees deterministic precedence.
-  type JobResult = {
-    kind: 'discovered' | 'generic';
-    tag: string;
-    headlines: Headline[];
-  };
-  const results = await mapConcurrent<typeof jobs[number], JobResult>(
-    jobs,
-    SOURCE_FETCH_CONCURRENCY,
-    async (job) => {
-      const result = await fetchFromSourceWithResult(job.source, job.tag, kv);
-      return { kind: job.kind, tag: job.tag, headlines: result.headlines };
-    },
-  );
-
-  // Deduplicate by canonical URL. First occurrence wins for title /
-  // source_name (tag-specific jobs come first in `jobs`), but the
-  // `source_tags` array unions contributions from every tag that
-  // produced the same URL — downstream the LLM needs to know that a
-  // single canonical article can satisfy multiple user hashtags.
-  const seen = new Map<string, Headline>();
-  const order: string[] = [];
-  for (const r of results) {
-    for (const h of r.headlines) {
-      const key = canonicalize(h.url);
-      const existing = seen.get(key);
-      if (existing !== undefined) {
-        // CF-011: replace the existing entry with an immutable copy so
-        // upstream callers that share a Headline reference (e.g. the
-        // chunk consumer reading the same map) cannot observe a
-        // half-updated source_tags array mid-iteration.
-        const tags = new Set(existing.source_tags ?? []);
-        tags.add(r.tag);
-        seen.set(key, { ...existing, source_tags: Array.from(tags) });
-        continue;
-      }
-      seen.set(key, { ...h, source_tags: [r.tag] });
-      order.push(key);
-      if (order.length >= MAX_COMBINED_HEADLINES) {
-        break;
-      }
-    }
-    if (order.length >= MAX_COMBINED_HEADLINES) break;
-  }
-
-  const ordered: Headline[] = [];
-  for (const key of order) {
-    const h = seen.get(key);
-    if (h !== undefined) ordered.push(h);
-  }
-
-  // Prefer direct sources over Google News for the same story
-  // (REQ-PIPE-001 dedup heuristic). Google News URLs canonicalise to
-  // a different form than the underlying publisher/HN/Reddit links,
-  // so the canonical-URL pass above keeps both copies. The
-  // title-overlap pass below drops the Google News entry when a
-  // direct headline carrying the same story is already present.
-  return preferDirectOverGoogleNews(ordered);
-}
+// CF-022: fanOutForTags was removed here. The function was
+// @internal-used-by-tests-only since the global-feed rework (2026-04-23)
+// replaced per-tag fan-out with CURATED_SOURCES + discovered-tag KV.
+// Tests that relied on fanOutForTags have been removed alongside this
+// function.
 
 /**
  * Convert a `DiscoveredFeed` list (from `sources:{tag}` in KV) into a

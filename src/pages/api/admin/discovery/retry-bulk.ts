@@ -41,6 +41,7 @@ import { requireSession } from '~/middleware/auth';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { parseJsonStringArray } from '~/lib/json-string-array';
+import { clearDiscoveryFailure } from '~/lib/kv/discovery-failures';
 
 /** Parse the user's stored hashtags_json (a JSON array of strings,
  *  possibly prefixed with `#`) into a normalised lowercase array.
@@ -123,7 +124,7 @@ async function executeRetryBulk(
     await Promise.all(
       stuck.flatMap((tag) => [
         env.KV.delete(`sources:${tag}`),
-        env.KV.delete(`discovery_failures:${tag}`),
+        clearDiscoveryFailure(env.KV, tag),
       ]),
     );
   } catch (err) {

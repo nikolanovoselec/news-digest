@@ -145,7 +145,7 @@ Native-form transport path for account deletion. Accepts a `application/x-www-fo
 
 **Error codes:** `invalid_hashtags`, `invalid_time`, `invalid_model_id`, `invalid_email_enabled`.
 
-**Implements:** [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation), [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone), [REQ-SET-004](../sdd/settings.md#req-set-004-model-selection) *(Deprecated 2026-04-24)*, [REQ-SET-005](../sdd/settings.md#req-set-005-email-notification-preference)
+**Implements:** [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation), [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone), [REQ-SET-004](../sdd/settings.md#req-set-004-model-selection) *(Partial — model selection UI hidden; API still validates and persists `model_id`)*, [REQ-SET-005](../sdd/settings.md#req-set-005-email-notification-preference)
 
 ### POST /api/settings
 
@@ -392,7 +392,7 @@ POST enforces Origin; GET is exempt (so operators can bookmark or `curl`).
 
 Dynamic XML sitemap. Lists only the public landing page (`/`). `changefreq=daily`, `priority=1.0`, `lastmod` set to the current date at request time. `Cache-Control: public, max-age=3600`. Referenced from `robots.txt`.
 
-**Implements:** [REQ-OPS-004](../sdd/observability.md#req-ops-004-crawler-policy-and-public-surface-discoverability) AC 4
+**Implements:** [REQ-OPS-004](../sdd/observability.md#req-ops-004-crawler-policy-and-public-surface-discoverability) AC 4, [REQ-OPS-007](../sdd/observability.md#req-ops-007-public-sitemap-for-crawler-discovery)
 
 ### GET /robots.txt
 

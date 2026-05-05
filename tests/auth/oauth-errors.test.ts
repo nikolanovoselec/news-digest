@@ -1,11 +1,15 @@
 // Tests for src/lib/oauth-errors.ts — REQ-AUTH-004 (OAuth error
 // allowlist and sanitization).
+//
+// CF-060: isKnownOAuthErrorCode export removed from production module.
+// The membership test now uses OAUTH_ERROR_CODES.includes() directly,
+// which is behaviourally equivalent without leaking a test-internal
+// predicate into the production surface.
 
 import { describe, it, expect } from 'vitest';
 import {
   OAUTH_ERROR_CODES,
   mapOAuthError,
-  isKnownOAuthErrorCode,
 } from '~/lib/oauth-errors';
 
 describe('OAUTH_ERROR_CODES', () => {
@@ -16,6 +20,16 @@ describe('OAUTH_ERROR_CODES', () => {
       'invalid_state',
       'oauth_error',
     ]);
+  });
+
+  it('REQ-AUTH-004: every code round-trips through mapOAuthError unchanged (CF-060)', () => {
+    // Real-world contract: a provider returning one of these codes
+    // verbatim must echo back unchanged so the landing page can route
+    // to the right copy. Exercises the allowlist + mapper together
+    // instead of testing array membership in isolation.
+    for (const code of OAUTH_ERROR_CODES) {
+      expect(mapOAuthError(code)).toBe(code);
+    }
   });
 });
 
@@ -51,18 +65,3 @@ describe('mapOAuthError', () => {
   });
 });
 
-describe('isKnownOAuthErrorCode', () => {
-  it('REQ-AUTH-004: true for each allowlisted code', () => {
-    for (const code of OAUTH_ERROR_CODES) {
-      expect(isKnownOAuthErrorCode(code)).toBe(true);
-    }
-  });
-
-  it('REQ-AUTH-004: false for unknown strings and non-strings', () => {
-    expect(isKnownOAuthErrorCode('nope')).toBe(false);
-    expect(isKnownOAuthErrorCode(null)).toBe(false);
-    expect(isKnownOAuthErrorCode(undefined)).toBe(false);
-    expect(isKnownOAuthErrorCode(42)).toBe(false);
-    expect(isKnownOAuthErrorCode({})).toBe(false);
-  });
-});

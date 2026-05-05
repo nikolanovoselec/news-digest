@@ -21,10 +21,7 @@ function isIos(nav: IosNavigatorLike): boolean {
 }
 
 describe('InstallPrompt source content', () => {
-  it('REQ-PWA-001: declares it implements REQ-PWA-001 (in both the script and the template)', () => {
-    expect(installPromptSource).toContain('REQ-PWA-001');
-    expect(installPromptTemplate).toContain('REQ-PWA-001');
-  });
+  // CF-033: REQ-ID presence theater removed — CI gate covers annotations.
 
   it('REQ-PWA-001: listens for the beforeinstallprompt event (AC 5)', () => {
     expect(installPromptSource).toMatch(/addEventListener\(\s*['"]beforeinstallprompt['"]/);

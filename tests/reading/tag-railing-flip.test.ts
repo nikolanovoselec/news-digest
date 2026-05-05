@@ -121,9 +121,7 @@ describe('tag-railing FLIP reorder — REQ-READ-007', () => {
     expect(historyPage).toContain('flipChipToFront');
   });
 
-  it('REQ-READ-007: helper annotates itself with the REQ id', () => {
-    expect(flipHelper).toContain('REQ-READ-007');
-  });
+  // CF-033: REQ-READ-007 annotation theater removed — CI gate covers it.
 
   it('REQ-READ-007: helper exports flipChipToPosition for arbitrary destinations (AC 3 unselect)', () => {
     // The unselect cascade slides the chip to its natural sort

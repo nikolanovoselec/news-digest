@@ -1,3 +1,4 @@
+// Implements REQ-PIPE-001
 // DEV-ONLY pipeline trigger. Gated by DEV_BYPASS_TOKEN the same way
 // /api/dev/login is, and 404s when the secret isn't set.
 //
@@ -22,15 +23,16 @@ import { generateUlid } from '~/lib/ulid';
 import { startRun } from '~/lib/scrape-run';
 import { DEFAULT_MODEL_ID } from '~/lib/models';
 import { log } from '~/lib/log';
-import { timingSafeEqualHmac } from '~/lib/crypto';
+import { verifyHmacSignature } from '~/lib/crypto';
 import { checkDevEndpointOrigin } from '~/middleware/origin-check';
 
 interface DevEnv {
   DEV_BYPASS_TOKEN?: string;
 }
 
-// `timingSafeEqualHmac` from ~/lib/crypto replaces the previously
-// open-coded JS XOR loop (CF-005).
+// `verifyHmacSignature` from ~/lib/crypto replaces the previously
+// open-coded JS XOR loop (CF-005). Renamed in CF-014 from
+// `timingSafeEqualHmac`.
 
 export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env as typeof context.locals.runtime.env &
@@ -56,7 +58,7 @@ export async function POST(context: APIContext): Promise<Response> {
   const match = /^Bearer\s+(.+)$/i.exec(auth);
   if (
     match === null ||
-    !(await timingSafeEqualHmac(match[1] ?? '', bypass, env.OAUTH_JWT_SECRET))
+    !(await verifyHmacSignature(bypass, match[1] ?? '', env.OAUTH_JWT_SECRET))
   ) {
     return new Response(null, { status: 404 });
   }
