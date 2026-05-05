@@ -112,14 +112,19 @@ export function capChunks<T>(
   return chunks.slice(0, max);
 }
 
-/** Return true if the URL is a plain http(s) URL. Rejects
+/** Return true if the URL is a plain https URL. Rejects http,
  * `javascript:`, `data:`, `file:`, mailto:, etc. at the coordinator
  * layer so those schemes can never reach article_sources / primary_source_url
- * and end up rendered as an `href`. */
+ * and end up rendered as an `href`.
+ *
+ * CF-021: previously accepted `http:` too, which left the SSRF guard
+ * (`isUrlSafe` in src/lib/ssrf.ts — https-only) and this write-time
+ * filter asymmetric. http URLs would land in D1 then silently fail the
+ * body fetch. Aligned: both layers reject anything that isn't https. */
 function isSafeWebUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    return parsed.protocol === 'https:';
   } catch {
     return false;
   }

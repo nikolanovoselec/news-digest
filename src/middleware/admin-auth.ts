@@ -27,6 +27,7 @@
 //   that didn't actually traverse Access.
 
 import type { APIContext } from 'astro';
+import type { AuthenticatedUser } from '~/lib/types';
 import { applyRefreshCookie, loadSession } from '~/middleware/auth';
 import { log } from '~/lib/log';
 import { base64UrlDecode } from '~/lib/crypto';
@@ -34,9 +35,22 @@ import { base64UrlDecode } from '~/lib/crypto';
 /** Successful admin auth result. `cookiesToSet` is forwarded to the
  *  caller so they can attach the access + refresh cookies to their
  *  outgoing response — admin routes participate in the access/refresh
- *  flow just like every other authenticated endpoint. */
+ *  flow just like every other authenticated endpoint.
+ *
+ *  CF-030: the full {@link AuthenticatedUser} is exposed alongside the
+ *  bare userId/email so admin routes that need other user fields
+ *  (hashtags_json, daily_digest_email_consent, …) can read them from
+ *  this result instead of calling `requireSession` a second time.
+ *  Calling loadSession twice doubled the auth_refresh rate-limit
+ *  drain per request and opened a token-rotation race window. */
 export type AdminAuthResult =
-  | { ok: true; userId: string; email: string; cookiesToSet: string[] }
+  | {
+      ok: true;
+      userId: string;
+      email: string;
+      user: AuthenticatedUser;
+      cookiesToSet: string[];
+    }
   | { ok: false; response: Response };
 
 interface AccessJwtClaims {
@@ -198,6 +212,7 @@ export async function requireAdminSession(
     ok: true,
     userId: sessionUser.id,
     email: sessionUser.email,
+    user: sessionUser,
     cookiesToSet: session.cookiesToSet,
   };
 }

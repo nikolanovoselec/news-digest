@@ -27,6 +27,7 @@ import { requireSettingsComplete } from '~/middleware/settings-gate';
 import { slugify } from '~/lib/slug';
 import { splitIntoParagraphs } from '~/lib/paragraph-split';
 import { DEFAULT_TZ, localeForTz } from '~/lib/tz';
+import { safeHref } from '~/lib/safe-href';
 
 interface ArticleRow {
   id: string;
@@ -350,7 +351,7 @@ const articleDataset = {
       altSources.length === 0 ? (
         <a
           class="article-detail__source-link"
-          href={articleRow.primary_source_url}
+          href={safeHref(articleRow.primary_source_url)}
           target="_blank"
           rel="noopener noreferrer"
         >

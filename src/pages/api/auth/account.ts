@@ -18,7 +18,12 @@ import type { APIContext } from 'astro';
 import { applyForeignKeysPragma } from '~/lib/db';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
-import { applyRefreshCookie, loadSession, buildClearSessionCookie } from '~/middleware/auth';
+import {
+  applyRefreshCookie,
+  loadSession,
+  buildClearSessionCookie,
+  buildClearRefreshCookie,
+} from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
 interface DeleteAccountBody {
@@ -55,7 +60,8 @@ async function deleteAccountCore(
   context: APIContext,
   confirm: unknown,
 ): Promise<
-  { ok: true; userId: string; clearCookie: string } | { ok: false; response: Response }
+  | { ok: true; userId: string; clearCookies: string[] }
+  | { ok: false; response: Response }
 > {
   const env = context.locals.runtime.env;
   if (typeof env.APP_URL !== 'string' || env.APP_URL === '') {
@@ -119,7 +125,16 @@ async function deleteAccountCore(
 
   log('info', 'auth.account.delete', { user_id: userId });
 
-  return { ok: true, userId, clearCookie: buildClearSessionCookie() };
+  // CF-028: clear BOTH cookies. Account deletion has the same browser
+  // state as logout — without buildClearRefreshCookie() the
+  // __Host-news_digest_refresh cookie keeps replaying until it
+  // expires and the worker logs auth.refresh.rejected on every
+  // request. logout.ts pairs both clears for the same reason.
+  return {
+    ok: true,
+    userId,
+    clearCookies: [buildClearSessionCookie(), buildClearRefreshCookie()],
+  };
 }
 
 export async function DELETE(context: APIContext): Promise<Response> {
@@ -136,7 +151,7 @@ export async function DELETE(context: APIContext): Promise<Response> {
   if (!result.ok) return result.response;
 
   const headers = new Headers({ 'Content-Type': 'application/json' });
-  headers.append('Set-Cookie', result.clearCookie);
+  for (const cookie of result.clearCookies) headers.append('Set-Cookie', cookie);
   return new Response(
     JSON.stringify({ ok: true, redirect: `/?account_deleted=1` }),
     { status: 200, headers },
@@ -178,6 +193,6 @@ export async function POST(context: APIContext): Promise<Response> {
   if (!result.ok) return result.response;
 
   const headers = new Headers({ Location: '/?account_deleted=1' });
-  headers.append('Set-Cookie', result.clearCookie);
+  for (const cookie of result.clearCookies) headers.append('Set-Cookie', cookie);
   return new Response(null, { status: 303, headers });
 }
