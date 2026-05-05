@@ -62,8 +62,13 @@ export type ErrorCode =
  *  - Short (one sentence, ≤120 chars)
  *  - Action-oriented when possible ("Try again in a few minutes.")
  *  - Free of implementation detail (no vendor names, no internal IDs)
+ *
+ * CF-058: production callers use `errorResponse()` rather than importing
+ * this map directly. The map is re-exported as `USER_FACING_MESSAGES_FOR_TESTS`
+ * (same object, test-scoped alias) so the name signals intent and static
+ * analysis can flag non-test callers.
  */
-export const USER_FACING_MESSAGES: Record<ErrorCode, string> = {
+const USER_FACING_MESSAGES: Record<ErrorCode, string> = {
   // Digest generation
   llm_invalid_json:
     'The language model returned an unexpected response. Please try again.',
@@ -179,3 +184,15 @@ export function errorResponse(
     headers: { 'Content-Type': 'application/json' },
   });
 }
+
+/**
+ * CF-058 — test-only re-export of the message registry. Production code
+ * MUST use `errorResponse()` instead; this alias exists purely so tests
+ * can assert on message presence without accessing a non-exported symbol.
+ * Static analysis (e.g. a grep for `USER_FACING_MESSAGES_FOR_TESTS` in
+ * `src/`) signals a lane violation.
+ *
+ * @internal
+ */
+export const USER_FACING_MESSAGES_FOR_TESTS: Record<ErrorCode, string> =
+  USER_FACING_MESSAGES;

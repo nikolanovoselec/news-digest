@@ -41,8 +41,7 @@ import {
   clearDiscoveryFailure,
 } from '~/lib/kv/discovery-failures';
 
-const FETCH_TIMEOUT_MS = FEED_FETCH_TIMEOUT_MS;
-const MAX_BODY_BYTES = FEED_MAX_BODY_BYTES;
+// CF-056: use the imported names directly instead of local re-aliases.
 /** Evict after 2 consecutive discovery failures. Mirrors the per-feed
  * eviction threshold in REQ-DISC-003 AC 2 applied at the tag level:
  * two attempts without a usable feed and the tag is parked. */
@@ -187,7 +186,7 @@ export async function validateFeedUrl(
     response = await fetch(url, {
       method: 'GET',
       headers: { 'User-Agent': 'news-digest-discovery' },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(FEED_FETCH_TIMEOUT_MS),
       redirect: 'follow',
     });
   } catch {
@@ -211,7 +210,7 @@ export async function validateFeedUrl(
   let body: string;
   try {
     const text = await response.text();
-    if (text.length > MAX_BODY_BYTES) {
+    if (text.length > FEED_MAX_BODY_BYTES) {
       return false;
     }
     body = text;

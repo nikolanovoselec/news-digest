@@ -1,3 +1,4 @@
+// Implements REQ-AUTH-001
 // DEV-ONLY auth bypass. Gated by the `DEV_BYPASS_TOKEN` Worker secret —
 // if unset, the endpoint returns 404 and is effectively disabled.
 //

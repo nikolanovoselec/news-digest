@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  USER_FACING_MESSAGES,
+  USER_FACING_MESSAGES_FOR_TESTS as USER_FACING_MESSAGES,
   errorResponse,
   type ErrorCode,
 } from '~/lib/errors';

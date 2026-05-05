@@ -23,6 +23,21 @@
 //   - When `items.length === 0` the function resolves to `[]`
 //     without spawning any workers.
 
+/**
+ * CF-027 — Map `fn` over `items` with at most `concurrency` promises
+ * in-flight at once. Results are returned in the same order as `items`.
+ *
+ * **Partial-error semantics:** if `fn` throws for any item, the entire
+ * batch rejects via `Promise.all` — there is no per-item suppression.
+ * Callers that need per-item tolerance must catch inside `fn` and
+ * return a sentinel value instead of throwing.
+ *
+ * @param items       Items to process; may be empty (resolves to `[]`).
+ * @param concurrency Maximum simultaneous promises; must be ≥ 1.
+ * @param fn          Async transform; receives the item and its 0-based
+ *                    index. Must not mutate `items`.
+ * @returns           Array of results in source order.
+ */
 export async function mapConcurrent<T, R>(
   items: readonly T[],
   concurrency: number,

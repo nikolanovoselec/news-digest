@@ -1,7 +1,14 @@
+// Implements REQ-AUTH-001
+// Implements REQ-PIPE-001
+//
 // Shared types used across src/lib and src/pages modules.
+// CF-027: each export carries a JSDoc comment so callers can orient
+// themselves without opening this file.
 // This file is imported read-only by every domain module — when a domain
 // needs a new cross-cutting type, add it here rather than duplicating.
 
+/** Full authenticated-user record returned by a successful `loadSession`
+ * call. Stored in `Astro.locals.user` by the middleware. */
 export interface AuthenticatedUser {
   id: string;
   email: string;
@@ -15,6 +22,9 @@ export interface AuthenticatedUser {
   session_version: number;
 }
 
+/** A single article candidate emitted by a source adapter. Carries
+ * the raw feed-entry fields; the coordinator adds `source_tags` and
+ * the chunk consumer writes the summarised version to D1. */
 export interface Headline {
   title: string;
   url: string;
@@ -34,12 +44,16 @@ export interface Headline {
   published_at?: number;
 }
 
+/** A feed URL discovered by the LLM-assisted source discovery pass
+ * (REQ-DISC-001) and persisted to `sources:{tag}` in KV. */
 export interface DiscoveredFeed {
   name: string;
   url: string;
   kind: 'rss' | 'atom' | 'json';
 }
 
+/** Shape of the `sources:{tag}` KV entry written by the discovery
+ * pipeline and consumed by the coordinator fan-out. */
 export interface SourcesCacheValue {
   feeds: DiscoveredFeed[];
   discovered_at: number;

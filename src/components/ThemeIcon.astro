@@ -1,0 +1,64 @@
+---
+// Implements REQ-DES-002
+//
+// CF-059: shared sun/moon SVG markup factored out of ThemeToggle.astro
+// and HeaderThemeToggle.astro. Both components previously duplicated
+// the two SVG icons verbatim; this component is the single source of
+// truth so a future icon refresh only touches one file.
+//
+// Props:
+//   variant  — 'sun' | 'moon' selects which icon to render.
+//              Visibility is controlled by the parent component's CSS
+//              (`[data-theme='dark']` shows sun, `[data-theme='light']`
+//              shows moon) — this component renders both unconditionally.
+
+interface Props {
+  variant: 'sun' | 'moon';
+  /** Optional CSS class applied to the wrapper <span>. Defaults to empty. */
+  class?: string;
+}
+
+const { variant, class: className = '' } = Astro.props;
+---
+
+{variant === 'sun' ? (
+  <span class={className} aria-hidden="true">
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <circle cx="12" cy="12" r="4"></circle>
+      <path d="M12 2v2"></path>
+      <path d="M12 20v2"></path>
+      <path d="m4.93 4.93 1.41 1.41"></path>
+      <path d="m17.66 17.66 1.41 1.41"></path>
+      <path d="M2 12h2"></path>
+      <path d="M20 12h2"></path>
+      <path d="m6.34 17.66-1.41 1.41"></path>
+      <path d="m19.07 4.93-1.41 1.41"></path>
+    </svg>
+  </span>
+) : (
+  <span class={className} aria-hidden="true">
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>
+    </svg>
+  </span>
+)}

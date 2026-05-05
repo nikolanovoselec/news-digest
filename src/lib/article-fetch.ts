@@ -30,8 +30,7 @@ import {
  *  higher origin pressure than feed re-fetches. */
 const ARTICLE_BODY_FETCH_CONCURRENCY = 20;
 
-const FETCH_TIMEOUT_MS = ARTICLE_FETCH_TIMEOUT_MS;
-const MAX_BODY_BYTES = ARTICLE_MAX_BODY_BYTES;
+// CF-056: use the imported names directly instead of local re-aliases.
 const SNIPPET_CAP = 3000;
 
 /**
@@ -128,7 +127,7 @@ export async function fetchArticleBody(
       : 'Mozilla/5.0 (compatible; news-digest/1.0)';
   try {
     const response = await fetch(url, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(ARTICLE_FETCH_TIMEOUT_MS),
       redirect: 'follow',
       headers: {
         'User-Agent': ua,
@@ -160,7 +159,7 @@ export async function fetchArticleBody(
       if (done) break;
       if (value !== undefined) {
         total += value.byteLength;
-        if (total > MAX_BODY_BYTES) {
+        if (total > ARTICLE_MAX_BODY_BYTES) {
           await reader.cancel();
           break;
         }

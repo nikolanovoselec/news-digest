@@ -31,6 +31,7 @@
 // all passes are emitted as structured log lines for observability.
 
 import { log } from '~/lib/log';
+import { errMsg } from '~/lib/error-message';
 import { purgeOldRefreshTokens } from '~/lib/refresh-tokens';
 import { clearDiscoveryFailure } from '~/lib/kv/discovery-failures';
 
@@ -137,7 +138,7 @@ async function runChunkCompletionsPurge(env: Env): Promise<number> {
   } catch (err) {
     log('error', 'digest.generation', {
       status: 'cleanup_chunk_completions_failed',
-      detail: String(err).slice(0, 500),
+      detail: errMsg(err),
     });
     return 0;
   }
@@ -155,7 +156,7 @@ async function runRefreshTokenPurge(env: Env): Promise<number> {
     return purged;
   } catch (err) {
     log('error', 'auth.refresh.purge_failed', {
-      detail: String(err).slice(0, 500),
+      detail: errMsg(err),
     });
     return 0;
   }
@@ -195,7 +196,7 @@ async function runArticleRetention(env: Env, deadline: number): Promise<number> 
   } catch (err) {
     log('error', 'digest.generation', {
       status: 'cleanup_failed',
-      detail: String(err).slice(0, 500),
+      detail: errMsg(err),
     });
     return 0;
   }
@@ -270,7 +271,7 @@ async function runOrphanTagSweep(env: Env, deadline: number): Promise<number> {
   } catch (err) {
     log('error', 'digest.generation', {
       status: 'orphan_tag_sweep_failed',
-      detail: String(err).slice(0, 500),
+      detail: errMsg(err),
     });
     return 0;
   }
@@ -419,7 +420,7 @@ async function runStuckTagPrune(env: Env, deadline: number): Promise<number> {
   } catch (err) {
     log('error', 'discovery.completed', {
       status: 'stuck_tag_prune_failed',
-      detail: String(err).slice(0, 500),
+      detail: errMsg(err),
     });
     return 0;
   }

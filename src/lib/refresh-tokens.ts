@@ -68,17 +68,34 @@ export interface RefreshTokenRow {
   rotation_count: number;
 }
 
-/** Generate a fresh 32-byte random cookie value (the value the client
- *  holds). Hex-encoded so it's cookie-safe and printable. */
+/**
+ * CF-027 — Generate a fresh random cookie value.
+ *
+ * The value the client holds in the refresh-token cookie.
+ * {@link REFRESH_TOKEN_BYTES} bytes (32 by default) from
+ * `crypto.getRandomValues`, hex-encoded for cookie safety.
+ *
+ * **Entropy:** 32 bytes = 256 bits. A birthday-attack collision at
+ * 2^128 hashes would require ~1.8×10^19 tokens stored, which exceeds
+ * any feasible deployment by many orders of magnitude.
+ *
+ * **NOT the DB primary key** — that is {@link generateRowId}. The
+ * separation means a DB dump does not expose live token values.
+ */
 function generateRefreshTokenValue(): string {
   const bytes = new Uint8Array(REFRESH_TOKEN_BYTES);
   crypto.getRandomValues(bytes);
   return hexEncode(bytes);
 }
 
-/** Generate a fresh 16-byte random row id (the value used as PRIMARY
- *  KEY internally, NEVER the cookie value). Distinct from the cookie
- *  value so a DB leak doesn't expose live tokens. */
+/**
+ * CF-027 — Generate a fresh random DB row id.
+ *
+ * {@link REFRESH_ROW_ID_BYTES} bytes (16 by default) from
+ * `crypto.getRandomValues`, hex-encoded. Used as the PRIMARY KEY in
+ * `refresh_tokens`; never sent to the client. The split between token
+ * value and row id ensures a D1 dump does not expose live cookie values.
+ */
 function generateRowId(): string {
   const bytes = new Uint8Array(REFRESH_ROW_ID_BYTES);
   crypto.getRandomValues(bytes);

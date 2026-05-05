@@ -38,7 +38,7 @@ export function requireStrongJwtSecret(secret: string): void {
   }
 }
 
-/** Reset the module-level latch — exposed for tests only. */
-export function __resetWeakSecretLatch(): void {
-  weakSecretLogged = false;
-}
+// CF-061: __resetWeakSecretLatch removed. Tests that need a clean
+// module state should use `vi.resetModules()` + dynamic import, which
+// reloads the module entirely. The latch is a much simpler mechanism
+// than the IIFE-based AD20 guards so vi.resetModules() is safe here.

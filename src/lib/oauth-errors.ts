@@ -44,13 +44,7 @@ export function mapOAuthError(raw: string | null | undefined): OAuthErrorCode {
   return 'oauth_error';
 }
 
-/**
- * @internal — exported for the OAuth-error-code unit test only. Production
- * callers MUST use {@link mapOAuthError}, which delivers the structured
- * `{ message, severity }` shape; this predicate's existence is purely so
- * the test surface can verify membership without re-typing the allowlist
- * literal.
- */
-export function isKnownOAuthErrorCode(code: unknown): code is OAuthErrorCode {
-  return typeof code === 'string' && (OAUTH_ERROR_CODES as readonly string[]).includes(code);
-}
+// CF-060: isKnownOAuthErrorCode export removed. Tests that previously
+// used it now assert directly against OAUTH_ERROR_CODES (already
+// exported) — the membership check is equivalent without leaking a
+// test-internal predicate into the production module surface.

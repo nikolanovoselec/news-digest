@@ -1,3 +1,4 @@
+// Implements REQ-PIPE-001
 // DEV-ONLY pipeline trigger. Gated by DEV_BYPASS_TOKEN the same way
 // /api/dev/login is, and 404s when the secret isn't set.
 //
