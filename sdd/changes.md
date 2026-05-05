@@ -8,6 +8,7 @@ Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are a
 
 ## 2026-05-05
 
+- REQ-AUTH-005 AC 3 corrected: account deletion clears both session cookies (access and refresh), matching the logout contract in REQ-AUTH-002 AC 3 — previously the AC named only "the session cookie" in the singular, which understated the actual cookie-clear behavior.
 - REQ-PIPE-001 AC8 reworded: "coordinator fetches the article body" changed to "pipeline fetches the article body" — the chunk consumer, not the coordinator, performs the body-fetch step; the AC now names the actor correctly without changing the observable contract.
 - REQ-OPS-003 AC1 reworded: the CSP requirement now uses user-observable language ("restricts script execution to same-origin, blocks inline event handlers") with the literal directive value moved to documentation/security.md.
 - REQ-DES-001 AC1 and REQ-DES-003 AC1 reworded: implementation details (exact font-stack strings, pixel sizes, cubic-bezier value) moved to documentation/architecture.md design-system section; the ACs now describe the observable outcome (5 type sizes, single easing curve, system fonts only).

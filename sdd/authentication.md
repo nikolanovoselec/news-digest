@@ -109,7 +109,7 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 **Acceptance Criteria:**
 1. `/settings` has a "Delete account" control with a confirmation dialog requiring the user to type an explicit confirmation string.
 2. Submitting the confirmed deletion deletes the user and every row owned by the user (stars, read-tracking, pending discoveries) via foreign-key cascade. The shared article pool is unaffected — articles are global, not per-user. The account-deletion endpoint accepts both a JSON API path (used by scripted clients and smoke tests) and a native HTML form submission (used by the settings page) so deletion succeeds on every browser the app supports, including mobile in-app webviews that do not reliably dispatch fetch-based `DELETE` requests.
-3. The session cookie is cleared and the user is redirected to the landing page with a one-time confirmation banner.
+3. Both session cookies (access and refresh) are cleared and the user is redirected to the landing page with a one-time confirmation banner.
 4. KV entries keyed by the user's id (if any) are deleted in the same handler.
 
 **Constraints:** CON-AUTH-001

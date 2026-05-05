@@ -5,6 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DELETE, POST } from '~/pages/api/auth/account';
 import { SESSION_COOKIE_NAME } from '~/middleware/auth';
+import { REFRESH_TOKEN_COOKIE_NAME } from '~/lib/refresh-tokens';
 import { signSession } from '~/lib/session-jwt';
 
 /** Collect every Set-Cookie value from a Response. */
@@ -238,6 +239,37 @@ describe('DELETE /api/auth/account', () => {
     expect(clear).toBeDefined();
   });
 
+  it('REQ-AUTH-005 / CF-028: clears BOTH the session AND refresh cookies on successful delete', async () => {
+    // Account deletion has the same browser cookie state as logout —
+    // both __Host-news_digest_session and __Host-news_digest_refresh
+    // must be wiped or the dead refresh cookie keeps replaying after
+    // the user row is gone, generating auth.refresh.rejected log
+    // noise on every subsequent navigation.
+    const token = await signSession(
+      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
+      JWT_SECRET,
+    );
+    const { db } = makeDb(baseRow());
+    const { kv } = makeKv();
+    const req = await deleteRequest({
+      origin: APP_ORIGIN,
+      cookie: `${SESSION_COOKIE_NAME}=${token}`,
+      body: { confirm: 'DELETE' },
+    });
+    const res = await DELETE(makeContext(req, env(db, kv)) as never);
+    const cookies = setCookiesOf(res);
+    const sessionClear = cookies.find(
+      (c) => c.startsWith(`${SESSION_COOKIE_NAME}=`) && c.includes('Max-Age=0'),
+    );
+    const refreshClear = cookies.find(
+      (c) =>
+        c.startsWith(`${REFRESH_TOKEN_COOKIE_NAME}=`) &&
+        c.includes('Max-Age=0'),
+    );
+    expect(sessionClear).toBeDefined();
+    expect(refreshClear).toBeDefined();
+  });
+
   it('REQ-AUTH-005: removes KV entries namespaced to user:<id>:', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
@@ -395,6 +427,34 @@ describe('POST /api/auth/account — native form path', () => {
       (c) => c.startsWith(`${SESSION_COOKIE_NAME}=`) && c.includes('Max-Age=0'),
     );
     expect(clear).toBeDefined();
+  });
+
+  it('REQ-AUTH-005 / CF-028: native POST clears BOTH cookies on 303', async () => {
+    const token = await signSession(
+      { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
+      JWT_SECRET,
+    );
+    const { db } = makeDb(baseRow());
+    const { kv } = makeKv();
+    const req = await postRequest({
+      origin: APP_ORIGIN,
+      cookie: `${SESSION_COOKIE_NAME}=${token}`,
+      confirm: 'DELETE',
+    });
+    const res = await POST(makeContext(req, env(db, kv)) as never);
+    const cookies = setCookiesOf(res);
+    expect(
+      cookies.find(
+        (c) => c.startsWith(`${SESSION_COOKIE_NAME}=`) && c.includes('Max-Age=0'),
+      ),
+    ).toBeDefined();
+    expect(
+      cookies.find(
+        (c) =>
+          c.startsWith(`${REFRESH_TOKEN_COOKIE_NAME}=`) &&
+          c.includes('Max-Age=0'),
+      ),
+    ).toBeDefined();
   });
 
   it('REQ-AUTH-005: native POST without confirm field returns 400', async () => {

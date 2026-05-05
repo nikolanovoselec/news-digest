@@ -39,7 +39,7 @@ Generic server-error fallback. Shown when an uncaught exception bubbles up to As
 
 Initiates the OAuth/OIDC authorization-code flow. `{provider}` matches the provider registry (`github`, `google`); unknown names return `404`. Sets a 10-minute `state` cookie and redirects to the provider's authorize URL. Exempt from the Origin check.
 
-**Rate limit:** 10 / 60 s per IP (`auth_login`). Fails open on KV errors. Exhausted → `429` with `Retry-After`.
+**Rate limit:** 10 / 60 s per IP (`auth_login`). Fails closed on KV errors (see [AD23](decisions/README.md#ad23-auth-rate-limit-fail-closed-without-waf-backstop)). Exhausted → `429` with `Retry-After`.
 
 **Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9, [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
 
@@ -53,7 +53,7 @@ Validates the per-provider `state` cookie, exchanges the code for tokens, extrac
 
 New accounts are seeded with default hashtags, `digest_hour=8`, `email_enabled=1`. Sets the session cookie and redirects to `/digest`.
 
-**Rate limit:** 20 / 60 s per IP (`auth_callback`). Fails open on KV errors.
+**Rate limit:** 20 / 60 s per IP (`auth_callback`). Fails closed on KV errors (see [AD23](decisions/README.md#ad23-auth-rate-limit-fail-closed-without-waf-backstop)).
 
 **Error responses:**
 | Outcome | Status | Body |
@@ -113,7 +113,7 @@ Session near-expiry triggers a `Set-Cookie` refresh in the same response.
 
 **Request:** JSON body `{ confirm: "DELETE" }`
 
-**Response:** `200 { ok: true, redirect: "/?account_deleted=1" }` (session cookie cleared, FK cascade deletes all user data, KV entries under `user:{id}:*` deleted best-effort) | `400 bad_request` (missing/unparseable body) | `400 confirmation_required` | `401 unauthorized` | `403 forbidden_origin`
+**Response:** `200 { ok: true, redirect: "/?account_deleted=1" }` (both cookies cleared — access and refresh, FK cascade deletes all user data, KV entries under `user:{id}:*` deleted best-effort) | `400 bad_request` (missing/unparseable body) | `400 confirmation_required` | `401 unauthorized` | `403 forbidden_origin`
 
 **Implements:** [REQ-AUTH-005](../sdd/authentication.md#req-auth-005-account-deletion), [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
 
@@ -123,7 +123,7 @@ Native-form transport path for account deletion. Accepts a `application/x-www-fo
 
 **Request:** form-encoded body `confirm=DELETE`
 
-**Response:** `303` redirect to `/?account_deleted=1` (session cookie cleared, same cascade as DELETE) | `400 bad_request` (empty body or `Content-Length: 0`) | `400 confirmation_required` | `401 unauthorized` | `403 forbidden_origin`
+**Response:** `303` redirect to `/?account_deleted=1` (both cookies cleared — access and refresh, same cascade as DELETE) | `400 bad_request` (empty body or `Content-Length: 0`) | `400 confirmation_required` | `401 unauthorized` | `403 forbidden_origin`
 
 **Implements:** [REQ-AUTH-005](../sdd/authentication.md#req-auth-005-account-deletion), [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
 

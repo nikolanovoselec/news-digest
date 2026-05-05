@@ -37,7 +37,6 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
-import { requireSession } from '~/middleware/auth';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { parseJsonStringArray } from '~/lib/json-string-array';
@@ -162,8 +161,8 @@ export async function POST(context: APIContext): Promise<Response> {
     return originResult.response;
   }
 
-  const auth = await requireSession(context.request, env);
-  if (!auth.ok) return auth.response;
+  // CF-030: re-use the user already loaded by requireAdminSession.
+  const auth = adminAuth;
 
   const result = await executeRetryBulk(env, auth.user.id, auth.user.hashtags_json);
   if (!result.ok) {
@@ -207,15 +206,11 @@ export async function GET(context: APIContext): Promise<Response> {
     });
   }
 
-  const auth = await requireSession(context.request, env, () =>
-    wantsJson
-      ? errorResponse('unauthorized')
-      : new Response(null, {
-          status: 303,
-          headers: { Location: `${appOrigin}/settings?rediscover=error` },
-        }),
-  );
-  if (!auth.ok) return auth.response;
+  // CF-030: GET path also re-uses adminAuth. The bespoke `unauthorized`
+  // callback that requireSession used to take is no longer needed —
+  // adminAuth already returned the redirect/JSON shape via its own
+  // wantsJson branch above before we ever get here.
+  const auth = adminAuth;
 
   const result = await executeRetryBulk(env, auth.user.id, auth.user.hashtags_json);
   if (!result.ok) {

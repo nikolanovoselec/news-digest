@@ -70,7 +70,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 
 **What it does NOT cover:**
 - The morph-pair structural contract lives in `tests/layouts/base.test.ts` — Playwright cannot observe Astro lifecycle timing from outside the browser, so a static source-grep is the right layer for that class.
-- The history-vs-digest perf-comparability test is permanently skipped (see `.user-overrides.md`: `skipped-test:REQ-READ-002,REQ-HIST-001`).
+- The history-vs-digest perf-comparability test is permanently skipped (see [AD14](decisions/README.md#ad14-history-page-perf-comparability-test-permanently-skipped)).
 
 **How to run:** Actions tab → `Playwright E2E (live)` → Run workflow. Optional `base_url` input targets a preview deploy.
 

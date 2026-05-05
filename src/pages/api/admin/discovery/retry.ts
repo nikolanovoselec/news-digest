@@ -42,7 +42,6 @@
 import type { APIContext } from 'astro';
 import { errorResponse } from '~/lib/errors';
 import { log } from '~/lib/log';
-import { requireSession } from '~/middleware/auth';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { parseJsonStringArray } from '~/lib/json-string-array';
@@ -114,10 +113,11 @@ export async function POST(context: APIContext): Promise<Response> {
     return originResult.response;
   }
 
-  // Re-load session to get the user's hashtags_json (the admin gate
-  // already verified the session, but it doesn't return the full user).
-  const auth = await requireSession(context.request, env);
-  if (!auth.ok) return auth.response;
+  // CF-030: requireAdminSession already loaded the full user. Read
+  // hashtags_json from adminAuth.user instead of calling loadSession a
+  // second time. Two loads per request doubled the auth_refresh
+  // rate-limit drain and opened a token-rotation race window.
+  const auth = adminAuth;
 
   // Body parsing — branch on Content-Type. Both branches produce the
   // same `tag` string for the downstream flow; the only difference is

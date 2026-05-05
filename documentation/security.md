@@ -53,7 +53,7 @@ The `__Host-` prefix (RFC 6265bis) enforces Secure, Path=/, and no Domain attrib
 
 ---
 
-## Rate limiting (REQ-AUTH-003)
+## Rate limiting (REQ-AUTH-001 AC 9)
 
 Auth endpoints (login, callback, refresh) use a fail-closed KV-backed sliding-window rate limiter. See `src/lib/rate-limit.ts` for bucket definitions and [`configuration.md`](configuration.md) for the `KV` namespace binding and key conventions.
 

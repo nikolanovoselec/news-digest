@@ -62,7 +62,7 @@ describe('detail page source contract — REQ-READ-002', () => {
     // <a> with target=_blank and rel=noopener noreferrer pointing at
     // primary_source_url — the legacy behaviour preserved verbatim.
     expect(detailSource).toMatch(/altSources\.length\s*===\s*0/);
-    expect(detailSource).toMatch(/href=\{articleRow\.primary_source_url\}/);
+    expect(detailSource).toMatch(/href=\{safeHref\(articleRow\.primary_source_url\)\}/);
     expect(detailSource).toMatch(/target="_blank"/);
     expect(detailSource).toMatch(/rel="noopener noreferrer"/);
   });

@@ -116,8 +116,8 @@ The `KV` namespace uses a structured key scheme. All keys are shared across all 
 
 | Rule | Limit | Scope | Fail mode |
 |---|---|---|---|
-| `auth_login` | 10 / 60s | IP | Fail open |
-| `auth_callback` | 20 / 60s | IP | Fail open |
+| `auth_login` | 10 / 60s | IP | Fail closed ([AD23](decisions/README.md#ad23-auth-rate-limit-fail-closed-without-waf-backstop)) |
+| `auth_callback` | 20 / 60s | IP | Fail closed ([AD23](decisions/README.md#ad23-auth-rate-limit-fail-closed-without-waf-backstop)) |
 | `auth_refresh_ip` | 60 / 60s | IP | Fail closed |
 | `auth_refresh_user` | 30 / 60s | User | Fail closed |
 | `auth_logout` | 5 / 60s | IP | Fail open |
