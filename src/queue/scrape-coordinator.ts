@@ -186,32 +186,44 @@ export async function runCoordinator(
   // decremented it, breaking the "last chunk calls finishRun" math
   // and leaving the run stuck as `running` forever.
   //
-  // If chunk_count > 0, a prior coordinator pass already fanned out
-  // chunks for this run — skip this duplicate dispatch.
+  // CF-002 — atomic CAS race guard. The earlier SELECT-then-act shape
+  // had a TOCTOU window: two concurrent redeliveries (queue retry +
+  // queue lifecycle race) both observed chunk_count == 0 and BOTH
+  // proceeded to fan out. Replacing the SELECT with a conditional
+  // UPDATE that flips chunk_count to a sentinel `-1` makes only ONE
+  // caller win — the second one observes meta.changes === 0 and bails
+  // out cleanly. Mirrors the `finalize_enqueued` atomic-CAS pattern
+  // from migration 0008 (per AD10) and the `chunk_count` invariant
+  // documented in CF-021. The sentinel is rolled back when the real
+  // chunk count is written below; if dispatch crashes, the sentinel
+  // `-1` is recoverable on a subsequent retry that explicitly clears
+  // it (or via `force-refresh` which seeds a fresh run id).
+  let claimedDispatch = false;
   try {
-    const existing = await env.DB
-      .prepare('SELECT chunk_count FROM scrape_runs WHERE id = ?1')
+    const cas = await env.DB
+      .prepare(
+        `UPDATE scrape_runs SET chunk_count = -1
+          WHERE id = ?1 AND (chunk_count IS NULL OR chunk_count = 0)`,
+      )
       .bind(scrape_run_id)
-      .first<{ chunk_count: number | null }>();
-    if (
-      existing !== null &&
-      typeof existing.chunk_count === 'number' &&
-      existing.chunk_count > 0
-    ) {
+      .run();
+    claimedDispatch = (cas.meta?.changes ?? 0) === 1;
+    if (!claimedDispatch) {
       log('warn', 'digest.generation', {
         status: 'coordinator_duplicate_dispatch',
         scrape_run_id,
-        existing_chunk_count: existing.chunk_count,
       });
       return;
     }
   } catch (err) {
     log('warn', 'digest.generation', {
-      status: 'coordinator_race_guard_select_failed',
+      status: 'coordinator_race_guard_cas_failed',
       scrape_run_id,
       detail: String(err).slice(0, 500),
     });
-    // Fall through — race guard is best-effort.
+    // Fall through — race guard is best-effort. Without the sentinel,
+    // a concurrent caller may double-dispatch; the cost is bounded by
+    // the queue's max-retries budget.
   }
 
   // --- Step 1: Build the full source list (curated + discovered) -------

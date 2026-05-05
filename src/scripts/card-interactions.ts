@@ -215,6 +215,26 @@ export async function handleStarClick(button: HTMLButtonElement): Promise<void> 
       // recurrence is observable without DevTools network panel.
       // eslint-disable-next-line no-console
       console.warn('star toggle failed', { articleId, status: res.status });
+      return;
+    }
+    // CF-038 — REQ-STAR-001 AC 5 says "the UI reconciles with the
+    // server value if the optimistic flip disagreed". The earlier
+    // implementation only reverted on non-2xx; on 2xx it left the
+    // optimistic flip in place even if the server value disagreed.
+    // Parse the response body and reconcile.
+    try {
+      const body = (await res.json()) as { starred?: boolean };
+      if (typeof body.starred === 'boolean' && body.starred !== nextPressed) {
+        button.setAttribute(
+          'aria-pressed',
+          body.starred ? 'true' : 'false',
+        );
+      }
+    } catch {
+      // Reconciliation is best-effort; an unexpected response body
+      // shape leaves the optimistic flip in place. Worst case the UI
+      // disagrees with the server until the next page load, which is
+      // observably better than reverting on every 2xx parse failure.
     }
   } catch (err) {
     button.setAttribute('aria-pressed', wasPressed ? 'true' : 'false');

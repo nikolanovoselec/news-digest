@@ -19,7 +19,6 @@
 import type { APIContext } from 'astro';
 import { log } from '~/lib/log';
 import { generateUlid } from '~/lib/ulid';
-import { startRun } from '~/lib/scrape-run';
 import { DEFAULT_MODEL_ID } from '~/lib/models';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { requireAdminSession } from '~/middleware/admin-auth';
@@ -29,17 +28,7 @@ import { applyRefreshCookie } from '~/middleware/auth';
  * started within this many seconds, reuse it instead of kicking a
  * fresh coordinator. Guards against double-clicks separated by more
  * than the INSERT commit latency AND against link-preview bots
- * refetching the URL.
- *
- * **Known race**: two truly concurrent requests can both SELECT
- * (no running row), both INSERT fresh rows, and both enqueue. D1 has
- * no `SELECT ... FOR UPDATE`; the ULIDs are unique, so no PK collision
- * collapses the race. For this operator-only endpoint behind
- * Cloudflare Access the tradeoff is acceptable — the window only
- * needs to absorb "user clicked twice within N seconds", not a
- * contested multi-writer flood. If this endpoint ever opens to
- * non-operators, wrap the SELECT+INSERT in a Durable Object or a
- * KV SET NX mutex. */
+ * refetching the URL. */
 const REUSE_WINDOW_SECONDS = 120;
 
 interface RecentRun {
@@ -48,7 +37,9 @@ interface RecentRun {
 }
 
 /** Find any `status='running'` row started within REUSE_WINDOW_SECONDS.
- * Returns null when there's nothing to reuse. */
+ * Used as the fallback lookup AFTER the atomic conditional INSERT
+ * loses the race (so we can return the winning run's id). Returns
+ * null when there's nothing to reuse. */
 async function findRecentRunningRun(env: Env): Promise<RecentRun | null> {
   const cutoff = Math.floor(Date.now() / 1000) - REUSE_WINDOW_SECONDS;
   const row = await env.DB
@@ -62,24 +53,74 @@ async function findRecentRunningRun(env: Env): Promise<RecentRun | null> {
   return row ?? null;
 }
 
+/** CF-003 — atomic conditional INSERT for the dispatch claim. Prior
+ *  shape was SELECT-then-act, which left a TOCTOU window where two
+ *  concurrent calls could both observe "no running row" and both
+ *  insert fresh rows + enqueue. Now: a single statement that inserts
+ *  ONLY when no recent-running row exists. `meta.changes === 0`
+ *  means another caller's claim already landed; we re-SELECT to
+ *  return the winning id. ULID uniqueness guarantees the INSERT can
+ *  never collide on the PK; the race is purely on the existence
+ *  predicate, which the WHERE NOT EXISTS clause now resolves
+ *  atomically inside D1's serial writer. */
+async function tryClaimDispatch(
+  env: Env,
+  scrape_run_id: string,
+): Promise<{ claimed: boolean }> {
+  const cutoff = Math.floor(Date.now() / 1000) - REUSE_WINDOW_SECONDS;
+  const now = Math.floor(Date.now() / 1000);
+  const result = await env.DB
+    .prepare(
+      `INSERT INTO scrape_runs (id, model_id, started_at, status, chunk_count)
+       SELECT ?1, ?2, ?3, 'running', 0
+        WHERE NOT EXISTS (
+          SELECT 1 FROM scrape_runs
+           WHERE status = 'running' AND started_at >= ?4
+        )`,
+    )
+    .bind(scrape_run_id, DEFAULT_MODEL_ID, now, cutoff)
+    .run();
+  return { claimed: (result.meta?.changes ?? 0) === 1 };
+}
+
 async function kickCoordinator(env: Env): Promise<{ run_id: string; reused: boolean }> {
-  const existing = await findRecentRunningRun(env);
-  if (existing !== null) {
+  const candidate_run_id = generateUlid();
+  const claim = await tryClaimDispatch(env, candidate_run_id);
+  if (!claim.claimed) {
+    // Another caller's INSERT landed first. Fall through to the
+    // SELECT to return the winning id (so the operator's UI knows
+    // which run to poll).
+    const existing = await findRecentRunningRun(env);
+    if (existing !== null) {
+      log('info', 'digest.generation', {
+        status: 'force_refresh_skipped',
+        scrape_run_id: existing.id,
+        age_seconds: Math.floor(Date.now() / 1000) - existing.started_at,
+      });
+      return { run_id: existing.id, reused: true };
+    }
+    // No recent-running row found AND we lost the claim race — this
+    // can happen if the winning run finished within the same second.
+    // Retry the claim once with a fresh ULID; if that also fails,
+    // surface the error so the caller can show a graceful notice.
+    const retryClaim = await tryClaimDispatch(env, generateUlid());
+    if (!retryClaim.claimed) {
+      throw new Error('force_refresh_claim_lost_after_retry');
+    }
+    // Fall through with the original ULID — the retry won.
+    await env.SCRAPE_COORDINATOR.send({ scrape_run_id: candidate_run_id });
     log('info', 'digest.generation', {
-      status: 'force_refresh_reused',
-      scrape_run_id: existing.id,
-      age_seconds: Math.floor(Date.now() / 1000) - existing.started_at,
+      status: 'force_refresh_dispatched',
+      scrape_run_id: candidate_run_id,
     });
-    return { run_id: existing.id, reused: true };
+    return { run_id: candidate_run_id, reused: false };
   }
-  const scrape_run_id = generateUlid();
-  await startRun(env.DB, { id: scrape_run_id, model_id: DEFAULT_MODEL_ID });
-  await env.SCRAPE_COORDINATOR.send({ scrape_run_id });
+  await env.SCRAPE_COORDINATOR.send({ scrape_run_id: candidate_run_id });
   log('info', 'digest.generation', {
     status: 'force_refresh_dispatched',
-    scrape_run_id,
+    scrape_run_id: candidate_run_id,
   });
-  return { run_id: scrape_run_id, reused: false };
+  return { run_id: candidate_run_id, reused: false };
 }
 
 function redirectToSettings(origin: string, runId: string, reused: boolean): Response {
