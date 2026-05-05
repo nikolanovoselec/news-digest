@@ -51,7 +51,7 @@ The result: 55+ written requirements across 10 product domains (authentication, 
 |---|---|
 | Framework | [Astro 5](https://astro.build) on [Cloudflare Workers](https://workers.cloudflare.com) |
 | DB / Cache / Queues | [D1](https://developers.cloudflare.com/d1/) · [KV](https://developers.cloudflare.com/kv/) · [Queues](https://developers.cloudflare.com/queues/) |
-| LLM | [Workers AI](https://developers.cloudflare.com/workers-ai/): `gpt-oss-120b` primary, `gpt-oss-20b` fallback |
+| LLM | [Workers AI](https://developers.cloudflare.com/workers-ai/): `gemma-4-26b-a4b-it` primary, `gpt-oss-120b` fallback |
 | Email | [Resend](https://resend.com) |
 | Auth | GitHub OAuth + Google OIDC. 5-min HMAC-SHA256 access JWT + 30-day device-bound refresh token (rotated, reuse-detected) |
 

@@ -172,7 +172,12 @@ export async function queue(
   env: Env,
   _ctx: ExecutionContext,
 ): Promise<void> {
-  switch (batch.queue) {
+  // Integration uses suffixed queue names (`scrape-coordinator-integration`,
+  // ...); production uses bare names. Strip the env suffix so one dispatcher
+  // serves both. Without this, integration queue messages hit the default
+  // branch, log `unknown_queue`, and runs hang at chunk_count=0 forever.
+  const queueKey = batch.queue.replace(/-(integration|staging)$/, '');
+  switch (queueKey) {
     case 'scrape-coordinator':
       await handleCoordinatorBatch(
         batch as MessageBatch<CoordinatorMessage>,

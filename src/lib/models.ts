@@ -18,25 +18,25 @@ export interface ModelOption {
   category: 'featured' | 'budget';
 }
 
-// Default model: @cf/openai/gpt-oss-120b. Native OpenAI JSON mode
-// (response_format: json_object is HARD-guaranteed), 128K context,
-// $0.35/$0.75 per M tokens. Promoted from fallback to default after
-// @cf/openai/gpt-oss-20b consistently produced ~145-word summaries
-// against the then-current 200-250 word target — even after the
-// structured prompt rewrite and temperature bump to 0.5. 20B has
-// the context window but not the long-form coherence; 120B hits
-// the current 150-200 band reliably. The earlier target was later
-// tightened (REQ-PIPE-002 AC 3) but the model choice still stands.
+// Default model: @cf/google/gemma-4-26b-a4b-it. 256K context (~2x
+// gpt-oss-120b), $0.10/$0.30 per M tokens (~3.5x cheaper output).
+// The bigger context lets the chunk packer carry full 15K-char
+// long-form-essay snippets without splitting; the price drop pays
+// for the cron-tick budget at scale. Earlier Gemma-class models
+// were dropped because they undershot the 200-250 word target —
+// Gemma 4 is a newer release; flipped on 2026-05-05 to test
+// against the current 150-200 word contract on integration first
+// before touching production.
 //
-// Fallback stays at @cf/openai/gpt-oss-20b — cheaper and faster for
-// the malformed-JSON retry path where we just need a parsable payload,
-// not maximum verbosity.
-export const DEFAULT_MODEL_ID = '@cf/openai/gpt-oss-120b';
+// Fallback stays at @cf/openai/gpt-oss-120b — proven on the 150-200
+// word band, used only when Gemma 4 fails JSON parsing.
+export const DEFAULT_MODEL_ID = '@cf/google/gemma-4-26b-a4b-it';
 
 /** Fallback model the chunk consumer retries with on malformed-JSON
- * output. `@cf/openai/gpt-oss-20b` is the smaller sibling — cheaper
- * and faster, used only when the 120B output fails JSON parsing. */
-export const FALLBACK_MODEL_ID = '@cf/openai/gpt-oss-20b';
+ * output. `@cf/openai/gpt-oss-120b` is proven against the 150-200
+ * word contract; Gemma 4 is the cheaper default but unproven on
+ * verbosity, so 120B backstops the malformed-JSON retry path. */
+export const FALLBACK_MODEL_ID = '@cf/openai/gpt-oss-120b';
 
 export const MODELS: ModelOption[] = [
   // Featured — the four headline choices users see at the top of the dropdown.
@@ -44,7 +44,7 @@ export const MODELS: ModelOption[] = [
     id: '@cf/google/gemma-4-26b-a4b-it',
     name: 'Gemma 4 26B',
     description:
-      'Default. 256K context, reasoning, Google-instruction-tuned, cheapest output.',
+      'Default. 256K context, Google-instruction-tuned. Cheapest of the featured tier.',
     inputPricePerMtok: 0.10,
     outputPricePerMtok: 0.30,
     category: 'featured',
@@ -53,7 +53,7 @@ export const MODELS: ModelOption[] = [
     id: '@cf/openai/gpt-oss-20b',
     name: 'GPT OSS 20B',
     description:
-      'Failover. Native JSON mode, 128K context — the chunk consumer retries here on malformed-JSON output.',
+      'Native JSON mode, 128K context. Cheaper sibling of 120B.',
     inputPricePerMtok: 0.20,
     outputPricePerMtok: 0.30,
     category: 'featured',
@@ -61,7 +61,7 @@ export const MODELS: ModelOption[] = [
   {
     id: '@cf/openai/gpt-oss-120b',
     name: 'GPT OSS 120B',
-    description: 'OpenAI 120B MoE. Native JSON mode, 128K context.',
+    description: 'Failover. OpenAI 120B MoE with native JSON mode, 128K context — the chunk consumer retries here on malformed-JSON output.',
     inputPricePerMtok: 0.35,
     outputPricePerMtok: 0.75,
     category: 'featured',

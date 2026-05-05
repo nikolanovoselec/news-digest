@@ -285,11 +285,18 @@ interface PromptCandidate {
   body_snippet?: string;
 }
 
+/** Minimum snippet length the chunk consumer treats as "already
+ *  fetched". Below this, the consumer issues its own body fetch.
+ *  Exported so the coordinator's chunk packer
+ *  (`packCandidatesIntoChunks` in scrape-coordinator.ts) can size
+ *  thin-snippet candidates by the same threshold instead of
+ *  duplicating the literal 400 across module boundaries. */
+export const SNIPPET_FLOOR = 400;
+
 async function fetchAndBuildPromptCandidates(
   env: Env,
   body: ChunkJobMessage,
 ): Promise<{ promptCandidates: PromptCandidate[] }> {
-  const SNIPPET_FLOOR = 400;
   const urlsToFetch: string[] = [];
   for (const c of body.candidates) {
     const existingSnippet = c.body_snippet ?? '';

@@ -33,13 +33,26 @@ const LLM_BASE_PARAMS = {
 } as const;
 
 /**
- * Chunk-prompt budget — ~50 articles × 150-200 words each
- * (~280 toks/article → ~14K total with JSON overhead). Input side is
- * ~8K tokens for the prompt + candidate list.
+ * Chunk-prompt OUTPUT budget. The chunk consumer uses `DEFAULT_MODEL_ID`
+ * (Gemma 4 26B, 256K context) on the happy path and falls back to
+ * `FALLBACK_MODEL_ID` (gpt-oss-120b, 128K context) on malformed-JSON
+ * retry — the fallback's smaller context is the binding constraint
+ * because the same chunk gets retried there with the same input. The
+ * Workers AI runtime enforces `prompt_tokens + max_tokens ≤ context`,
+ * so a value chosen for the 256K default would overflow the 128K
+ * fallback. Observed chunk output is ~14K tokens at typical chunk
+ * sizes (50-100 candidates × ~200-word summaries + JSON overhead, per
+ * the budget-aware packer in `scrape-coordinator.ts`); 32K reserves
+ * ~2x output headroom
+ * and leaves ~96K for input on the fallback (~280K chars at ~3.5
+ * chars/token), which the coordinator's greedy chunk packer
+ * (`scrape-coordinator.ts:CHUNK_INPUT_CHARS_BUDGET`) honours. The 256K
+ * default has comfortable headroom either way. User-selected budget
+ * models in `MODELS` are never wired here.
  */
 export const CHUNK_LLM_PARAMS = {
   ...LLM_BASE_PARAMS,
-  max_tokens: 50_000,
+  max_tokens: 32_000,
 } as const;
 
 /**
@@ -166,7 +179,11 @@ Examples (assume the tag is in the allowlist):
 const TITLE_MAX_CHARS = 300;
 const SOURCE_NAME_MAX_CHARS = 100;
 const URL_MAX_CHARS = 1000;
-const BODY_SNIPPET_MAX_CHARS = 2000;
+// Sized strictly above the upstream `SNIPPET_CAP` (15000 in
+// article-fetch.ts) so this layered cap remains meaningful — an
+// upstream regression that produced a 30K-char snippet would still
+// be clamped here. Defense-in-depth, per CF-013.
+const BODY_SNIPPET_MAX_CHARS = 16000;
 const DETAILS_MAX_CHARS = 4000;
 
 function sanitizePromptField(value: string, maxChars: number): string {

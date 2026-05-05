@@ -21,7 +21,7 @@ Stored via `wrangler secret put <name>`. Never committed to git.
 | `RESEND_FROM` | Sender address for emails (domain must be verified in Resend) — accepts a bare address or a display-name format; see [RESEND_FROM display-name handling](#resend_from-display-name-handling) below. |
 | `APP_URL` | Canonical origin, e.g., `https://digest.example.com`; used in email CTA links, OAuth redirect URI construction, and as the reference value for the Origin CSRF check ([REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)) |
 | `ADMIN_EMAIL` | Operator email that gates `/api/admin/*` ([REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8). Required in production; when unset, every admin endpoint returns HTTP 403. Match is case-insensitive against `users.email`. |
-| `CF_ACCESS_AUD` | Optional Cloudflare Access audience tag. When set, `/api/admin/*` additionally validates that the `aud` claim of the `Cf-Access-Jwt-Assertion` header matches. When unset, only header presence is required (the JWT signature is trusted because Cloudflare Access already verified it before forwarding). |
+| `CF_ACCESS_AUD` | Optional Cloudflare Access audience tag. When set, enables Layer 0 perimeter check on `/api/admin/*`: request must carry a Cloudflare Access assertion with a matching `aud` claim. When unset, Layer 0 is skipped; admin is gated by session + `ADMIN_EMAIL` alone (AD29). |
 | `DEV_BYPASS_TOKEN` | Optional Bearer token that gates `/api/dev/login` and `/api/dev/trigger-scrape` for local + e2e flows. When unset, those endpoints return HTTP 404. Set only on dev/staging deployments, never production. |
 | `DEV_BYPASS_USER_ID` | Optional override for the user id minted by `/api/dev/login`. Defaults to the synthetic `__e2e__` row; rarely set manually — see [DEV_BYPASS_USER_ID override](#dev_bypass_user_id-override) below. |
 
@@ -51,17 +51,15 @@ The deploy job reads these secrets from GitHub Actions. The first two are Cloudf
 | `APP_URL` | Yes | Canonical origin (e.g., `https://digest.example.com`); used in emails, OAuth redirect URIs, and CSRF checks |
 | `DEV_BYPASS_TOKEN` | Conditional | Bearer token that enables `/api/dev/login` and `/api/dev/trigger-scrape`; omit in production |
 | `ADMIN_EMAIL` | Conditional | Operator email that gates `/api/admin/*`; when unset every admin endpoint returns HTTP 403 ([REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8) |
-| `CF_ACCESS_AUD` | Optional but recommended in production | Cloudflare Access audience tag for `aud`-claim validation on the admin JWT; when unset, only header presence is required ([REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8). See [Setting `CF_ACCESS_AUD`](#setting-cf_access_aud-strongly-recommended-in-production) below for the full threat model and setup. |
+| `CF_ACCESS_AUD` | Optional | Cloudflare Access audience tag; when set, enables Layer 0 perimeter check (assertion presence + `aud`-claim match) on `/api/admin/*`; when unset, Layer 0 is skipped and admin is gated by session + `ADMIN_EMAIL` alone ([REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8, AD29). See [Setting `CF_ACCESS_AUD`](#setting-cf_access_aud-strongly-recommended-in-production) for setup. |
 
 ### Setting `CF_ACCESS_AUD` (strongly recommended in production)
 
-`CF_ACCESS_AUD` is technically optional, but **production deployments where Cloudflare Access is bound to a custom domain should set it.** Without it, the Worker only checks `Cf-Access-Jwt-Assertion` header presence — an attacker hitting the same Worker via the `*.workers.dev` URL (where Access is not bound) can forge any JWT-shaped value in the header and pass Layer 1. The session + `ADMIN_EMAIL` checks (Layers 2 + 3) still gate, but the perimeter check is missing.
+`CF_ACCESS_AUD` is optional. Per AD29, Cloudflare Access is opt-in additive perimeter: when this var is unset, admin is gated by signed-in session + `ADMIN_EMAIL` alone — appropriate for forks and integration deploys where binding Access in front of the worker is overkill.
 
-Two ways to close that gap:
-1. **Set `CF_ACCESS_AUD`** — the audience tag of the Access application fronting the custom domain. The Worker validates the JWT `aud` claim; a forged header on `workers.dev` is rejected at Layer 1. Recommended for any deploy that binds Access.
-2. **Disable `*.workers.dev`** — Workers & Pages → your worker → Settings → Domains & Routes → disable workers.dev. Forks without Access should leave it enabled; forks with Access in production should disable it.
-
-When Access is bound and `CF_ACCESS_AUD` is unset, the structured log `admin.auth.aud_unset_warning` is emitted once per Worker isolate (isolates cycle roughly every 30 minutes under load) so the misconfiguration is visible via `wrangler tail` or Logpush without flooding Logpush during brute-force probes. Forks without Access bound still see admin unreachable at Layer 1 and never trigger this warning.
+For production deploys that DO bind Access, set this var and follow AD30 — bind Access on every public hostname the worker serves OR disable the unbound hostnames:
+1. **Set `CF_ACCESS_AUD`** — the audience tag of the Access application fronting the custom domain. The Worker enforces Layer 0 (assertion presence + `aud` claim match) before the baseline session + `ADMIN_EMAIL` checks run.
+2. **Bind Access on the `*.workers.dev` URL too OR disable that subdomain** — Workers & Pages → your worker → Settings → Domains & Routes → disable workers.dev (or attach the same Access application to it). Without this, an attacker hitting the worker via the unbound `workers.dev` URL bypasses the Access perimeter entirely; the session + `ADMIN_EMAIL` baseline still gates, but the perimeter promise is broken.
 
 The deploy job also runs `wrangler secret delete DEV_BYPASS_USER_ID` (idempotent, silenced on not-found) on each deploy so any stray value cannot defeat the synthetic `__e2e__` sandbox. The workflow does not propagate this secret; operators who need it must set it manually via `wrangler secret put`.
 

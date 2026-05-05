@@ -243,7 +243,7 @@ Both responses carry a `Set-Cookie` refresh when the session is within 5 minutes
 
 ## Discovery
 
-> **Admin auth.** Every `/api/admin/*` route is gated by the Worker-side middleware: (a) `Cf-Access-Jwt-Assertion` header present; (b) valid Worker session cookie; (c) session email matches `ADMIN_EMAIL` (case-insensitive); (d) when `CF_ACCESS_AUD` is set, the JWT `aud` claim is validated — strongly recommended in production. See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8.
+> **Admin auth.** Every `/api/admin/*` route is gated by the Worker-side middleware. Baseline (always enforced): valid Worker session cookie + session email matches `ADMIN_EMAIL` (case-insensitive). Optional perimeter (Layer 0, AD29): when `CF_ACCESS_AUD` is set, the request must additionally carry a Cloudflare Access assertion whose `aud` claim matches the configured audience tag — without the assertion or with a mismatched audience the request is rejected before the baseline runs. When `CF_ACCESS_AUD` is unset, Layer 0 is skipped entirely. Operators who bind Access MUST also bind it on the `*.workers.dev` URL or disable that subdomain (AD30). See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8.
 
 ### POST /api/admin/discovery/retry
 
@@ -494,7 +494,6 @@ Implements [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-log
 | `auth.refresh.rate_limited` | Inline middleware or the explicit refresh path hit a refresh rate-limit bucket — request rejected with 429. See [Refresh rate-limit fail mode](#refresh-rate-limit-fail-mode) below for the `bucket` field values. |
 | `rate.limit.kv_error` | KV read/write in the rate-limit helper threw. The caller proceeds per the per-rule fail-mode; `decision` and `kv_op` field values are documented in [Refresh rate-limit fail mode](#refresh-rate-limit-fail-mode). |
 | `article.star.failed` | D1 insert or delete in `POST/DELETE /api/articles/:id/star` threw |
-| `admin.auth.aud_unset_warning` | `CF_ACCESS_AUD` is unset but the Access assertion header is present — the Worker checks header presence only, not the `aud` claim. Emitted once per isolate. See [Configuration: Setting CF_ACCESS_AUD](configuration.md#setting-cf_access_aud-strongly-recommended-in-production). |
 
 Raw exception messages appear only in the `detail` field of error-level records; they are never stored in D1 and never returned to clients (see [REQ-OPS-002](../sdd/observability.md#req-ops-002-sanitized-error-surfaces)).
 

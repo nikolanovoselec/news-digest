@@ -43,13 +43,14 @@ describe('MODELS catalog', () => {
 });
 
 describe('DEFAULT_MODEL_ID', () => {
-  it('REQ-SET-004: DEFAULT_MODEL_ID is @cf/openai/gpt-oss-120b — native OpenAI JSON mode, long-form coherent at 150-200 words', () => {
-    // Promoted from fallback to default after @cf/openai/gpt-oss-20b
-    // consistently produced ~145-word summaries against the earlier
-    // 200-250 target, even after the structured prompt rewrite and
-    // the temperature bump. 20B has the context window but not the
-    // long-form coherence; 120B hits the 150-200 band reliably.
-    expect(DEFAULT_MODEL_ID).toBe('@cf/openai/gpt-oss-120b');
+  it('REQ-SET-004: DEFAULT_MODEL_ID is @cf/google/gemma-4-26b-a4b-it — 256K context, 3.5x cheaper output', () => {
+    // Switched 2026-05-05: Gemma 4 26B's 256K context lets the chunk
+    // packer carry full 15K-char long-form-essay snippets without
+    // splitting; the price drop pays for the cron-tick budget at
+    // scale. Earlier Gemma-class models undershot the 200-250 target;
+    // Gemma 4 is a newer release tested against the current 150-200
+    // word contract on integration first.
+    expect(DEFAULT_MODEL_ID).toBe('@cf/google/gemma-4-26b-a4b-it');
   });
 
   it('REQ-SET-004: DEFAULT_MODEL_ID is present in MODELS', () => {
@@ -75,18 +76,18 @@ describe('modelById', () => {
 
 describe('estimateCost', () => {
   it('REQ-SET-004: estimateCost computes USD from per-million-token prices', () => {
-    // gpt-oss-120b: input $0.35 / output $0.75 per Mtok.
-    // 1,000,000 in → $0.35; 1,000,000 out → $0.75; total $1.10.
+    // gemma-4-26b-a4b-it: input $0.10 / output $0.30 per Mtok.
+    // 1,000,000 in → $0.10; 1,000,000 out → $0.30; total $0.40.
     const cost = estimateCost(DEFAULT_MODEL_ID, 1_000_000, 1_000_000);
-    expect(cost).toBeCloseTo(1.10, 6);
+    expect(cost).toBeCloseTo(0.40, 6);
   });
 
   it('REQ-SET-004: estimateCost scales linearly with token counts', () => {
-    // 2,000 input tokens × $0.35/Mtok → $0.00070
-    // 1,000 output tokens × $0.75/Mtok → $0.00075
-    // total ≈ $0.00145
+    // 2,000 input tokens × $0.10/Mtok → $0.00020
+    // 1,000 output tokens × $0.30/Mtok → $0.00030
+    // total ≈ $0.00050
     const cost = estimateCost(DEFAULT_MODEL_ID, 2_000, 1_000);
-    expect(cost).toBeCloseTo(0.00145, 9);
+    expect(cost).toBeCloseTo(0.00050, 9);
   });
 
   it('REQ-SET-004: estimateCost is non-zero for Kimi K2.5 (published pricing)', () => {

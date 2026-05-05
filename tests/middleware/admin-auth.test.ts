@@ -1,6 +1,8 @@
-// Tests for src/middleware/admin-auth.ts — CF-001 (three-layer admin
-// gate: Cloudflare Access header, Worker-side session, ADMIN_EMAIL
-// match) and CF-072 (JWT sv mismatch flow through the admin path).
+// Tests for src/middleware/admin-auth.ts — CF-001 admin gate.
+// Baseline (always enforced): Layer A (Worker-side session) + Layer B
+// (ADMIN_EMAIL match). Optional perimeter (Layer 0): CF Access JWT +
+// aud — only enforced when env.CF_ACCESS_AUD is set. CF-072 covers
+// JWT sv mismatch flow through the admin path.
 //
 // Implements REQ-AUTH-001.
 
@@ -107,9 +109,29 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
-describe('requireAdminSession — Layer 1: Cf-Access-Jwt-Assertion', () => {
-  it('CF-001: returns 401 when the Access header is missing', async () => {
-    const ctx = await makeContext({ accessJwt: null, cookieJwt: null, row: null });
+describe('requireAdminSession — Layer 0: Cf-Access-Jwt-Assertion (optional)', () => {
+  it('CF-001: passes when CF_ACCESS_AUD is unset and the Access header is missing (perimeter is opt-in)', async () => {
+    const jwt = await signSession(
+      { sub: 'user-1', email: ADMIN_EMAIL, ghl: 'admin', sv: 1 },
+      SECRET,
+    );
+    const ctx = await makeContext({
+      accessJwt: null,
+      cookieJwt: jwt,
+      row: defaultUserRow(),
+      // cfAccessAud intentionally undefined
+    });
+    const result = await requireAdminSession(ctx as never);
+    expect(result.ok).toBe(true);
+  });
+
+  it('CF-001: returns 401 when CF_ACCESS_AUD is set and the Access header is missing', async () => {
+    const ctx = await makeContext({
+      accessJwt: null,
+      cookieJwt: null,
+      row: null,
+      cfAccessAud: 'tenant-aud-tag',
+    });
     const result = await requireAdminSession(ctx as never);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -117,8 +139,13 @@ describe('requireAdminSession — Layer 1: Cf-Access-Jwt-Assertion', () => {
     }
   });
 
-  it('CF-001: returns 401 when the Access header is empty', async () => {
-    const ctx = await makeContext({ accessJwt: '', cookieJwt: null, row: null });
+  it('CF-001: returns 401 when CF_ACCESS_AUD is set and the Access header is empty', async () => {
+    const ctx = await makeContext({
+      accessJwt: '',
+      cookieJwt: null,
+      row: null,
+      cfAccessAud: 'tenant-aud-tag',
+    });
     const result = await requireAdminSession(ctx as never);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -154,7 +181,7 @@ describe('requireAdminSession — Layer 1: Cf-Access-Jwt-Assertion', () => {
   });
 });
 
-describe('requireAdminSession — Layer 2: session', () => {
+describe('requireAdminSession — Layer A: session', () => {
   it('CF-001: returns 401 when the session cookie is absent', async () => {
     const ctx = await makeContext({
       accessJwt: makeAccessJwt({}),
@@ -187,7 +214,7 @@ describe('requireAdminSession — Layer 2: session', () => {
   });
 });
 
-describe('requireAdminSession — Layer 3: ADMIN_EMAIL match', () => {
+describe('requireAdminSession — Layer B: ADMIN_EMAIL match', () => {
   it('CF-001: returns 403 when the session email does NOT match ADMIN_EMAIL', async () => {
     const jwt = await signSession(
       { sub: 'user-2', email: 'nobody@example.com', ghl: 'nobody', sv: 1 },
