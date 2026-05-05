@@ -180,8 +180,8 @@ jobs:
           fi
 
           # Wipe any pre-existing DEV_BYPASS_USER_ID secret (matches deploy.yml).
-          npx --yes wrangler secret delete DEV_BYPASS_USER_ID --env integration --force 2>/dev/null \
-            || echo "DEV_BYPASS_USER_ID not set on integration Worker — nothing to clear"
+          printf 'y\n' | npx --yes wrangler secret delete DEV_BYPASS_USER_ID --env integration \
+            || echo "DEV_BYPASS_USER_ID delete returned non-zero (likely already absent)"
 
           # Optional: ADMIN_EMAIL.
           if [ -n "${ADMIN_EMAIL:-}" ]; then
@@ -199,9 +199,12 @@ jobs:
           # session + ADMIN_EMAIL alone. Force the secret unset on
           # every deploy so a stale repo-level value cannot re-enable
           # Layer 0 against an integration deploy that has no Access
-          # bound in front of it.
-          npx --yes wrangler secret delete CF_ACCESS_AUD --env integration --force 2>/dev/null \
-            || echo "CF_ACCESS_AUD not set on integration Worker — nothing to clear"
+          # bound in front of it. wrangler 4.x has no --force on
+          # `secret delete` and pipes `y\n` to its confirmation prompt.
+          # If the secret isn't present wrangler exits non-zero with
+          # "Secret not found", which we tolerate.
+          printf 'y\n' | npx --yes wrangler secret delete CF_ACCESS_AUD --env integration \
+            || echo "CF_ACCESS_AUD delete returned non-zero (likely already absent)"
 
       - name: Deploy (integration)
         id: deploy
