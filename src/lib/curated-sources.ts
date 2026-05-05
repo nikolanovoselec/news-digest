@@ -1,4 +1,4 @@
-// Implements REQ-PIPE-004, REQ-DISC-001
+// Implements REQ-PIPE-001, REQ-PIPE-004, REQ-DISC-001
 //
 // Curated feed registry for the global-feed scrape pipeline. Each entry is
 // a trusted HTTPS feed (RSS, Atom, or JSON Feed) that the scrape coordinator
@@ -15,6 +15,8 @@
 // Live-fetch validation is deliberately NOT automated — the dev script
 // `scripts/validate-curated-sources.mjs` probes each URL with a real fetch
 // and prints a swap-list for feeds that 4xx/5xx. Run it before every deploy.
+
+import { HASHTAG_REGEX } from './hashtags';
 
 /** Feed format. We parse RSS 2.0 and Atom the same way (fast-xml-parser);
  * `json` is reserved for JSON Feed 1.1 endpoints. */
@@ -525,4 +527,57 @@ const CURATED_TAGS: ReadonlySet<string> = new Set(
  */
 export function hasCuratedSource(tag: string): boolean {
   return CURATED_TAGS.has(tag);
+}
+
+/**
+ * Set of tags already served by a bespoke `google-news-*` curated entry.
+ * Auto-synthesised generic GN sources skip these tags so the bespoke
+ * (more precise) query is the only Google News call for that tag.
+ */
+const GOOGLE_NEWS_CURATED_TAGS: ReadonlySet<string> = new Set(
+  CURATED_SOURCES
+    .filter((s) => s.slug.startsWith('google-news-'))
+    .flatMap((s) => s.tags),
+);
+
+/**
+ * True iff a bespoke `google-news-*` curated entry already covers
+ * {@link tag}. Used by {@link googleNewsSourceForTag} to skip
+ * auto-synthesis for tags that already have a hand-tuned GN query
+ * (avoids two redundant fetches per tick for the same Google News
+ * results).
+ */
+export function hasCuratedGoogleNews(tag: string): boolean {
+  return GOOGLE_NEWS_CURATED_TAGS.has(tag);
+}
+
+/**
+ * Build a synthetic curated source that fetches Google News query-RSS
+ * for {@link tag}. Returns `null` when {@link tag} is empty, malformed,
+ * or already covered by a bespoke `google-news-*` curated entry.
+ *
+ * The query is the tag with dashes converted to spaces (e.g.
+ * `supply-chain-security` → `supply chain security`), URL-encoded.
+ * That's a deliberately simple query: tags are short and topical, so
+ * the natural English phrasing produces the most relevant Google News
+ * coverage. `prefer-direct-source.ts` drops the GN copy when a direct
+ * publisher copy lands in the same tick (≥3 shared title tokens), so
+ * a generous GN fan-out costs nothing on the dedup side.
+ */
+export function googleNewsSourceForTag(tag: string): CuratedSource | null {
+  if (tag === '' || hasCuratedGoogleNews(tag)) return null;
+  // Reuse the canonical hashtag shape (2-32 chars, lowercase letters /
+  // digits / dashes) so this helper stays in lockstep with the
+  // user-facing tag validator. Permissive-regex drift here would let a
+  // malformed tag from a future call site reach Google News as a
+  // bogus query.
+  if (!HASHTAG_REGEX.test(tag)) return null;
+  const q = encodeURIComponent(tag.replace(/-/g, ' '));
+  return {
+    slug: `google-news-auto-${tag}`,
+    name: `Google News: ${tag}`,
+    feed_url: `https://news.google.com/rss/search?q=${q}&hl=en-US&gl=US&ceid=US:en`,
+    kind: 'rss',
+    tags: [tag],
+  };
 }

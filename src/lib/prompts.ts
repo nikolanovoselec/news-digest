@@ -101,10 +101,15 @@ Shape:
 
 # DETAILS RULES — THIS IS THE CORE TASK
 
-LENGTH — 150 to 200 WORDS:
+LENGTH — 150 to 200 WORDS (NON-NEGOTIABLE CONTRACT):
 
-  - Minimum 150 words. Under 120 words is malformed and will be dropped.
-  - Maximum 200 words. Do not pad or repeat.
+  - The summary MUST be 150-200 words. This is the contract; do not
+    ship under 150. If the snippet feels thin, extend the WHAT and
+    HOW paragraphs with concrete grounded facts — never pad with
+    filler, never repeat, but never cut short either.
+  - Maximum 200 words. Do not exceed.
+  - Truncated outputs are rejected server-side as malformed. Your
+    target is 150-200; aim for the middle of that range.
 
 STRUCTURE — 2 to 3 PARAGRAPHS:
 
