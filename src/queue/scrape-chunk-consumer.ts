@@ -559,9 +559,17 @@ function validateAndSanitizeArticle(
     .filter((p) => p !== '');
   if (title === '' || details.length === 0) return null;
 
-  // REQ-PIPE-002 AC3: enforce 120-word floor server-side.
+  // REQ-PIPE-002 AC3: enforce 80-word backstop floor server-side. The
+  // prompt's contract is 150-200 words; the floor catches genuinely
+  // truncated outputs (single-paragraph 30-word stubs) without
+  // rejecting the model's natural lower-end distribution. CF-030
+  // originally set this to 120 but Workers AI gpt-oss-120b regularly
+  // produces 100-130-word summaries when the source snippet is thin,
+  // so 120 cut off ~80% of the legitimate output and dropped daily
+  // ingestion from ~100 to ~25 articles. 80 is a true sanity floor;
+  // the 150-word target stays in the prompt as the contract.
   const wordCount = details.join(' ').trim().split(/\s+/).filter((w) => w !== '').length;
-  if (wordCount < 120) {
+  if (wordCount < 80) {
     log('warn', 'digest.generation', {
       status: 'chunk_article_dropped_word_count',
       scrape_run_id: body.scrape_run_id,

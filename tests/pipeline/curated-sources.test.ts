@@ -9,7 +9,11 @@
 //   - unique slugs so cache keys and log fields stay collision-free
 
 import { describe, it, expect } from 'vitest';
-import { CURATED_SOURCES } from '~/lib/curated-sources';
+import {
+  CURATED_SOURCES,
+  googleNewsSourceForTag,
+  hasCuratedGoogleNews,
+} from '~/lib/curated-sources';
 import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
 
 describe('curated-sources — REQ-PIPE-004', () => {
@@ -67,6 +71,74 @@ describe('curated-sources — REQ-PIPE-004', () => {
     for (const source of CURATED_SOURCES) {
       expect(source.name.length).toBeGreaterThan(0);
       expect(source.name).toBe(source.name.trim());
+    }
+  });
+});
+
+describe('googleNewsSourceForTag — auto-synthesised per-tag GN feeds', () => {
+  it('builds a Google News query-RSS source for an uncovered tag with dashes converted to spaces and URL-encoded', () => {
+    const synth = googleNewsSourceForTag('supply-chain-security');
+    expect(synth).not.toBeNull();
+    expect(synth!.slug).toBe('google-news-auto-supply-chain-security');
+    expect(synth!.name).toBe('Google News: supply-chain-security');
+    expect(synth!.kind).toBe('rss');
+    expect(synth!.tags).toEqual(['supply-chain-security']);
+    // Dashes become spaces in the query, then URL-encoded as `+` or `%20`.
+    expect(synth!.feed_url).toContain('q=supply%20chain%20security');
+    expect(synth!.feed_url.startsWith('https://news.google.com/rss/search?')).toBe(true);
+  });
+
+  it('returns null for tags already served by a bespoke `google-news-*` curated entry', () => {
+    // anthropic-ish tags are covered by `google-news-anthropic` (tags:
+    // ['ai-agents','generative-ai']). pqc by `google-news-pqc`.
+    expect(googleNewsSourceForTag('ai-agents')).toBeNull();
+    expect(googleNewsSourceForTag('generative-ai')).toBeNull();
+    expect(googleNewsSourceForTag('pqc')).toBeNull();
+    expect(googleNewsSourceForTag('coding-agents')).toBeNull();
+    expect(googleNewsSourceForTag('openziti')).toBeNull();
+  });
+
+  it('returns null for empty / malformed tag input (defence against KV corruption)', () => {
+    expect(googleNewsSourceForTag('')).toBeNull();
+    expect(googleNewsSourceForTag('Has Spaces')).toBeNull();
+    expect(googleNewsSourceForTag('UPPERCASE')).toBeNull();
+    expect(googleNewsSourceForTag('with/slash')).toBeNull();
+    expect(googleNewsSourceForTag('quote"injection')).toBeNull();
+  });
+
+  it('hasCuratedGoogleNews mirrors the bespoke `google-news-*` tag set derived from CURATED_SOURCES', () => {
+    // Derive ground truth from the same registry the production helper
+    // reads — fails if a future curated entry adds GN coverage for a
+    // new tag without the helper picking it up.
+    const expected = new Set(
+      CURATED_SOURCES
+        .filter((s) => s.slug.startsWith('google-news-'))
+        .flatMap((s) => s.tags),
+    );
+    for (const tag of expected) {
+      expect(hasCuratedGoogleNews(tag)).toBe(true);
+    }
+    // Every DEFAULT tag NOT in `expected` must NOT be flagged as covered.
+    for (const tag of DEFAULT_HASHTAGS) {
+      if (!expected.has(tag)) {
+        expect(hasCuratedGoogleNews(tag)).toBe(false);
+      }
+    }
+  });
+
+  it('every DEFAULT_HASHTAGS tag is either bespoke-GN-covered OR auto-synthesisable (no tag falls through both)', () => {
+    // Exactly one of (a) covered by a bespoke `google-news-*` curated
+    // entry, or (b) a synth source is built. Two named branches read
+    // more clearly on failure than an XOR boolean would.
+    for (const tag of DEFAULT_HASHTAGS) {
+      const covered = hasCuratedGoogleNews(tag);
+      const synth = googleNewsSourceForTag(tag);
+      if (covered) {
+        expect(synth).toBeNull();
+      } else {
+        expect(synth).not.toBeNull();
+        expect(synth!.tags).toContain(tag);
+      }
     }
   });
 });
