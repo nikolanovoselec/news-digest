@@ -1,4 +1,4 @@
-// Implements REQ-PIPE-004, REQ-DISC-001
+// Implements REQ-PIPE-001, REQ-PIPE-004, REQ-DISC-001
 //
 // Curated feed registry for the global-feed scrape pipeline. Each entry is
 // a trusted HTTPS feed (RSS, Atom, or JSON Feed) that the scrape coordinator
@@ -15,6 +15,8 @@
 // Live-fetch validation is deliberately NOT automated — the dev script
 // `scripts/validate-curated-sources.mjs` probes each URL with a real fetch
 // and prints a swap-list for feeds that 4xx/5xx. Run it before every deploy.
+
+import { HASHTAG_REGEX } from './hashtags';
 
 /** Feed format. We parse RSS 2.0 and Atom the same way (fast-xml-parser);
  * `json` is reserved for JSON Feed 1.1 endpoints. */
@@ -564,7 +566,12 @@ export function hasCuratedGoogleNews(tag: string): boolean {
  */
 export function googleNewsSourceForTag(tag: string): CuratedSource | null {
   if (tag === '' || hasCuratedGoogleNews(tag)) return null;
-  if (!/^[a-z0-9-]+$/.test(tag)) return null;
+  // Reuse the canonical hashtag shape (2-32 chars, lowercase letters /
+  // digits / dashes) so this helper stays in lockstep with the
+  // user-facing tag validator. Permissive-regex drift here would let a
+  // malformed tag from a future call site reach Google News as a
+  // bogus query.
+  if (!HASHTAG_REGEX.test(tag)) return null;
   const q = encodeURIComponent(tag.replace(/-/g, ' '));
   return {
     slug: `google-news-auto-${tag}`,

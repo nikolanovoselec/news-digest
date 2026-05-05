@@ -286,12 +286,24 @@ async function assembleAllSources(env: Env): Promise<SourceForFetch[]> {
         'KV scan failed mid-iteration; some discovered tags may be missing from this tick.',
     });
   }
-  // Synthesise per-tag Google News query-RSS sources for every tag in
-  // (DEFAULT_HASHTAGS ∪ curated tags ∪ discovered KV tags) that does
-  // NOT already have a bespoke `google-news-*` curated entry. The
-  // post-canonical-dedup pass in `prefer-direct-source.ts` drops the
-  // GN copy when a direct publisher copy lands in the same tick, so
-  // wide GN fan-out is safe and gives every tag a long-tail backstop.
+  // Synthesise per-tag Google News query-RSS sources. Collect every
+  // candidate tag (DEFAULT_HASHTAGS ∪ all curated tags ∪ discovered KV
+  // tags) into one set, then `googleNewsSourceForTag` filters out tags
+  // already covered by a bespoke `google-news-*` curated entry — one
+  // pass through the helper handles dedup so the loop body stays
+  // simple. The post-canonical-dedup pass in `prefer-direct-source.ts`
+  // drops the GN copy when a direct publisher copy lands in the same
+  // tick, so wide GN fan-out is safe and gives every tag a long-tail
+  // backstop.
+  //
+  // `discoveredTag: null` is intentional even though the synth source
+  // is conceptually "for" a tag: GN URLs are infrastructure-grade and
+  // shouldn't be subject to per-tag eviction (the eviction path
+  // permanently removes a feed from `sources:{tag}` after a failure
+  // streak). A transient GN outage shouldn't disable GN for one tag
+  // forever, so we opt OUT of health tracking by keeping the tag null.
+  // The synth feed is rebuilt every tick from `googleNewsSourceForTag`
+  // so it self-heals when GN recovers.
   const allTags = new Set<string>();
   for (const t of DEFAULT_HASHTAGS) allTags.add(t);
   for (const s of CURATED_SOURCES) for (const t of s.tags) allTags.add(t);

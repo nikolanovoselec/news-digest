@@ -127,11 +127,18 @@ describe('googleNewsSourceForTag — auto-synthesised per-tag GN feeds', () => {
   });
 
   it('every DEFAULT_HASHTAGS tag is either bespoke-GN-covered OR auto-synthesisable (no tag falls through both)', () => {
+    // Exactly one of (a) covered by a bespoke `google-news-*` curated
+    // entry, or (b) a synth source is built. Two named branches read
+    // more clearly on failure than an XOR boolean would.
     for (const tag of DEFAULT_HASHTAGS) {
       const covered = hasCuratedGoogleNews(tag);
       const synth = googleNewsSourceForTag(tag);
-      // Exactly one of: covered by bespoke entry, OR a synth source builds.
-      expect(covered === (synth === null)).toBe(true);
+      if (covered) {
+        expect(synth).toBeNull();
+      } else {
+        expect(synth).not.toBeNull();
+        expect(synth!.tags).toContain(tag);
+      }
     }
   });
 });

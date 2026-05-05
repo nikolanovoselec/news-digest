@@ -108,10 +108,8 @@ LENGTH — 150 to 200 WORDS (NON-NEGOTIABLE CONTRACT):
     HOW paragraphs with concrete grounded facts — never pad with
     filler, never repeat, but never cut short either.
   - Maximum 200 words. Do not exceed.
-  - The server enforces an 80-word backstop and rejects anything
-    shorter as malformed. Your TARGET is 150-200, not 80 — the
-    backstop catches obviously broken output, not your normal
-    operating range.
+  - Truncated outputs are rejected server-side as malformed. Your
+    target is 150-200; aim for the middle of that range.
 
 STRUCTURE — 2 to 3 PARAGRAPHS:
 
