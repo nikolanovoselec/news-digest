@@ -344,7 +344,16 @@ async function runChunkLLM(
   promptCandidates: object[],
   allowedTags: string[],
 ): Promise<{
-  llmRun: Awaited<ReturnType<typeof runJsonWithFallback<LLMChunkPayload>>>;
+  // Narrow to the `ok: true` branch — the helper throws on the
+  // `ok: false` path so the caller never receives a failure value.
+  // Without this Extract, TypeScript leaves `llmRun` as the full
+  // discriminated union and access to `tokensIn`/`tokensOut`/`costUsd`
+  // at the call site triggers a TS2339 error on the never-reachable
+  // failure branch.
+  llmRun: Extract<
+    Awaited<ReturnType<typeof runJsonWithFallback<LLMChunkPayload>>>,
+    { ok: true }
+  >;
   rawArticles: LLMChunkArticle[];
   dedupGroups: number[][];
 }> {
