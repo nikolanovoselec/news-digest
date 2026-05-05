@@ -89,7 +89,10 @@ Shape:
 - "articles": one entry per input candidate. Each entry MUST include its "index" field echoing the input candidate's bracketed index (the [N] in the user message). The consumer aligns output to input BY THIS INDEX, not by position — an entry without a correct "index" is dropped, so every summary you write is lost.
 - Never change an entry's index. "index": 47 means "this entry summarises the candidate that appeared as [47] in the input list". Title, details, and tags in that entry MUST be about THAT specific candidate's URL and snippet — never mix facts across candidates.
 - For an unusable candidate, still emit its entry with the correct index and empty tags so the consumer knows you saw it.
-- "dedup_groups": arrays of input-candidate indices that describe the same story (vendor blog + HN mirror, press release + reporter's write-up). Only groups of size ≥ 2. Omit the field as [] when none.
+- "dedup_groups": arrays of input-candidate indices that describe THE SAME NEWS EVENT — not just the same topic. The bar is: would a reasonable reader say "I already read about this exact thing"? Only group when the answer is unambiguously yes. Only groups of size ≥ 2. Omit the field as [] when none.
+- DO group: vendor blog post + HN/Lobsters mirror of that exact post; press release + reporter's write-up of that release; two outlets covering one announcement on the same day with overlapping facts.
+- DO NOT group: two studies on the same topic citing different numbers (e.g. "25% of MCP servers vulnerable" and "6.2% of MCP servers vulnerable" are DIFFERENT studies — different methodology, different findings, never merge); two different incidents in the same product family; two opinion pieces about the same topic by different authors; rumour + later confirmation (these are separate events).
+- When in doubt, leave the candidate ungrouped. A false split is cheap (two cards in the digest), a false merge is expensive (one of two real stories disappears).
 - Empty input → {"articles":[],"dedup_groups":[]}.
 
 # TITLE RULES
@@ -268,7 +271,12 @@ Shape:
 
 - Two stories about the same product but covering different features / different versions.
 - Two stories about the same vendor but unrelated launches.
-- Two opinion pieces on the same topic from different angles.`;
+- Two opinion pieces on the same topic from different angles.
+- Two studies / audits / benchmarks on the same topic citing DIFFERENT numbers, methodology, or authors. Example: "25% of MCP servers vulnerable" and "6.2% of MCP servers vulnerable" are DIFFERENT studies and must NEVER be merged, even though both bodies discuss MCP RCE risk. The numerical specificity is the load-bearing signal — when in doubt, leave them ungrouped.
+
+# WHEN IN DOUBT, DO NOT MERGE
+
+A false split (two cards in the digest that could have been one) is cheap. A false merge (one of two real stories disappears) is expensive — the user loses a story they would have read. Default to splitting; only group when the bodies overlap on the SAME specific facts (same numbers, same names, same date, same product version).`;
 
 /**
  * Build the user message for the cross-chunk dedup call. Each candidate
