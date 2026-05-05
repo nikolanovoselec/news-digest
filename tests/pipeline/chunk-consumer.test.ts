@@ -905,15 +905,16 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     }
   });
 
-  it('REQ-PIPE-002 AC3 / CF-030: drops articles whose details word count falls under the 120-word floor', async () => {
-    // The prompt itself flags responses under ~120 words as malformed.
-    // Without a server-side guard a model that ignores the contract
-    // can still ship a 30-word stub as a real article. A passing
-    // sibling article in the same chunk proves only the malformed
-    // entry is dropped, not the whole batch.
+  it('REQ-PIPE-002 AC3: drops articles whose details word count falls under the 80-word backstop floor', async () => {
+    // The prompt's contract is 150-200 words; the server enforces an
+    // 80-word backstop so genuinely truncated outputs (single-paragraph
+    // 30-word stubs) get dropped without rejecting the model's natural
+    // 100-130 lower-end distribution. A passing sibling article in the
+    // same chunk proves only the malformed entry is dropped, not the
+    // whole batch.
     const tooShort = 'Short body sentence one. Sentence two. Sentence three.';
     const longBody =
-      'This is a long-enough article body that easily clears the 120-word floor. '
+      'This is a long-enough article body that easily clears the 80-word floor. '
         .repeat(14) +
       'It crosses two paragraph boundaries with explicit periods between sentences.';
     const aiResponse = {
@@ -938,6 +939,40 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     expect(articleInserts.length).toBe(1);
     expect(articleInserts[0]!.params).toContain('Title A — long enough headline copy');
     expect(articleInserts[0]!.params).not.toContain('Title B — also long enough headline');
+  });
+
+  it('REQ-PIPE-002 AC3: keeps articles in the 80-150 natural-distribution range that the prompt asks for but the model often undershoots', async () => {
+    // The Workers AI gpt-oss-120b often produces 100-130-word summaries
+    // when source snippets are thin. The 80-word floor is a backstop,
+    // not a contract — bodies above 80 must pass. Pinning the boundary
+    // here so a future tightening (back to 120) is caught by CI rather
+    // than discovered via a 75% drop in daily ingestion.
+    const exactly100Words = Array.from({ length: 100 }, (_, i) => `word${i}`).join(' ');
+    const aiResponse = {
+      response: JSON.stringify({
+        articles: [
+          {
+            index: 0,
+            title: 'A natural-distribution-length headline that fits in range',
+            details: exactly100Words,
+            tags: ['cloudflare'],
+          },
+        ],
+        dedup_groups: [],
+      }),
+      usage: { input_tokens: 10, output_tokens: 10 },
+    };
+    const { db, records } = makeDb();
+    const { kv } = makeKv({ chunksRemaining: '1' });
+    const env = makeEnv(db, kv, aiResponse);
+    await processOneChunk(env, makeChunk());
+    const articleInserts = records.filter(
+      (r) =>
+        r.via === 'batch' &&
+        r.sql.startsWith('INSERT OR IGNORE INTO articles'),
+    );
+    expect(articleInserts.length).toBe(1);
+    expect(articleInserts[0]!.params).toContain('A natural-distribution-length headline that fits in range');
   });
 
   it('REQ-PIPE-002 AC2 / CF-030: drops articles whose title length is outside the [5, 500] sanity range', async () => {

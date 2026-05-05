@@ -20,9 +20,11 @@
 
 import {
   CURATED_SOURCES,
+  googleNewsSourceForTag,
   hasCuratedSource,
   type CuratedSource,
 } from '~/lib/curated-sources';
+import { DEFAULT_HASHTAGS } from '~/lib/default-hashtags';
 import {
   adaptersForDiscoveredFeeds,
   fetchFromSourceWithResult,
@@ -284,6 +286,29 @@ async function assembleAllSources(env: Env): Promise<SourceForFetch[]> {
         'KV scan failed mid-iteration; some discovered tags may be missing from this tick.',
     });
   }
+  // Synthesise per-tag Google News query-RSS sources for every tag in
+  // (DEFAULT_HASHTAGS ∪ curated tags ∪ discovered KV tags) that does
+  // NOT already have a bespoke `google-news-*` curated entry. The
+  // post-canonical-dedup pass in `prefer-direct-source.ts` drops the
+  // GN copy when a direct publisher copy lands in the same tick, so
+  // wide GN fan-out is safe and gives every tag a long-tail backstop.
+  const allTags = new Set<string>();
+  for (const t of DEFAULT_HASHTAGS) allTags.add(t);
+  for (const s of CURATED_SOURCES) for (const t of s.tags) allTags.add(t);
+  for (const ds of discoveredSources) {
+    if (ds.discoveredTag !== null) allTags.add(ds.discoveredTag);
+  }
+  const googleNewsSources: SourceForFetch[] = [];
+  for (const tag of allTags) {
+    const synth = googleNewsSourceForTag(tag);
+    if (synth === null) continue;
+    googleNewsSources.push({
+      adapter: curatedToAdapter(synth),
+      sourceName: synth.name,
+      feedUrl: synth.feed_url,
+      discoveredTag: null,
+    });
+  }
   return [
     ...CURATED_SOURCES.map((s) => ({
       adapter: curatedToAdapter(s),
@@ -292,6 +317,7 @@ async function assembleAllSources(env: Env): Promise<SourceForFetch[]> {
       discoveredTag: null as string | null,
     })),
     ...discoveredSources,
+    ...googleNewsSources,
   ];
 }
 

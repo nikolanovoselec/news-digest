@@ -526,3 +526,51 @@ const CURATED_TAGS: ReadonlySet<string> = new Set(
 export function hasCuratedSource(tag: string): boolean {
   return CURATED_TAGS.has(tag);
 }
+
+/**
+ * Set of tags already served by a bespoke `google-news-*` curated entry.
+ * Auto-synthesised generic GN sources skip these tags so the bespoke
+ * (more precise) query is the only Google News call for that tag.
+ */
+const GOOGLE_NEWS_CURATED_TAGS: ReadonlySet<string> = new Set(
+  CURATED_SOURCES
+    .filter((s) => s.slug.startsWith('google-news-'))
+    .flatMap((s) => s.tags),
+);
+
+/**
+ * True iff a bespoke `google-news-*` curated entry already covers
+ * {@link tag}. Used by {@link googleNewsSourceForTag} to skip
+ * auto-synthesis for tags that already have a hand-tuned GN query
+ * (avoids two redundant fetches per tick for the same Google News
+ * results).
+ */
+export function hasCuratedGoogleNews(tag: string): boolean {
+  return GOOGLE_NEWS_CURATED_TAGS.has(tag);
+}
+
+/**
+ * Build a synthetic curated source that fetches Google News query-RSS
+ * for {@link tag}. Returns `null` when {@link tag} is empty, malformed,
+ * or already covered by a bespoke `google-news-*` curated entry.
+ *
+ * The query is the tag with dashes converted to spaces (e.g.
+ * `supply-chain-security` → `supply chain security`), URL-encoded.
+ * That's a deliberately simple query: tags are short and topical, so
+ * the natural English phrasing produces the most relevant Google News
+ * coverage. `prefer-direct-source.ts` drops the GN copy when a direct
+ * publisher copy lands in the same tick (≥3 shared title tokens), so
+ * a generous GN fan-out costs nothing on the dedup side.
+ */
+export function googleNewsSourceForTag(tag: string): CuratedSource | null {
+  if (tag === '' || hasCuratedGoogleNews(tag)) return null;
+  if (!/^[a-z0-9-]+$/.test(tag)) return null;
+  const q = encodeURIComponent(tag.replace(/-/g, ' '));
+  return {
+    slug: `google-news-auto-${tag}`,
+    name: `Google News: ${tag}`,
+    feed_url: `https://news.google.com/rss/search?q=${q}&hl=en-US&gl=US&ceid=US:en`,
+    kind: 'rss',
+    tags: [tag],
+  };
+}
