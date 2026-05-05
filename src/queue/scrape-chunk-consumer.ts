@@ -128,6 +128,26 @@ export async function handleChunkBatch(
   });
 }
 
+/** Aligned LLM output for one input cluster, ready for validation. */
+interface Survivor {
+  cluster: Cluster;
+  articleIdx: number;
+  llmArticle: LLMChunkArticle;
+}
+
+/** Validated, sanitised article ready to be written to D1. */
+interface PreparedArticle {
+  id: string;
+  canonical_url: string;
+  title: string;
+  details: string[];
+  tags: string[];
+  primary_source_url: string;
+  primary_source_name: string;
+  alternatives: Array<{ source_url: string; source_name: string }>;
+  published_at: number;
+}
+
 /** Process a single chunk message end-to-end. Exported for direct unit
  * testing without having to fake the queue batch envelope. */
 export async function processOneChunk(
@@ -139,14 +159,124 @@ export async function processOneChunk(
   const allowedTags = await loadAllowedTags(env.KV);
   const allowedTagSet = new Set(allowedTags);
 
-  // Fetch article bodies for candidates whose feed snippet is thin.
-  // Happens inside the chunk consumer (not the coordinator) so the
-  // coordinator's execution budget isn't blown by 500+ HTTP fetches
-  // before it can enqueue chunks. Each chunk only fetches its own
-  // ~100 URLs (100 × 5s / 20 workers ≈ 25s) — well within a chunk
-  // consumer's 15-min queue-message budget. Feeds that ship rich
-  // <content:encoded> skip the fetch; the LLM prompt's 'grounded
-  // summary' branch only fires when snippet has real content.
+  // Fetch article bodies; build prompt-ready candidates.
+  const { promptCandidates } = await fetchAndBuildPromptCandidates(env, body);
+
+  // LLM call (primary + fallback).
+  const { llmRun, rawArticles, dedupGroups } = await runChunkLLM(
+    env,
+    body,
+    promptCandidates,
+    allowedTags,
+  );
+
+  // Build per-input singleton clusters, then merge by LLM dedup hints.
+  const perInputClusters: Cluster[] = body.candidates.map((c) => {
+    const primary: Candidate = {
+      canonical_url: c.canonical_url,
+      source_url: c.source_url,
+      source_name: c.source_name,
+      title: c.title,
+      published_at: c.published_at,
+      ...(typeof c.body_snippet === 'string' && c.body_snippet !== ''
+        ? { body_snippet: c.body_snippet }
+        : {}),
+    };
+    const alternatives: Candidate[] = (c.alternatives ?? []).map((alt) => ({
+      canonical_url: c.canonical_url,
+      source_url: alt.source_url,
+      source_name: alt.source_name,
+      title: c.title,
+      published_at: c.published_at,
+    }));
+    return { primary, alternatives };
+  });
+  const mergedClusters = mergeClustersByLlmHints(perInputClusters, dedupGroups);
+
+  // Align LLM output to input candidates by echoed index (with positional fallback).
+  const {
+    survivors,
+    articlesWithEchoedIndex,
+    duplicateEchoedIndex,
+    droppedForMissingAlignment,
+    droppedForTitleMismatch,
+    useEchoedIndex,
+  } = alignLlmArticlesToInputs(rawArticles, perInputClusters, mergedClusters, dedupGroups, body);
+
+  // Validate + sanitize each survivor; drop articles that fail any gate.
+  const prepared: PreparedArticle[] = [];
+  for (const s of survivors) {
+    const article = validateAndSanitizeArticle(s, allowedTagSet, body);
+    if (article !== null) prepared.push(article);
+  }
+
+  // Write articles + sources + tags in a single atomic D1 batch.
+  const statements = buildArticleBatchStatements(env.DB, prepared, body.scrape_run_id);
+  if (statements.length > 0) {
+    await env.DB.batch(statements);
+  }
+
+  // Record completion + conditionally enqueue finalize.
+  const {
+    isFirstCompletion,
+    completedCount,
+  } = await recordChunkCompletionAndCheckFinalize(env, body);
+
+  const wastedTokensIn = llmRun.wastedTokensIn;
+  const wastedTokensOut = llmRun.wastedTokensOut;
+  const wastedCostUsd = llmRun.wastedCostUsd;
+  const tokensIn = llmRun.tokensIn + wastedTokensIn;
+  const tokensOut = llmRun.tokensOut + wastedTokensOut;
+  const costUsd = llmRun.costUsd + wastedCostUsd;
+  const articlesIngested = prepared.length;
+  const articlesDeduped = body.candidates.length - articlesIngested;
+
+  if (isFirstCompletion) {
+    await addChunkStats(env.DB, body.scrape_run_id, {
+      tokens_in: tokensIn,
+      tokens_out: tokensOut,
+      estimated_cost_usd: costUsd,
+      articles_ingested: articlesIngested,
+      articles_deduped: articlesDeduped,
+    });
+  }
+
+  // Keep the legacy KV counter in sync for /api/scrape-status.
+  const remaining = Math.max(0, body.total_chunks - completedCount);
+  await setChunksRemaining(env.KV, body.scrape_run_id, remaining);
+
+  log('info', 'digest.generation', {
+    status: 'chunk_ready',
+    scrape_run_id: body.scrape_run_id,
+    chunk_index: body.chunk_index,
+    total_chunks: body.total_chunks,
+    articles_ingested: articlesIngested,
+    articles_deduped: articlesDeduped,
+    tokens_in: tokensIn,
+    tokens_out: tokensOut,
+    estimated_cost_usd: costUsd,
+    alignment_mode: useEchoedIndex ? 'echoed_index' : 'positional_fallback',
+    articles_with_echoed_index: articlesWithEchoedIndex,
+    duplicate_echoed_index: duplicateEchoedIndex,
+    dropped_for_missing_alignment: droppedForMissingAlignment,
+    dropped_for_title_mismatch: droppedForTitleMismatch,
+  });
+}
+
+// ---------- step helpers (colocated; not re-exported) ---------------------
+
+/**
+ * Fetch article bodies for thin-snippet candidates, then build the
+ * prompt-ready candidate array.
+ *
+ * Happens inside the chunk consumer (not the coordinator) so the
+ * coordinator's execution budget is not blown by 500+ HTTP fetches before
+ * it can enqueue chunks. Each chunk only fetches its own ~100 URLs.
+ */
+async function fetchAndBuildPromptCandidates(
+  env: Env,
+  body: ChunkJobMessage,
+): Promise<{ promptCandidates: object[] }> {
   const SNIPPET_FLOOR = 400;
   const urlsToFetch: string[] = [];
   for (const c of body.candidates) {
@@ -158,11 +288,6 @@ export async function processOneChunk(
   let fetchedBodies = new Map<string, string>();
   if (urlsToFetch.length > 0) {
     const fetchStart = Date.now();
-    // Pass APP_URL as the contact URL so the User-Agent on outbound
-    // article fetches points at THIS deployment, not the upstream
-    // repo's host. Forks deploying their own copy get correct
-    // attribution; the helper falls back to a generic identifier when
-    // env.APP_URL is unset (local dev with no deployment hostname).
     fetchedBodies = await fetchArticleBodies(urlsToFetch, 20, env.APP_URL);
     log('info', 'digest.generation', {
       status: 'chunk_article_bodies_fetched',
@@ -174,10 +299,6 @@ export async function processOneChunk(
     });
   }
 
-  // Build candidates in the LLM-expected shape. Order is preserved so
-  // output array indices line up with input indices for cluster + dedup
-  // lookups. For each candidate we keep whichever snippet is longer:
-  // the fetched HTML body, or the feed's own <content:encoded>.
   const promptCandidates = body.candidates.map((c, idx) => {
     const fetched = fetchedBodies.get(c.source_url) ?? '';
     const feedSnippet = c.body_snippet ?? '';
@@ -193,11 +314,9 @@ export async function processOneChunk(
     if (bestSnippet !== '') return { ...base, body_snippet: bestSnippet };
     return base;
   });
-  // Observability: log how many candidates fell through with NO
-  // snippet of any kind so we can find feeds + URLs where our
-  // extractor is failing and improve the heuristic.
+
   const noSnippetCount = promptCandidates.filter(
-    (p) => !('body_snippet' in p) || p.body_snippet === undefined || p.body_snippet === '',
+    (p) => !('body_snippet' in p) || (p as { body_snippet?: string }).body_snippet === undefined || (p as { body_snippet?: string }).body_snippet === '',
   ).length;
   if (noSnippetCount > 0) {
     log('warn', 'digest.generation', {
@@ -209,13 +328,27 @@ export async function processOneChunk(
     });
   }
 
-  // CF-009: primary-then-fallback retry centralised in
-  // src/lib/llm-json.ts so chunk + finalize + discovery share the
-  // same waste-cost accounting and the same single-attempt narrowing.
-  // The hot path stays on the cheap default (gemma-4); the fallback
-  // (gpt-oss-20b) is JSON-strict for runs where the primary's
-  // prompt-following wobbles.
-  const llmRun = await runJsonWithFallback({
+  return { promptCandidates };
+}
+
+/**
+ * Run the LLM call (primary model with fallback) for a chunk.
+ *
+ * Throws `Error('chunk_invalid_json')` when both models fail to produce
+ * valid JSON — this tells the queue handler to retry the chunk message.
+ * Returns the successful run result plus the parsed articles and dedup groups.
+ */
+async function runChunkLLM(
+  env: Env,
+  body: ChunkJobMessage,
+  promptCandidates: object[],
+  allowedTags: string[],
+): Promise<{
+  llmRun: Awaited<ReturnType<typeof runJsonWithFallback<LLMChunkPayload>>>;
+  rawArticles: LLMChunkArticle[];
+  dedupGroups: number[][];
+}> {
+  const llmRun = await runJsonWithFallback<LLMChunkPayload>({
     ai: asAiBinding(env.AI),
     params: {
       messages: [
@@ -253,68 +386,38 @@ export async function processOneChunk(
     throw new Error('chunk_invalid_json');
   }
 
-  const parsed = llmRun.parsed;
-  const wastedTokensIn = llmRun.wastedTokensIn;
-  const wastedTokensOut = llmRun.wastedTokensOut;
-  const wastedCostUsd = llmRun.wastedCostUsd;
+  const rawArticles = Array.isArray(llmRun.parsed.articles) ? llmRun.parsed.articles : [];
+  const dedupGroups = normaliseRawDedupGroups(llmRun.parsed.dedup_groups);
+  return { llmRun, rawArticles, dedupGroups };
+}
 
-  const rawArticles = Array.isArray(parsed.articles) ? parsed.articles : [];
-  const dedupGroups = normaliseRawDedupGroups(parsed.dedup_groups);
-
-  // Build one candidate cluster per input row. Each starts as a
-  // singleton cluster whose primary is the input candidate plus its
-  // coordinator-provided alternatives. mergeClustersByLlmHints then
-  // collapses groups listed in `dedup_groups`.
-  const perInputClusters: Cluster[] = body.candidates.map((c) => {
-    const primary: Candidate = {
-      canonical_url: c.canonical_url,
-      source_url: c.source_url,
-      source_name: c.source_name,
-      title: c.title,
-      published_at: c.published_at,
-      ...(typeof c.body_snippet === 'string' && c.body_snippet !== ''
-        ? { body_snippet: c.body_snippet }
-        : {}),
-    };
-    const alternatives: Candidate[] = (c.alternatives ?? []).map((alt) => ({
-      canonical_url: c.canonical_url,
-      source_url: alt.source_url,
-      source_name: alt.source_name,
-      title: c.title,
-      published_at: c.published_at,
-    }));
-    return { primary, alternatives };
-  });
-
-  // Merge clusters per LLM dedup hints. The result array is stable-
-  // ordered: each merged cluster is anchored at the minimum index of
-  // its source clusters.
-  const mergedClusters = mergeClustersByLlmHints(perInputClusters, dedupGroups);
-
-  // Map merged clusters back to their LLM article payloads. A merged
-  // cluster at anchor index N uses articles[N] for title/details/tags;
-  // the other grouped indices are collapsed into article_sources rows.
-
-  interface Survivor {
-    cluster: Cluster;
-    articleIdx: number; // the LLM article index whose title/details/tags we use
-    llmArticle: LLMChunkArticle;
-  }
-  const survivors: Survivor[] = [];
-  // mergedClusters come out in input order. For each one we need the
-  // "anchor" input index — the cluster's primary's original position —
-  // to pick the matching LLM article.
-  const anchorByCluster = buildAnchorIndices(perInputClusters, dedupGroups);
-
-  // Align LLM output to input candidates BY VALUE using the echoed
-  // `index` field, not by positional order. Models occasionally reorder
-  // entries, skip candidates, or invent articles that weren't in the
-  // input — when that happens, positional alignment staples the wrong
-  // summary to the wrong canonical URL. Require each LLM article to
-  // echo its candidate index and look it up by that key; fall back to
-  // positional only when the index is missing (legacy model behaviour)
-  // to preserve backwards compatibility on the first deploy after this
-  // change.
+/**
+ * Align LLM output articles to input clusters.
+ *
+ * Prefers echoed `index` fields when the model adopted the contract (majority
+ * of articles echo a valid index); falls back to positional alignment for
+ * legacy model behaviour. Drops articles whose LLM title shares no non-trivial
+ * token with the source candidate title (cross-wires defence-in-depth).
+ *
+ * CF-026: uses a single `Map<number, LLMChunkArticle>` (`articleByIndex`) as
+ * the canonical lookup regardless of alignment mode — positional fallback
+ * populates the same map from rawArticles before the merge pass.
+ */
+function alignLlmArticlesToInputs(
+  rawArticles: LLMChunkArticle[],
+  perInputClusters: Cluster[],
+  mergedClusters: Cluster[],
+  dedupGroups: number[][],
+  body: ChunkJobMessage,
+): {
+  survivors: Survivor[];
+  articlesWithEchoedIndex: number;
+  duplicateEchoedIndex: number;
+  droppedForMissingAlignment: number;
+  droppedForTitleMismatch: number;
+  useEchoedIndex: boolean;
+} {
+  // Build the echoed-index map first.
   const articleByIndex = new Map<number, LLMChunkArticle>();
   let articlesWithEchoedIndex = 0;
   let duplicateEchoedIndex = 0;
@@ -336,15 +439,28 @@ export async function processOneChunk(
       }
     }
   }
-  // Enable strict index-echo alignment only when the model demonstrably
-  // adopted the contract on this chunk. A single echoed entry out of
-  // 50 is likely a fluke — falling into strict mode there would drop
-  // the other 49 positionally-aligned articles. Require a majority OR
-  // an absolute floor of 3 echoed entries.
+  // Use echoed-index lookup only when the model demonstrably adopted the
+  // contract on this chunk. A single echoed entry out of 50 is likely a
+  // fluke — falling into strict mode there would drop the other 49
+  // positionally-aligned articles.
   const useEchoedIndex =
     articlesWithEchoedIndex >= 3 ||
     (rawArticles.length > 0 &&
       articlesWithEchoedIndex * 2 >= rawArticles.length);
+
+  // CF-026: for positional fallback, populate the SAME map from rawArticles
+  // so the merge pass always reads from articleByIndex regardless of mode.
+  if (!useEchoedIndex) {
+    for (let i = 0; i < rawArticles.length; i++) {
+      const art = rawArticles[i];
+      if (art !== undefined && !articleByIndex.has(i)) {
+        articleByIndex.set(i, art);
+      }
+    }
+  }
+
+  const anchorByCluster = buildAnchorIndices(perInputClusters, dedupGroups);
+  const survivors: Survivor[] = [];
   let droppedForMissingAlignment = 0;
   let droppedForTitleMismatch = 0;
 
@@ -352,19 +468,11 @@ export async function processOneChunk(
   for (const merged of mergedClusters) {
     const anchor = anchorByCluster[clusterCursor] ?? 0;
     clusterCursor++;
-    const llmArticle = useEchoedIndex
-      ? articleByIndex.get(anchor)
-      : rawArticles[anchor];
+    const llmArticle = articleByIndex.get(anchor);
     if (llmArticle === undefined) {
       droppedForMissingAlignment += 1;
       continue;
     }
-    // Defense-in-depth: even when the LLM echoes the right index, it
-    // could still write content for a different candidate. Compare the
-    // LLM title against the source candidate title for at least one
-    // shared non-trivial word. Zero overlap on two long titles signals
-    // the LLM got its wires crossed (the "CF CLI Local Explorer"
-    // summary on a SageMaker URL bug had exactly zero shared tokens).
     const llmTitle = typeof llmArticle.title === 'string' ? llmArticle.title : '';
     if (!titlesShareAnyToken(llmTitle, merged.primary.title)) {
       droppedForTitleMismatch += 1;
@@ -381,117 +489,114 @@ export async function processOneChunk(
     survivors.push({ cluster: merged, articleIdx: anchor, llmArticle });
   }
 
-  // Sanitize + validate each surviving article. Articles with zero
-  // allowed tags after validation are dropped.
-  interface PreparedArticle {
-    id: string;
-    canonical_url: string;
-    title: string;
-    details: string[]; // 1-3 paragraphs, persisted as JSON array in details_json
-    tags: string[];
-    primary_source_url: string;
-    primary_source_name: string;
-    alternatives: Array<{ source_url: string; source_name: string }>;
-    published_at: number;
-  }
-  const prepared: PreparedArticle[] = [];
-  for (const s of survivors) {
-    const title = sanitizeText(s.llmArticle.title);
-    const detailsRaw = s.llmArticle.details;
-    // The prompt contract asks the LLM for a single string with
-    // paragraphs separated by `\n`. A minority of responses escape the
-    // separator as the two-character sequence `\n` (backslash + n)
-    // rather than a real newline — splitIntoParagraphs normalises both
-    // forms before splitting. If the model ignores the contract and
-    // returns an array, apply the same normaliser per element.
-    const rawPieces: string[] = Array.isArray(detailsRaw)
-      ? detailsRaw.flatMap((p) =>
-          typeof p === 'string' ? splitIntoParagraphs(p) : [],
-        )
-      : typeof detailsRaw === 'string'
-        ? splitIntoParagraphs(detailsRaw)
-        : [];
-    const details = rawPieces
-      .map((p) => sanitizeText(p))
-      .filter((p) => p !== '');
-    if (title === '' || details.length === 0) continue;
+  return {
+    survivors,
+    articlesWithEchoedIndex,
+    duplicateEchoedIndex,
+    droppedForMissingAlignment,
+    droppedForTitleMismatch,
+    useEchoedIndex,
+  };
+}
 
-    // CF-030 — REQ-PIPE-002 AC3: the prompt itself flags responses
-    // under ~120 words as malformed. Enforce the floor server-side so
-    // the LLM-side contract isn't the only line of defense — a model
-    // that ignores the word-count instruction can no longer ship a
-    // truncated 30-word body as a real article.
-    const wordCount = details.join(' ').trim().split(/\s+/).filter((w) => w !== '').length;
-    if (wordCount < 120) {
-      log('warn', 'digest.generation', {
-        status: 'chunk_article_dropped_word_count',
-        scrape_run_id: body.scrape_run_id,
-        chunk_index: body.chunk_index,
-        word_count: wordCount,
-        llm_title: title.slice(0, 120),
-      });
-      continue;
-    }
+/**
+ * Validate and sanitize one surviving article.
+ *
+ * Returns `null` when any gate fails (title empty, details empty, word count
+ * below floor, title length outside range, or zero allowed tags after
+ * filtering). Callers should skip `null` returns.
+ */
+function validateAndSanitizeArticle(
+  s: Survivor,
+  allowedTagSet: Set<string>,
+  body: ChunkJobMessage,
+): PreparedArticle | null {
+  const title = sanitizeText(s.llmArticle.title);
+  const detailsRaw = s.llmArticle.details;
+  const rawPieces: string[] = Array.isArray(detailsRaw)
+    ? detailsRaw.flatMap((p) =>
+        typeof p === 'string' ? splitIntoParagraphs(p) : [],
+      )
+    : typeof detailsRaw === 'string'
+      ? splitIntoParagraphs(detailsRaw)
+      : [];
+  const details = rawPieces
+    .map((p) => sanitizeText(p))
+    .filter((p) => p !== '');
+  if (title === '' || details.length === 0) return null;
 
-    // CF-030 — REQ-PIPE-002 AC2: the spec asks for 45-80-character
-    // headlines but the LLM is fuzzy by design. A wide sanity range
-    // catches the genuinely broken cases (single-character labels,
-    // paragraph-as-title) without rejecting the merely short or long
-    // edges the LLM produces in the wild.
-    if (title.length < 5 || title.length > 500) {
-      log('warn', 'digest.generation', {
-        status: 'chunk_article_dropped_title_length',
-        scrape_run_id: body.scrape_run_id,
-        chunk_index: body.chunk_index,
-        title_length: title.length,
-        llm_title: title.slice(0, 120),
-      });
-      continue;
-    }
-
-    const llmTags = Array.isArray(s.llmArticle.tags) ? s.llmArticle.tags : [];
-    const tags: string[] = [];
-    const seen = new Set<string>();
-    for (const t of llmTags) {
-      if (typeof t !== 'string') continue;
-      // CF-034 — same normalisation the user-settings write-path applies,
-      // so an LLM-emitted "Cloud Infrastructure" lands as the same canonical
-      // form a user typed "#cloud-infrastructure" into settings.
-      const normalised = normalizeHashtag(t.trim());
-      if (normalised === '' || seen.has(normalised)) continue;
-      if (!allowedTagSet.has(normalised)) continue;
-      seen.add(normalised);
-      tags.push(normalised);
-    }
-    if (tags.length === 0) continue;
-
-    const primary = s.cluster.primary;
-    prepared.push({
-      id: generateUlid(),
-      canonical_url: primary.canonical_url,
-      title,
-      details,
-      tags,
-      primary_source_url: primary.source_url,
-      primary_source_name: primary.source_name,
-      alternatives: s.cluster.alternatives.map((alt) => ({
-        source_url: alt.source_url,
-        source_name: alt.source_name,
-      })),
-      published_at: primary.published_at,
+  // REQ-PIPE-002 AC3: enforce 120-word floor server-side.
+  const wordCount = details.join(' ').trim().split(/\s+/).filter((w) => w !== '').length;
+  if (wordCount < 120) {
+    log('warn', 'digest.generation', {
+      status: 'chunk_article_dropped_word_count',
+      scrape_run_id: body.scrape_run_id,
+      chunk_index: body.chunk_index,
+      word_count: wordCount,
+      llm_title: title.slice(0, 120),
     });
+    return null;
   }
 
-  // Build the atomic batch: one INSERT per article, one per alt source,
-  // one per tag. D1 handles ordering + rollback. Column list mirrors
-  // migrations/0003_global_feed.sql exactly — details_json / tags_json
-  // are JSON arrays, ingested_at stamps row creation, scrape_run_id
-  // is the parent run attribution.
+  // REQ-PIPE-002 AC2: sanity-range for headline length.
+  if (title.length < 5 || title.length > 500) {
+    log('warn', 'digest.generation', {
+      status: 'chunk_article_dropped_title_length',
+      scrape_run_id: body.scrape_run_id,
+      chunk_index: body.chunk_index,
+      title_length: title.length,
+      llm_title: title.slice(0, 120),
+    });
+    return null;
+  }
+
+  const llmTags = Array.isArray(s.llmArticle.tags) ? s.llmArticle.tags : [];
+  const tags: string[] = [];
+  const seen = new Set<string>();
+  for (const t of llmTags) {
+    if (typeof t !== 'string') continue;
+    const normalised = normalizeHashtag(t.trim());
+    if (normalised === '' || seen.has(normalised)) continue;
+    if (!allowedTagSet.has(normalised)) continue;
+    seen.add(normalised);
+    tags.push(normalised);
+  }
+  if (tags.length === 0) return null;
+
+  const primary = s.cluster.primary;
+  return {
+    id: generateUlid(),
+    canonical_url: primary.canonical_url,
+    title,
+    details,
+    tags,
+    primary_source_url: primary.source_url,
+    primary_source_name: primary.source_name,
+    alternatives: s.cluster.alternatives.map((alt) => ({
+      source_url: alt.source_url,
+      source_name: alt.source_name,
+    })),
+    published_at: primary.published_at,
+  };
+}
+
+/**
+ * Build the D1 batch statements for articles, alt-sources, and tags.
+ *
+ * Column list mirrors migrations/0003_global_feed.sql exactly.
+ * details_json / tags_json are JSON arrays; ingested_at stamps row
+ * creation; scrape_run_id is the parent run attribution.
+ */
+function buildArticleBatchStatements(
+  db: D1Database,
+  prepared: PreparedArticle[],
+  scrape_run_id: string,
+): D1PreparedStatement[] {
   const statements: D1PreparedStatement[] = [];
   const nowSec = Math.floor(Date.now() / 1000);
   for (const a of prepared) {
     statements.push(
-      env.DB.prepare(
+      db.prepare(
         `INSERT OR IGNORE INTO articles
            (id, canonical_url, primary_source_name, primary_source_url,
             title, details_json, tags_json, published_at, ingested_at,
@@ -507,12 +612,12 @@ export async function processOneChunk(
         JSON.stringify(a.tags),
         a.published_at,
         nowSec,
-        body.scrape_run_id,
+        scrape_run_id,
       ),
     );
     for (const alt of a.alternatives) {
       statements.push(
-        env.DB.prepare(
+        db.prepare(
           `INSERT OR IGNORE INTO article_sources
              (article_id, source_name, source_url, published_at)
            VALUES (?1, ?2, ?3, ?4)`,
@@ -521,67 +626,36 @@ export async function processOneChunk(
     }
     for (const tag of a.tags) {
       statements.push(
-        env.DB.prepare(
+        db.prepare(
           `INSERT OR IGNORE INTO article_tags (article_id, tag) VALUES (?1, ?2)`,
         ).bind(a.id, tag),
       );
     }
   }
+  return statements;
+}
 
-  if (statements.length > 0) {
-    await env.DB.batch(statements);
-  }
-
-  // CF-002: atomic chunk-completion via D1. INSERT OR IGNORE makes the
-  // per-chunk write idempotent under retries/redelivery, and the
-  // COUNT(*) gives the exact "completed so far" total without depending
-  // on a non-atomic counter that two concurrent consumers could race to
-  // "0" and double-finalize.
-  //
-  // The completion INSERT runs FIRST so we can use its `meta.changes`
-  // as the idempotency gate for `addChunkStats` below — that update is
-  // additive (`col = col + ?`) and would double-count tokens, cost,
-  // and article counters on every queue redelivery. Article INSERTs
-  // above are already idempotent via `INSERT OR IGNORE` on
-  // canonical_url, so they don't need the gate.
-  // CF-003 — chunk completion gate centralised in articles-repo so
-  // the SQL touching scrape_chunk_completions lives next to the rest
-  // of the article-domain queries.
+/**
+ * Record chunk completion (idempotent via INSERT OR IGNORE) and, if this
+ * is the last chunk, atomically claim the finalize-enqueue slot and kick
+ * off SCRAPE_FINALIZE.
+ *
+ * Returns `{ isFirstCompletion, completedCount }` so the caller can gate
+ * additive stat updates on `isFirstCompletion`.
+ *
+ * CF-002: the finalize gate uses a conditional UPDATE on `finalize_enqueued`
+ * so only one concurrent last-chunk consumer triggers the finalize pass.
+ */
+async function recordChunkCompletionAndCheckFinalize(
+  env: Env,
+  body: ChunkJobMessage,
+): Promise<{ isFirstCompletion: boolean; completedCount: number }> {
   const isFirstCompletion = await recordChunkCompletion(
     env.DB,
     body.scrape_run_id,
     body.chunk_index,
   );
 
-  // Tokens from the failed primary call (when the fallback was taken)
-  // count too — they burned real budget even though their output was
-  // unusable — so we add them to the reported totals. Both live and
-  // wasted counters come from runJsonWithFallback (CF-009).
-  const tokensIn = llmRun.tokensIn + wastedTokensIn;
-  const tokensOut = llmRun.tokensOut + wastedTokensOut;
-  // llmRun.costUsd attributes to the model that actually produced the
-  // output (DEFAULT on the happy path, FALLBACK when the retry
-  // succeeded). Add the wasted-primary cost on top (zero on happy path).
-  const costUsd = llmRun.costUsd + wastedCostUsd;
-  // Deduped count = input candidates that ended up collapsed into a
-  // primary plus input candidates that were dropped entirely (e.g. zero
-  // valid tags after validation).
-  const articlesIngested = prepared.length;
-  const articlesDeduped = body.candidates.length - articlesIngested;
-
-  // Only the first delivery for a given (run_id, chunk_index) pair runs
-  // addChunkStats — it issues an additive UPDATE that would otherwise
-  // double-count tokens, cost, and article counters under queue
-  // redelivery.
-  if (isFirstCompletion) {
-    await addChunkStats(env.DB, body.scrape_run_id, {
-      tokens_in: tokensIn,
-      tokens_out: tokensOut,
-      estimated_cost_usd: costUsd,
-      articles_ingested: articlesIngested,
-      articles_deduped: articlesDeduped,
-    });
-  }
   const completedRow = await env.DB
     .prepare(
       'SELECT COUNT(*) AS done FROM scrape_chunk_completions WHERE scrape_run_id = ?1',
@@ -590,29 +664,16 @@ export async function processOneChunk(
     .first<{ done: number }>();
   const completedCount = completedRow?.done ?? 0;
 
-  // Keep the legacy KV counter in sync so /api/scrape-status can keep
-  // showing "X of Y chunks done" while the UI clients are in flight.
-  // The KV value is now derived from the authoritative D1 count rather
-  // than computed by decrement, so it can never be out of sync with
-  // the actual completion state.
-  const remaining = Math.max(0, body.total_chunks - completedCount);
-  await setChunksRemaining(env.KV, body.scrape_run_id, remaining);
-
   if (completedCount >= body.total_chunks) {
     await finishRun(env.DB, body.scrape_run_id, 'ready');
-    // REQ-PIPE-008: kick off the cross-chunk semantic dedup pass. Articles
-    // are already visible (run is `ready`) — finalize is a background
-    // cleanup that may briefly leave duplicates in the feed.
+    // REQ-PIPE-008: kick off cross-chunk semantic dedup. Articles are already
+    // visible (run is ready) — finalize is a background cleanup that may
+    // briefly leave duplicates in the feed.
     //
-    // CF-002 follow-up: the previous KV-based gate (KV.get → KV.put)
-    // had its own TOCTOU — two concurrent last-chunk consumers could
-    // both read `null` and both call SCRAPE_FINALIZE.send, burning
-    // duplicate Workers AI calls. Migration 0008 added a
-    // finalize_enqueued column on scrape_runs; the conditional UPDATE
-    // below is atomic in D1 — only the consumer whose statement bumps
-    // the row from 0→1 sees `meta.changes === 1` and enqueues the
-    // finalize message. Every other concurrent or redelivered consumer
-    // sees `changes === 0` and short-circuits.
+    // CF-002 follow-up: conditional UPDATE is atomic in D1 — only the consumer
+    // whose statement bumps finalize_enqueued from 0 to 1 sees changes === 1
+    // and enqueues the finalize message. Every other concurrent or redelivered
+    // consumer short-circuits.
     const lockResult = await env.DB
       .prepare(
         'UPDATE scrape_runs SET finalize_enqueued = 1 WHERE id = ?1 AND finalize_enqueued = 0',
@@ -624,16 +685,9 @@ export async function processOneChunk(
       try {
         await env.SCRAPE_FINALIZE.send({ scrape_run_id: body.scrape_run_id });
       } catch (sendErr) {
-        // Roll back the lock so the queue redelivery can re-attempt
-        // the send. Without this, a transient send failure would mark
-        // finalize_enqueued = 1 forever, and the next redelivery
-        // would short-circuit, losing the finalize permanently.
-        //
-        // The rollback itself is wrapped — if D1 is the failing
-        // dependency we still want to surface the original send error
-        // to the queue retry path. Logging the rollback failure is
-        // the only way an operator can see the lock is now stranded
-        // at 1 and the finalize message is lost.
+        // Roll back the lock so queue redelivery can re-attempt the send.
+        // Without this, a transient send failure marks finalize_enqueued = 1
+        // forever and the finalize message is lost.
         try {
           await env.DB
             .prepare(
@@ -654,23 +708,7 @@ export async function processOneChunk(
     }
   }
 
-  log('info', 'digest.generation', {
-    status: 'chunk_ready',
-    scrape_run_id: body.scrape_run_id,
-    chunk_index: body.chunk_index,
-    total_chunks: body.total_chunks,
-    articles_ingested: articlesIngested,
-    articles_deduped: articlesDeduped,
-    tokens_in: tokensIn,
-    tokens_out: tokensOut,
-    estimated_cost_usd: costUsd,
-    alignment_mode: useEchoedIndex ? 'echoed_index' : 'positional_fallback',
-    articles_with_echoed_index: articlesWithEchoedIndex,
-    duplicate_echoed_index: duplicateEchoedIndex,
-    dropped_for_missing_alignment: droppedForMissingAlignment,
-    dropped_for_title_mismatch: droppedForTitleMismatch,
-  });
-
+  return { isFirstCompletion, completedCount };
 }
 
 // titlesShareAnyToken / tokenizeTitle moved to ~/lib/title-overlap (CF-058).
