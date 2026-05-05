@@ -24,6 +24,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
    c. Readable plaintext is extracted and attached to the candidate.
    d. When extraction yields too little text, the candidate falls back to whatever the feed itself provided.
    e. A failed body-fetch never blocks a summary.
+9. Every tag in the union of (default-seed hashtags ∪ curated source tags ∪ discovered KV tags) gets a per-tag Google News query-RSS source added to the tick's source list as a long-tail backstop. Tags already served by a bespoke hand-tuned Google News curated entry are skipped (no double-fetch). The aggregator-vs-direct dedup pass already prefers a direct publisher copy over a Google News copy that lands in the same tick, so wide GN fan-out gives every tag baseline coverage without polluting the article pool with aggregator duplicates when direct sources also surface the story.
 
 **Constraints:** CON-LLM-001, CON-PERF-001, CON-SEC-002
 **Priority:** P0
@@ -42,7 +43,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 **Acceptance Criteria:**
 1. Each chunk yields a JSON payload shaped `{articles: [{title, details[], tags[]}], dedup_groups: [[…]]}` and no other top-level keys.
 2. Titles are NYT-style headlines, 45–80 characters, active voice, rewritten rather than copied from the source feed. The 45–80 range is the prompt-side target; the consumer additionally enforces a hard sanity range of 5–500 characters server-side, dropping titles outside that range so genuinely broken cases (single-character labels, paragraph-as-title) never reach the reading surface.
-3. `details` is a plaintext body of 150–200 words split into 2 or 3 paragraphs (WHAT happened, HOW it works, and optionally IMPACT for the reader), each 3–5 sentences, with no lists, HTML, or Markdown. Responses under ~120 words are treated as malformed and dropped server-side, so a model that ignores the word-count instruction cannot ship a truncated body as a real article.
+3. `details` is a plaintext body of 150–200 words split into 2 or 3 paragraphs (WHAT happened, HOW it works, and optionally IMPACT for the reader), each 3–5 sentences, with no lists, HTML, or Markdown. The 150–200 range is the prompt-side contract; the consumer additionally enforces an 80-word backstop server-side, dropping responses below that threshold so a model that ships a single-sentence stub cannot reach the reading surface. The backstop is a true sanity floor (genuinely truncated outputs), not the model's normal operating range.
 4. `tags` values come exclusively from the system-approved allowlist — the union of the default-seed hashtag list shared with new accounts plus every tag for which a discovered-source cache currently exists. Any tag the LLM invents outside that union is discarded server-side before persistence, and an article that ends up with zero valid tags is dropped.
 5. Intra-chunk duplicates collapse via the `dedup_groups` hints: the earliest-published source becomes the primary article and the others are recorded as alternative sources.
 6. A chunk failure marks only that chunk's portion of the run as failed; other chunks in the same tick still persist their articles.
