@@ -51,28 +51,30 @@ interface DbFixture {
 function makeDb(fixture: DbFixture): D1Database {
   const prepare = vi.fn().mockImplementation((sql: string) => {
     const bound: unknown[] = [];
+    const ops = {
+      first: vi.fn().mockImplementation(async () => {
+        if (sql.includes('FROM users')) return ADMIN_USER_ROW;
+        if (sql.includes('SELECT COUNT(*) AS c FROM articles')) {
+          return { c: fixture.remaining };
+        }
+        return null;
+      }),
+      all: vi.fn().mockImplementation(async () => {
+        if (sql.includes('SELECT id, title, details_json')) {
+          return { results: fixture.pending };
+        }
+        return { results: [] };
+      }),
+      run: vi.fn().mockImplementation(async () => {
+        fixture.runCalls.push({ sql, params: [...bound] });
+        return { success: true, meta: { changes: 1 } };
+      }),
+    };
     const stmt = {
+      ...ops,
       bind: (...params: unknown[]) => {
         bound.push(...params);
-        return {
-          first: vi.fn().mockImplementation(async () => {
-            if (sql.includes('FROM users')) return ADMIN_USER_ROW;
-            if (sql.includes('SELECT COUNT(*) AS c FROM articles')) {
-              return { c: fixture.remaining };
-            }
-            return null;
-          }),
-          all: vi.fn().mockImplementation(async () => {
-            if (sql.includes('SELECT id, title, details_json')) {
-              return { results: fixture.pending };
-            }
-            return { results: [] };
-          }),
-          run: vi.fn().mockImplementation(async () => {
-            fixture.runCalls.push({ sql, params: [...bound] });
-            return { success: true, meta: { changes: 1 } };
-          }),
-        };
+        return ops;
       },
     };
     return stmt as unknown as D1PreparedStatement;
