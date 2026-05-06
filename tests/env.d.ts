@@ -13,6 +13,7 @@ declare namespace Cloudflare {
     SCRAPE_CHUNKS: Queue<import('../src/queue/scrape-chunk-consumer').ChunkJobMessage>;
     SCRAPE_FINALIZE: Queue<import('../src/queue/scrape-finalize-consumer').FinalizeJobMessage>;
     AI: Ai;
+    VECTORIZE: Vectorize;
     ASSETS: Fetcher;
     GH_OAUTH_CLIENT_ID: string;
     GH_OAUTH_CLIENT_SECRET: string;

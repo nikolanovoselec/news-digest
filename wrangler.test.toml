@@ -29,3 +29,12 @@ queue = "scrape-chunks-test"
 [[queues.producers]]
 binding = "SCRAPE_FINALIZE"
 queue = "scrape-finalize-test"
+
+# REQ-PIPE-003 — Vectorize binding for the test pool. workerd does
+# not back this binding with a real index in tests; it produces a
+# typed stub that throws on any call. Tests that exercise dedup
+# behaviour mock the binding directly. The declaration is here only
+# so the cloudflare:test Env type matches the production Env shape.
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "ai-news-embeddings-test"

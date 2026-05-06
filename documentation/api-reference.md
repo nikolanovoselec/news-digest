@@ -386,6 +386,38 @@ POST enforces Origin; GET is exempt (so operators can bookmark or `curl`).
 
 ---
 
+### POST /api/admin/embed-backfill
+
+Resumable embedding backfill for articles whose `embedding_status` is `NULL` or `'failed'`. Each call processes up to 50 rows oldest-first by `published_at`, embeds them via the AI binding, upserts the vectors into Vectorize, and stamps the row `embedding_status='embedded'`. Operators loop the route until `done: true`.
+
+| Method | Auth | Request body |
+|---|---|---|
+| `POST` | Admin session | empty |
+
+**Success (200):** `{ ok: true, processed: N, failed: M, remaining: K, done: boolean }` — `done` is `true` when `remaining` is 0 after the call. A row whose embed or upsert fails is stamped `'failed'` and counted under `failed`; the next call retries it.
+
+**Error responses:** `401 unauthorized` | `403 forbidden` | `500 "Backfill failed"`.
+
+**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)
+
+---
+
+### POST /api/admin/historical-dedup
+
+Resumable cross-article same-story sweep. Walks the article pool oldest-first by `published_at`; for each article, queries Vectorize for top-K matches above `DEDUP_COSINE_THRESHOLD` whose `published_at` is strictly newer, then folds every qualifying newer match into the current (older) article via `mergeAsAltSource`. Operators loop the route with the returned cursor until `done: true`.
+
+| Method | Auth | Request body |
+|---|---|---|
+| `POST` | Admin session | `{ "cursor"?: number, "batch"?: number }` (cursor = `published_at` lower bound from the previous call; batch defaults to 100, cap 500) |
+
+**Success (200):** `{ ok: true, scanned: N, merged: M, next_cursor: number, remaining: K, done: boolean }`.
+
+**Error responses:** `400 "batch out of range"` | `401 unauthorized` | `403 forbidden` | `500 "Sweep failed"`.
+
+**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9
+
+---
+
 ## SEO and Crawler Policy
 
 ### GET /sitemap.xml

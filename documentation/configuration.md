@@ -59,7 +59,7 @@ The deploy job reads these secrets from GitHub Actions. The first two are Cloudf
 
 For production deploys that DO bind Access, set this var and follow AD30 — bind Access on every public hostname the worker serves OR disable the unbound hostnames:
 1. **Set `CF_ACCESS_AUD`** — the audience tag of the Access application fronting the custom domain. The Worker enforces Layer 0 (assertion presence + `aud` claim match) before the baseline session + `ADMIN_EMAIL` checks run.
-2. **Bind Access on the `*.workers.dev` URL too OR disable that subdomain** — Workers & Pages → your worker → Settings → Domains & Routes → disable workers.dev (or attach the same Access application to it). Without this, an attacker hitting the worker via the unbound `workers.dev` URL bypasses the Access perimeter entirely; the session + `ADMIN_EMAIL` baseline still gates, but the perimeter promise is broken.
+2. **Bind Access on the `*.workers.dev` URL too OR disable that subdomain** — Workers & Pages → your worker → Settings → Domains & Routes. Without this, requests to the unbound `workers.dev` URL bypass the Access perimeter; the session + `ADMIN_EMAIL` baseline still gates, but the perimeter promise is broken.
 
 The deploy job also runs `wrangler secret delete DEV_BYPASS_USER_ID` (idempotent, silenced on not-found) on each deploy so any stray value cannot defeat the synthetic `__e2e__` sandbox. The workflow does not propagate this secret; operators who need it must set it manually via `wrangler secret put`.
 
@@ -75,11 +75,23 @@ Declared in `wrangler.toml`:
 | `KV` | KV namespace | Edge cache for discovered sources, headlines, source health |
 | `SCRAPE_COORDINATOR` | Queue producer | Producer binding — one message per every-4-hours cron tick kicks the coordinator |
 | `SCRAPE_CHUNKS` | Queue producer | Producer binding — one message per ~100-candidate LLM chunk |
-| `SCRAPE_FINALIZE` | Queue producer | Producer binding — one message per scrape run, enqueued by the last chunk consumer after the run is stamped `ready`; triggers the finalize pass ([REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)) |
-| `AI` | Workers AI | LLM inference for chunk summarization, source discovery, and the finalize pass (cross-chunk semantic dedup) |
+| `SCRAPE_FINALIZE` | Queue producer | Producer binding — one message per scrape run, enqueued by the last chunk consumer after the run is stamped `ready`; triggers the same-story dedup pass ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
+| `AI` | Workers AI | LLM inference for chunk summarization and source discovery, plus bge-base-en-v1.5 embedding generation for same-story dedup |
+| `VECTORIZE` | Vectorize index | 768-dim cosine index over every surviving article's embedding; queried in the finalize pass and by the historical re-run sweep ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
 | `ASSETS` | Fetcher (static assets) | Cloudflare static-asset binding for serving the Astro-built output; falls back to `new Response('news-digest')` in tests |
 
 All three queue consumers run with `max_batch_size = 1` (one isolate per message) and `max_retries = 3`.
+
+## Worker Vars (non-secret)
+
+Declared in `wrangler.toml` under `[vars]`. Forks may override per-environment via `[env.<name>.vars]`.
+
+| Var | Default | Purpose |
+|---|---|---|
+| `QUEUE_MAX_RETRIES` | `"3"` | Single source of truth for the queue retry cap. Read by the consumer batch handler; must match every queue consumer's `max_retries` literal in the same file. ([REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract)) |
+| `DEDUP_COSINE_THRESHOLD` | `"0.85"` | Cosine-similarity threshold for semantic same-story matching. Matches at or above this score are merged into the older article as alt-sources; tune lower to catch more pairs, higher to reduce false merges. Operators override per fork without a code change. ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
+
+The 0.85 default is validated against the production corpus (2026-05-06): same-event article pairs scored 0.81-0.91 pairwise; different events on the same topic scored 0.77-0.84; unrelated topics scored below 0.73. The threshold sits cleanly between the same-event cluster and the different-event band. If the embedding model changes or the corpus shifts substantially, re-validate against a fresh sample before relying on this number.
 
 ## Cron
 

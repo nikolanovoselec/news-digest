@@ -45,6 +45,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD29 | Cloudflare Access is opt-in additive perimeter; ADMIN_EMAIL gates admin alone | Security | 2026-05-05 |
 | AD30 | Cloudflare Access (when bound) MUST cover `*.workers.dev` too; not enforced in worker code | Security | 2026-05-05 |
 | AD31 | Google News baseline ownership: coordinator owns per-tag GN fan-out; discovery LLM no longer emits GN fallback | Architecture | 2026-05-06 |
+| AD32 | Same-story dedup uses Workers AI embeddings + Vectorize (replaces LLM finalize dedup) | Architecture | 2026-05-06 |
 
 ---
 
@@ -822,6 +823,35 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - The aggregator-vs-direct dedup pass continues to absorb GN-vs-direct overlap as it does today; no new behaviour is required of it.
 
 **Related requirements:** REQ-PIPE-001 AC 9, REQ-DISC-001 AC 3.
+
+---
+
+### AD32: Same-story dedup uses Workers AI embeddings + Vectorize, not LLM finalize call
+
+**Status:** Accepted (2026-05-06)
+
+**Decision:** Same-story dedup is performed by `@cf/baai/bge-base-en-v1.5` embeddings (768-dim cosine) stored in a dedicated Vectorize index. Every new article is embedded inline in the chunk consumer and upserted into the index; the finalize-pass consumer queries the index for each article in a run and folds matches above `DEDUP_COSINE_THRESHOLD` (default 0.85) whose `published_at` is older into the matched older article via `mergeAsAltSource`. The retention sweep dual-deletes from D1 and Vectorize so the index never holds vectors for evicted rows. The previous LLM-based finalize prompt is removed entirely.
+
+**Context:** Production scrape run `01KQZ0A6PKNP56H7B9MP1CWQS8` on 2026-05-06 produced four cards for one news event (Anthropic financial-services AI agents launch) under different headlines. D1 confirmed `finalize_recorded=1` (the LLM finalize ran and emitted `[]`). Two failure modes: (a) the prompt was heavily anti-merge after earlier false-merge incidents, and (b) at ~49-corpus scale gpt-oss-120b could not reliably hold the entire batch in working memory. URL-canonical dedup was working (~87 dupes/tick); the defect was downstream. Independent LLM-rewritten summaries of the same event share almost no token vocabulary (Jaccard ~0.10-0.13), so neither token-Jaccard nor body-Jaccard could catch them.
+
+**Alternatives considered:**
+
+- **Tighten the finalize LLM prompt** — rejected. The prompt was already tightened twice; the next tightening would re-introduce the false-merge failure mode the current prompt was guarding against. The corpus-scale problem (49 articles in a single context) is structural, not a prompt-tuning issue.
+- **Token-Jaccard fallback** — proven mathematically broken in the previous attempt (PR #205). Same-event Anthropic articles measured Jaccard 0.10-0.13 regardless of threshold tuning; no threshold could separate same-event from different-event without also dropping unrelated topics into the merge bucket.
+- **Cross-encoder reranker on top of dense retrieval** — rejected for v1. The cosine threshold alone (validated 0.81-0.91 same-event vs 0.77-0.84 different-event vs <0.73 unrelated on 11 production articles) gave a clean separation. Adding a reranker would double the AI binding's per-tick spend without evidence of false merges in the validation set.
+
+**Rationale:** Embeddings capture meaning, not vocabulary. Validation on the production corpus showed 0.85 cleanly separates same-event paraphrases from different-event articles on the same topic. Vectorize is queried by id (the article that was just embedded), so the matcher sees every surviving article in the pool, not just the current scrape tick — closing the cross-tick blind spot the LLM finalize had by construction. Cost shifts from one LLM call per finalize (gpt-oss-120b on ~49 articles) to one embedding call per ingested article (bge-base on 1-100 texts) — substantially cheaper at the per-article rate.
+
+**Consequences:**
+
+- REQ-PIPE-008 (LLM finalize dedup) is deprecated as of 2026-05-06; the finalize prompt and its parameters are removed from `src/lib/prompts.ts`.
+- The retention sweep (REQ-PIPE-005) MUST dual-delete: D1 row drop plus `VECTORIZE.deleteByIds`. Single-side deletes leak vectors that future articles will match against, producing phantom merges into rows that no longer exist.
+- Forks must provision their own Vectorize index (`ai-news-embeddings` for production, `ai-news-embeddings-integration` for the integration env). Index creation is wired into both deploy workflows via `wrangler vectorize create`, idempotent on subsequent deploys.
+- The 0.85 threshold is validated against the current corpus and embedding model. If the model is bumped or the corpus shifts substantially, re-validate against a fresh sample before relying on this number. Operators tune via `DEDUP_COSINE_THRESHOLD` without a code change.
+- Vectorize cold-start lag on the first query of a new index (≈30 s) means the first scrape tick after a fresh deploy may produce duplicates; the historical-dedup admin route resolves them on demand.
+- Embedding-model drift: bge-base-en-v1.5 is pinned by id in `src/lib/embeddings.ts`. A future Cloudflare catalogue upgrade does not silently change the vector space.
+
+**Related requirements:** REQ-PIPE-003, REQ-PIPE-005, REQ-PIPE-008 (deprecated).
 
 ---
 

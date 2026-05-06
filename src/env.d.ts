@@ -17,6 +17,10 @@ interface Env {
   SCRAPE_CHUNKS: Queue<import('./queue/scrape-chunk-consumer').ChunkJobMessage>;
   SCRAPE_FINALIZE: Queue<import('./queue/scrape-finalize-consumer').FinalizeJobMessage>;
   AI: Ai;
+  // Cloudflare Vectorize index used for semantic article dedup.
+  // 768-dim cosine, populated by the chunk-consumer + admin
+  // backfill route. See REQ-PIPE-003 + AD33.
+  VECTORIZE: Vectorize;
   ASSETS: Fetcher;
 
   // Secrets
@@ -61,4 +65,11 @@ interface Env {
   // and falls back to 3 when unset (e.g. unit-test environments that
   // mock Env directly).
   QUEUE_MAX_RETRIES?: string;
+
+  // Cosine threshold for semantic dedup. Articles whose Vectorize
+  // top-K match scores at or above this are merged into the older
+  // article as alt-sources (REQ-PIPE-003). String-typed for parity
+  // with QUEUE_MAX_RETRIES; the runtime parses to float and falls
+  // back to 0.85 when unset.
+  DEDUP_COSINE_THRESHOLD?: string;
 }

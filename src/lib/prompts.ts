@@ -52,18 +52,6 @@ export const CHUNK_LLM_PARAMS = {
 } as const;
 
 /**
- * Finalize-prompt budget — output is just a `dedup_groups: number[][]`
- * payload, typically <100 tokens. The 50K cap inherited from the
- * shared variant was wasteful in both reservation and observability.
- * 4K leaves comfortable headroom for an over-eager LLM without
- * misrepresenting the call's actual token footprint.
- */
-export const FINALIZE_LLM_PARAMS = {
-  ...LLM_BASE_PARAMS,
-  max_tokens: 4_000,
-} as const;
-
-/**
  * Discovery-prompt budget — output is `{ feeds: [{ url, name, kind }] }`,
  * usually a handful of entries. Same 4K cap as finalize: small JSON
  * envelope, no benefit from the chunk-sized 50K reservation.
@@ -186,7 +174,6 @@ const URL_MAX_CHARS = 1000;
 // upstream regression that produced a 30K-char snippet would still
 // be clamped here. Defense-in-depth, per CF-013.
 const BODY_SNIPPET_MAX_CHARS = 16000;
-const DETAILS_MAX_CHARS = 4000;
 
 function sanitizePromptField(value: string, maxChars: number): string {
   const stripped = value.replace(/`{3,}/g, '[code-block]');
@@ -249,81 +236,14 @@ Return JSON:
 }`;
 }
 
-// Implements REQ-PIPE-008
-//
-// Cross-chunk dedup pass. Runs once per scrape tick AFTER all chunks
-// have written their articles to D1. Sees title + the full summary
-// body for each candidate (the same `details` text the dashboard
-// shows) so the model can identify same-story pairs by their actual
-// content rather than by surface lexical overlap on the headline
-// alone. Source name is deliberately excluded as a signal — two
-// outlets covering the same event were occasionally blocked from
-// clustering by a name mismatch (REQ-PIPE-008 AC 1, revised 2026-05-03).
-// Output is the same `dedup_groups: number[][]` JSON contract as
-// PROCESS_CHUNK_SYSTEM so the parsing path can be reused; we
-// deliberately drop the `articles` field so the model doesn't waste
-// tokens echoing back summaries the consumer already has.
-
-export const FINALIZE_DEDUP_SYSTEM = `You receive scraped news articles and identify pairs/groups that describe the same news event.
-
-# OUTPUT FORMAT
-
-Return ONE JSON object, nothing else. No prose, no code fences, no text before "{" or after "}".
-
-Shape:
-{"dedup_groups":[[0,3],[1,2,5]]}
-
-- "dedup_groups": arrays of input-candidate indices that describe the same news event (e.g. TechCrunch and The Verge both covering the same vendor announcement; vendor blog and HN mirror; press release and reporter's write-up). Only include groups of size >= 2.
-- Use [] when no groups describe the same event.
-- Be CONSERVATIVE: only group items when you are confident they describe the SAME news event, not just the same broad topic. Two unrelated stories about Kubernetes are NOT a group; two articles about the same Kubernetes 1.34 release announcement ARE.
-- Ground every grouping decision in the SUMMARY BODY, not the headline alone. Two articles with similar-sounding titles but disjoint factual content are NOT the same event. Two articles whose bodies describe the same announcement / incident / release / paper ARE the same event even if their titles read very differently.
-
-# WHAT COUNTS AS THE SAME EVENT
-
-- Same vendor + same product launch / version release / feature announcement.
-- Same incident / outage / security disclosure.
-- Same acquisition / funding round / partnership.
-- Same paper / research finding / benchmark result.
-
-# WHAT DOES NOT COUNT
-
-- Two stories about the same product but covering different features / different versions.
-- Two stories about the same vendor but unrelated launches.
-- Two opinion pieces on the same topic from different angles.
-- Two studies / audits / benchmarks on the same topic citing DIFFERENT numbers, methodology, or authors. Example: "25% of MCP servers vulnerable" and "6.2% of MCP servers vulnerable" are DIFFERENT studies and must NEVER be merged, even though both bodies discuss MCP RCE risk. The numerical specificity is the load-bearing signal — when in doubt, leave them ungrouped.
-
-# WHEN IN DOUBT, DO NOT MERGE
-
-A false split (two cards in the digest that could have been one) is cheap. A false merge (one of two real stories disappears) is expensive — the user loses a story they would have read. Default to splitting; only group when the bodies overlap on the SAME specific facts (same numbers, same names, same date, same product version).`;
-
-/**
- * Build the user message for the cross-chunk dedup call. Each candidate
- * is rendered as a `[N] title` line followed by the candidate's full
- * `details` body, so the model has both the headline and the grounded
- * factual content to compare. Source name is intentionally NOT
- * included — REQ-PIPE-008 AC 1 makes this an explicit non-signal so
- * two outlets covering the same event are never blocked from
- * clustering by a publisher-name mismatch.
- */
-export function finalizeDedupUserPrompt(
-  candidates: ReadonlyArray<{
-    index: number;
-    title: string;
-    details: string;
-    published_at: number;
-  }>,
-): string {
-  const blocks = candidates.map(
-    (c) =>
-      `[${c.index}] ${sanitizePromptField(c.title, TITLE_MAX_CHARS)} (published_at: ${c.published_at})\n${sanitizePromptField(c.details, DETAILS_MAX_CHARS)}`,
-  );
-  return `Candidates (${candidates.length} entries, 0-indexed). Each candidate is a headline followed by its full summary body. Decide whether two candidates describe the same news event by comparing their bodies, not their headlines:
-\`\`\`
-${blocks.join('\n\n---\n\n')}
-\`\`\`
-
-Return JSON: {"dedup_groups":[[idx, idx, ...], ...]} or {"dedup_groups":[]} when none describe the same event.`;
-}
+// REQ-PIPE-003: cross-tick semantic dedup runs against Cloudflare
+// Vectorize using bge-base-en-v1.5 embeddings. The previous
+// FINALIZE_DEDUP_SYSTEM / finalizeDedupUserPrompt / FINALIZE_LLM_PARAMS
+// trio was removed 2026-05-06 — independent LLM-rewritten summaries of
+// the same event share too little vocabulary for any LLM dedup call to
+// catch reliably at scale, and the embedding-based approach gives
+// deterministic same-event collapse with zero per-tick LLM cost. See
+// AD33 (Vectorize + embeddings) for evidence.
 
 export const DISCOVERY_SYSTEM = `You are a JSON API. You suggest authoritative, stable, publicly accessible RSS/Atom/JSON feed URLs for a given technology or topic, and output JSON.
 

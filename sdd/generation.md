@@ -41,11 +41,11 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 **Applies To:** System
 
 **Acceptance Criteria:**
-1. Each chunk yields a JSON payload shaped `{articles: [{title, details[], tags[]}]}` and no other top-level keys. Cross-source dedup is performed in a separate finalize pass over the full tick rather than at the chunk level, so the chunk pass is summarisation-only (every input candidate gets its own entry).
+1. Each chunk yields a JSON payload shaped `{articles: [{title, details[], tags[]}]}` and no other top-level keys. Cross-source dedup is performed in the separate same-story dedup pass (REQ-PIPE-003) over the surviving article pool rather than at the chunk level, so the chunk pass is summarisation-only (every input candidate gets its own entry).
 2. Titles are NYT-style headlines, 45–80 characters, active voice, rewritten rather than copied from the source feed. The 45–80 range is the prompt-side target; the consumer additionally enforces a hard sanity range of 5–500 characters server-side, dropping titles outside that range so genuinely broken cases (single-character labels, paragraph-as-title) never reach the reading surface.
 3. `details` is a plaintext body of 100–150 words split into 2 or 3 paragraphs (WHAT happened, HOW it works, and optionally IMPACT for the reader), each 2–4 sentences, with no lists, HTML, or Markdown. The 100–150 range is the prompt-side contract; the consumer additionally enforces an 80-word backstop server-side, dropping responses below that threshold so a model that ships a single-sentence stub cannot reach the reading surface. The backstop is a true sanity floor (genuinely truncated outputs), not the model's normal operating range.
 4. `tags` values come exclusively from the system-approved allowlist — the union of the default-seed hashtag list shared with new accounts plus every tag for which a discovered-source cache currently exists. Any tag the LLM invents outside that union is discarded server-side before persistence, and an article that ends up with zero valid tags is dropped.
-5. Same-story collapse runs in the cross-chunk finalize pass (REQ-PIPE-008), not in the per-chunk call. The chunk pass emits one entry per input candidate; the finalize pass over the full tick is the single point where same-story groups are formed and the earliest-published source becomes the primary article with the others recorded as alternative sources.
+5. Same-story collapse runs in the same-story dedup pass (REQ-PIPE-003), not in the per-chunk call. The chunk pass emits one entry per input candidate; the same-story dedup pass over the surviving article pool is the single point where same-story groups are formed and the earliest-published source becomes the primary article with the others recorded as alternative sources.
 6. A chunk failure marks only that chunk's portion of the run as failed; other chunks in the same tick still persist their articles.
 7. Every article returned by the LLM echoes its input candidate's index; the consumer aligns output back to the input by that echoed value, dropping any article whose index is missing, invalid, or does not match an input candidate so a summary can never be stapled to the wrong canonical URL.
 8. Before a summary is persisted, the consumer verifies the LLM-generated title shares at least one substantive non-stopword token with the source candidate's headline; summaries with zero topical overlap are dropped so a mis-wired LLM response can never appear as a real article.
@@ -58,19 +58,22 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 ---
 
-### REQ-PIPE-003: Canonical-URL + LLM-cluster dedupe with first-source-wins
+### REQ-PIPE-003: Same-story dedupe across the entire article history
 
-**Intent:** The same story published by five outlets appears as one primary card with four alternative-source links rather than five duplicate cards.
+**Intent:** The same story published by five outlets appears as one primary card with four alternative-source links rather than five duplicate cards. Two outlets that paraphrase the same event under different headlines collapse to a single card even when they share almost no surface vocabulary, and the collapse holds across scrape ticks so a story discovered today never produces a second card when a different outlet covers the same event tomorrow.
 
 **Applies To:** System
 
 **Acceptance Criteria:**
-1. URLs are canonicalised by stripping `utm_*` and `fbclid` tracking parameters, trimming trailing slashes, and removing default ports before any comparison.
-2. Clusters are merged per the LLM's same-story hints from the cross-chunk finalize pass (REQ-PIPE-008), not only by canonical-URL equality. The finalize pass is the single point of LLM-driven same-story collapse — chunk-level passes emit one entry per candidate.
-3. Within a cluster the earliest-published source becomes the primary article; the remaining members are persisted as alternative sources for that article.
-4. A canonical URL already present in the article pool is skipped on subsequent ticks — re-ingestion never produces a duplicate primary card.
-5. A single-source article (no cluster members) is persisted with zero alternative-source rows.
-6. When the same story appears under both a direct publisher / community link and an aggregator-wrapper link whose canonical form differs from the publisher's (e.g., a Google News URL), the aggregator-wrapper copy is dropped in favour of the direct copy and any tag-of-discovery state from the dropped copy is merged onto the surviving direct article. When no direct copy is present, the aggregator-wrapper copy is kept so coverage of stories no direct source surfaced is preserved.
+1. URLs are canonicalised by stripping `utm_*` and `fbclid` tracking parameters, trimming trailing slashes, and removing default ports before any comparison. A canonical URL already present in the article pool is skipped on subsequent ticks so re-ingestion never produces a duplicate primary card.
+2. Articles describing the same news event are collapsed to a single primary card regardless of whether their headlines share vocabulary. Same-event detection runs across the entire surviving article pool (not only the current scrape tick), so a story already in the pool absorbs a newly-arrived duplicate as an alternative source even when the duplicate landed in a later scrape run.
+3. When two articles are recognised as the same story, the article with the earlier publication time survives as the primary card and the later one is recorded as an alternative source on it. Source links, tag union, stars, and read marks from the later article are preserved on the surviving primary card so a user never loses a star or a read by virtue of dedup.
+4. A single-source article (no same-story matches) is persisted with zero alternative-source rows.
+5. When the same story appears under both a direct publisher / community link and an aggregator-wrapper link whose canonical form differs from the publisher's (e.g., a Google News URL), the aggregator-wrapper copy is dropped in favour of the direct copy and any tag-of-discovery state from the dropped copy is merged onto the surviving direct article. When no direct copy is present, the aggregator-wrapper copy is kept so coverage of stories no direct source surfaced is preserved.
+6. Articles become visible to users as soon as the scrape run reaches `ready`. Cross-tick same-story matching runs asynchronously after that, so a user may briefly see two cards for the same story; the window is bounded by the queue's processing latency and the second card is replaced by an alternative-source row on the surviving card on the next pass of the asynchronous matcher.
+7. Two studies, audits, or benchmarks on the same topic that cite different numbers, methodologies, or authors are treated as distinct stories and never merged - even when they discuss identical subject matter - so conflicting findings on the same topic remain visible as separate cards on the dashboard.
+8. The retention sweep (REQ-PIPE-005) that drops articles older than 14 days also removes the corresponding entries from the same-story index, so a deleted article can never be cited as a "match" for a future article and starred articles preserved past the retention window keep their same-story matching capability.
+9. An operator can re-run same-story matching across the entire historical article pool on demand (admin-gated), so a threshold change or backfill can re-collapse duplicates that existed before the new behaviour shipped without waiting for natural churn.
 
 **Constraints:** CON-SEC-002
 **Priority:** P0
@@ -167,6 +170,8 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 ### REQ-PIPE-008: Cross-chunk semantic dedup pass
 
+Superseded by REQ-PIPE-003's same-story dedupe across the entire article history (2026-05-06). The LLM-based finalize pass is gone; semantic same-story matching now runs against an embedding index over every surviving article rather than only against the current scrape tick's titles.
+
 **Intent:** When the same news story arrives from two sources that landed in different chunks of the same scrape tick, the per-chunk dedup hint cannot collapse them — they were never in the same LLM context. A single post-merge LLM call over the surviving titles plus source names catches these cross-chunk pairs so the dashboard shows one card with two alternative sources rather than two near-identical cards.
 
 **Applies To:** System
@@ -192,7 +197,9 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 **Priority:** P1
 **Dependencies:** REQ-PIPE-002, REQ-PIPE-003
 **Verification:** Integration test
-**Status:** Implemented
+**Status:** Deprecated
+**Replaced By:** REQ-PIPE-003
+**Removed In:** 2026-05-06
 
 ---
 
