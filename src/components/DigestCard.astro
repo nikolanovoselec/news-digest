@@ -470,14 +470,12 @@ const altLabel = formatAltSourceLabel(altCount);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
-  /* "+N" suffix sits inline with the source name. Same metadata
-     treatment (small-caps, muted text) but slightly de-emphasised
-     via reduced opacity so the publisher name stays the primary
-     attribution and the count reads as a secondary annotation. */
+  /* "+N" suffix inherits the source-name typography (size, weight,
+     letter-spacing, small-caps) so the count reads as part of the same
+     metadata line; only the colour is dimmed so the publisher stays
+     the primary attribution. */
   .digest-card__alt-count {
     opacity: 0.7;
-    font-weight: 500;
-    letter-spacing: 0.08em;
   }
 
   /* Popover — always in the DOM, hidden via visibility + opacity so

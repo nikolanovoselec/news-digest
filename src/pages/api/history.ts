@@ -161,7 +161,7 @@ export async function GET(context: APIContext): Promise<Response> {
       `a.published_at, a.ingested_at, a.details_json, ` +
       `(SELECT json_group_array(DISTINCT at.tag) FROM article_tags at ` +
       `WHERE at.article_id = a.id) AS tags_json, ` +
-      `(SELECT COUNT(*) FROM article_sources s WHERE s.article_id = a.id) AS alt_source_count, ` +
+      `(SELECT COUNT(*) FROM article_sources s WHERE s.article_id = a.id AND s.source_url != a.primary_source_url) AS alt_source_count, ` +
       `EXISTS(SELECT 1 FROM article_stars st WHERE st.article_id = a.id AND st.user_id = ?1) AS starred ` +
       `FROM articles a ` +
       `WHERE a.ingested_at >= ?2 ` +

@@ -430,7 +430,7 @@ Each day group contains: `local_date`, `article_count`, `articles[]` (filtered t
 
 Each article in `articles[]` includes a `starred: boolean` field reflecting the authenticated user's current star state. The value is `true` when a row exists in `article_stars` for that `(user_id, article_id)` pair, `false` otherwise. This lets `/history` render the star glyph and `aria-pressed` state server-side on initial load without a separate fetch.
 
-Each article also includes `alt_source_count: number` — the count of additional sources beyond the primary that reported the same story (`COUNT(*) FROM article_sources WHERE article_id = a.id`). A value of `0` means only one source; values `> 0` drive the `+N` suffix on the DigestCard source label across all card grids (dashboard, history, starred).
+Each article also includes `alt_source_count: number` — the count of sources in `article_sources` whose `source_url` differs from `primary_source_url` (`COUNT(*) WHERE source_url != primary_source_url`). A value of `0` means no alternative sources exist; values `> 0` drive the `+N` suffix on the DigestCard source label across all card grids (dashboard, history, starred). This matches the modal filter used on the detail page, which also excludes the primary URL from the alt-source list.
 
 `?q=` and `?tags=` are page-level URL state read client-side; they are not server query params.
 

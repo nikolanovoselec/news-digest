@@ -7,7 +7,7 @@
 // on the observable behaviour contracts.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { processOneChunk } from '~/queue/scrape-chunk-consumer';
+import { processOneChunk, handleChunkBatch } from '~/queue/scrape-chunk-consumer';
 import type { ChunkJobMessage } from '~/queue/scrape-chunk-consumer';
 import { PROCESS_CHUNK_SYSTEM } from '~/lib/prompts';
 
@@ -1119,5 +1119,99 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
       (r) => r.via === 'batch' && r.sql.startsWith('INSERT OR IGNORE INTO articles'),
     );
     expect(articleInserts).toHaveLength(0);
+  });
+
+  // Partial-success rescue ladder. The 2026-05-05 incident: chunks 0+2
+  // ingested 5 articles, chunk 1 timed out at AiError 3046 and exhausted
+  // its retries; without onTerminalFailure the run flipped to 'failed'
+  // even though articles existed for the user. The handleChunkBatch
+  // rescue path inspects scrape_chunk_completions to decide between
+  // 'ready' (≥1 sibling completed) and 'failed' (none completed) on
+  // the final retry, then enqueues finalize for the partial-success case.
+  it('REQ-PIPE-002 / REQ-PIPE-008 partial-success rescue: terminal failure with completed > 0 marks run ready and enqueues finalize', async () => {
+    const { db, records } = makeDb({ initialCompletedChunks: 2 });
+    const { kv } = makeKv();
+    // AI throws on every attempt — the rescue path is the contract here,
+    // not the LLM call.
+    const env = makeEnv(db, kv, {});
+    (env.AI.run as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('AiError: 3046: Request timeout'),
+    );
+    const sendMock = (env.SCRAPE_FINALIZE as unknown as { send: ReturnType<typeof vi.fn> }).send;
+
+    const message = {
+      body: { scrape_run_id: 'partial-run', chunk_index: 1, total_chunks: 3, candidates: [] } as ChunkJobMessage,
+      attempts: 3,
+      ack: vi.fn(),
+      retry: vi.fn(),
+    };
+    const batch = { messages: [message] } as unknown as MessageBatch<ChunkJobMessage>;
+    await handleChunkBatch(batch, env);
+
+    // finishRun(scrape_run_id, 'ready') — UPDATE scrape_runs … SET status = 'ready' …
+    const finishReady = records.find(
+      (r) =>
+        r.sql.includes('UPDATE scrape_runs') &&
+        r.sql.includes("status = 'running'") &&
+        r.sql.includes('SET status = ?2') &&
+        r.params[1] === 'ready' &&
+        r.params[0] === 'partial-run',
+    );
+    expect(finishReady).toBeDefined();
+
+    // Atomic finalize lock acquired AND finalize message sent.
+    const lock = records.find(
+      (r) =>
+        r.sql.includes('UPDATE scrape_runs') &&
+        r.sql.includes('finalize_enqueued = 1') &&
+        r.sql.includes('finalize_enqueued = 0') &&
+        r.params[0] === 'partial-run',
+    );
+    expect(lock).toBeDefined();
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(sendMock).toHaveBeenCalledWith({ scrape_run_id: 'partial-run' });
+
+    // The original throw still propagates to retry() so CF queue stats
+    // record the failure visibly.
+    expect(message.retry).toHaveBeenCalledTimes(1);
+  });
+
+  it('REQ-PIPE-002 / REQ-PIPE-008 partial-success rescue: terminal failure with zero completions marks run failed and does NOT enqueue finalize', async () => {
+    const { db, records } = makeDb({ initialCompletedChunks: 0 });
+    const { kv } = makeKv();
+    const env = makeEnv(db, kv, {});
+    (env.AI.run as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('AiError: 3046: Request timeout'),
+    );
+    const sendMock = (env.SCRAPE_FINALIZE as unknown as { send: ReturnType<typeof vi.fn> }).send;
+
+    const message = {
+      body: { scrape_run_id: 'failed-run', chunk_index: 0, total_chunks: 1, candidates: [] } as ChunkJobMessage,
+      attempts: 3,
+      ack: vi.fn(),
+      retry: vi.fn(),
+    };
+    const batch = { messages: [message] } as unknown as MessageBatch<ChunkJobMessage>;
+    await handleChunkBatch(batch, env);
+
+    const finishFailed = records.find(
+      (r) =>
+        r.sql.includes('UPDATE scrape_runs') &&
+        r.sql.includes("status = 'running'") &&
+        r.sql.includes('SET status = ?2') &&
+        r.params[1] === 'failed' &&
+        r.params[0] === 'failed-run',
+    );
+    expect(finishFailed).toBeDefined();
+
+    // No finalize enqueue when nothing completed.
+    expect(sendMock).not.toHaveBeenCalled();
+    const lock = records.find(
+      (r) =>
+        r.sql.includes('UPDATE scrape_runs') &&
+        r.sql.includes('finalize_enqueued = 1') &&
+        r.params[0] === 'failed-run',
+    );
+    expect(lock).toBeUndefined();
   });
 });
