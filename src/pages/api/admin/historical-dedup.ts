@@ -1,7 +1,7 @@
 // Implements REQ-PIPE-003
 // Implements REQ-AUTH-001
 //
-// Operator-only historical-dedup sweep. POST/GET
+// Operator-only historical-dedup sweep. POST
 // /api/admin/historical-dedup walks already-embedded articles
 // oldest-first and merges any newer near-duplicates into them as
 // alt-sources via {@link mergeAsAltSource}. Newer matches are
