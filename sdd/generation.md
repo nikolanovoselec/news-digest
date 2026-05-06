@@ -71,6 +71,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 4. A canonical URL already present in the article pool is skipped on subsequent ticks — re-ingestion never produces a duplicate primary card.
 5. A single-source article (no cluster members) is persisted with zero alternative-source rows.
 6. When the same story appears under both a direct publisher / community link and an aggregator-wrapper link whose canonical form differs from the publisher's (e.g., a Google News URL), the aggregator-wrapper copy is dropped in favour of the direct copy and any tag-of-discovery state from the dropped copy is merged onto the surviving direct article. When no direct copy is present, the aggregator-wrapper copy is kept so coverage of stories no direct source surfaced is preserved.
+7. When a single publisher feed surfaces multiple near-duplicate framings of the same event under distinct canonical URLs within the same day (the topical-aggregator case where canonical-URL clustering misses them and the cross-chunk finalize pass cannot reliably catch them once fanned out across chunks), the duplicates are collapsed into one card before chunk dispatch. The earliest-published copy survives as the primary; the rest are recorded as alternative sources. The collapse never crosses publisher boundaries — two outlets covering the same event are still handled by the cross-chunk finalize pass (REQ-PIPE-008), not here.
 
 **Constraints:** CON-SEC-002
 **Priority:** P0
