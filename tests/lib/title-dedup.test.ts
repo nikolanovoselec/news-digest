@@ -9,7 +9,6 @@ function candidate(overrides: Partial<Candidate>): Candidate {
     source_name: 'Example Source',
     title: 'Untitled',
     published_at: 1_700_000_000,
-    body_snippet: undefined,
     ...overrides,
   };
 }
