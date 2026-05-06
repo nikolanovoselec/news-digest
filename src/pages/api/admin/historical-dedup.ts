@@ -35,7 +35,12 @@ import { requireAdminSession } from '~/middleware/admin-auth';
 import { applyRefreshCookie } from '~/middleware/auth';
 import { originOf } from '~/middleware/origin-check';
 import { mergeAsAltSource } from '~/lib/finalize-merge';
-import { readCosineThreshold, deleteVectorsBatched } from '~/lib/embeddings';
+import {
+  readCosineThreshold,
+  readSameVendorPenalty,
+  deleteVectorsBatched,
+} from '~/lib/embeddings';
+import { sameVendor } from '~/lib/etld';
 
 /** Default articles scanned per call when the caller omits `batch`. */
 const DEFAULT_BATCH = 100;
@@ -52,6 +57,7 @@ const VECTORIZE_TOPK = 5;
 interface ArticleRow {
   id: string;
   published_at: number;
+  primary_source_url: string;
 }
 
 interface DedupResult {
@@ -230,6 +236,7 @@ async function runHistoricalDedupBatch(
   batch: number,
 ): Promise<DedupResult> {
   const threshold = readCosineThreshold(env);
+  const sameVendorPenalty = readSameVendorPenalty(env);
 
   // Walk articles by ascending published_at, starting strictly after
   // the supplied cursor (or from the beginning when null). Only
@@ -238,7 +245,7 @@ async function runHistoricalDedupBatch(
   const cursorBind = cursor ?? -1;
   const result = await env.DB
     .prepare(
-      `SELECT id, published_at
+      `SELECT id, published_at, primary_source_url
          FROM articles
         WHERE embedding_status = 'embedded'
           AND published_at > ?1
@@ -285,11 +292,27 @@ async function runHistoricalDedupBatch(
     for (const match of matches) {
       if (match.id === self.id) continue;
       if (removedIds.has(match.id)) continue;
-      if (match.score < threshold) continue;
-      const meta = match.metadata as { published_at?: unknown } | undefined;
+      const meta = match.metadata as
+        | { published_at?: unknown; primary_source_url?: unknown }
+        | undefined;
       const matchPublishedAt =
         typeof meta?.published_at === 'number' ? meta.published_at : null;
       if (matchPublishedAt === null) continue;
+      // Same-vendor cosine penalty (REQ-PIPE-003 AC 11). Subtracts
+      // the configured offset before comparing to the threshold so
+      // same-publisher pairs need a stronger signal than cross-
+      // publisher pairs to merge — neutralises publisher-style
+      // boilerplate inflating cosines on LLM-summary embeddings.
+      const matchUrl =
+        typeof meta?.primary_source_url === 'string'
+          ? meta.primary_source_url
+          : '';
+      const sameEtld1 =
+        matchUrl !== '' && sameVendor(self.primary_source_url, matchUrl);
+      const adjustedScore = sameEtld1
+        ? match.score - sameVendorPenalty
+        : match.score;
+      if (adjustedScore < threshold) continue;
       // We're walking oldest-first: any match with strictly NEWER
       // published_at is a candidate to fold into self. Older or
       // equal-time matches are skipped — they were either already

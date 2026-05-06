@@ -37,6 +37,7 @@ interface ArticleRow {
   id: string;
   title: string;
   details_json: string;
+  source_snippet: string | null;
   published_at: number;
   primary_source_url: string;
 }
@@ -83,6 +84,23 @@ async function handle(context: APIContext): Promise<Response> {
     return new Response(null, {
       status: 303,
       headers: { Location: `${appOrigin}/settings?embed=denied` },
+    });
+  }
+
+  // ?reembed=1 forces a re-embed of every article regardless of
+  // current embedding_status. Used after the embedding input or model
+  // changes (REQ-PIPE-003 AC 12) — the operator clicks the button on
+  // /settings, the route flips every row to 'failed' in one UPDATE,
+  // and the existing batch loop picks them up oldest-first. Idempotent
+  // when re-fired mid-loop because already-flipped rows simply stay
+  // in the SELECT predicate.
+  const reembed = context.url.searchParams.get('reembed') === '1';
+  if (reembed) {
+    await env.DB
+      .prepare(`UPDATE articles SET embedding_status = 'failed'`)
+      .run();
+    log('info', 'digest.generation', {
+      status: 'embed_backfill_reembed_requested',
     });
   }
 
@@ -189,7 +207,8 @@ async function handle(context: APIContext): Promise<Response> {
 async function runOneBackfillBatch(env: Env): Promise<BatchResult> {
   const result = await env.DB
     .prepare(
-      `SELECT id, title, details_json, published_at, primary_source_url
+      `SELECT id, title, details_json, source_snippet, published_at,
+              primary_source_url
          FROM articles
         WHERE embedding_status IS NULL OR embedding_status = 'failed'
         ORDER BY published_at ASC

@@ -39,7 +39,12 @@ import { log } from '~/lib/log';
 import { applyForeignKeysPragma } from '~/lib/db';
 import { mergeAsAltSource } from '~/lib/finalize-merge';
 import { handleBatch } from '~/lib/queue-handler';
-import { readCosineThreshold, deleteVectorsBatched } from '~/lib/embeddings';
+import {
+  readCosineThreshold,
+  readSameVendorPenalty,
+  deleteVectorsBatched,
+} from '~/lib/embeddings';
+import { sameVendor } from '~/lib/etld';
 
 /** Hard cap on candidates per finalize call. Comfortable headroom over
  *  current production loads (~150-200 articles per tick). Vectorize
@@ -63,6 +68,7 @@ interface ArticleRow {
   id: string;
   published_at: number;
   ingested_at: number;
+  primary_source_url: string;
 }
 
 /** Handle one batch of `scrape-finalize` messages. Per REQ-PIPE-008
@@ -113,7 +119,7 @@ export async function processOneFinalize(
   // them later.
   const result = await env.DB
     .prepare(
-      `SELECT id, published_at, ingested_at
+      `SELECT id, published_at, ingested_at, primary_source_url
          FROM articles
         WHERE scrape_run_id = ?1
           AND embedding_status = 'embedded'
@@ -137,6 +143,7 @@ export async function processOneFinalize(
   }
 
   const threshold = readCosineThreshold(env);
+  const sameVendorPenalty = readSameVendorPenalty(env);
 
   // Step 2 — for each article, query Vectorize for top-K matches and
   // pick the oldest sufficiently-similar older article (if any).
@@ -175,11 +182,29 @@ export async function processOneFinalize(
 
     for (const match of matches) {
       if (match.id === self.id) continue;
-      if (match.score < threshold) continue;
-      const meta = match.metadata as { published_at?: unknown } | undefined;
+      const meta = match.metadata as
+        | { published_at?: unknown; primary_source_url?: unknown }
+        | undefined;
       const matchPublishedAt =
         typeof meta?.published_at === 'number' ? meta.published_at : null;
       if (matchPublishedAt === null) continue;
+      // Apply the same-vendor cosine penalty BEFORE the threshold gate.
+      // Same-publisher pairs (cloud.google.com vs blog.google,
+      // workos.com vs blog.workos.com) consistently produced inflated
+      // cosines on LLM-summary embeddings because the model carried
+      // publisher-style boilerplate; the offset neutralises that
+      // without forbidding genuine same-publisher merges (a very
+      // strong source-text match still clears 0.85 + 0.05 = 0.90).
+      const matchUrl =
+        typeof meta?.primary_source_url === 'string'
+          ? meta.primary_source_url
+          : '';
+      const sameEtld1 =
+        matchUrl !== '' && sameVendor(self.primary_source_url, matchUrl);
+      const adjustedScore = sameEtld1
+        ? match.score - sameVendorPenalty
+        : match.score;
+      if (adjustedScore < threshold) continue;
       // Only merge into STRICTLY older articles. Equal-published_at
       // matches (rare, possible for press-release feeds publishing the
       // same minute) keep both rows so the standalone tiebreak rule

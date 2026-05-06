@@ -194,6 +194,12 @@ interface PreparedArticle {
   primary_source_name: string;
   alternatives: Array<{ source_url: string; source_name: string }>;
   published_at: number;
+  /** Raw scraped body excerpts (primary + alts joined). Becomes the
+   *  embedding input via buildEmbeddingInput; persisted to D1 so the
+   *  embed-backfill route can re-embed without re-scraping. NULL when
+   *  no candidate carried a body_snippet (rare — scrapers always set
+   *  one when the source page returned text). */
+  source_snippet: string | null;
   /** Per-article embedding lifecycle state set after embedTexts.
    *  `embedded` — vector present in `embedding`, will be upserted to
    *  Vectorize after the D1 batch succeeds.
@@ -671,6 +677,22 @@ function validateAndSanitizeArticle(
   if (tags.length === 0) return null;
 
   const primary = s.cluster.primary;
+  // Concat primary + alt body snippets so the embedding sees the
+  // widest available source-text surface for this story. Each
+  // candidate has its own pre-LLM body excerpt (`body_snippet`) from
+  // the scraper; folding them in helps when one publisher truncated
+  // and another carried more context. Whitespace collapsed and the
+  // result is capped via buildEmbeddingInput.
+  const sourceParts: string[] = [];
+  if (typeof primary.body_snippet === 'string' && primary.body_snippet !== '') {
+    sourceParts.push(primary.body_snippet);
+  }
+  for (const alt of s.cluster.alternatives) {
+    if (typeof alt.body_snippet === 'string' && alt.body_snippet !== '') {
+      sourceParts.push(alt.body_snippet);
+    }
+  }
+  const sourceSnippet = sourceParts.join('\n\n');
   return {
     id: generateUlid(),
     canonical_url: primary.canonical_url,
@@ -684,6 +706,7 @@ function validateAndSanitizeArticle(
       source_name: alt.source_name,
     })),
     published_at: primary.published_at,
+    source_snippet: sourceSnippet === '' ? null : sourceSnippet,
     // Embedding lifecycle defaults — `attachEmbeddings` overwrites
     // these post-embed. Default 'failed' so a thrown embed call leaves
     // the article in a state the backfill route can pick up.
@@ -713,8 +736,8 @@ function buildArticleBatchStatements(
         `INSERT OR IGNORE INTO articles
            (id, canonical_url, primary_source_name, primary_source_url,
             title, details_json, tags_json, published_at, ingested_at,
-            scrape_run_id, embedding_status, embedded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
+            scrape_run_id, embedding_status, embedded_at, source_snippet)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
       ).bind(
         a.id,
         a.canonical_url,
@@ -728,6 +751,7 @@ function buildArticleBatchStatements(
         scrape_run_id,
         a.embedding_status,
         a.embedded_at,
+        a.source_snippet,
       ),
     );
     for (const alt of a.alternatives) {
@@ -935,6 +959,7 @@ async function attachEmbeddings(
   const inputs = prepared.map((a) =>
     buildEmbeddingInput({
       title: a.title,
+      source_snippet: a.source_snippet,
       details_json: JSON.stringify(a.details),
     }),
   );
