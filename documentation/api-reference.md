@@ -463,7 +463,8 @@ Returns the cosine similarity between two articles' stored Vectorize embeddings,
 | Either article not found in D1 | `404` | `article_not_found` |
 | Either vector not found in Vectorize | `404` | `vector_not_found` |
 | Vectorize lookup threw | `500` | `vectorize_lookup_failed` |
-| Session not admin | `401` | `unauthorized` |
+| No valid session | `401` | `unauthorized` |
+| Valid session but not admin email | `403` | (plain text `Forbidden`) |
 
 **Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 10
 
