@@ -111,6 +111,13 @@ QUEUE_MAX_RETRIES = "3"
 # without a code change. Float, string-typed for parity with
 # QUEUE_MAX_RETRIES.
 DEDUP_COSINE_THRESHOLD = "0.85"
+# REQ-PIPE-003 AC 11 — same-vendor cosine penalty, subtracted from
+# the raw cosine before the threshold gate when both articles share
+# an eTLD+1. Lifts the effective same-publisher threshold to 0.90,
+# neutralising publisher-style boilerplate that inflated cosines on
+# the LLM-summary embeddings (the dominant FP class in the 2026-05-06
+# integration sweep). Float, string-typed; clamp [0,1] in code.
+DEDUP_SAME_VENDOR_PENALTY = "0.05"
 
 # ---------------------------------------------------------------------------
 # Integration environment — `wrangler deploy --env integration` targets a
@@ -135,6 +142,8 @@ QUEUE_MAX_RETRIES = "3"
 # REQ-PIPE-003 — same threshold as production. Forks tuning their
 # own corpus may override here without touching prod.
 DEDUP_COSINE_THRESHOLD = "0.85"
+# REQ-PIPE-003 AC 11 — see top-level vars block for rationale.
+DEDUP_SAME_VENDOR_PENALTY = "0.05"
 
 [env.integration.observability]
 enabled = true

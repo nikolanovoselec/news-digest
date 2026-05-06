@@ -1,5 +1,11 @@
 # Deployment
 
+<!-- doc-allow-large -->
+<!-- The dev-bypass runbook is a symptom/cause/fix reference that sits naturally
+     alongside the deploy steps it troubleshoots. Splitting it into a separate
+     troubleshooting.md fragments operator discovery — operators hit the runbook
+     immediately after a deploy, in the same context. -->
+
 **Audience:** Developers, Operators
 
 Local development setup and production deployment steps.

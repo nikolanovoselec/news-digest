@@ -39,6 +39,7 @@ const ADMIN_USER_ROW = {
 interface ArticleRow {
   id: string;
   published_at: number;
+  primary_source_url: string;
 }
 
 interface DbFixture {
@@ -221,6 +222,7 @@ function singleMatch(opts: {
   id: string;
   score: number;
   published_at: number;
+  primary_source_url?: string;
 }): VectorizeMatches {
   return {
     count: 1,
@@ -228,7 +230,11 @@ function singleMatch(opts: {
       {
         id: opts.id,
         score: opts.score,
-        metadata: { published_at: opts.published_at },
+        metadata: {
+          published_at: opts.published_at,
+          primary_source_url:
+            opts.primary_source_url ?? 'https://other-publisher.example/post',
+        },
       } as VectorizeMatch,
     ],
   };
@@ -266,7 +272,13 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
     const MATCH_PUBLISHED_AT = 1_700_000_100;
 
     const { res, fixture, vectorize } = await buildContextAndCall({
-      articles: [{ id: SELF_ID, published_at: SELF_PUBLISHED_AT }],
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: SELF_PUBLISHED_AT,
+          primary_source_url: 'https://acme.example/self',
+        },
+      ],
       existenceGuardResults: {
         [MATCH_ID]: { present: 1 },
       },
@@ -318,7 +330,13 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
     const MATCH_ID = 'article-low-score';
 
     const { res, fixture, vectorize } = await buildContextAndCall({
-      articles: [{ id: SELF_ID, published_at: 1_700_000_000 }],
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: 1_700_000_000,
+          primary_source_url: 'https://acme.example/self',
+        },
+      ],
       existenceGuardResults: {
         [MATCH_ID]: { present: 1 },
       },
@@ -352,7 +370,13 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
     const PUBLISHED_AT = 1_700_000_000;
 
     const { res, fixture, vectorize } = await buildContextAndCall({
-      articles: [{ id: SELF_ID, published_at: PUBLISHED_AT }],
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: PUBLISHED_AT,
+          primary_source_url: 'https://acme.example/self',
+        },
+      ],
       existenceGuardResults: {
         [MATCH_ID]: { present: 1 },
       },
@@ -384,7 +408,13 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
     const STALE_MATCH_ID = 'article-stale';
 
     const { res, fixture, vectorize } = await buildContextAndCall({
-      articles: [{ id: SELF_ID, published_at: 1_700_000_000 }],
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: 1_700_000_000,
+          primary_source_url: 'https://acme.example/self',
+        },
+      ],
       // existenceGuard returns null — row was retention-deleted from D1
       existenceGuardResults: {
         [STALE_MATCH_ID]: null,
@@ -455,7 +485,13 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
     const MATCH_PUBLISHED_AT = 1_700_000_100;
 
     const { res } = await buildContextAndCall({
-      articles: [{ id: SELF_ID, published_at: SELF_PUBLISHED_AT }],
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: SELF_PUBLISHED_AT,
+          primary_source_url: 'https://acme.example/self',
+        },
+      ],
       existenceGuardResults: {
         [MATCH_ID]: { present: 1 },
       },
@@ -479,5 +515,167 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
     expect(body.ok).toBe(true);
     // The merge SQL was committed before the best-effort delete; merged must be 1
     expect(body.merged).toBe(1);
+  });
+
+  // Browser path — the /settings button posts a plain HTML form, so the
+  // handler must 303-redirect with cumulative counts on the URL instead
+  // of returning JSON. Mirrors the embed-backfill button shape.
+  it('REQ-PIPE-003: browser form post redirects to /settings?dedup=done with counts', async () => {
+    const SELF_ID = 'article-older';
+    const MATCH_ID = 'article-newer';
+    const SELF_PUBLISHED_AT = 1_700_000_000;
+    const MATCH_PUBLISHED_AT = 1_700_000_100;
+
+    // Build a request WITHOUT Accept: application/json — browser default.
+    const fixture: DbFixture = {
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: SELF_PUBLISHED_AT,
+          primary_source_url: 'https://acme.example/self',
+        },
+      ],
+      existenceGuardResults: { [MATCH_ID]: { present: 1 } },
+      remainingCount: 0,
+      batchCalls: [],
+      allCalls: [],
+    };
+    const db = makeDb(fixture);
+    const vectorize = makeVectorize({
+      queryByIdResults: {
+        [SELF_ID]: singleMatch({
+          id: MATCH_ID,
+          score: DEFAULT_THRESHOLD + 0.01,
+          published_at: MATCH_PUBLISHED_AT,
+        }),
+      },
+      deleteByIdsFails: false,
+    });
+    const cookie = await adminCookieJwt();
+    const req = new Request(`${APP_URL}/api/admin/historical-dedup`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: `${SESSION_COOKIE_NAME}=${cookie}`,
+      },
+    });
+    const env = {
+      DB: db,
+      VECTORIZE: vectorize,
+      OAUTH_JWT_SECRET: SECRET,
+      ADMIN_EMAIL,
+      APP_URL,
+    } as unknown as Env;
+    const context = {
+      request: req,
+      locals: { runtime: { env } },
+      url: new URL(req.url),
+      params: {},
+    } as never;
+
+    const res = await POST(context);
+
+    expect(res.status).toBe(303);
+    const location = res.headers.get('Location') ?? '';
+    expect(location).toContain('/settings?dedup=done');
+    expect(location).toContain('scanned=1');
+    expect(location).toContain('merged=1');
+    expect(location).toContain('remaining=0');
+  });
+
+  // ---------------------------------------------------------------------
+  // AC 11: Same-publisher stricter bar (cosine penalty for shared eTLD+1)
+  // ---------------------------------------------------------------------
+  it('REQ-PIPE-003 AC 11: same-vendor pair just above threshold falls below after penalty (no merge)', async () => {
+    const SELF_ID = 'self-blog';
+    const MATCH_ID = 'old-news';
+    const { res, fixture, vectorize } = await buildContextAndCall({
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: 1_700_000_500,
+          primary_source_url: 'https://blog.example.com/new-post',
+        },
+      ],
+      existenceGuardResults: { [MATCH_ID]: { present: 1 } },
+      remainingCount: 0,
+      queryByIdResults: {
+        // Raw cosine 0.87, same eTLD+1 example.com → adjusted 0.82 < 0.85
+        [SELF_ID]: singleMatch({
+          id: MATCH_ID,
+          score: 0.87,
+          published_at: 1_700_001_000,
+          primary_source_url: 'https://news.example.com/old-post',
+        }),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { merged: number };
+    expect(body.merged).toBe(0);
+    expect(fixture.batchCalls.length).toBe(0);
+    expect(vectorize.deleteByIds).not.toHaveBeenCalled();
+  });
+
+  it('REQ-PIPE-003 AC 11: same-vendor pair well above threshold still merges after penalty', async () => {
+    const SELF_ID = 'self-blog';
+    const MATCH_ID = 'old-news';
+    const { res, fixture, vectorize } = await buildContextAndCall({
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: 1_700_000_500,
+          primary_source_url: 'https://blog.example.com/new-post',
+        },
+      ],
+      existenceGuardResults: { [MATCH_ID]: { present: 1 } },
+      remainingCount: 0,
+      queryByIdResults: {
+        // Raw cosine 0.95, same eTLD+1 → adjusted 0.90 still ≥ 0.85
+        [SELF_ID]: singleMatch({
+          id: MATCH_ID,
+          score: 0.95,
+          published_at: 1_700_001_000,
+          primary_source_url: 'https://news.example.com/old-post',
+        }),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { merged: number };
+    expect(body.merged).toBe(1);
+    expect(fixture.batchCalls.length).toBeGreaterThan(0);
+    const deleteByIds = vectorize.deleteByIds as ReturnType<typeof vi.fn>;
+    expect(deleteByIds).toHaveBeenCalled();
+  });
+
+  it('REQ-PIPE-003 AC 11: cross-vendor pair just above threshold merges (penalty does not apply)', async () => {
+    const SELF_ID = 'self-acme';
+    const MATCH_ID = 'old-other';
+    const { res, fixture } = await buildContextAndCall({
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: 1_700_000_500,
+          primary_source_url: 'https://acme.example/new',
+        },
+      ],
+      existenceGuardResults: { [MATCH_ID]: { present: 1 } },
+      remainingCount: 0,
+      queryByIdResults: {
+        // Raw cosine 0.87, cross-vendor → no penalty, ≥ 0.85
+        [SELF_ID]: singleMatch({
+          id: MATCH_ID,
+          score: 0.87,
+          published_at: 1_700_001_000,
+          primary_source_url: 'https://other-publisher.example/old',
+        }),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { merged: number };
+    expect(body.merged).toBe(1);
+    expect(fixture.batchCalls.length).toBeGreaterThan(0);
   });
 });

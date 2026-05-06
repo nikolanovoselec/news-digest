@@ -46,6 +46,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD30 | Cloudflare Access (when bound) MUST cover `*.workers.dev` too; not enforced in worker code | Security | 2026-05-05 |
 | AD31 | Google News baseline ownership: coordinator owns per-tag GN fan-out; discovery LLM no longer emits GN fallback | Architecture | 2026-05-06 |
 | AD32 | Same-story dedup uses Workers AI embeddings + Vectorize (replaces LLM finalize dedup) | Architecture | 2026-05-06 |
+| AD33 | Embed source-text (not LLM rewrite) and apply a same-vendor cosine penalty for dedup | Architecture | 2026-05-06 |
 
 ---
 
@@ -852,6 +853,36 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - Embedding-model drift: bge-base-en-v1.5 is pinned by id in `src/lib/embeddings.ts`. A future Cloudflare catalogue upgrade does not silently change the vector space.
 
 **Related requirements:** REQ-PIPE-003, REQ-PIPE-005, REQ-PIPE-008 (deprecated).
+
+---
+
+### AD33: Embed source-text and apply a same-vendor cosine penalty
+
+**Status:** Accepted (2026-05-06)
+
+**Decision:** The dedup embedding input is the raw scraped body excerpt (`source_snippet`) rather than the chunk-consumer's LLM-rewritten paragraphs. A new column `articles.source_snippet` (migration 0012) stores the input alongside each row so re-embeds via the admin backfill route do not require re-scraping. The dedup decision adds a same-vendor cosine penalty: when both candidates' `primary_source_url` resolve to the same eTLD+1, the cosine is reduced by `DEDUP_SAME_VENDOR_PENALTY` (default 0.05) before the threshold gate. The admin backfill route accepts `?reembed=1` to flip every row to `embedding_status='failed'` so the existing batch loop re-embeds the entire corpus against the new input.
+
+**Context:** Integration historical-dedup sweep on 2026-05-06 produced 4 TPs and 4 FPs across 8 verifiable merges (~50% precision). Phase-0 dedup-diag measurements across the 28 cross-pairs of the 8 surviving primaries showed unrelated articles clustering in 0.55-0.71 cosine — the LLM-summary input compresses unrelated stories into a similar WHAT/HOW/IMPACT prose template, leaving the same-event signal buried within the noise floor. 3 of the 4 FPs were same-publisher pairs (WorkOS, Google AI, CrowdStrike) where publisher-style boilerplate inflated the cosine.
+
+**Alternatives considered:**
+
+- **Tighten threshold to 0.90.** Rejected. Phase-0 data shows same-event different-vendor cosines as low as 0.71 with the LLM-summary input; raising the threshold trades the FP rate for missed merges of cross-vendor TPs. The compressed dynamic range is the underlying problem.
+- **Cross-encoder reranker (`@cf/baai/bge-reranker-base`).** Deferred to phase 2. Source-text + same-vendor offset alone is expected to clear the precision target; if 90%+ precision is not reached after re-embed + sweep on integration, the reranker becomes the next gate.
+- **Forbid same-vendor merges entirely (binary cliff).** Rejected. Genuine same-publisher dupes do exist (e.g., a vendor's blog post and the same vendor's product launch announcement). A subtractive penalty preserves the merge path with a stricter signal requirement; a binary cliff loses real merges to avoid a measurable FP cluster.
+
+**Rationale:** Source-text widens the embedding distribution — independent reporting of the same event shares concrete phrases (entity names, numbers, technical terms) that the LLM rewrite paraphrases away. The same-vendor offset is a precise countermeasure for the dominant FP class (publisher-style inflation) without forbidding genuine same-publisher merges; with `0.05` the effective threshold for same-publisher pairs is 0.90, requiring a stronger source-text signal than cross-publisher merges.
+
+**Consequences:**
+
+- Migration 0012 adds the `source_snippet TEXT` column. Historical rows leave it NULL; `buildEmbeddingInput` falls back to `details_json` for those rows so re-embed produces a valid (but less precise) vector.
+- `DEDUP_SAME_VENDOR_PENALTY` is exposed as an env var (default 0.05). Setting it to `0` disables the offset for forks that ingest different corpora.
+- The chunk-consumer now writes the union of `primary.body_snippet` and each alt's `body_snippet` into `source_snippet` so the embedding sees the widest available source-text surface.
+- The historical 1321 production articles (and 124 integration articles) were embedded against the old LLM-summary input. The `?reembed=1` flag re-embeds them against `details_json` (since they have no `source_snippet`).
+- True precision improvement compounds as new scrape ticks accumulate `source_snippet` rows. The same-vendor penalty applies immediately to every queried pair regardless of `source_snippet` presence.
+- The dedup-diag diagnostic now also reports `adjusted_score` (cosine minus penalty when same-vendor) and `same_vendor_penalty`, so an operator inspecting a pair sees the value the merge decision actually compares.
+- The eTLD+1 helper (`src/lib/etld.ts`) is the same-publisher decision; it intentionally avoids the Public Suffix List dependency. If the corpus ingests UK / AU / NZ regional press, swap to PSL.
+
+**Related requirements:** REQ-PIPE-003 (AC 11, AC 12).
 
 ---
 

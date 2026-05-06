@@ -72,4 +72,8 @@ interface Env {
   // with QUEUE_MAX_RETRIES; the runtime parses to float and falls
   // back to 0.85 when unset.
   DEDUP_COSINE_THRESHOLD?: string;
+  // Same-vendor cosine penalty subtracted before the threshold gate
+  // when both articles' primary_source_url resolve to the same eTLD+1
+  // (REQ-PIPE-003 AC 11). Default 0.05; clamped to [0, 1] at runtime.
+  DEDUP_SAME_VENDOR_PENALTY?: string;
 }
