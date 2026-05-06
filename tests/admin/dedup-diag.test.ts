@@ -136,7 +136,6 @@ async function callGet(opts: CallOpts): Promise<Response> {
   return GET(context);
 }
 
-const ZERO_VEC: number[] = Array.from({ length: 8 }, () => 0);
 const ONE_VEC: number[] = Array.from({ length: 8 }, () => 1 / Math.sqrt(8));
 const TILTED_VEC: number[] = (() => {
   const v = Array.from({ length: 8 }, (_, i) => (i === 0 ? 0.95 : 0.05));
