@@ -8,10 +8,11 @@
 // and stamps `embedding_status='embedded'` + `embedded_at` on each.
 //
 // One request drives the whole backfill. The handler keeps batching
-// inside a single isolate until either `done` or the wall-time budget
-// hits. Browser callers (the /settings button) get a 303 redirect back
-// with `?embed=done|partial&processed=N`; scripted callers opting in
-// with `Accept: application/json` get the cumulative JSON shape.
+// inside a single isolate until `done` (or the platform tears the
+// request down — Cloudflare's edge cuts requests at ~100s with a 524).
+// Browser callers (the /settings button) get a 303 redirect back with
+// `?embed=done|partial&processed=N`; scripted callers opting in with
+// `Accept: application/json` get the cumulative JSON shape.
 //
 // Three-layer admin auth (CF-001) — same gate every other admin route
 // uses. No Origin check on POST because the backfill is also driven
@@ -31,17 +32,6 @@ import { buildEmbeddingInput, embedTexts } from '~/lib/embeddings';
  *  isolate budget even if the model takes a few seconds. */
 const BATCH_SIZE = 50;
 
-/** Wall-time budget for the server-side loop. The Cloudflare edge cuts
- *  any HTTP request at ~100s with a 524, and operators staring at a
- *  spinning tab give up well before that. 25s lets the loop drain
- *  several batches (≈ 3-4s per batch on warm Workers AI) — typically
- *  300-400 articles per click — and still leaves margin for the 303
- *  redirect to flush. The flow is paginated by design: when the
- *  redirect lands on /settings with `embed=partial`, the operator
- *  clicks again. There's no win to a longer budget; the edge would
- *  kill the request before a `done=true` arrived for very large
- *  backlogs anyway. */
-const LOOP_BUDGET_MS = 25_000;
 
 interface ArticleRow {
   id: string;
@@ -114,15 +104,12 @@ async function handle(context: APIContext): Promise<Response> {
         done = true;
         break;
       }
-      // Safety: if a batch made zero forward progress (nothing
-      // processed AND nothing newly failed), stop instead of looping
-      // forever. countRemaining > 0 with no progress means the SELECT
-      // returned 0 rows but the count says otherwise — a state we
-      // shouldn't auto-recover from in a tight loop.
+      // Forward-progress guard: if a batch processed nothing AND
+      // failed nothing, the SELECT returned [] yet countRemaining > 0
+      // (a corrupt state we won't auto-recover from in a tight loop).
+      // Without this the loop would spin a CPU until the platform
+      // killed the request.
       if (result.processed === 0 && result.failed === 0) {
-        break;
-      }
-      if (Date.now() - startedAt >= LOOP_BUDGET_MS) {
         break;
       }
     }

@@ -555,9 +555,10 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               <p class="settings__hint">
                 Generate Vectorize embeddings for every D1 article that
                 doesn't have one yet. Drives the full backfill in one
-                request — the server loops in batches until done or the
-                wall-time budget hits, then redirects back here with the
-                outcome. Safe to re-run; idempotent.
+                request — the server loops in batches until done, then
+                redirects back here with the outcome. If the platform
+                cuts the request before draining the backlog, click
+                again to resume. Safe to re-run; idempotent.
               </p>
               <div class="settings__actions-row">
                 <form method="post" action="/api/admin/embed-backfill">
