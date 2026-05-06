@@ -200,7 +200,7 @@ Returns the set of hashtags the authenticated user has queued for background sou
 
 Up to 29 articles from the article pool filtered by the user's active hashtags. Ordered by `ingested_at DESC, published_at DESC` — the canonical URL's earliest-known ingestion time (since re-discoveries don't re-stamp `ingested_at`), with `published_at` as the tiebreaker for stories ingested in the same second. `next_scrape_at` is the next UTC quadrant-hour boundary (`HH:00` where `HH ∈ {0,4,8,12,16,20}`), derived from the cron schedule rather than from the last run's start time, so a delayed run does not push the next tick out.
 
-**Implements:** [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) AC 5
+**Implements:** [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) AC 5, AC 7 (the `alt_source_count` field drives the `+N` suffix on source labels)
 
 ### GET /api/digest/:id
 
@@ -430,9 +430,11 @@ Each day group contains: `local_date`, `article_count`, `articles[]` (filtered t
 
 Each article in `articles[]` includes a `starred: boolean` field reflecting the authenticated user's current star state. The value is `true` when a row exists in `article_stars` for that `(user_id, article_id)` pair, `false` otherwise. This lets `/history` render the star glyph and `aria-pressed` state server-side on initial load without a separate fetch.
 
+Each article also includes `alt_source_count: number` — the count of additional sources beyond the primary that reported the same story (`COUNT(*) FROM article_sources WHERE article_id = a.id`). A value of `0` means only one source; values `> 0` drive the `+N` suffix on the DigestCard source label across all card grids (dashboard, history, starred).
+
 `?q=` and `?tags=` are page-level URL state read client-side; they are not server query params.
 
-**Implements:** [REQ-HIST-001](../sdd/history.md#req-hist-001-day-grouped-article-history) AC 4, AC 5; [REQ-STAR-001](../sdd/reading.md#req-star-001-star-and-unstar-articles) AC 6 (SSR-rendered initial star state per card)
+**Implements:** [REQ-HIST-001](../sdd/history.md#req-hist-001-day-grouped-article-history) AC 4, AC 5; [REQ-STAR-001](../sdd/reading.md#req-star-001-star-and-unstar-articles) AC 6 (SSR-rendered initial star state per card); [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) AC 7 (`alt_source_count` surfaces the `+N` suffix on history and starred card grids)
 
 ### GET /api/stats
 
