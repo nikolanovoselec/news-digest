@@ -1238,4 +1238,68 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     );
     expect(lock).toBeUndefined();
   });
+  it('REQ-PIPE-003: Vectorize.upsert failure rolls back this attempt\'s rows to embedding_status=\'failed\'', async () => {
+    // Regression test: the rollback UPDATE must actually fire on the
+    // FIRST attempt when Vectorize.upsert throws. The previous gate
+    // (`AND embedding_status != 'embedded'`) was self-defeating because
+    // the rows were just INSERT'd with status='embedded', so the gate
+    // excluded every row it was supposed to fix and the articles
+    // remained marked 'embedded' in D1 with no vector in Vectorize —
+    // invisible to both the finalize pass and the admin backfill route.
+    const aiResponse = {
+      response: JSON.stringify({
+        articles: [
+          { title: 'Headline A', details: LONG_BODY, tags: ['cloudflare'] },
+          { title: 'Headline B', details: LONG_BODY, tags: ['generative-ai'] },
+        ],
+        dedup_groups: [],
+      }),
+      usage: { input_tokens: 10, output_tokens: 10 },
+    };
+    const { db, records } = makeDb();
+    const { kv } = makeKv({ chunksRemaining: '1' });
+    const env = makeEnv(db, kv, aiResponse);
+    // Replace the VECTORIZE.upsert mock so it throws.
+    (env.VECTORIZE as unknown as { upsert: ReturnType<typeof vi.fn> }).upsert =
+      vi.fn().mockRejectedValue(new Error('Vectorize 503'));
+
+    await processOneChunk(env, makeChunk());
+
+    // Article INSERTs landed in D1 with embedding_status='embedded'
+    // (the in-memory state attachEmbeddings produced before upsert).
+    const articleInserts = records.filter(
+      (r) =>
+        r.via === 'batch' &&
+        r.sql.startsWith('INSERT OR IGNORE INTO articles'),
+    );
+    expect(articleInserts.length).toBe(2);
+    // Position ?11 in the bind list = embedding_status; ?12 = embedded_at.
+    for (const ins of articleInserts) {
+      expect(ins.params[10]).toBe('embedded');
+      expect(typeof ins.params[11]).toBe('number');
+    }
+    // The fix: rollback UPDATE fires and matches both rows via the
+    // per-attempt embedded_at gate (not the broken status gate).
+    const rollback = records.find(
+      (r) =>
+        r.via === 'run' &&
+        r.sql.includes('UPDATE articles') &&
+        r.sql.includes("embedding_status = 'failed'") &&
+        r.sql.includes('embedded_at = ?'),
+    );
+    expect(rollback).toBeDefined();
+    // The bind list ends with the per-attempt embedded_at; the IDs come
+    // first, then the timestamp. Verify the timestamp matches the value
+    // written by the article INSERT batch.
+    const expectedStamp = articleInserts[0]!.params[11];
+    const lastParam = rollback!.params[rollback!.params.length - 1];
+    expect(lastParam).toBe(expectedStamp);
+    // The structured failure log should also have fired.
+    const failedLog = records.find(
+      (r) =>
+        r.sql.includes('UPDATE articles') &&
+        r.sql.includes("embedding_status = 'failed'"),
+    );
+    expect(failedLog).toBeDefined();
+  });
 });

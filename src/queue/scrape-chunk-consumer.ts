@@ -988,8 +988,10 @@ async function upsertVectors(
   body: ChunkJobMessage,
 ): Promise<void> {
   const embedded = prepared.filter(
-    (a): a is PreparedArticle & { embedding: number[] } =>
-      a.embedding !== null && a.embedding_status === 'embedded',
+    (a): a is PreparedArticle & { embedding: number[]; embedded_at: number } =>
+      a.embedding !== null &&
+      a.embedding_status === 'embedded' &&
+      a.embedded_at !== null,
   );
   if (embedded.length === 0) return;
   try {
@@ -1020,23 +1022,30 @@ async function upsertVectors(
       detail: String(err).slice(0, 500),
     });
     try {
-      // Gate the rollback so a queue redelivery whose first attempt
-      // already succeeded (rows committed with 'embedded' + vectors
-      // upserted) does NOT downgrade those rows back to 'failed' if
-      // a later attempt's upsert hits a transient Vectorize outage.
-      // Without this gate the finalize pass's `embedded`-only filter
-      // would silently drop the affected articles from this tick's
-      // dedup, and the admin backfill route would re-do work that
-      // was already correct.
+      // Gate the rollback on the per-attempt embedded_at timestamp.
+      // Each chunk-consumer attempt stamps `nowSec` in attachEmbeddings;
+      // every article in `embedded` shares the same timestamp this
+      // attempt assigned. Gating on `embedded_at = ?N` means:
+      //   - First-attempt rollback: rows just INSERT'd with this attempt's
+      //     timestamp match → flip to 'failed'. (The previous gate
+      //     `embedding_status != 'embedded'` was self-defeating because
+      //     the rows had just been written as 'embedded'.)
+      //   - Redelivery whose first attempt fully succeeded: D1 still
+      //     holds the FIRST attempt's timestamp; this attempt's
+      //     timestamp won't match → 0 rows updated, prior success
+      //     preserved.
+      // All articles in this attempt share `nowSec`; pick any one.
+      const attemptStamp = embedded[0]?.embedded_at;
+      if (attemptStamp === undefined) return;
       const placeholders = embedded.map((_, i) => `?${i + 1}`).join(',');
       await env.DB
         .prepare(
           `UPDATE articles
               SET embedding_status = 'failed', embedded_at = NULL
             WHERE id IN (${placeholders})
-              AND embedding_status != 'embedded'`,
+              AND embedded_at = ?${embedded.length + 1}`,
         )
-        .bind(...embedded.map((a) => a.id))
+        .bind(...embedded.map((a) => a.id), attemptStamp)
         .run();
     } catch (rollbackErr) {
       log('error', 'digest.generation', {
@@ -1048,4 +1057,3 @@ async function upsertVectors(
     }
   }
 }
-
