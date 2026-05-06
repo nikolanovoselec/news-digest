@@ -23,6 +23,11 @@
 // rows. The historical-dedup route is the only path that should be
 // invoked manually post-deploy; the per-tick finalize-consumer
 // handles new articles inline.
+//
+// Three-layer admin auth (CF-001) — same gate every other admin route
+// uses. No Origin check on POST because the sweep is also driven
+// from curl / scripts via the dev-bypass session; CSRF defence-in-
+// depth on form posts would block the legitimate scripted flow.
 
 import type { APIContext } from 'astro';
 import { log } from '~/lib/log';
