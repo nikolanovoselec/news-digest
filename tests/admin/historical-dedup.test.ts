@@ -125,7 +125,7 @@ function makeVectorize(opts: {
   return {
     queryById: vi.fn().mockImplementation(async (id: string) => {
       const result = opts.queryByIdResults?.[id];
-      return result ?? { matches: [] };
+      return result ?? { count: 0, matches: [] };
     }),
     deleteByIds: vi.fn().mockImplementation(async (_ids: string[]) => {
       if (opts.deleteByIdsFails) {
@@ -185,11 +185,11 @@ async function buildContextAndCall(opts: BuildContextOpts): Promise<{
     headers['Cookie'] = `${SESSION_COOKIE_NAME}=${cookie}`;
   }
 
-  const req = new Request(`${APP_URL}/api/admin/historical-dedup`, {
-    method: 'POST',
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
+  const init: RequestInit = { method: 'POST', headers };
+  if (opts.body !== undefined) {
+    init.body = JSON.stringify(opts.body);
+  }
+  const req = new Request(`${APP_URL}/api/admin/historical-dedup`, init);
 
   const env = {
     DB: db,
@@ -218,6 +218,7 @@ function singleMatch(opts: {
   published_at: number;
 }): VectorizeMatches {
   return {
+    count: 1,
     matches: [
       {
         id: opts.id,
