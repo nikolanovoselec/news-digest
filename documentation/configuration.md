@@ -59,7 +59,7 @@ The deploy job reads these secrets from GitHub Actions. The first two are Cloudf
 
 For production deploys that DO bind Access, set this var and follow AD30 — bind Access on every public hostname the worker serves OR disable the unbound hostnames:
 1. **Set `CF_ACCESS_AUD`** — the audience tag of the Access application fronting the custom domain. The Worker enforces Layer 0 (assertion presence + `aud` claim match) before the baseline session + `ADMIN_EMAIL` checks run.
-2. **Bind Access on the `*.workers.dev` URL too OR disable that subdomain** — Workers & Pages → your worker → Settings → Domains & Routes → disable workers.dev (or attach the same Access application to it). Without this, an attacker hitting the worker via the unbound `workers.dev` URL bypasses the Access perimeter entirely; the session + `ADMIN_EMAIL` baseline still gates, but the perimeter promise is broken.
+2. **Bind Access on the `*.workers.dev` URL too OR disable that subdomain** — Workers & Pages → your worker → Settings → Domains & Routes. Without this, requests to the unbound `workers.dev` URL bypass the Access perimeter; the session + `ADMIN_EMAIL` baseline still gates, but the perimeter promise is broken.
 
 The deploy job also runs `wrangler secret delete DEV_BYPASS_USER_ID` (idempotent, silenced on not-found) on each deploy so any stray value cannot defeat the synthetic `__e2e__` sandbox. The workflow does not propagate this secret; operators who need it must set it manually via `wrangler secret put`.
 

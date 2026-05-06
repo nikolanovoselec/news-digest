@@ -103,6 +103,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 | KV | `ai-news-digest-integration-kv` (auto-derived) |
 | Queues | `scrape-coordinator-integration`, `scrape-chunks-integration`, `scrape-finalize-integration` |
 | Workers AI | shared `AI` binding (no per-env isolation needed) |
+| Vectorize | `ai-news-embeddings-integration` |
 
 **One-time per-fork setup:**
 
@@ -138,8 +139,9 @@ curl -i ${APP_URL}/api/admin/force-refresh
 | `KV` | KV namespace | `ai-news-digest-kv` (derived: `${WORKER_NAME}-kv` in `scripts/bootstrap-resources.sh`, where `WORKER_NAME = "ai-news-digest"` from `wrangler.toml`) | Caches (headlines, sources, health) |
 | `SCRAPE_COORDINATOR` | Queue | `scrape-coordinator` | Every-4-hours coordinator dispatch (00/04/08/12/16/20 UTC) |
 | `SCRAPE_CHUNKS` | Queue | `scrape-chunks` | LLM chunk jobs |
-| `SCRAPE_FINALIZE` | Queue | `scrape-finalize` | Finalize pass (cross-chunk semantic dedup); one message enqueued by the last chunk consumer per scrape run ([REQ-PIPE-008](../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)) |
-| `AI` | Workers AI | (account-level) | LLM inference |
+| `SCRAPE_FINALIZE` | Queue | `scrape-finalize` | Same-story dedup pass; one message enqueued by the last chunk consumer per scrape run ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
+| `AI` | Workers AI | (account-level) | LLM inference and bge-base-en-v1.5 embedding generation |
+| `VECTORIZE` | Vectorize index | `ai-news-embeddings` | 768-dim cosine index for same-story dedup; provisioned by the deploy workflow via `wrangler vectorize create` ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
 
 ## Dependency Automation
 
