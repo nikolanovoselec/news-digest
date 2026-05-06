@@ -42,6 +42,15 @@ const VECTORIZE_DELETE_BATCH_SIZE = 100;
  *  Validated 2026-05-06; see the file header for evidence. */
 export const DEFAULT_COSINE_THRESHOLD = 0.85;
 
+/** Default same-vendor cosine penalty when DEDUP_SAME_VENDOR_PENALTY is
+ *  unset. Subtracted from the raw cosine when both articles resolve to
+ *  the same eTLD+1, lifting the effective threshold for same-publisher
+ *  pairs to 0.90 against the 0.85 default. Calibrated against the
+ *  2026-05-06 integration sweep where 3/4 of the historical false-
+ *  positive merges were same-vendor pairs whose cosine was inflated by
+ *  publisher-style boilerplate (WorkOS, Google AI, CrowdStrike). */
+export const DEFAULT_SAME_VENDOR_PENALTY = 0.05;
+
 /** Read the runtime cosine threshold from env, with a safe fallback.
  *  Parses the env var (string-typed in wrangler.toml) and clamps to
  *  [0, 1]. An invalid value falls back to the default rather than
@@ -56,33 +65,69 @@ export function readCosineThreshold(env: Pick<Env, 'DEDUP_COSINE_THRESHOLD'>): n
   return parsed;
 }
 
+/** Read the runtime same-vendor cosine penalty from env, with a safe
+ *  fallback. Parses the env var (string-typed in wrangler.toml) and
+ *  clamps to [0, 1]. Negative or NaN values fall back to the default
+ *  rather than turning the penalty into a bonus. */
+export function readSameVendorPenalty(
+  env: Pick<Env, 'DEDUP_SAME_VENDOR_PENALTY'>,
+): number {
+  const raw = env.DEDUP_SAME_VENDOR_PENALTY;
+  if (typeof raw !== 'string' || raw === '') return DEFAULT_SAME_VENDOR_PENALTY;
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    return DEFAULT_SAME_VENDOR_PENALTY;
+  }
+  return parsed;
+}
+
 /** Build the embedding input string for one article. Title + body
  *  prefix, whitespace collapsed, capped at MAX_INPUT_CHARS. The title
  *  is prefixed because bge-base attends to the leading tokens most
  *  strongly; putting the headline first means two articles with the
  *  same headline produce highly-similar vectors even when their bodies
- *  differ in framing. */
+ *  differ in framing.
+ *
+ *  Body source priority (intentional):
+ *    1. `source_snippet` — the raw scraped body excerpt from the
+ *       publisher. This is the preferred input because the LLM
+ *       summariser homogenises unrelated articles into a similar
+ *       WHAT/HOW/IMPACT prose template, compressing the cosine
+ *       distribution and burying the same-event signal in noise.
+ *       Validated 2026-05-06 on integration: source-text widens the
+ *       distribution and lifts true-event cosines closer to 0.85.
+ *    2. `details_json` — the LLM-rewritten paragraphs. Used for
+ *       historical rows (pre-migration 0012) that have no
+ *       `source_snippet` stored. Re-embedding such a row produces a
+ *       valid vector with the older, narrower geometry.
+ *    3. `body_summary` — last-ditch fallback for tests / fixtures. */
 export function buildEmbeddingInput(article: {
   title: string;
+  source_snippet?: string | null;
   details_json?: string | null;
   body_summary?: string | null;
 }): string {
   const title = article.title.trim();
   let body = '';
-  const detailsRaw = article.details_json;
-  if (typeof detailsRaw === 'string' && detailsRaw !== '') {
-    try {
-      const parsed = JSON.parse(detailsRaw) as unknown;
-      if (Array.isArray(parsed)) {
-        body = parsed.filter((p): p is string => typeof p === 'string').join(' ');
-      } else if (typeof parsed === 'string') {
-        body = parsed;
+  const snippetRaw = article.source_snippet;
+  if (typeof snippetRaw === 'string' && snippetRaw !== '') {
+    body = snippetRaw;
+  } else {
+    const detailsRaw = article.details_json;
+    if (typeof detailsRaw === 'string' && detailsRaw !== '') {
+      try {
+        const parsed = JSON.parse(detailsRaw) as unknown;
+        if (Array.isArray(parsed)) {
+          body = parsed.filter((p): p is string => typeof p === 'string').join(' ');
+        } else if (typeof parsed === 'string') {
+          body = parsed;
+        }
+      } catch {
+        body = '';
       }
-    } catch {
-      body = '';
+    } else if (typeof article.body_summary === 'string') {
+      body = article.body_summary;
     }
-  } else if (typeof article.body_summary === 'string') {
-    body = article.body_summary;
   }
   const combined = `${title}\n\n${body}`.replace(/\s+/g, ' ').trim();
   if (combined.length <= MAX_INPUT_CHARS) return combined;

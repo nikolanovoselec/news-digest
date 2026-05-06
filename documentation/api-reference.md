@@ -390,15 +390,16 @@ POST enforces Origin; GET is exempt (so operators can bookmark or `curl`).
 
 Resumable embedding backfill for articles whose `embedding_status` is `NULL` or `'failed'`. Each call processes up to 50 rows oldest-first by `published_at`, embeds them via the AI binding, upserts the vectors into Vectorize, and stamps the row `embedding_status='embedded'`. Operators loop the route until `done: true`.
 
-| Method | Auth | Request body |
-|---|---|---|
-| `POST` | Admin session | empty |
+| Method | Auth | Request body | Query params |
+|---|---|---|---|
+| `POST` | Admin session | empty | `?reembed=1` (optional) — flips every row to `embedding_status='failed'` before the loop runs so the entire corpus re-embeds against the current `buildEmbeddingInput` definition. Requires `POST`; `GET` with `?reembed=1` returns `405`. |
+| `GET` | Admin session | empty | none — runs one batch without the reembed flag |
 
 **Success (200):** `{ ok: true, processed: N, failed: M, remaining: K, done: boolean }` — `done` is `true` when `remaining` is 0 after the call. A row whose embed or upsert fails is stamped `'failed'` and counted under `failed`; the next call retries it.
 
-**Error responses:** `401 unauthorized` | `403 forbidden` | `500 "Backfill failed"`.
+**Error responses:** `401 unauthorized` | `403 forbidden` | `405 "reembed requires POST"` (GET with `?reembed=1`) | `500 "Backfill failed"`.
 
-**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)
+**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 12 for `?reembed=1`)
 
 ---
 
@@ -418,9 +419,9 @@ Cross-article same-story sweep. Walks the article pool oldest-first by `publishe
 
 ---
 
-### GET /api/admin/dedup-diag (REQ-PIPE-003 AC 10)
+### GET /api/admin/dedup-diag (REQ-PIPE-003 AC 10, AC 11)
 
-Returns the cosine similarity between two articles' stored Vectorize embeddings, the currently-effective same-story threshold, and a flag for whether the two articles share the same registrable domain (eTLD+1). Intended for evaluating threshold changes against known true-positive and false-positive pairs before committing them to configuration.
+Returns the cosine similarity between two articles' stored Vectorize embeddings, the currently-effective same-story threshold, the same-vendor cosine penalty, and a flag for whether the two articles share the same registrable domain (eTLD+1). Intended for evaluating threshold changes against known true-positive and false-positive pairs before committing them to configuration.
 
 **Auth:** Admin session required (same three-layer gate as every other `/api/admin/*` route — see the admin auth note above). No `Origin` check (read-only GET).
 
@@ -447,12 +448,14 @@ Returns the cosine similarity between two articles' stored Vectorize embeddings,
   "b": { ... },
   "cosine": 0.87,
   "same_etld1": true,
+  "adjusted_score": 0.82,
+  "same_vendor_penalty": 0.05,
   "threshold": 0.85,
-  "above_threshold": true
+  "above_threshold": false
 }
 ```
 
-`same_etld1` is `true` when both articles' `primary_source_url` values resolve to the same registrable domain via `src/lib/etld.ts`. `threshold` is the value of `DEDUP_COSINE_THRESHOLD` in effect at request time. `above_threshold` is `cosine >= threshold`.
+`same_etld1` is `true` when both articles' `primary_source_url` values resolve to the same registrable domain via `src/lib/etld.ts`. `threshold` is the value of `DEDUP_COSINE_THRESHOLD` in effect at request time. `same_vendor_penalty` is the value of `DEDUP_SAME_VENDOR_PENALTY`. `adjusted_score` is `cosine - same_vendor_penalty` when `same_etld1` is true, otherwise equals `cosine`; it is the value the dedup decision actually compares to the threshold. `above_threshold` is `adjusted_score >= threshold`.
 
 **Error responses:**
 
@@ -466,7 +469,7 @@ Returns the cosine similarity between two articles' stored Vectorize embeddings,
 | No valid session | `401` | `unauthorized` |
 | Valid session but not admin email | `403` | (plain text `Forbidden`) |
 
-**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 10
+**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 10, AC 11
 
 ---
 

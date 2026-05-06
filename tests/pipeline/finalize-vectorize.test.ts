@@ -20,6 +20,7 @@ interface MockDb {
     id: string;
     published_at: number;
     ingested_at: number;
+    primary_source_url: string;
   }>;
   /** finalize_recorded value the gate probe returns. */
   finalizeRecorded: number;
@@ -127,11 +128,16 @@ function makeMockVectorize(matchesById: Map<string, VectorizeMatch[]>): MockVect
   };
 }
 
-function makeEnv(db: D1Database, vectorize: Vectorize): Env {
+function makeEnv(
+  db: D1Database,
+  vectorize: Vectorize,
+  opts: { sameVendorPenalty?: string } = {},
+): Env {
   return {
     DB: db,
     VECTORIZE: vectorize,
     DEDUP_COSINE_THRESHOLD: '0.85',
+    DEDUP_SAME_VENDOR_PENALTY: opts.sameVendorPenalty ?? '0.05',
   } as unknown as Env;
 }
 
@@ -155,7 +161,14 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     const newId = 'new-1';
     const oldId = 'old-1';
     const mockDb = makeMockDb({
-      articleRows: [{ id: newId, published_at: 2000, ingested_at: 2000 }],
+      articleRows: [
+        {
+          id: newId,
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://newsite.example/post/2',
+        },
+      ],
       existsIds: new Set([oldId]),
     });
     const matches = new Map<string, VectorizeMatch[]>();
@@ -163,7 +176,10 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
       {
         id: oldId,
         score: 0.9,
-        metadata: { published_at: 1000 },
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://oldsite.example/post/1',
+        },
       } as unknown as VectorizeMatch,
     ]);
     const mockVec = makeMockVectorize(matches);
@@ -196,7 +212,14 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     const newId = 'new-1';
     const oldId = 'old-1';
     const mockDb = makeMockDb({
-      articleRows: [{ id: newId, published_at: 2000, ingested_at: 2000 }],
+      articleRows: [
+        {
+          id: newId,
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://newsite.example/post/2',
+        },
+      ],
       existsIds: new Set([oldId]),
     });
     const matches = new Map<string, VectorizeMatch[]>();
@@ -204,7 +227,10 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
       {
         id: oldId,
         score: 0.5,
-        metadata: { published_at: 1000 },
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://oldsite.example/post/1',
+        },
       } as unknown as VectorizeMatch,
     ]);
     const mockVec = makeMockVectorize(matches);
@@ -219,7 +245,14 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     const newerId = 'newer-1';
     const equalId = 'equal-1';
     const mockDb = makeMockDb({
-      articleRows: [{ id: newId, published_at: 2000, ingested_at: 2000 }],
+      articleRows: [
+        {
+          id: newId,
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://newsite.example/post/2',
+        },
+      ],
       existsIds: new Set([newerId, equalId]),
     });
     const matches = new Map<string, VectorizeMatch[]>();
@@ -227,12 +260,18 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
       {
         id: newerId,
         score: 0.95,
-        metadata: { published_at: 3000 },
+        metadata: {
+          published_at: 3000,
+          primary_source_url: 'https://other.example/a',
+        },
       } as unknown as VectorizeMatch,
       {
         id: equalId,
         score: 0.95,
-        metadata: { published_at: 2000 },
+        metadata: {
+          published_at: 2000,
+          primary_source_url: 'https://other.example/b',
+        },
       } as unknown as VectorizeMatch,
     ]);
     const mockVec = makeMockVectorize(matches);
@@ -247,7 +286,14 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     const old1 = 'old-1';
     const old2 = 'old-2';
     const mockDb = makeMockDb({
-      articleRows: [{ id: newId, published_at: 2000, ingested_at: 2000 }],
+      articleRows: [
+        {
+          id: newId,
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://newsite.example/post/2',
+        },
+      ],
       existsIds: new Set([old1, old2]),
     });
     const matches = new Map<string, VectorizeMatch[]>();
@@ -255,12 +301,18 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
       {
         id: old1,
         score: 0.86,
-        metadata: { published_at: 1500 },
+        metadata: {
+          published_at: 1500,
+          primary_source_url: 'https://aaa.example/x',
+        },
       } as unknown as VectorizeMatch,
       {
         id: old2,
         score: 0.92,
-        metadata: { published_at: 1000 },
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://bbb.example/y',
+        },
       } as unknown as VectorizeMatch,
     ]);
     const mockVec = makeMockVectorize(matches);
@@ -278,7 +330,14 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     const newId = 'new-1';
     const goneId = 'old-gone';
     const mockDb = makeMockDb({
-      articleRows: [{ id: newId, published_at: 2000, ingested_at: 2000 }],
+      articleRows: [
+        {
+          id: newId,
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://newsite.example/post/2',
+        },
+      ],
       existsIds: new Set(), // gone-id NOT in existsIds → null
     });
     const matches = new Map<string, VectorizeMatch[]>();
@@ -286,7 +345,10 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
       {
         id: goneId,
         score: 0.95,
-        metadata: { published_at: 1000 },
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://oldsite.example/post/1',
+        },
       } as unknown as VectorizeMatch,
     ]);
     const mockVec = makeMockVectorize(matches);
@@ -294,6 +356,105 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
 
     await processOneFinalize(env, { scrape_run_id: 'r1' });
     expect(mockVec.deleteMock).not.toHaveBeenCalled();
+  });
+
+  it('REQ-PIPE-003 AC 11: same-vendor pair just above threshold falls below after penalty (no merge)', async () => {
+    const newId = 'new-1';
+    const oldId = 'old-1';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: newId,
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://blog.example.com/new-post',
+        },
+      ],
+      existsIds: new Set([oldId]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    // Raw cosine 0.87 > threshold 0.85, but same eTLD+1 → adjusted 0.82 < 0.85.
+    matches.set(newId, [
+      {
+        id: oldId,
+        score: 0.87,
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://news.example.com/old-post',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const env = makeEnv(mockDb.db, mockVec.binding);
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    expect(mockVec.deleteMock).not.toHaveBeenCalled();
+  });
+
+  it('REQ-PIPE-003 AC 11: same-vendor pair well above threshold still merges after penalty', async () => {
+    const newId = 'new-1';
+    const oldId = 'old-1';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: newId,
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://blog.example.com/new-post',
+        },
+      ],
+      existsIds: new Set([oldId]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    // Raw cosine 0.95, same eTLD+1 → adjusted 0.90 still >= 0.85.
+    matches.set(newId, [
+      {
+        id: oldId,
+        score: 0.95,
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://news.example.com/old-post',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const env = makeEnv(mockDb.db, mockVec.binding);
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    expect(mockVec.deleteMock).toHaveBeenCalledWith([newId]);
+  });
+
+  it('REQ-PIPE-003 AC 11: cross-vendor pair just above threshold merges (penalty does not apply)', async () => {
+    const newId = 'new-1';
+    const oldId = 'old-1';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: newId,
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://acme.example/new',
+        },
+      ],
+      existsIds: new Set([oldId]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    // Raw cosine 0.87, different eTLD+1 → no penalty, still >= 0.85.
+    matches.set(newId, [
+      {
+        id: oldId,
+        score: 0.87,
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://other-publisher.example/old',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const env = makeEnv(mockDb.db, mockVec.binding);
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    expect(mockVec.deleteMock).toHaveBeenCalledWith([newId]);
   });
 
   it('REQ-PIPE-003: still flips the gate when zero articles have vectors', async () => {

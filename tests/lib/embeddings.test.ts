@@ -6,8 +6,10 @@ import {
   embedTexts,
   deleteVectorsBatched,
   readCosineThreshold,
+  readSameVendorPenalty,
   EMBEDDING_MODEL_ID,
   DEFAULT_COSINE_THRESHOLD,
+  DEFAULT_SAME_VENDOR_PENALTY,
 } from '~/lib/embeddings';
 
 describe('buildEmbeddingInput', () => {
@@ -53,6 +55,63 @@ describe('buildEmbeddingInput', () => {
       body_summary: 'plain body',
     });
     expect(out).toContain('plain body');
+  });
+
+  it('REQ-PIPE-003: prefers source_snippet over details_json when both present', () => {
+    const out = buildEmbeddingInput({
+      title: 'Headline',
+      source_snippet: 'raw scraped text',
+      details_json: JSON.stringify(['llm rewritten paragraph']),
+    });
+    expect(out).toContain('raw scraped text');
+    expect(out).not.toContain('llm rewritten paragraph');
+  });
+
+  it('REQ-PIPE-003: falls back to details_json when source_snippet is null', () => {
+    const out = buildEmbeddingInput({
+      title: 'Headline',
+      source_snippet: null,
+      details_json: JSON.stringify(['llm body']),
+    });
+    expect(out).toContain('llm body');
+  });
+
+  it('REQ-PIPE-003: falls back to details_json when source_snippet is empty string', () => {
+    const out = buildEmbeddingInput({
+      title: 'Headline',
+      source_snippet: '',
+      details_json: JSON.stringify(['llm body']),
+    });
+    expect(out).toContain('llm body');
+  });
+});
+
+describe('readSameVendorPenalty', () => {
+  it('returns the default when env var is unset', () => {
+    expect(readSameVendorPenalty({})).toBe(DEFAULT_SAME_VENDOR_PENALTY);
+  });
+
+  it('parses a valid float from the env', () => {
+    expect(readSameVendorPenalty({ DEDUP_SAME_VENDOR_PENALTY: '0.1' })).toBe(0.1);
+  });
+
+  it('falls back to the default on out-of-range values', () => {
+    expect(readSameVendorPenalty({ DEDUP_SAME_VENDOR_PENALTY: '-0.05' })).toBe(
+      DEFAULT_SAME_VENDOR_PENALTY,
+    );
+    expect(readSameVendorPenalty({ DEDUP_SAME_VENDOR_PENALTY: '2' })).toBe(
+      DEFAULT_SAME_VENDOR_PENALTY,
+    );
+  });
+
+  it('falls back to the default on non-numeric values', () => {
+    expect(readSameVendorPenalty({ DEDUP_SAME_VENDOR_PENALTY: 'banana' })).toBe(
+      DEFAULT_SAME_VENDOR_PENALTY,
+    );
+  });
+
+  it('accepts 0 as a valid penalty (disables the feature without falling back)', () => {
+    expect(readSameVendorPenalty({ DEDUP_SAME_VENDOR_PENALTY: '0' })).toBe(0);
   });
 });
 

@@ -17,7 +17,11 @@ import type { APIContext } from 'astro';
 import { log } from '~/lib/log';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { applyRefreshCookie } from '~/middleware/auth';
-import { cosineSimilarity, readCosineThreshold } from '~/lib/embeddings';
+import {
+  cosineSimilarity,
+  readCosineThreshold,
+  readSameVendorPenalty,
+} from '~/lib/embeddings';
 import { etldPlusOne } from '~/lib/etld';
 
 interface ArticleSide {
@@ -35,6 +39,14 @@ interface DiagSuccess {
   b: ArticleSide;
   cosine: number;
   same_etld1: boolean;
+  /** Effective score after the same-vendor cosine penalty has been
+   *  applied (cosine - DEDUP_SAME_VENDOR_PENALTY when same_etld1, else
+   *  cosine). The dedup pipeline compares this to `threshold`, so it's
+   *  what an operator should look at when judging whether the pair
+   *  would merge today. */
+  adjusted_score: number;
+  /** Active same-vendor penalty in effect at request time. */
+  same_vendor_penalty: number;
   threshold: number;
   above_threshold: boolean;
 }
@@ -109,6 +121,8 @@ export async function GET(context: APIContext): Promise<Response> {
   const b = buildSide(bRow);
   const sameEtld1 = a.etld1 === b.etld1 && a.etld1 !== '';
   const threshold = readCosineThreshold(env);
+  const sameVendorPenalty = readSameVendorPenalty(env);
+  const adjustedScore = sameEtld1 ? cosine - sameVendorPenalty : cosine;
 
   const result: DiagSuccess = {
     ok: true,
@@ -116,8 +130,10 @@ export async function GET(context: APIContext): Promise<Response> {
     b,
     cosine,
     same_etld1: sameEtld1,
+    adjusted_score: adjustedScore,
+    same_vendor_penalty: sameVendorPenalty,
     threshold,
-    above_threshold: cosine >= threshold,
+    above_threshold: adjustedScore >= threshold,
   };
   return jsonResponse(result, 200, adminAuth);
 }

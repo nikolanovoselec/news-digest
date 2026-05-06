@@ -102,6 +102,7 @@ interface CallOpts {
   fixture: DbFixture;
   vectors: Record<string, number[] | undefined>;
   threshold?: string;
+  sameVendorPenalty?: string;
 }
 
 async function callGet(opts: CallOpts): Promise<Response> {
@@ -126,6 +127,7 @@ async function callGet(opts: CallOpts): Promise<Response> {
     ADMIN_EMAIL,
     APP_URL,
     DEDUP_COSINE_THRESHOLD: opts.threshold,
+    DEDUP_SAME_VENDOR_PENALTY: opts.sameVendorPenalty,
   } as unknown as Env;
   const context = {
     request: req,
@@ -217,7 +219,7 @@ describe('GET /api/admin/dedup-diag — REQ-PIPE-003 diagnostic', () => {
     expect(body.error).toBe('vector_not_found');
   });
 
-  it('200 happy path — same eTLD+1, cosine 1.0, above threshold', async () => {
+  it('200 happy path — same eTLD+1, cosine 1.0, above threshold even after penalty', async () => {
     const res = await callGet({
       a: 'aaa',
       b: 'bbb',
@@ -239,12 +241,15 @@ describe('GET /api/admin/dedup-diag — REQ-PIPE-003 diagnostic', () => {
       },
       vectors: { aaa: ONE_VEC, bbb: ONE_VEC },
       threshold: '0.85',
+      sameVendorPenalty: '0.05',
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       ok: boolean;
       cosine: number;
       same_etld1: boolean;
+      adjusted_score: number;
+      same_vendor_penalty: number;
       threshold: number;
       above_threshold: boolean;
       a: { etld1: string };
@@ -256,10 +261,60 @@ describe('GET /api/admin/dedup-diag — REQ-PIPE-003 diagnostic', () => {
     expect(body.a.etld1).toBe('workos.com');
     expect(body.b.etld1).toBe('workos.com');
     expect(body.threshold).toBeCloseTo(0.85, 5);
+    expect(body.same_vendor_penalty).toBeCloseTo(0.05, 5);
+    expect(body.adjusted_score).toBeCloseTo(0.95, 5);
     expect(body.above_threshold).toBe(true);
   });
 
-  it('200 different vendors — same_etld1 false, cosine reflects vector difference', async () => {
+  it('200 same-vendor pair below adjusted threshold reports above_threshold=false', async () => {
+    // Construct a TILTED vector pair whose raw cosine is in
+    // (0.85, 0.85+penalty) so penalty pushes it below threshold.
+    // Use unit vectors aligned along axis 0 with small lateral
+    // shift so cosine is ~0.86.
+    const cosineAtAngle = (theta: number): number[] => {
+      const v = [Math.cos(theta), Math.sin(theta)];
+      // Pad to 8-dim by appending zeros so length matches ONE_VEC.
+      return [...v, 0, 0, 0, 0, 0, 0];
+    };
+    const vecA = [1, 0, 0, 0, 0, 0, 0, 0];
+    const vecB = cosineAtAngle(Math.acos(0.86));
+    const res = await callGet({
+      a: 'aaa',
+      b: 'bbb',
+      fixture: {
+        articles: {
+          aaa: {
+            id: 'aaa',
+            title: 'WorkOS A',
+            primary_source_url: 'https://workos.com/x',
+            embedding_status: 'embedded',
+          },
+          bbb: {
+            id: 'bbb',
+            title: 'WorkOS B',
+            primary_source_url: 'https://blog.workos.com/y',
+            embedding_status: 'embedded',
+          },
+        },
+      },
+      vectors: { aaa: vecA, bbb: vecB },
+      threshold: '0.85',
+      sameVendorPenalty: '0.05',
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      cosine: number;
+      same_etld1: boolean;
+      adjusted_score: number;
+      above_threshold: boolean;
+    };
+    expect(body.same_etld1).toBe(true);
+    expect(body.cosine).toBeCloseTo(0.86, 2);
+    expect(body.adjusted_score).toBeCloseTo(0.81, 2);
+    expect(body.above_threshold).toBe(false);
+  });
+
+  it('200 different vendors — same_etld1 false, no penalty applied (cosine == adjusted_score)', async () => {
     const res = await callGet({
       a: 'aaa',
       b: 'bbb',
@@ -281,11 +336,13 @@ describe('GET /api/admin/dedup-diag — REQ-PIPE-003 diagnostic', () => {
       },
       vectors: { aaa: ONE_VEC, bbb: TILTED_VEC },
       threshold: '0.85',
+      sameVendorPenalty: '0.05',
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       cosine: number;
       same_etld1: boolean;
+      adjusted_score: number;
       a: { etld1: string };
       b: { etld1: string };
     };
@@ -295,5 +352,7 @@ describe('GET /api/admin/dedup-diag — REQ-PIPE-003 diagnostic', () => {
     // ONE_VEC and TILTED_VEC differ; cosine should be < 1
     expect(body.cosine).toBeLessThan(1);
     expect(body.cosine).toBeGreaterThan(0);
+    // Penalty does NOT apply when same_etld1 is false.
+    expect(body.adjusted_score).toBeCloseTo(body.cosine, 6);
   });
 });

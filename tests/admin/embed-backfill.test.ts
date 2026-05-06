@@ -35,6 +35,7 @@ interface PendingRow {
   id: string;
   title: string;
   details_json: string;
+  source_snippet: string | null;
   published_at: number;
   primary_source_url: string;
 }
@@ -131,6 +132,7 @@ interface BuildContextOpts {
   remainingAfter: number;
   aiFails?: boolean;
   vectorizeFails?: boolean;
+  reembed?: boolean;
 }
 
 async function buildContextAndCall(opts: BuildContextOpts): Promise<{
@@ -150,7 +152,10 @@ async function buildContextAndCall(opts: BuildContextOpts): Promise<{
   const ai = makeAi(opts.aiFails === true ? { fail: true } : {});
   const vectorize = makeVectorize(opts.vectorizeFails === true ? { fail: true } : {});
   const cookie = await adminCookieJwt();
-  const req = new Request(`${APP_URL}/api/admin/embed-backfill`, {
+  const url = `${APP_URL}/api/admin/embed-backfill${
+    opts.reembed === true ? '?reembed=1' : ''
+  }`;
+  const req = new Request(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -200,6 +205,7 @@ describe('POST /api/admin/embed-backfill — REQ-PIPE-003', () => {
           id: 'a-1',
           title: 'A',
           details_json: '["body of a"]',
+          source_snippet: null,
           published_at: 1000,
           primary_source_url: 'https://x/a',
         },
@@ -207,6 +213,7 @@ describe('POST /api/admin/embed-backfill — REQ-PIPE-003', () => {
           id: 'a-2',
           title: 'B',
           details_json: '["body of b"]',
+          source_snippet: 'raw scraped b',
           published_at: 1100,
           primary_source_url: 'https://x/b',
         },
@@ -246,6 +253,7 @@ describe('POST /api/admin/embed-backfill — REQ-PIPE-003', () => {
           id: 'p-1',
           title: 'P',
           details_json: '["body p"]',
+          source_snippet: null,
           published_at: 1000,
           primary_source_url: 'https://x/p',
         },
@@ -274,6 +282,33 @@ describe('POST /api/admin/embed-backfill — REQ-PIPE-003', () => {
     expect(failedUpdate).toBeDefined();
   });
 
+  it('REQ-PIPE-003 AC 12: ?reembed=1 flips every row to failed before the SELECT loop runs', async () => {
+    const { res, fixture } = await buildContextAndCall({
+      reembed: true,
+      pending: [
+        {
+          id: 'r-1',
+          title: 'R',
+          details_json: '["body r"]',
+          source_snippet: null,
+          published_at: 3000,
+          primary_source_url: 'https://x/r',
+        },
+      ],
+      remainingAfter: 0,
+    });
+    expect(res.status).toBe(200);
+    // The first issued UPDATE on the run is the unconditional re-embed
+    // flip — captured in runCalls. SELECT/UPDATE for individual rows
+    // come after.
+    const reembedFlip = fixture.runCalls.find(
+      (c) =>
+        c.sql.includes("UPDATE articles SET embedding_status = 'failed'") &&
+        !c.sql.includes('WHERE'),
+    );
+    expect(reembedFlip).toBeDefined();
+  });
+
   it('REQ-PIPE-003: Vectorize upsert failure marks rows as failed', async () => {
     const { res, fixture } = await buildContextAndCall({
       pending: [
@@ -281,6 +316,7 @@ describe('POST /api/admin/embed-backfill — REQ-PIPE-003', () => {
           id: 'q-1',
           title: 'Q',
           details_json: '["body q"]',
+          source_snippet: null,
           published_at: 2000,
           primary_source_url: 'https://x/q',
         },
