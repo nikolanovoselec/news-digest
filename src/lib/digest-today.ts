@@ -125,7 +125,7 @@ export async function loadTodayPayload(
            a.title, a.details_json, a.published_at, a.ingested_at,
            (SELECT json_group_array(DISTINCT at.tag)
               FROM article_tags at WHERE at.article_id = a.id) AS tags_json,
-           (SELECT COUNT(*) FROM article_sources s WHERE s.article_id = a.id) AS alt_source_count,
+           (SELECT COUNT(*) FROM article_sources s WHERE s.article_id = a.id AND s.source_url != a.primary_source_url) AS alt_source_count,
            EXISTS(SELECT 1 FROM article_stars st WHERE st.article_id = a.id AND st.user_id = ?1) AS starred,
            EXISTS(SELECT 1 FROM article_reads rd WHERE rd.article_id = a.id AND rd.user_id = ?1) AS read
       FROM articles a
