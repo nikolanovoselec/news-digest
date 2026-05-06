@@ -31,11 +31,17 @@ import { buildEmbeddingInput, embedTexts } from '~/lib/embeddings';
  *  isolate budget even if the model takes a few seconds. */
 const BATCH_SIZE = 50;
 
-/** Wall-time budget for the server-side loop. Workers cap the isolate
- *  at ~30s of CPU but allow longer wall time for I/O-bound work; we
- *  cap below the request-level safety margin so the redirect always
- *  has time to flush before the platform tears the request down. */
-const LOOP_BUDGET_MS = 240_000;
+/** Wall-time budget for the server-side loop. The Cloudflare edge cuts
+ *  any HTTP request at ~100s with a 524, and operators staring at a
+ *  spinning tab give up well before that. 25s lets the loop drain
+ *  several batches (≈ 3-4s per batch on warm Workers AI) — typically
+ *  300-400 articles per click — and still leaves margin for the 303
+ *  redirect to flush. The flow is paginated by design: when the
+ *  redirect lands on /settings with `embed=partial`, the operator
+ *  clicks again. There's no win to a longer budget; the edge would
+ *  kill the request before a `done=true` arrived for very large
+ *  backlogs anyway. */
+const LOOP_BUDGET_MS = 25_000;
 
 interface ArticleRow {
   id: string;

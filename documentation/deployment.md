@@ -209,6 +209,70 @@ The dev-bypass endpoint at `/api/dev/login` is gated separately by the `DEV_BYPA
 
 Keep the Cloudflare Access policy in sync with deploys so unauthorized clicks land on the login page rather than a bare 403. The Worker gate is the security boundary; Access tunes the UX around it.
 
+### Dev-bypass runbook (integration only)
+
+`/api/dev/login` is the operator escape hatch for driving admin endpoints from a script when the integration deploy has no Cloudflare Access in front of it (`news.novoselec.ch`). Production (`news.graymatter.ch`) leaves `DEV_BYPASS_TOKEN` unset; the runbook below applies only to integration.
+
+**Two secrets, two failure modes the deploy creates:**
+
+1. `DEV_BYPASS_TOKEN` — pushed by the deploy from the `DEV_BYPASS_TOKEN` GitHub Actions secret. Past deploys have written an empty/encoded value when the GH-side secret push had a CR/LF or trailing-newline issue, leaving `/api/dev/login` returning 404 for a token the local file claims is valid.
+2. `DEV_BYPASS_USER_ID` — actively **deleted** by the deploy (`wrangler secret delete DEV_BYPASS_USER_ID`, idempotent). This is intentional — it stops a stale impersonation override from outliving its testing window. Effect for the runbook: every integration deploy reverts the dev-login user to the synthetic `__e2e__` row, which does **not** match `ADMIN_EMAIL`, so admin endpoints return 401/403 even with a valid session cookie.
+
+**After every integration deploy, re-stamp both secrets via the Cloudflare REST API.** Wrangler's `/memberships` preflight fails in this container (token has Workers Scripts edit but not Account Read) — go direct to the secrets endpoint instead:
+
+```bash
+# From the operator's local env. ACCOUNT_ID lives in the
+# `CLOUDFLARE_ACCOUNT_ID` GitHub Actions repo variable; export it from
+# there or copy from the Cloudflare dashboard sidebar before running.
+ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID"
+WORKER=ai-news-digest-integration
+
+# 1. Re-push DEV_BYPASS_TOKEN from the local source of truth (~/tmp/.bypass_token).
+curl -s -X PUT \
+  "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/workers/scripts/$WORKER/secrets" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg v "$(cat /tmp/.bypass_token)" \
+        '{name:"DEV_BYPASS_TOKEN",text:$v,type:"secret_text"}')"
+
+# 2. Set DEV_BYPASS_USER_ID to the operator user_id (from D1 `users` table).
+curl -s -X PUT \
+  "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/workers/scripts/$WORKER/secrets" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg v "$DEV_BYPASS_USER_ID" \
+        '{name:"DEV_BYPASS_USER_ID",text:$v,type:"secret_text"}')"
+# DEV_BYPASS_USER_ID is the operator's user_id from the D1 `users`
+# table (lookup: SELECT id FROM users WHERE email = '<your-email>').
+```
+
+Both writes propagate within ~5-10 seconds. Then mint a session and drive any admin endpoint:
+
+```bash
+# Mint a session — Origin header is required (the route enforces same-origin POST).
+curl -s -X POST "https://news.novoselec.ch/api/dev/login" \
+  -H "Authorization: Bearer $(cat /tmp/.bypass_token)" \
+  -H "Origin: https://news.novoselec.ch" \
+  -c /tmp/cookies.txt -o /dev/null -w "%{http_code}\n"   # expect 200
+
+# Drive any admin endpoint with the cookie + Origin + Accept: application/json.
+curl -s -X POST "https://news.novoselec.ch/api/admin/embed-backfill" \
+  -b /tmp/cookies.txt \
+  -H "Origin: https://news.novoselec.ch" \
+  -H "Accept: application/json"
+```
+
+**Failure-mode quick-reference:**
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `/api/dev/login` returns 404 | `DEV_BYPASS_TOKEN` empty/missing on the worker (deploy push truncated it) | Re-push via REST as above |
+| `/api/dev/login` returns 200 but admin route returns 401/403 | `DEV_BYPASS_USER_ID` deleted by deploy → session is `__e2e__`, not admin | Set `DEV_BYPASS_USER_ID` via REST as above |
+| `/api/dev/login` returns 403 with "Cross-site POST forbidden" | Missing `Origin: https://news.novoselec.ch` header | Add it; the route enforces same-origin POST |
+| Session cookie present but admin still 401 | Session expired (5-minute access-token TTL) | Re-mint via `/api/dev/login` |
+
+The token in `/tmp/.bypass_token` is the canonical local source of truth; treat the GitHub Actions `DEV_BYPASS_TOKEN` secret as derivative — re-push it from `/tmp/.bypass_token` whenever they appear out of sync.
+
 ## Resend domain verification
 
 1. Log in to Resend dashboard.
