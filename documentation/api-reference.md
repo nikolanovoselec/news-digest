@@ -418,6 +418,58 @@ Cross-article same-story sweep. Walks the article pool oldest-first by `publishe
 
 ---
 
+### GET /api/admin/dedup-diag (REQ-PIPE-003 AC 10)
+
+Returns the cosine similarity between two articles' stored Vectorize embeddings, the currently-effective same-story threshold, and a flag for whether the two articles share the same registrable domain (eTLD+1). Intended for evaluating threshold changes against known true-positive and false-positive pairs before committing them to configuration.
+
+**Auth:** Admin session required (same three-layer gate as every other `/api/admin/*` route — see the admin auth note above). No `Origin` check (read-only GET).
+
+**Query parameters:**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `a` | string | Yes | Article ID of the first article. |
+| `b` | string | Yes | Article ID of the second article. Must differ from `a`. |
+
+**Success (200):**
+
+```json
+{
+  "ok": true,
+  "a": {
+    "id": "string",
+    "title": "string",
+    "primary_source_url": "string",
+    "host": "string",
+    "etld1": "string",
+    "embedding_status": "embedded" | "failed" | null
+  },
+  "b": { ... },
+  "cosine": 0.87,
+  "same_etld1": true,
+  "threshold": 0.85,
+  "above_threshold": true
+}
+```
+
+`same_etld1` is `true` when both articles' `primary_source_url` values resolve to the same registrable domain via `src/lib/etld.ts`. `threshold` is the value of `DEDUP_COSINE_THRESHOLD` in effect at request time. `above_threshold` is `cosine >= threshold`.
+
+**Error responses:**
+
+| Outcome | Status | `error` field |
+|---|---|---|
+| Missing or empty `a` or `b` param | `400` | `missing_a_or_b` |
+| `a` and `b` are the same ID | `400` | `identical_ids` |
+| Either article not found in D1 | `404` | `article_not_found` |
+| Either vector not found in Vectorize | `404` | `vector_not_found` |
+| Vectorize lookup threw | `500` | `vectorize_lookup_failed` |
+| No valid session | `401` | `unauthorized` |
+| Valid session but not admin email | `403` | (plain text `Forbidden`) |
+
+**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 10
+
+---
+
 ## SEO and Crawler Policy
 
 ### GET /sitemap.xml
