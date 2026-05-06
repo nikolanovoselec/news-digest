@@ -405,7 +405,7 @@ Resumable embedding backfill for articles whose `embedding_status` is `NULL` or 
 
 ### POST /api/admin/historical-dedup
 
-Cross-article same-story sweep. Walks the article pool oldest-first by `published_at`; for each article, queries Vectorize for top-K matches above `DEDUP_COSINE_THRESHOLD` whose `published_at` is strictly newer, then folds every qualifying newer match into the current (older) article via `mergeAsAltSource`. The handler keeps batching inside a single isolate until `done: true` or the platform tears the request down (Cloudflare's edge cuts at ~100s with 524). Browser callers get a 303 redirect back to `/settings?dedup=done|partial&scanned=N&merged=M&remaining=K`; scripted callers opting in with `Accept: application/json` get the cumulative JSON shape and may pass `{ cursor, batch }` to drive a single batch manually.
+Cross-article same-story sweep. Walks the article pool oldest-first by `published_at`; for each article, queries Vectorize for top-K matches above `DEDUP_COSINE_THRESHOLD` whose `published_at` is strictly newer, then folds every qualifying newer match into the current (older) article via `mergeAsAltSource`. The handler keeps batching inside a single isolate until `done: true` or the platform tears the request down (Cloudflare's edge cuts at ~100s with 524). Browser callers get a 303 redirect back to `/settings?dedup=done|partial&scanned=N&merged=M&remaining=K`; scripted callers opting in with `Accept: application/json` get the cumulative JSON shape and may pass `{ cursor, batch }` to seed the starting cursor and per-iteration batch size.
 
 | Method | Auth | Request body |
 |---|---|---|
