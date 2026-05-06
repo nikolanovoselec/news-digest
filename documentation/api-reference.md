@@ -404,15 +404,15 @@ Resumable embedding backfill for articles whose `embedding_status` is `NULL` or 
 
 ### POST /api/admin/historical-dedup
 
-Resumable cross-article same-story sweep. Walks the article pool oldest-first by `published_at`; for each article, queries Vectorize for top-K matches above `DEDUP_COSINE_THRESHOLD` whose `published_at` is strictly newer, then folds every qualifying newer match into the current (older) article via `mergeAsAltSource`. Operators loop the route with the returned cursor until `done: true`.
+Cross-article same-story sweep. Walks the article pool oldest-first by `published_at`; for each article, queries Vectorize for top-K matches above `DEDUP_COSINE_THRESHOLD` whose `published_at` is strictly newer, then folds every qualifying newer match into the current (older) article via `mergeAsAltSource`. The handler keeps batching inside a single isolate until `done: true` or the platform tears the request down (Cloudflare's edge cuts at ~100s with 524). Browser callers get a 303 redirect back to `/settings?dedup=done|partial&scanned=N&merged=M&remaining=K`; scripted callers opting in with `Accept: application/json` get the cumulative JSON shape and may pass `{ cursor, batch }` to drive a single batch manually.
 
 | Method | Auth | Request body |
 |---|---|---|
-| `POST` | Admin session | `{ "cursor"?: number, "batch"?: number }` (cursor = `published_at` lower bound from the previous call; batch defaults to 100, cap 500) |
+| `POST`/`GET` | Admin session | empty (browser button) or `{ "cursor"?: number, "batch"?: number }` for scripted single-batch calls (cursor = `published_at` lower bound; batch defaults to 100, cap 500) |
 
-**Success (200):** `{ ok: true, scanned: N, merged: M, next_cursor: number, remaining: K, done: boolean }`.
+**Success (200):** `{ ok: true, scanned: N, merged: M, remaining: K, done: boolean, iterations: I, elapsed_ms: T }`.
 
-**Error responses:** `400 "batch out of range"` | `401 unauthorized` | `403 forbidden` | `500 "Sweep failed"`.
+**Error responses:** `401 unauthorized` | `403 forbidden` | `500 historical_dedup_failed`.
 
 **Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9
 

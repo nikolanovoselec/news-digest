@@ -480,4 +480,64 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
     // The merge SQL was committed before the best-effort delete; merged must be 1
     expect(body.merged).toBe(1);
   });
+
+  // Browser path — the /settings button posts a plain HTML form, so the
+  // handler must 303-redirect with cumulative counts on the URL instead
+  // of returning JSON. Mirrors the embed-backfill button shape.
+  it('REQ-PIPE-003: browser form post redirects to /settings?dedup=done with counts', async () => {
+    const SELF_ID = 'article-older';
+    const MATCH_ID = 'article-newer';
+    const SELF_PUBLISHED_AT = 1_700_000_000;
+    const MATCH_PUBLISHED_AT = 1_700_000_100;
+
+    // Build a request WITHOUT Accept: application/json — browser default.
+    const fixture: DbFixture = {
+      articles: [{ id: SELF_ID, published_at: SELF_PUBLISHED_AT }],
+      existenceGuardResults: { [MATCH_ID]: { present: 1 } },
+      remainingCount: 0,
+      batchCalls: [],
+      allCalls: [],
+    };
+    const db = makeDb(fixture);
+    const vectorize = makeVectorize({
+      queryByIdResults: {
+        [SELF_ID]: singleMatch({
+          id: MATCH_ID,
+          score: DEFAULT_THRESHOLD + 0.01,
+          published_at: MATCH_PUBLISHED_AT,
+        }),
+      },
+      deleteByIdsFails: false,
+    });
+    const cookie = await adminCookieJwt();
+    const req = new Request(`${APP_URL}/api/admin/historical-dedup`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: `${SESSION_COOKIE_NAME}=${cookie}`,
+      },
+    });
+    const env = {
+      DB: db,
+      VECTORIZE: vectorize,
+      OAUTH_JWT_SECRET: SECRET,
+      ADMIN_EMAIL,
+      APP_URL,
+    } as unknown as Env;
+    const context = {
+      request: req,
+      locals: { runtime: { env } },
+      url: new URL(req.url),
+      params: {},
+    } as never;
+
+    const res = await POST(context);
+
+    expect(res.status).toBe(303);
+    const location = res.headers.get('Location') ?? '';
+    expect(location).toContain('/settings?dedup=done');
+    expect(location).toContain('scanned=1');
+    expect(location).toContain('merged=1');
+    expect(location).toContain('remaining=0');
+  });
 });

@@ -578,6 +578,35 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               ></p>
             </fieldset>
           )}
+          {isAdmin && (
+            <fieldset class="settings__section">
+              <legend class="settings__legend">Dedupe historic articles</legend>
+              <p class="settings__hint">
+                Walk the embedded corpus oldest-first and merge any
+                newer near-duplicates into the older article as
+                alt-sources. Same one-request loop shape as the embed
+                button — re-clickable if the platform cuts the request.
+                Idempotent; running it again on a clean corpus merges
+                nothing.
+              </p>
+              <div class="settings__actions-row">
+                <form method="post" action="/api/admin/historical-dedup">
+                  <button
+                    type="submit"
+                    class="settings__secondary-button"
+                  >
+                    Dedupe historic articles
+                  </button>
+                </form>
+              </div>
+              <p
+                class="settings__status"
+                data-dedup-status
+                aria-live="polite"
+                hidden
+              ></p>
+            </fieldset>
+          )}
           <fieldset class="settings__section">
             <legend class="settings__legend">Delete account</legend>
             <p class="settings__hint">
@@ -1011,19 +1040,45 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
                       : `Embed backfill: ${embed}`;
           }
         }
+        // Historical-dedup round-trip — same shape as embed, but the
+        // counts are scanned/merged/remaining and the param is `dedup`.
+        const dedup = params.get('dedup');
+        if (dedup !== null && dedup !== '') {
+          const node = document.querySelector<HTMLElement>('[data-dedup-status]');
+          if (node !== null) {
+            const scanned = params.get('scanned') ?? '0';
+            const merged = params.get('merged') ?? '0';
+            const remaining = params.get('remaining') ?? '0';
+            node.hidden = false;
+            node.textContent =
+              dedup === 'done'
+                ? `Scanned ${scanned} articles, merged ${merged} duplicates. Done.`
+                : dedup === 'partial'
+                  ? `Scanned ${scanned} articles, merged ${merged}; ${remaining} remaining. Click again to continue.`
+                  : dedup === 'denied'
+                    ? 'Not authorised to run the dedup sweep.'
+                    : dedup === 'error'
+                      ? 'Historical dedup failed; check logs.'
+                      : `Historical dedup: ${dedup}`;
+          }
+        }
         if (
           saved !== null ||
           errorCode !== null ||
           forceRefresh !== null ||
-          embed !== null
+          embed !== null ||
+          dedup !== null
         ) {
           params.delete('saved');
           params.delete('error');
           params.delete('force_refresh');
           params.delete('run_id');
           params.delete('embed');
+          params.delete('dedup');
           params.delete('processed');
           params.delete('failed');
+          params.delete('scanned');
+          params.delete('merged');
           params.delete('remaining');
           const next = params.toString();
           const newUrl = window.location.pathname + (next === '' ? '' : '?' + next);

@@ -1,7 +1,7 @@
 // Implements REQ-PIPE-003
 // Implements REQ-AUTH-001
 //
-// Operator-only resumable historical-dedup sweep. POST
+// Operator-only historical-dedup sweep. POST/GET
 // /api/admin/historical-dedup walks already-embedded articles
 // oldest-first and merges any newer near-duplicates into them as
 // alt-sources via {@link mergeAsAltSource}. Newer matches are
@@ -9,10 +9,14 @@
 // `published_at >` comparison; the older article always wins so
 // users' stars / reads / canonical URLs are preserved.
 //
-// Resumable: POST `{"cursor": <unix_seconds>, "batch": <number>}` to
-// resume from a given published_at. The default batch size is 100
-// articles per call. The caller loops until the response reports
-// `done: true`.
+// One request drives the whole sweep. The handler keeps batching
+// inside a single isolate until `done` (or the platform tears the
+// request down — Cloudflare's edge cuts requests at ~100s with a
+// 524). Browser callers (the /settings button) get a 303 redirect
+// back with `?dedup=done|partial&scanned=N&merged=N`; scripted
+// callers opting in with `Accept: application/json` get the
+// cumulative JSON shape and may pass `{ cursor, batch }` to drive
+// the sweep manually.
 //
 // Idempotent: a second pass over the same window finds nothing to
 // merge because the previous pass already removed those vectors and
@@ -24,6 +28,7 @@ import type { APIContext } from 'astro';
 import { log } from '~/lib/log';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { applyRefreshCookie } from '~/middleware/auth';
+import { originOf } from '~/middleware/origin-check';
 import { mergeAsAltSource } from '~/lib/finalize-merge';
 import { readCosineThreshold, deleteVectorsBatched } from '~/lib/embeddings';
 
@@ -53,14 +58,50 @@ interface DedupResult {
   done: boolean;
 }
 
+interface CumulativeResult {
+  ok: true;
+  scanned: number;
+  merged: number;
+  remaining: number;
+  done: boolean;
+  iterations: number;
+  elapsed_ms: number;
+}
+
 export async function POST(context: APIContext): Promise<Response> {
+  return handle(context);
+}
+
+export async function GET(context: APIContext): Promise<Response> {
+  return handle(context);
+}
+
+async function handle(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env;
+  if (typeof env.APP_URL !== 'string' || env.APP_URL === '') {
+    return new Response('Application not configured', { status: 500 });
+  }
+  const appOrigin = originOf(env.APP_URL);
+  const wantsJson = (context.request.headers.get('Accept') ?? '').includes(
+    'application/json',
+  );
+
   const adminAuth = await requireAdminSession(context);
-  if (!adminAuth.ok) return adminAuth.response;
+  if (!adminAuth.ok) {
+    if (wantsJson) return adminAuth.response;
+    return new Response(null, {
+      status: 303,
+      headers: { Location: `${appOrigin}/settings?dedup=denied` },
+    });
+  }
 
   let cursor: number | null = null;
   let batch = DEFAULT_BATCH;
 
+  // JSON callers may seed cursor/batch via the request body. The
+  // browser button posts an empty form so this block is a no-op for
+  // it — the loop just starts at cursor=null and walks the whole
+  // corpus.
   try {
     const raw = await context.request.text();
     if (raw !== '') {
@@ -80,28 +121,102 @@ export async function POST(context: APIContext): Promise<Response> {
     // Body is optional; an empty / malformed body just means default.
   }
 
+  const startedAt = Date.now();
+  let totalScanned = 0;
+  let totalMerged = 0;
+  let lastRemaining = 0;
+  let iterations = 0;
+  let done = false;
+
   try {
-    const result = await runHistoricalDedupBatch(env, cursor, batch);
+    for (;;) {
+      const result = await runHistoricalDedupBatch(env, cursor, batch);
+      iterations += 1;
+      totalScanned += result.scanned;
+      totalMerged += result.merged;
+      lastRemaining = result.remaining;
+      cursor = result.next_cursor;
+      if (result.done) {
+        done = true;
+        break;
+      }
+      // Forward-progress guard: bail when a batch scanned ZERO rows.
+      // The cursor advances per batch by published_at of the last
+      // scanned row, so a zero-scan batch means the SELECT predicate
+      // is exhausted (or Vectorize is degraded enough that no rows
+      // are processable). Either way the loop should stop and let
+      // the operator click again rather than busy-spin.
+      if (result.scanned === 0) {
+        break;
+      }
+    }
+  } catch (err) {
+    log('error', 'digest.generation', {
+      status: 'historical_dedup_failed',
+      detail: String(err).slice(0, 500),
+      iterations,
+      scanned: totalScanned,
+    });
+    if (wantsJson) {
+      return applyRefreshCookie(
+        new Response(
+          JSON.stringify({ ok: false, error: 'historical_dedup_failed' }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } },
+        ),
+        adminAuth,
+      );
+    }
     return applyRefreshCookie(
-      new Response(JSON.stringify(result, null, 2), {
+      new Response(null, {
+        status: 303,
+        headers: { Location: `${appOrigin}/settings?dedup=error` },
+      }),
+      adminAuth,
+    );
+  }
+
+  log('info', 'digest.generation', {
+    status: 'historical_dedup_loop_completed',
+    iterations,
+    scanned: totalScanned,
+    merged: totalMerged,
+    remaining: lastRemaining,
+    done,
+    elapsed_ms: Date.now() - startedAt,
+  });
+
+  if (wantsJson) {
+    const body: CumulativeResult = {
+      ok: true,
+      scanned: totalScanned,
+      merged: totalMerged,
+      remaining: lastRemaining,
+      done,
+      iterations,
+      elapsed_ms: Date.now() - startedAt,
+    };
+    return applyRefreshCookie(
+      new Response(JSON.stringify(body, null, 2), {
         status: 200,
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
       }),
       adminAuth,
     );
-  } catch (err) {
-    log('error', 'digest.generation', {
-      status: 'historical_dedup_failed',
-      detail: String(err).slice(0, 500),
-    });
-    return applyRefreshCookie(
-      new Response(
-        JSON.stringify({ ok: false, error: 'historical_dedup_failed' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } },
-      ),
-      adminAuth,
-    );
   }
+
+  const status = done ? 'done' : 'partial';
+  const location =
+    `${appOrigin}/settings?dedup=${status}` +
+    `&scanned=${totalScanned}` +
+    `&merged=${totalMerged}` +
+    `&remaining=${lastRemaining}`;
+  return applyRefreshCookie(
+    new Response(null, {
+      status: 303,
+      headers: { Location: location },
+    }),
+    adminAuth,
+  );
 }
 
 async function runHistoricalDedupBatch(
