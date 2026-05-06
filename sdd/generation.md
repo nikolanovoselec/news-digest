@@ -41,11 +41,11 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 **Applies To:** System
 
 **Acceptance Criteria:**
-1. Each chunk yields a JSON payload shaped `{articles: [{title, details[], tags[]}], dedup_groups: [[…]]}` and no other top-level keys.
+1. Each chunk yields a JSON payload shaped `{articles: [{title, details[], tags[]}]}` and no other top-level keys. Cross-source dedup is performed in a separate finalize pass over the full tick rather than at the chunk level, so the chunk pass is summarisation-only (every input candidate gets its own entry).
 2. Titles are NYT-style headlines, 45–80 characters, active voice, rewritten rather than copied from the source feed. The 45–80 range is the prompt-side target; the consumer additionally enforces a hard sanity range of 5–500 characters server-side, dropping titles outside that range so genuinely broken cases (single-character labels, paragraph-as-title) never reach the reading surface.
-3. `details` is a plaintext body of 150–200 words split into 2 or 3 paragraphs (WHAT happened, HOW it works, and optionally IMPACT for the reader), each 3–5 sentences, with no lists, HTML, or Markdown. The 150–200 range is the prompt-side contract; the consumer additionally enforces an 80-word backstop server-side, dropping responses below that threshold so a model that ships a single-sentence stub cannot reach the reading surface. The backstop is a true sanity floor (genuinely truncated outputs), not the model's normal operating range.
+3. `details` is a plaintext body of 100–150 words split into 2 or 3 paragraphs (WHAT happened, HOW it works, and optionally IMPACT for the reader), each 2–4 sentences, with no lists, HTML, or Markdown. The 100–150 range is the prompt-side contract; the consumer additionally enforces an 80-word backstop server-side, dropping responses below that threshold so a model that ships a single-sentence stub cannot reach the reading surface. The backstop is a true sanity floor (genuinely truncated outputs), not the model's normal operating range.
 4. `tags` values come exclusively from the system-approved allowlist — the union of the default-seed hashtag list shared with new accounts plus every tag for which a discovered-source cache currently exists. Any tag the LLM invents outside that union is discarded server-side before persistence, and an article that ends up with zero valid tags is dropped.
-5. Intra-chunk duplicates collapse via the `dedup_groups` hints: the earliest-published source becomes the primary article and the others are recorded as alternative sources.
+5. Same-story collapse runs in the cross-chunk finalize pass (REQ-PIPE-008), not in the per-chunk call. The chunk pass emits one entry per input candidate; the finalize pass over the full tick is the single point where same-story groups are formed and the earliest-published source becomes the primary article with the others recorded as alternative sources.
 6. A chunk failure marks only that chunk's portion of the run as failed; other chunks in the same tick still persist their articles.
 7. Every article returned by the LLM echoes its input candidate's index; the consumer aligns output back to the input by that echoed value, dropping any article whose index is missing, invalid, or does not match an input candidate so a summary can never be stapled to the wrong canonical URL.
 8. Before a summary is persisted, the consumer verifies the LLM-generated title shares at least one substantive non-stopword token with the source candidate's headline; summaries with zero topical overlap are dropped so a mis-wired LLM response can never appear as a real article.
@@ -66,7 +66,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 **Acceptance Criteria:**
 1. URLs are canonicalised by stripping `utm_*` and `fbclid` tracking parameters, trimming trailing slashes, and removing default ports before any comparison.
-2. Clusters are merged per the LLM's `dedup_groups` hints, not only by canonical-URL equality.
+2. Clusters are merged per the LLM's same-story hints from the cross-chunk finalize pass (REQ-PIPE-008), not only by canonical-URL equality. The finalize pass is the single point of LLM-driven same-story collapse — chunk-level passes emit one entry per candidate.
 3. Within a cluster the earliest-published source becomes the primary article; the remaining members are persisted as alternative sources for that article.
 4. A canonical URL already present in the article pool is skipped on subsequent ticks — re-ingestion never produces a duplicate primary card.
 5. A single-source article (no cluster members) is persisted with zero alternative-source rows.
