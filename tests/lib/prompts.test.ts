@@ -131,10 +131,12 @@ describe('PROCESS_CHUNK_SYSTEM + processChunkUserPrompt — REQ-PIPE-002', () =>
     expect(PROCESS_CHUNK_SYSTEM.length).toBeGreaterThan(0);
   });
 
-  it('REQ-PIPE-002: PROCESS_CHUNK_SYSTEM demands JSON output with articles + dedup_groups', () => {
+  it('REQ-PIPE-002: PROCESS_CHUNK_SYSTEM demands JSON output with an articles array (intra-chunk dedup_groups removed 2026-05-06 — finalize handles cross-source dedup with full corpus)', () => {
     expect(PROCESS_CHUNK_SYSTEM.toLowerCase()).toContain('json');
     expect(PROCESS_CHUNK_SYSTEM).toContain('articles');
-    expect(PROCESS_CHUNK_SYSTEM).toContain('dedup_groups');
+    // dedup_groups intentionally absent — see prompts.ts and the
+    // finalize consumer for the dedup contract.
+    expect(PROCESS_CHUNK_SYSTEM).not.toContain('dedup_groups');
   });
 
   it('REQ-PIPE-002: PROCESS_CHUNK_SYSTEM requires each article to echo its candidate index', () => {
@@ -193,13 +195,13 @@ describe('PROCESS_CHUNK_SYSTEM + processChunkUserPrompt — REQ-PIPE-002', () =>
     expect(prompt.toLowerCase()).toMatch(/allowlist|subset of|never invent/i);
   });
 
-  it('REQ-PIPE-002: processChunkUserPrompt documents the expected JSON response shape', () => {
+  it('REQ-PIPE-002: processChunkUserPrompt documents the expected JSON response shape (no dedup_groups — see finalize)', () => {
     const prompt = processChunkUserPrompt(sampleCandidates, ['cloudflare']);
     expect(prompt).toContain('articles');
     expect(prompt).toContain('title');
     expect(prompt).toContain('details');
     expect(prompt).toContain('tags');
-    expect(prompt).toContain('dedup_groups');
+    expect(prompt).not.toContain('dedup_groups');
   });
 
   it('CF-032: title containing triple backticks cannot break the fenced block', () => {

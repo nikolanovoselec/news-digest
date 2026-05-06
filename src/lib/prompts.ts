@@ -97,16 +97,13 @@ export const PROCESS_CHUNK_SYSTEM = `You summarise scraped news candidates into 
 Return ONE JSON object, nothing else. No prose, no code fences, no text before "{" or after "}".
 
 Shape:
-{"articles":[{"index":N,"title":"...","details":"...","tags":["..."]},...],"dedup_groups":[[0,3],[1,2,5]]}
+{"articles":[{"index":N,"title":"...","details":"...","tags":["..."]},...]}
 
 - "articles": one entry per input candidate. Each entry MUST include its "index" field echoing the input candidate's bracketed index (the [N] in the user message). The consumer aligns output to input BY THIS INDEX, not by position — an entry without a correct "index" is dropped, so every summary you write is lost.
 - Never change an entry's index. "index": 47 means "this entry summarises the candidate that appeared as [47] in the input list". Title, details, and tags in that entry MUST be about THAT specific candidate's URL and snippet — never mix facts across candidates.
 - For an unusable candidate, still emit its entry with the correct index and empty tags so the consumer knows you saw it.
-- "dedup_groups": arrays of input-candidate indices that describe THE SAME NEWS EVENT — not just the same topic. The bar is: would a reasonable reader say "I already read about this exact thing"? Only group when the answer is unambiguously yes. Only groups of size ≥ 2. Omit the field as [] when none.
-- DO group: vendor blog post + HN/Lobsters mirror of that exact post; press release + reporter's write-up of that release; two outlets covering one announcement on the same day with overlapping facts.
-- DO NOT group: two studies on the same topic citing different numbers (e.g. "25% of MCP servers vulnerable" and "6.2% of MCP servers vulnerable" are DIFFERENT studies — different methodology, different findings, never merge); two different incidents in the same product family; two opinion pieces about the same topic by different authors; rumour + later confirmation (these are separate events).
-- When in doubt, leave the candidate ungrouped. A false split is cheap (two cards in the digest), a false merge is expensive (one of two real stories disappears).
-- Empty input → {"articles":[],"dedup_groups":[]}.
+- DO NOT cluster, group, or merge candidates. Every input candidate gets its own entry in "articles". Cross-source duplicate detection happens in a later pipeline step that sees the full corpus — your job here is summarisation only.
+- Empty input → {"articles":[]}.
 
 # TITLE RULES
 
@@ -252,8 +249,7 @@ Return JSON:
       "details": "2-3 paragraphs of 2-4 sentences each, 100-150 words total, separated by \\n (WHAT happened / HOW it works / IMPACT for the reader) — grounded in candidate [0]'s snippet only, every claim traceable to a single passage, distinctive mechanism named",
       "tags": ["only tags from the allowlist above"]
     }
-  ],
-  "dedup_groups": [[0, 3], [1, 2, 5]]
+  ]
 }`;
 }
 

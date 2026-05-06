@@ -9,9 +9,13 @@
 //   2. Calls Workers AI once (env.AI.run) with the default model.
 //   3. Parses strict JSON via the shared extractResponsePayload +
 //      parseLLMPayload helpers from `src/lib/generate.ts`.
-//   4. Collapses intra-chunk dedup_groups (LLM-hinted "these are the
-//      same story" groups) via mergeClustersByLlmHints, so only one
-//      article row lands in D1 per real story.
+//   4. Defensively normalises any `dedup_groups` field the model may
+//      still emit (the prompt no longer asks for it as of 2026-05-06 —
+//      cross-source dedup runs in the finalize pass with full-corpus
+//      visibility, so a single chunk's view is too narrow to make the
+//      call). normaliseRawDedupGroups returns [] for missing fields,
+//      so the merger is effectively a no-op and every input candidate
+//      keeps its own row.
 //   5. Validates every output tag against the allowlist (DEFAULT_HASHTAGS
 //      ∪ discovered-tag KV keys). Articles with zero valid tags are
 //      dropped — they're either off-topic or the LLM hallucinated tags
