@@ -173,12 +173,30 @@ function makeEnv(
   kv: KVNamespace,
   aiResponse: unknown,
 ): Env {
+  // env.AI.run is called twice per chunk: once for the chunk LLM
+  // (returns aiResponse), once for the embedding model (returns a
+  // shape the embeddings helper accepts). REQ-PIPE-003.
+  const aiRun = vi.fn().mockImplementation((model: string, params: { text?: string[] }) => {
+    if (model.startsWith('@cf/baai/bge-')) {
+      const count = params.text?.length ?? 0;
+      return Promise.resolve({
+        data: Array.from({ length: count }, () =>
+          Array.from({ length: 768 }, () => 0),
+        ),
+      });
+    }
+    return Promise.resolve(aiResponse);
+  });
   return {
     DB: db,
     KV: kv,
-    AI: {
-      run: vi.fn().mockResolvedValue(aiResponse),
-    } as unknown as Ai,
+    AI: { run: aiRun } as unknown as Ai,
+    VECTORIZE: {
+      upsert: vi.fn().mockResolvedValue({ count: 0, ids: [] }),
+      query: vi.fn().mockResolvedValue({ count: 0, matches: [] }),
+      queryById: vi.fn().mockResolvedValue({ count: 0, matches: [] }),
+      deleteByIds: vi.fn().mockResolvedValue({ count: 0, ids: [] }),
+    } as unknown as Vectorize,
     SCRAPE_COORDINATOR: { send: vi.fn() } as unknown as Queue<unknown>,
     SCRAPE_CHUNKS: { send: vi.fn() } as unknown as Queue<unknown>,
     SCRAPE_FINALIZE: { send: vi.fn() } as unknown as Queue<unknown>,
@@ -253,8 +271,14 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
     await processOneChunk(env, makeChunk());
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const runMock = (env.AI as any).run as ReturnType<typeof vi.fn>;
-    expect(runMock).toHaveBeenCalledTimes(1);
-    const [model, params] = runMock.mock.calls[0] as [string, Record<string, unknown>];
+    // env.AI.run is called twice per chunk: once for the chunk LLM,
+    // once for the per-article embedding model (REQ-PIPE-003).
+    expect(runMock).toHaveBeenCalledTimes(2);
+    const chunkCall = runMock.mock.calls.find(
+      (call: unknown[]) => !(call[0] as string).startsWith('@cf/baai/bge-'),
+    ) as [string, Record<string, unknown>] | undefined;
+    expect(chunkCall).toBeDefined();
+    const [model, params] = chunkCall as [string, Record<string, unknown>];
     expect(typeof model).toBe('string');
     expect(model.length).toBeGreaterThan(0);
     const messages = params.messages as Array<{ role: string; content: string }>;
@@ -1213,5 +1237,69 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
         r.params[0] === 'failed-run',
     );
     expect(lock).toBeUndefined();
+  });
+  it('REQ-PIPE-003: Vectorize.upsert failure rolls back this attempt\'s rows to embedding_status=\'failed\'', async () => {
+    // Regression test: the rollback UPDATE must actually fire on the
+    // FIRST attempt when Vectorize.upsert throws. The previous gate
+    // (`AND embedding_status != 'embedded'`) was self-defeating because
+    // the rows were just INSERT'd with status='embedded', so the gate
+    // excluded every row it was supposed to fix and the articles
+    // remained marked 'embedded' in D1 with no vector in Vectorize —
+    // invisible to both the finalize pass and the admin backfill route.
+    const aiResponse = {
+      response: JSON.stringify({
+        articles: [
+          { title: 'Headline A', details: LONG_BODY, tags: ['cloudflare'] },
+          { title: 'Headline B', details: LONG_BODY, tags: ['generative-ai'] },
+        ],
+        dedup_groups: [],
+      }),
+      usage: { input_tokens: 10, output_tokens: 10 },
+    };
+    const { db, records } = makeDb();
+    const { kv } = makeKv({ chunksRemaining: '1' });
+    const env = makeEnv(db, kv, aiResponse);
+    // Replace the VECTORIZE.upsert mock so it throws.
+    (env.VECTORIZE as unknown as { upsert: ReturnType<typeof vi.fn> }).upsert =
+      vi.fn().mockRejectedValue(new Error('Vectorize 503'));
+
+    await processOneChunk(env, makeChunk());
+
+    // Article INSERTs landed in D1 with embedding_status='embedded'
+    // (the in-memory state attachEmbeddings produced before upsert).
+    const articleInserts = records.filter(
+      (r) =>
+        r.via === 'batch' &&
+        r.sql.startsWith('INSERT OR IGNORE INTO articles'),
+    );
+    expect(articleInserts.length).toBe(2);
+    // Position ?11 in the bind list = embedding_status; ?12 = embedded_at.
+    for (const ins of articleInserts) {
+      expect(ins.params[10]).toBe('embedded');
+      expect(typeof ins.params[11]).toBe('number');
+    }
+    // The fix: rollback UPDATE fires and matches both rows via the
+    // per-attempt embedded_at gate (not the broken status gate).
+    const rollback = records.find(
+      (r) =>
+        r.via === 'run' &&
+        r.sql.includes('UPDATE articles') &&
+        r.sql.includes("embedding_status = 'failed'") &&
+        r.sql.includes('embedded_at = ?'),
+    );
+    expect(rollback).toBeDefined();
+    // The bind list ends with the per-attempt embedded_at; the IDs come
+    // first, then the timestamp. Verify the timestamp matches the value
+    // written by the article INSERT batch.
+    const expectedStamp = articleInserts[0]!.params[11];
+    const lastParam = rollback!.params[rollback!.params.length - 1];
+    expect(lastParam).toBe(expectedStamp);
+    // The structured failure log should also have fired.
+    const failedLog = records.find(
+      (r) =>
+        r.sql.includes('UPDATE articles') &&
+        r.sql.includes("embedding_status = 'failed'"),
+    );
+    expect(failedLog).toBeDefined();
   });
 });

@@ -82,6 +82,18 @@ binding = "AI"
 [triggers]
 crons = ["0 */4 * * *", "0 3 * * *", "*/5 * * * *"]
 
+# REQ-PIPE-003 — Cloudflare Vectorize index for semantic article
+# dedup. Populated by the chunk-consumer (each new article → one
+# upsert) and queried by the finalize-consumer + admin
+# historical-dedup route. 768-dim cosine to match the
+# bge-base-en-v1.5 embedding model. Create via:
+#   npx -y wrangler vectorize create ai-news-embeddings \
+#       --dimensions=768 --metric=cosine
+# See AD33 for the embeddings + Vectorize ADR.
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "ai-news-embeddings"
+
 [vars]
 # APP_URL is set as a Worker secret (different per deployment target)
 # CF-004 — single source of truth for the queue retry cap. Both the
@@ -90,6 +102,15 @@ crons = ["0 */4 * * *", "0 3 * * *", "*/5 * * * *"]
 # so a future bump only changes one place. Integers must be quoted as
 # strings here; the consumer `Number.parseInt`s them.
 QUEUE_MAX_RETRIES = "3"
+
+# REQ-PIPE-003 — cosine threshold for semantic dedup. Validated
+# 2026-05-06 against 11 production articles: 0.85 catches the
+# same-event Anthropic financial-AI cluster (pairwise 0.81-0.91)
+# without false-merging different events (Verisk announcement,
+# EPAM hiring at 0.77-0.84). Operators may tune via the same key
+# without a code change. Float, string-typed for parity with
+# QUEUE_MAX_RETRIES.
+DEDUP_COSINE_THRESHOLD = "0.85"
 
 # ---------------------------------------------------------------------------
 # Integration environment — `wrangler deploy --env integration` targets a
@@ -111,6 +132,9 @@ assets = { directory = "./dist", binding = "ASSETS" }
 # CF-004 — must match the top-level [vars] QUEUE_MAX_RETRIES; the
 # integration env doesn't inherit top-level vars automatically.
 QUEUE_MAX_RETRIES = "3"
+# REQ-PIPE-003 — same threshold as production. Forks tuning their
+# own corpus may override here without touching prod.
+DEDUP_COSINE_THRESHOLD = "0.85"
 
 [env.integration.observability]
 enabled = true
@@ -154,6 +178,15 @@ max_retries = 3
 
 [env.integration.ai]
 binding = "AI"
+
+# REQ-PIPE-003 — integration uses its own Vectorize index so a
+# integration retention sweep can never delete production vectors.
+# Create via:
+#   npx -y wrangler vectorize create ai-news-embeddings-integration \
+#       --dimensions=768 --metric=cosine
+[[env.integration.vectorize]]
+binding = "VECTORIZE"
+index_name = "ai-news-embeddings-integration"
 
 # No [env.integration.triggers] block — crons are intentionally disabled
 # on integration. Trigger scrape runs manually via /api/admin/force-refresh.

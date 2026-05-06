@@ -1,4 +1,5 @@
 // Implements REQ-PIPE-002
+// Implements REQ-PIPE-003 (per-article embedding + Vectorize upsert)
 // Implements REQ-PIPE-008 (last-chunk SCRAPE_FINALIZE enqueue)
 //
 // Chunk consumer for the `scrape-chunks` Cloudflare Queue. Each message
@@ -61,6 +62,7 @@ import { log } from '~/lib/log';
 import { titlesShareAnyToken } from '~/lib/title-overlap';
 import { handleBatch } from '~/lib/queue-handler';
 import { setChunksRemaining } from '~/lib/kv/chunks-remaining';
+import { buildEmbeddingInput, embedTexts } from '~/lib/embeddings';
 
 /** Shape of every `scrape-chunks` queue message. Produced by the
  * coordinator in `src/queue/scrape-coordinator.ts`. `candidates` are the
@@ -192,6 +194,17 @@ interface PreparedArticle {
   primary_source_name: string;
   alternatives: Array<{ source_url: string; source_name: string }>;
   published_at: number;
+  /** Per-article embedding lifecycle state set after embedTexts.
+   *  `embedded` — vector present in `embedding`, will be upserted to
+   *  Vectorize after the D1 batch succeeds.
+   *  `failed`   — embed call threw or returned a malformed payload;
+   *  the article still ships, the admin embed-backfill route picks
+   *  it up later. */
+  embedding_status: 'embedded' | 'failed';
+  embedded_at: number | null;
+  /** 768-dim cosine vector when `embedding_status === 'embedded'`,
+   *  otherwise null. */
+  embedding: number[] | null;
 }
 
 /** Process a single chunk message end-to-end. Exported for direct unit
@@ -256,11 +269,26 @@ export async function processOneChunk(
     if (article !== null) prepared.push(article);
   }
 
+  // Embed each prepared article. On success, articles carry their
+  // 768-dim vector + `embedding_status='embedded'` into D1; on
+  // failure, articles stay at the validateAndSanitizeArticle default
+  // ('failed', null vector) and the admin backfill route picks them
+  // up later. REQ-PIPE-003.
+  await attachEmbeddings(env, prepared, body);
+
   // Write articles + sources + tags in a single atomic D1 batch.
   const statements = buildArticleBatchStatements(env.DB, prepared, body.scrape_run_id);
   if (statements.length > 0) {
     await env.DB.batch(statements);
   }
+
+  // Vectorize.upsert runs AFTER the D1 batch lands, so a failed upsert
+  // never strands articles in Vectorize without a D1 row backing them.
+  // The other failure direction — D1 written but Vectorize upsert
+  // throws — is handled by reverting affected rows to
+  // `embedding_status='failed'` so the backfill route reattempts. The
+  // article itself is real and visible regardless. REQ-PIPE-003.
+  await upsertVectors(env, prepared, body);
 
   // Record completion + conditionally enqueue finalize.
   const {
@@ -656,6 +684,12 @@ function validateAndSanitizeArticle(
       source_name: alt.source_name,
     })),
     published_at: primary.published_at,
+    // Embedding lifecycle defaults — `attachEmbeddings` overwrites
+    // these post-embed. Default 'failed' so a thrown embed call leaves
+    // the article in a state the backfill route can pick up.
+    embedding_status: 'failed',
+    embedded_at: null,
+    embedding: null,
   };
 }
 
@@ -679,8 +713,8 @@ function buildArticleBatchStatements(
         `INSERT OR IGNORE INTO articles
            (id, canonical_url, primary_source_name, primary_source_url,
             title, details_json, tags_json, published_at, ingested_at,
-            scrape_run_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+            scrape_run_id, embedding_status, embedded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
       ).bind(
         a.id,
         a.canonical_url,
@@ -692,6 +726,8 @@ function buildArticleBatchStatements(
         a.published_at,
         nowSec,
         scrape_run_id,
+        a.embedding_status,
+        a.embedded_at,
       ),
     );
     for (const alt of a.alternatives) {
@@ -881,3 +917,143 @@ function buildAnchorIndices(
   return anchors;
 }
 
+/**
+ * Embed every prepared article in one Workers AI call. On success
+ * each article carries its 768-dim vector + embedded_at timestamp;
+ * on failure every article in the batch flips to
+ * `embedding_status='failed'` (the validateAndSanitizeArticle default
+ * — re-asserted defensively here in case a future change shifts the
+ * default). Errors are logged and swallowed: the article batch still
+ * lands in D1 and the admin embed-backfill route reattempts.
+ */
+async function attachEmbeddings(
+  env: Env,
+  prepared: PreparedArticle[],
+  body: ChunkJobMessage,
+): Promise<void> {
+  if (prepared.length === 0) return;
+  const inputs = prepared.map((a) =>
+    buildEmbeddingInput({
+      title: a.title,
+      details_json: JSON.stringify(a.details),
+    }),
+  );
+  try {
+    const vectors = await embedTexts(env.AI, inputs);
+    if (vectors.length !== prepared.length) {
+      throw new Error(
+        `attachEmbeddings: vector count ${vectors.length} != article count ${prepared.length}`,
+      );
+    }
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (let i = 0; i < prepared.length; i++) {
+      const article = prepared[i];
+      const vector = vectors[i];
+      if (article === undefined || vector === undefined) continue;
+      article.embedding_status = 'embedded';
+      article.embedded_at = nowSec;
+      article.embedding = vector;
+    }
+  } catch (err) {
+    for (const article of prepared) {
+      article.embedding_status = 'failed';
+      article.embedded_at = null;
+      article.embedding = null;
+    }
+    log('warn', 'digest.generation', {
+      status: 'chunk_embed_failed',
+      scrape_run_id: body.scrape_run_id,
+      chunk_index: body.chunk_index,
+      article_count: prepared.length,
+      detail: String(err).slice(0, 500),
+    });
+  }
+}
+
+/**
+ * Upsert every successfully-embedded article's vector into Vectorize.
+ * Runs AFTER the D1 batch lands so a failed upsert can be reverted by
+ * downgrading the affected rows' embedding_status to 'failed' (the
+ * articles themselves stay visible). Vectorize.upsert is idempotent
+ * on (id, vector) pairs — a queue-redelivered chunk re-upserts the
+ * same vectors and the index converges.
+ *
+ * Vectors are tagged with `published_at` and `primary_source_url` in
+ * metadata so the finalize-consumer query can filter on age (older
+ * articles win in semantic dedup) without re-reading D1.
+ */
+async function upsertVectors(
+  env: Env,
+  prepared: PreparedArticle[],
+  body: ChunkJobMessage,
+): Promise<void> {
+  const embedded = prepared.filter(
+    (a): a is PreparedArticle & { embedding: number[]; embedded_at: number } =>
+      a.embedding !== null &&
+      a.embedding_status === 'embedded' &&
+      a.embedded_at !== null,
+  );
+  if (embedded.length === 0) return;
+  try {
+    await env.VECTORIZE.upsert(
+      embedded.map((a) => ({
+        id: a.id,
+        values: a.embedding,
+        metadata: {
+          published_at: a.published_at,
+          primary_source_url: a.primary_source_url,
+        },
+      })),
+    );
+    log('info', 'digest.generation', {
+      status: 'chunk_vectorize_upsert',
+      scrape_run_id: body.scrape_run_id,
+      chunk_index: body.chunk_index,
+      vectors_upserted: embedded.length,
+    });
+  } catch (err) {
+    // Downgrade affected rows so the backfill route picks them up.
+    // Use a single UPDATE…IN(…) batch so the failure mode is bounded.
+    log('error', 'digest.generation', {
+      status: 'chunk_vectorize_upsert_failed',
+      scrape_run_id: body.scrape_run_id,
+      chunk_index: body.chunk_index,
+      vector_count: embedded.length,
+      detail: String(err).slice(0, 500),
+    });
+    try {
+      // Gate the rollback on the per-attempt embedded_at timestamp.
+      // Each chunk-consumer attempt stamps `nowSec` in attachEmbeddings;
+      // every article in `embedded` shares the same timestamp this
+      // attempt assigned. Gating on `embedded_at = ?N` means:
+      //   - First-attempt rollback: rows just INSERT'd with this attempt's
+      //     timestamp match → flip to 'failed'. (The previous gate
+      //     `embedding_status != 'embedded'` was self-defeating because
+      //     the rows had just been written as 'embedded'.)
+      //   - Redelivery whose first attempt fully succeeded: D1 still
+      //     holds the FIRST attempt's timestamp; this attempt's
+      //     timestamp won't match → 0 rows updated, prior success
+      //     preserved.
+      // All articles in this attempt share `nowSec`; pick any one.
+      const attemptStamp = embedded[0]?.embedded_at;
+      if (attemptStamp === undefined) return;
+      const placeholders = embedded.map((_, i) => `?${i + 1}`).join(',');
+      await env.DB
+        .prepare(
+          `UPDATE articles
+              SET embedding_status = 'failed', embedded_at = NULL
+            WHERE id IN (${placeholders})
+              AND embedded_at = ?${embedded.length + 1}`,
+        )
+        .bind(...embedded.map((a) => a.id), attemptStamp)
+        .run();
+    } catch (rollbackErr) {
+      log('error', 'digest.generation', {
+        status: 'chunk_vectorize_status_rollback_failed',
+        scrape_run_id: body.scrape_run_id,
+        chunk_index: body.chunk_index,
+        detail: String(rollbackErr).slice(0, 500),
+      });
+    }
+  }
+}

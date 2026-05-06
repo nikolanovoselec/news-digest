@@ -10,6 +10,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   pickWinner,
   buildMergeStatements,
+  mergeAsAltSource,
   type FinalizeRow,
 } from '~/lib/finalize-merge';
 
@@ -132,5 +133,51 @@ describe('buildMergeStatements — REQ-PIPE-008', () => {
     for (let i = 0; i < 5; i++) {
       expect(calls[i]!.sql).toMatch(/INSERT OR IGNORE/);
     }
+  });
+});
+
+describe('mergeAsAltSource — REQ-PIPE-003', () => {
+  it('REQ-PIPE-003: existing article wins regardless of published_at', () => {
+    // The semantic-dedup path inverts the buildMergeStatements winner
+    // rule: existing always wins, new article (which may even be older
+    // by published_at if the LLM mis-dated upstream) becomes alt-source.
+    const { db, calls } = makeRecordingDb();
+    mergeAsAltSource(db, 'existing-id', 'new-id');
+    expect(calls).toHaveLength(6);
+    // ?1 = existing (winner), ?2 = new (loser).
+    for (let i = 0; i < 5; i++) {
+      expect(calls[i]!.params[0]).toBe('existing-id');
+      expect(calls[i]!.params[1]).toBe('new-id');
+    }
+    // DELETE drops the new article id.
+    expect(calls[5]!.sql).toMatch(/DELETE FROM articles WHERE id = \?1/);
+    expect(calls[5]!.params[0]).toBe('new-id');
+  });
+
+  it('REQ-PIPE-003: new article primary source becomes alt-source on existing article', () => {
+    const { db, calls } = makeRecordingDb();
+    mergeAsAltSource(db, 'older', 'newer');
+    // Statement 0 lifts the LOSER's primary source onto the winner.
+    // SQL parameter binds ?1 = winner (older); ?2 = loser id (newer);
+    // the SELECT pulls primary_source_* from `articles WHERE id = ?2`.
+    expect(calls[0]!.sql).toContain('primary_source_url');
+    expect(calls[0]!.sql).toContain('FROM articles WHERE id = ?2');
+    expect(calls[0]!.params[0]).toBe('older');
+    expect(calls[0]!.params[1]).toBe('newer');
+  });
+
+  it('REQ-PIPE-003: stars and reads on the new article are re-pointed to the existing article', () => {
+    // Catches the regression "users lose a star when a freshly-arrived
+    // duplicate is merged into the canonical record".
+    const { db, calls } = makeRecordingDb();
+    mergeAsAltSource(db, 'existing', 'new');
+    const starStmt = calls.find((c) => c.sql.includes('article_stars'));
+    const readStmt = calls.find((c) => c.sql.includes('article_reads'));
+    expect(starStmt).toBeDefined();
+    expect(readStmt).toBeDefined();
+    expect(starStmt!.params[0]).toBe('existing');
+    expect(starStmt!.params[1]).toBe('new');
+    expect(readStmt!.params[0]).toBe('existing');
+    expect(readStmt!.params[1]).toBe('new');
   });
 });

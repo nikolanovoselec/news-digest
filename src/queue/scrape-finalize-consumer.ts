@@ -1,85 +1,75 @@
+// Implements REQ-PIPE-003
 // Implements REQ-PIPE-008
 //
-// Cross-chunk semantic dedup pass for the global-feed pipeline.
-//
-// Runs once per scrape tick AFTER all chunks have written their
-// articles to D1. The chunk consumer that closes the run (KV counter
-// hits 0) does two things in order: it stamps the run as `ready` so
-// articles become visible immediately, and it enqueues a single
+// Cross-tick semantic dedup pass for the global-feed pipeline. Runs
+// once per scrape tick AFTER all chunks have written their articles +
+// vectors. The chunk consumer that closes the run stamps the run as
+// `ready` so articles become visible immediately and enqueues a single
 // `scrape-finalize` message carrying just the `scrape_run_id`. This
 // consumer picks that message up and:
 //
-//   1. Loads up to 250 surviving articles for the run, ordered by
-//      ingested_at DESC. The SELECT pulls each article's `details`
-//      body so the dedup model grounds decisions in actual content.
-//   2. Calls Workers AI with FINALIZE_DEDUP_SYSTEM over the title +
-//      full summary body for each candidate (source name dropped per
-//      REQ-PIPE-008 AC 1), asking for `dedup_groups` over the prompt
-//      indices.
-//   3. For each returned group of size >= 2, picks a winner (earliest
-//      published_at, id-tiebreaker) and merges the losers into it via
-//      the 6-statement sequence in `src/lib/finalize-merge.ts`.
-//   4. Folds tokens + cost + losers_deleted into the scrape_runs
-//      row via a single atomic UPDATE that conditionally adds the
-//      stats only when `finalize_recorded = 0`, then flips the
-//      column to 1. Per REQ-PIPE-008 AC 7 the LLM-call cost is
-//      real and must surface on the daily tally even when zero
-//      merges occurred. Per-run idempotency on redelivery is
-//      enforced by the same statement's gating WHERE clause
-//      (migration 0010); a redelivered finalize sees
-//      `finalize_recorded = 1` already and the WHERE doesn't
-//      match, so no rows change and the cost is not double-counted.
+//   1. Loads every article from this scrape run that has an embedding
+//      in Vectorize. Articles whose embed call failed
+//      (`embedding_status='failed'`) skip dedup — they will be picked
+//      up by the admin embed-backfill + historical-dedup routes once
+//      their vectors land.
+//   2. For each article, runs `VECTORIZE.query(topK=5)` and filters
+//      matches to (a) different article id, (b) cosine score >=
+//      DEDUP_COSINE_THRESHOLD (default 0.85, validated 2026-05-06),
+//      (c) match `published_at < self.published_at` so older articles
+//      always win.
+//   3. When at least one match qualifies: pick the OLDEST match by
+//      `published_at`, batch the 6-statement `mergeAsAltSource` SQL
+//      (existing wins, new becomes alt-source, new row deleted), and
+//      delete the new article's vector from Vectorize.
+//   4. Folds tokens + cost (zero — bge-base is free) + losers_deleted
+//      into the scrape_runs row via the same atomic conditional UPDATE
+//      as before, so the per-run idempotency gate from migration 0010
+//      still holds across queue redeliveries.
 //
-// Articles are visible to users throughout — the merge runs in the
-// background and may briefly leave duplicates visible (REQ-PIPE-008
-// AC 4). On permanent failure (queue retries exhausted) we log
-// `finalize_failed` and leave the articles un-merged; the run stays
-// `ready` because the articles ARE real (AC 8).
-//
-// Idempotency invariants live in `src/lib/finalize-merge.ts` — every
-// INSERT…SELECT in the merge filters on `WHERE article_id = ?loserId`
-// (the article-row DELETE filters on `WHERE id = ?loserId`), so a
-// retry after a successful prior pass walks an empty source set and
-// is a no-op.
+// Why semantic embedding instead of an LLM dedup call:
+// independent LLM-rewritten summaries of the same event share
+// almost no token vocabulary (Jaccard ~0.10-0.13 measured against
+// production data), so the previous LLM call could not catch them at
+// scale. bge-base-en-v1.5 cosine 0.85 catches the same-event cluster
+// reliably; see `documentation/decisions/AD33...` (Vectorize +
+// embeddings ADR) for evidence.
 
 import { log } from '~/lib/log';
 import { applyForeignKeysPragma } from '~/lib/db';
-import { FINALIZE_DEDUP_SYSTEM, finalizeDedupUserPrompt, FINALIZE_LLM_PARAMS } from '~/lib/prompts';
-import { parseLLMJson } from '~/lib/generate';
-import { runJson, asAiBinding } from '~/lib/llm-json';
-import { pickWinner, buildMergeStatements, type FinalizeRow } from '~/lib/finalize-merge';
-import { normaliseRawDedupGroups } from '~/lib/dedupe';
+import { mergeAsAltSource } from '~/lib/finalize-merge';
 import { handleBatch } from '~/lib/queue-handler';
+import { readCosineThreshold, deleteVectorsBatched } from '~/lib/embeddings';
 
 /** Hard cap on candidates per finalize call. Comfortable headroom over
- *  current production loads (~150-200 articles per tick) and well
- *  under the LLM's input-token budget. Runs that produced more articles
- *  skip dedup on the tail (REQ-PIPE-008 AC 6). */
+ *  current production loads (~150-200 articles per tick). Vectorize
+ *  query latency dominates, not candidate volume — the cap exists so
+ *  ticks that briefly produce 1000+ articles don't drag finalize past
+ *  the queue isolate budget. */
 const FINALIZE_CANDIDATE_CAP = 250;
+
+/** TopK for each Vectorize query. Five gives the dedup loop enough
+ *  signal to pick the best older match while keeping per-call latency
+ *  bounded. Scores below threshold are filtered client-side; topK is
+ *  not the gate. */
+const VECTORIZE_TOPK = 5;
 
 /** Message shape for the SCRAPE_FINALIZE queue. */
 export interface FinalizeJobMessage {
   scrape_run_id: string;
 }
 
-/** Row shape returned by the per-run article fetch. `details_json`
- *  is the JSON-encoded paragraph array the chunk consumer wrote
- *  (column `details_json` in migration 0003). The dedup prompt
- *  consumes the joined paragraphs directly (REQ-PIPE-008 AC 1). */
 interface ArticleRow {
   id: string;
-  title: string;
-  details_json: string;
   published_at: number;
   ingested_at: number;
 }
 
-/** Handle one batch of `scrape-finalize` messages. Delegates to the
- *  shared `handleBatch` envelope. Per REQ-PIPE-008 AC 8 we deliberately
- *  do NOT pass `onTerminalFailure` — the run is already `ready` from
- *  the chunk consumer's last-chunk write, the articles are visible,
- *  and only the cross-chunk merge is missing. Operators investigate
- *  via the `finalize_failed` log event. */
+/** Handle one batch of `scrape-finalize` messages. Per REQ-PIPE-008
+ *  AC 8 we deliberately do NOT pass `onTerminalFailure` — the run is
+ *  already `ready` from the chunk consumer's last-chunk write, the
+ *  articles are visible, and only the cross-tick dedup is missing.
+ *  Operators investigate via the `finalize_failed` log event. */
 export async function handleFinalizeBatch(
   batch: MessageBatch<FinalizeJobMessage>,
   env: Env,
@@ -102,12 +92,8 @@ export async function processOneFinalize(
 
   // Step 0 — best-effort upfront short-circuit on queue redelivery.
   // The atomic UPDATE later in this function is the genuine race
-  // safety net (two concurrent redeliveries can both pass this SELECT
-  // and only one will win the UPDATE). The upfront check exists to
-  // avoid paying full Workers AI cost on every redelivery for runs
-  // that already finalized cleanly — under Queue redelivery storms
-  // that becomes real money. A miss here just falls through to the
-  // existing path; it never produces a wrong outcome.
+  // safety net; the upfront check exists to avoid issuing N Vectorize
+  // queries on every redelivery for runs that already finalized.
   const gateProbe = await env.DB
     .prepare(`SELECT finalize_recorded FROM scrape_runs WHERE id = ?1`)
     .bind(body.scrape_run_id)
@@ -121,14 +107,16 @@ export async function processOneFinalize(
     return;
   }
 
-  // Step 1 — load surviving articles for the run, capped at 250 by
-  // ingested_at DESC so we always prioritise the freshest tail when
-  // the cap bites.
+  // Step 1 — load this run's surviving article IDs that have a vector
+  // in Vectorize. Articles whose embed call failed are excluded; they
+  // ship un-deduped this tick and the admin backfill route catches
+  // them later.
   const result = await env.DB
     .prepare(
-      `SELECT id, title, details_json, published_at, ingested_at
+      `SELECT id, published_at, ingested_at
          FROM articles
         WHERE scrape_run_id = ?1
+          AND embedding_status = 'embedded'
         ORDER BY ingested_at DESC
         LIMIT ?2`,
     )
@@ -136,188 +124,199 @@ export async function processOneFinalize(
     .all<ArticleRow>();
   const rows: ArticleRow[] = result.results ?? [];
 
-  // Step 2 — skip the LLM call when there's nothing to dedup. AC 1.
-  if (rows.length <= 1) {
+  if (rows.length === 0) {
     log('info', 'digest.generation', {
       status: 'finalize_noop',
       scrape_run_id: body.scrape_run_id,
-      article_count: rows.length,
+      article_count: 0,
     });
+    // Still flip the gate so operator dashboards reflect the run as
+    // finalized even when zero articles had vectors.
+    await flipGate(env, body.scrape_run_id, 0);
     return;
   }
 
-  // Step 3 — build the prompt. Index aligns to row position in `rows`
-  // so the LLM's dedup_groups indices map directly back. Title +
-  // full body per REQ-PIPE-008 AC 1; source name deliberately
-  // omitted as a non-signal.
-  const candidates = rows.map((r, idx) => {
-    let body = '';
-    try {
-      const parsed = JSON.parse(r.details_json) as unknown;
-      if (Array.isArray(parsed)) {
-        body = parsed.filter((p): p is string => typeof p === 'string').join('\n\n');
-      } else if (typeof parsed === 'string') {
-        body = parsed;
-      }
-    } catch {
-      body = '';
-    }
-    return {
-      index: idx,
-      title: r.title,
-      details: body,
-      published_at: r.published_at,
-    };
-  });
+  const threshold = readCosineThreshold(env);
 
-  // Step 4 — single-model LLM call centralised in
-  // src/lib/llm-json.ts (CF-009) so chunk + finalize share identical
-  // cost accounting and single-attempt narrowing.
-  const llmRun = await runJson({
-    ai: asAiBinding(env.AI),
-    params: {
-      messages: [
-        { role: 'system', content: FINALIZE_DEDUP_SYSTEM },
-        { role: 'user', content: finalizeDedupUserPrompt(candidates) },
-      ],
-      ...FINALIZE_LLM_PARAMS,
-    },
-    narrow: (raw) => parseLLMJson(raw),
-  });
-
-  if (!llmRun.ok) {
-    log('error', 'digest.generation', {
-      status: 'finalize_invalid_json',
-      scrape_run_id: body.scrape_run_id,
-      model_used: llmRun.attempt.modelUsed,
-    });
-    throw new Error('finalize_invalid_json');
-  }
-
-  const parsed = llmRun.parsed;
-  const modelUsed = llmRun.modelUsed;
-
-  // Step 5 — extract dedup_groups from the parsed payload.
-  const dedupGroups = normaliseRawDedupGroups(
-    (parsed as { dedup_groups?: unknown }).dedup_groups,
-  );
-
-  // Step 6 — for each group of size >= 2, pick a winner and assemble
-  // the merge statements for every loser.
+  // Step 2 — for each article, query Vectorize for top-K matches and
+  // pick the oldest sufficiently-similar older article (if any).
   const statements: D1PreparedStatement[] = [];
+  const mergedNewIds = new Set<string>();
   let losersDeleted = 0;
-  let groupsMerged = 0;
-  for (const group of dedupGroups) {
-    // Resolve indices to row objects, drop any out-of-range entries
-    // the LLM might emit (shouldn't happen given a strict prompt; the
-    // belt-and-suspenders matters for production safety).
-    const groupRows: FinalizeRow[] = [];
-    for (const idx of group) {
-      const row = rows[idx];
-      if (row !== undefined) groupRows.push(toFinalizeRow(row));
+  let queriesAttempted = 0;
+  let queriesFailed = 0;
+
+  for (const self of rows) {
+    if (mergedNewIds.has(self.id)) continue; // already merged this pass
+
+    queriesAttempted += 1;
+    let queryResult: VectorizeMatches;
+    try {
+      // queryById queries the stored vector by id — semantically
+      // equivalent to fetch-then-query but a single round-trip.
+      queryResult = await env.VECTORIZE.queryById(self.id, {
+        topK: VECTORIZE_TOPK,
+        returnMetadata: 'all',
+      });
+    } catch (err) {
+      queriesFailed += 1;
+      log('warn', 'digest.generation', {
+        status: 'finalize_vectorize_query_failed',
+        scrape_run_id: body.scrape_run_id,
+        article_id: self.id,
+        detail: String(err).slice(0, 500),
+      });
+      continue;
     }
-    if (groupRows.length < 2) continue;
-    const winner = pickWinner(groupRows);
-    const losers = groupRows.filter((r) => r.id !== winner.id);
-    for (const loser of losers) {
-      const merge = buildMergeStatements(env.DB, winner.id, loser.id);
-      for (const stmt of merge) statements.push(stmt);
+
+    const matches = queryResult.matches ?? [];
+    let bestMatchId: string | null = null;
+    let bestMatchPublishedAt = Number.POSITIVE_INFINITY;
+
+    for (const match of matches) {
+      if (match.id === self.id) continue;
+      if (match.score < threshold) continue;
+      const meta = match.metadata as { published_at?: unknown } | undefined;
+      const matchPublishedAt =
+        typeof meta?.published_at === 'number' ? meta.published_at : null;
+      if (matchPublishedAt === null) continue;
+      // Only merge into STRICTLY older articles. Equal-published_at
+      // matches (rare, possible for press-release feeds publishing the
+      // same minute) keep both rows so the standalone tiebreak rule
+      // from REQ-PIPE-008 AC 2 still applies elsewhere.
+      if (matchPublishedAt >= self.published_at) continue;
+      if (matchPublishedAt < bestMatchPublishedAt) {
+        bestMatchId = match.id;
+        bestMatchPublishedAt = matchPublishedAt;
+      }
     }
-    losersDeleted += losers.length;
-    groupsMerged += 1;
+
+    if (bestMatchId === null) continue;
+
+    // Confirm the existing article still exists in D1 — Vectorize may
+    // hold a vector whose D1 row was already retention-deleted in the
+    // narrow window between the cleanup pass and the next finalize.
+    // Without this guard, the merge SQL would write FK violations.
+    const existsRow = await env.DB
+      .prepare(`SELECT 1 AS present FROM articles WHERE id = ?1`)
+      .bind(bestMatchId)
+      .first<{ present: number }>();
+    if (existsRow === null) {
+      log('warn', 'digest.generation', {
+        status: 'finalize_vectorize_stale_match',
+        scrape_run_id: body.scrape_run_id,
+        new_article_id: self.id,
+        existing_article_id: bestMatchId,
+      });
+      continue;
+    }
+
+    const merge = mergeAsAltSource(env.DB, bestMatchId, self.id);
+    for (const stmt of merge) statements.push(stmt);
+    mergedNewIds.add(self.id);
+    losersDeleted += 1;
   }
 
-  // Step 7 — execute the batch atomically. D1 rolls back the whole
-  // batch on any statement failure, so a partial merge can't land.
+  // Step 3 — execute the merge batch atomically.
   if (statements.length > 0) {
     await env.DB.batch(statements);
   }
 
-  // Step 8 — fold cost into the run's totals. The previous gate
-  // `if (losersDeleted > 0)` hid the cost of every finalize call
-  // that returned zero merges, even though Workers AI was billed
-  // for the call. Per REQ-PIPE-008 AC 7 (revised 2026-05-03) the
-  // cost is recorded on the first successful LLM call regardless
-  // of merge outcome.
-  //
-  // Idempotency on queue redelivery is enforced by a single atomic
-  // UPDATE that adds the stats AND flips `finalize_recorded`,
-  // gated by a `WHERE id = ?1 AND finalize_recorded = 0` clause:
-  //
-  //   UPDATE scrape_runs
-  //      SET finalize_recorded = 1,
-  //          tokens_in = tokens_in + ?2,
-  //          ...
-  //    WHERE id = ?1 AND finalize_recorded = 0
-  //
-  // On the first pass the WHERE matches, every SET clause fires,
-  // and `meta.changes === 1`. On every redelivery the row's
-  // `finalize_recorded` is already 1, the WHERE doesn't match,
-  // zero rows change, and the cost is not double-counted. The
-  // single-statement gate also rules out the prior split-update
-  // failure mode: a transient error inside the statement rolls
-  // back BOTH the gate flip and the cost add, so a retry can
-  // re-record cleanly. AC 5 + AC 7. Counters from
-  // runJson (CF-009).
-  const tokensIn = llmRun.tokensIn;
-  const tokensOut = llmRun.tokensOut;
-  const costUsd = llmRun.costUsd;
-  // Single atomic UPDATE that flips the gate AND adds the stats only
-  // when the row's `finalize_recorded` is currently 0. On the first
-  // successful pass the WHERE matches and every SET clause fires
-  // (cost recorded, gate flipped, meta.changes === 1). On every
-  // queue redelivery the WHERE doesn't match (gate already 1) and
-  // nothing changes (meta.changes === 0, cost not double-counted).
-  // The previous split — gate UPDATE then `addChunkStats` UPDATE —
-  // was non-atomic and would leave the gate flipped if the second
-  // call failed, permanently hiding that tick's spend.
-  const gateAndStats = await env.DB
-    .prepare(
-      `UPDATE scrape_runs
-          SET finalize_recorded = 1,
-              tokens_in = tokens_in + ?2,
-              tokens_out = tokens_out + ?3,
-              estimated_cost_usd = estimated_cost_usd + ?4,
-              articles_ingested = articles_ingested + ?5,
-              articles_deduped = articles_deduped + ?6
-        WHERE id = ?1 AND finalize_recorded = 0`,
-    )
-    .bind(body.scrape_run_id, tokensIn, tokensOut, costUsd, 0, losersDeleted)
-    .run();
-  const wonRecording = (gateAndStats.meta?.changes ?? 0) === 1;
+  // Step 4 — delete merged-away vectors from Vectorize. Best-effort:
+  // a failure here leaves the vector orphan in Vectorize, but D1 is
+  // canonical. The vector gets garbage-collected by the cleanup pass
+  // when its retention cutoff hits (Vectorize.deleteByIds for an
+  // already-deleted id is a no-op). Pages at 100 ids per call to stay
+  // under the platform delete-batch ceiling — with FINALIZE_CANDIDATE_CAP
+  // = 250 a worst-case "every article merged" tick would otherwise blow
+  // the limit on a single deleteByIds payload.
+  if (mergedNewIds.size > 0) {
+    await deleteVectorsBatched(
+      env.VECTORIZE,
+      Array.from(mergedNewIds),
+      (err, slice) => {
+        log('warn', 'digest.generation', {
+          status: 'finalize_vectorize_delete_failed',
+          scrape_run_id: body.scrape_run_id,
+          deleted_id_count: slice.length,
+          detail: String(err).slice(0, 500),
+        });
+      },
+    );
+  }
+
+  // Step 5 — refuse to flip the gate when Vectorize was hard-down for
+  // the whole pass. If every queryById threw, we have no information
+  // about cross-tick duplicates for this run — flipping the gate now
+  // would commit "finalized with zero merges" forever (the upfront
+  // SELECT short-circuits future redeliveries on finalize_recorded=1).
+  // Throwing instead lets the queue redelivery path retry the whole
+  // pass when Vectorize recovers.
+  if (
+    queriesAttempted > 0 &&
+    queriesFailed === queriesAttempted
+  ) {
+    log('error', 'digest.generation', {
+      status: 'finalize_vectorize_unavailable',
+      scrape_run_id: body.scrape_run_id,
+      queries_attempted: queriesAttempted,
+      queries_failed: queriesFailed,
+    });
+    throw new Error(
+      `finalize: Vectorize.queryById failed for all ${queriesAttempted} articles in run ${body.scrape_run_id}`,
+    );
+  }
+
+  // Step 6 — flip the per-run idempotency gate + record losers count.
+  // Tokens / cost are zero (bge-base is free on Workers AI as of
+  // 2026-05-06) so the cost-recording branch from the previous LLM
+  // path is gone — the gate just needs to flip.
+  const wonRecording = await flipGate(env, body.scrape_run_id, losersDeleted);
 
   if (wonRecording) {
     log('info', 'digest.generation', {
       status: 'finalize_ready',
       scrape_run_id: body.scrape_run_id,
       article_count: rows.length,
-      groups_merged: groupsMerged,
+      groups_merged: losersDeleted,
       losers_deleted: losersDeleted,
-      tokens_in: tokensIn,
-      tokens_out: tokensOut,
-      estimated_cost_usd: costUsd,
       cost_recorded: true,
-      model_used: modelUsed,
       capped_at_250: rows.length === FINALIZE_CANDIDATE_CAP,
+      cosine_threshold: threshold,
     });
   } else {
-    // Race lost to a concurrent redelivery that finished first.
-    // Only the fields that describe the outcome of THIS attempt go
-    // here — the per-row counters were already absorbed by the
-    // winning attempt and would mislead operators if repeated.
     log('info', 'digest.generation', {
       status: 'finalize_redelivery_skipped',
       scrape_run_id: body.scrape_run_id,
-      model_used: modelUsed,
       reason: 'race_lost',
     });
   }
 }
 
-function toFinalizeRow(r: ArticleRow): FinalizeRow {
-  return {
-    id: r.id,
-    title: r.title,
-    published_at: r.published_at,
-  };
+/**
+ * Single atomic UPDATE that flips finalize_recorded AND adds the
+ * losers_deleted count to articles_deduped, gated by
+ * `WHERE finalize_recorded = 0`. On the first successful pass the
+ * WHERE matches and the row is fully updated; on every queue
+ * redelivery the row's finalize_recorded is already 1, the WHERE
+ * doesn't match, and nothing changes (the dedup count is not
+ * double-counted). Same idempotency contract as migration 0010.
+ *
+ * Returns true when this attempt won the race, false otherwise.
+ */
+async function flipGate(
+  env: Env,
+  scrape_run_id: string,
+  losersDeleted: number,
+): Promise<boolean> {
+  const result = await env.DB
+    .prepare(
+      `UPDATE scrape_runs
+          SET finalize_recorded = 1,
+              articles_deduped = articles_deduped + ?2
+        WHERE id = ?1 AND finalize_recorded = 0`,
+    )
+    .bind(scrape_run_id, losersDeleted)
+    .run();
+  return (result.meta?.changes ?? 0) === 1;
 }

@@ -1,11 +1,15 @@
+// Implements REQ-PIPE-003
 // Implements REQ-PIPE-008
 //
-// Pure helpers for the cross-chunk dedup finalize pass: winner
+// Pure helpers for cross-chunk + cross-tick semantic dedup: winner
 // selection (REQ-PIPE-008 AC 2 — earliest published_at wins, with id
-// tiebreak for determinism) and SQL statement assembly (AC 3 — the
-// six-statement loser-into-winner merge that re-points user state
-// before deleting the loser row, so a starred article never quietly
-// disappears across a cross-chunk merge).
+// tiebreak for determinism), the six-statement loser-into-winner merge
+// (AC 3 — re-points user state before deleting the loser row, so a
+// starred article never quietly disappears), and the existing-wins
+// `mergeAsAltSource` variant used by REQ-PIPE-003's semantic-dedup
+// path (the new article merges into the older existing article
+// regardless of `published_at`, because the existing article is the
+// canonical record users may already have starred / read).
 //
 // All functions are pure: they take row data + a D1Database for
 // `prepare()` only and return arrays of bound prepared statements
@@ -119,4 +123,38 @@ export function buildMergeStatements(
     //     row that mattered, so the cascade is purely cleanup.
     db.prepare(`DELETE FROM articles WHERE id = ?1`).bind(loserId),
   ];
+}
+
+/**
+ * Merge a newly-arrived article into an existing one as an alt-source.
+ * Used by REQ-PIPE-003's semantic-dedup path in the finalize-consumer
+ * and the admin historical-dedup sweep. Both callers pre-select an
+ * older `existingId` and a strictly-newer `loserId` (equal-published_at
+ * pairs are deferred — neither caller merges them) so the policy in
+ * the single sentence is "older wins; equal-time pairs are not merged
+ * at all". The function itself is policy-agnostic — it just pipes the
+ * two ids straight into `buildMergeStatements` — and the caller is
+ * responsible for picking the older id.
+ *
+ * Why this caller-side rule: the older article has had time to accrue
+ * user state (stars, reads, shared URLs, email links). Folding the
+ * newer arrival in as an alt-source preserves that state by construction;
+ * any callers that flip the rule to "newer wins" must therefore re-point
+ * stars and reads forwards rather than just re-using this helper.
+ *
+ * Statement order matches `buildMergeStatements` so the same
+ * idempotency-on-retry guarantees hold (every INSERT...SELECT filters
+ * on `WHERE article_id = ?newId`; the DELETE on `id = ?newId` is a
+ * no-op once the row is gone).
+ */
+export function mergeAsAltSource(
+  db: D1Database,
+  existingId: string,
+  newId: string,
+): D1PreparedStatement[] {
+  // The 6-statement sequence is identical to buildMergeStatements with
+  // existingId as the winner and newId as the loser. We delegate so
+  // any future refinement (e.g. additional child tables) is captured
+  // in one place.
+  return buildMergeStatements(db, existingId, newId);
 }

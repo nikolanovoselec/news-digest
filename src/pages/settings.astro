@@ -549,6 +549,35 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               ></p>
             </fieldset>
           )}
+          {isAdmin && (
+            <fieldset class="settings__section">
+              <legend class="settings__legend">Embed historic articles</legend>
+              <p class="settings__hint">
+                Generate Vectorize embeddings for every D1 article that
+                doesn't have one yet. Drives the full backfill in one
+                request — the server loops in batches until done, then
+                redirects back here with the outcome. If the platform
+                cuts the request before draining the backlog, click
+                again to resume. Safe to re-run; idempotent.
+              </p>
+              <div class="settings__actions-row">
+                <form method="post" action="/api/admin/embed-backfill">
+                  <button
+                    type="submit"
+                    class="settings__secondary-button"
+                  >
+                    Embed all historic articles
+                  </button>
+                </form>
+              </div>
+              <p
+                class="settings__status"
+                data-embed-status
+                aria-live="polite"
+                hidden
+              ></p>
+            </fieldset>
+          )}
           <fieldset class="settings__section">
             <legend class="settings__legend">Delete account</legend>
             <p class="settings__hint">
@@ -957,11 +986,45 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
             pinnedRunId = runId;
           }
         }
-        if (saved !== null || errorCode !== null || forceRefresh !== null) {
+        // Embed-backfill round-trip — the admin endpoint 303-redirects
+        // to /settings?embed=done|partial|error|denied with cumulative
+        // counts after the operator clicks the button. Surface the
+        // outcome on the embed status node so the operator can see how
+        // many articles were embedded in this pass.
+        const embed = params.get('embed');
+        if (embed !== null && embed !== '') {
+          const node = document.querySelector<HTMLElement>('[data-embed-status]');
+          if (node !== null) {
+            const processed = params.get('processed') ?? '0';
+            const failed = params.get('failed') ?? '0';
+            const remaining = params.get('remaining') ?? '0';
+            node.hidden = false;
+            node.textContent =
+              embed === 'done'
+                ? `Embedded ${processed} articles (${failed} failed). Done.`
+                : embed === 'partial'
+                  ? `Embedded ${processed} articles (${failed} failed); ${remaining} remaining. Click again to continue.`
+                  : embed === 'denied'
+                    ? 'Not authorised to run the backfill.'
+                    : embed === 'error'
+                      ? 'Embed backfill failed; check logs.'
+                      : `Embed backfill: ${embed}`;
+          }
+        }
+        if (
+          saved !== null ||
+          errorCode !== null ||
+          forceRefresh !== null ||
+          embed !== null
+        ) {
           params.delete('saved');
           params.delete('error');
           params.delete('force_refresh');
           params.delete('run_id');
+          params.delete('embed');
+          params.delete('processed');
+          params.delete('failed');
+          params.delete('remaining');
           const next = params.toString();
           const newUrl = window.location.pathname + (next === '' ? '' : '?' + next);
           window.history.replaceState({}, '', newUrl);

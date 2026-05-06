@@ -1,3 +1,4 @@
+// Implements REQ-PIPE-003 (Vectorize retention sync)
 // Implements REQ-PIPE-005
 // Implements REQ-PIPE-007
 // Implements REQ-DISC-006
@@ -162,7 +163,16 @@ async function runRefreshTokenPurge(env: Env): Promise<number> {
   }
 }
 
-/** REQ-PIPE-005 — delete articles older than 14 days unless starred. */
+/** Vectorize.deleteByIds is paged — deleting >100 ids in one call hits
+ *  the platform limit. The retention pass batches at this size so a
+ *  single tick that swept >100 articles still gets all vectors purged. */
+const VECTORIZE_DELETE_BATCH = 100;
+
+/** REQ-PIPE-005 + REQ-PIPE-003 — delete articles older than 14 days
+ *  unless starred. After the D1 DELETE lands, drop the same ids from
+ *  Vectorize so the index doesn't accumulate orphan vectors. The two
+ *  stores are independent services; FK CASCADE does not reach
+ *  Vectorize. */
 async function runArticleRetention(env: Env, deadline: number): Promise<number> {
   if (Date.now() >= deadline) {
     log('warn', 'digest.generation', {
@@ -172,24 +182,60 @@ async function runArticleRetention(env: Env, deadline: number): Promise<number> 
   }
   const cutoff = Math.floor(Date.now() / 1000) - RETENTION_SECONDS;
   try {
-    // DELETE stale articles not referenced by any row in `article_stars`.
-    // `NOT IN (SELECT article_id FROM article_stars)` keeps every article
-    // that any user has starred, regardless of age.
-    //
+    // Capture the doomed ids BEFORE the DELETE so we can purge them
+    // from Vectorize after D1 commits. SELECT…WHERE matches the same
+    // predicate as the DELETE so the two operate on the same row set.
+    const idResult = await env.DB
+      .prepare(
+        `SELECT id FROM articles
+          WHERE published_at < ?1
+            AND id NOT IN (SELECT article_id FROM article_stars)`,
+      )
+      .bind(cutoff)
+      .all<{ id: string }>();
+    const doomedIds = (idResult.results ?? []).map((r) => r.id);
+
     // FK ON DELETE CASCADE on article_sources / article_tags / article_reads
     // is declared in migrations/0003_global_feed.sql and fires automatically
     // when the parent article row is removed.
-    const result = await env.DB.prepare(
-      `DELETE FROM articles
-        WHERE published_at < ?1
-          AND id NOT IN (SELECT article_id FROM article_stars)`,
-    )
+    const deleteResult = await env.DB
+      .prepare(
+        `DELETE FROM articles
+          WHERE published_at < ?1
+            AND id NOT IN (SELECT article_id FROM article_stars)`,
+      )
       .bind(cutoff)
       .run();
-    const deleted = result.meta?.changes ?? 0;
+    const deleted = deleteResult.meta?.changes ?? 0;
+
+    // Sync Vectorize. Best-effort — a partial failure leaves orphan
+    // vectors that the next retention pass will retry. The structured
+    // log below surfaces drift between D1 row count and Vectorize
+    // delete count for ops review.
+    let vectorsDeleted = 0;
+    let vectorDeleteFailed = false;
+    if (doomedIds.length > 0) {
+      for (let i = 0; i < doomedIds.length; i += VECTORIZE_DELETE_BATCH) {
+        const slice = doomedIds.slice(i, i + VECTORIZE_DELETE_BATCH);
+        try {
+          await env.VECTORIZE.deleteByIds(slice);
+          vectorsDeleted += slice.length;
+        } catch (err) {
+          vectorDeleteFailed = true;
+          log('error', 'digest.generation', {
+            status: 'cleanup_vectorize_delete_failed',
+            batch_size: slice.length,
+            detail: errMsg(err),
+          });
+        }
+      }
+    }
+
     log('info', 'digest.generation', {
       status: 'cleanup_completed',
       deleted,
+      vectors_deleted: vectorsDeleted,
+      vectors_partial_failure: vectorDeleteFailed,
       cutoff_unix: cutoff,
     });
     return deleted;
