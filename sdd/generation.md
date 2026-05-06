@@ -74,6 +74,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 7. Two studies, audits, or benchmarks on the same topic that cite different numbers, methodologies, or authors are treated as distinct stories and never merged - even when they discuss identical subject matter - so conflicting findings on the same topic remain visible as separate cards on the dashboard.
 8. The retention sweep (REQ-PIPE-005) that drops articles older than 14 days also removes the corresponding entries from the same-story index, so a deleted article can never be cited as a "match" for a future article and starred articles preserved past the retention window keep their same-story matching capability.
 9. An operator can re-run same-story matching across the entire historical article pool on demand (admin-gated), so a threshold change or backfill can re-collapse duplicates that existed before the new behaviour shipped without waiting for natural churn.
+10. An operator can inspect the cosine similarity between any two articles' stored embeddings on demand (admin-gated) alongside the currently-effective same-story threshold and a flag for whether the two articles come from the same publisher, so a threshold change can be evaluated against known true-positive and false-positive pairs before it is committed. The diagnostic reports an explicit not-found when either article or either embedding is missing rather than silently returning a misleading similarity.
 
 **Constraints:** CON-SEC-002
 **Priority:** P0
