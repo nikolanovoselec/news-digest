@@ -140,7 +140,6 @@ async function runHistoricalDedupBatch(
     };
   }
 
-  const statements: D1PreparedStatement[] = [];
   const removedIds = new Set<string>();
   let merged = 0;
 
@@ -187,15 +186,19 @@ async function runHistoricalDedupBatch(
         .first<{ present: number }>();
       if (stillThere === null) continue;
 
-      const merge = mergeAsAltSource(env.DB, self.id, match.id);
-      for (const stmt of merge) statements.push(stmt);
+      // Run each 6-statement merge as its own D1.batch so the route
+      // never approaches D1's per-batch statement cap regardless of
+      // the outer `batch` size or topK fan-out (worst case here was
+      // 500 outer rows × 5 matches × 6 stmts = 15k in one batch).
+      // Each merge is still atomic against itself; partial progress
+      // across the outer batch is exactly what we want — the cursor
+      // advances per outer row, so a transient mid-loop failure
+      // restarts cleanly from the resume point.
+      const mergeStatements = mergeAsAltSource(env.DB, self.id, match.id);
+      await env.DB.batch(mergeStatements);
       removedIds.add(match.id);
       merged += 1;
     }
-  }
-
-  if (statements.length > 0) {
-    await env.DB.batch(statements);
   }
 
   if (removedIds.size > 0) {

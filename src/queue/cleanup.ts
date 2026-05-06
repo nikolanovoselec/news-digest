@@ -211,17 +211,14 @@ async function runArticleRetention(env: Env, deadline: number): Promise<number> 
     // Sync Vectorize. Best-effort — a partial failure leaves orphan
     // vectors that the next retention pass will retry. The structured
     // log below surfaces drift between D1 row count and Vectorize
-    // delete count for ops review. The binding may be absent in
-    // integration test environments where workerd cannot provide a
-    // Vectorize stub; we no-op rather than crash the cron.
+    // delete count for ops review.
     let vectorsDeleted = 0;
     let vectorDeleteFailed = false;
-    const vectorize = (env as { VECTORIZE?: VectorizeIndex }).VECTORIZE;
-    if (doomedIds.length > 0 && vectorize !== undefined) {
+    if (doomedIds.length > 0) {
       for (let i = 0; i < doomedIds.length; i += VECTORIZE_DELETE_BATCH) {
         const slice = doomedIds.slice(i, i + VECTORIZE_DELETE_BATCH);
         try {
-          await vectorize.deleteByIds(slice);
+          await env.VECTORIZE.deleteByIds(slice);
           vectorsDeleted += slice.length;
         } catch (err) {
           vectorDeleteFailed = true;

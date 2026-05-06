@@ -1020,12 +1020,21 @@ async function upsertVectors(
       detail: String(err).slice(0, 500),
     });
     try {
+      // Gate the rollback so a queue redelivery whose first attempt
+      // already succeeded (rows committed with 'embedded' + vectors
+      // upserted) does NOT downgrade those rows back to 'failed' if
+      // a later attempt's upsert hits a transient Vectorize outage.
+      // Without this gate the finalize pass's `embedded`-only filter
+      // would silently drop the affected articles from this tick's
+      // dedup, and the admin backfill route would re-do work that
+      // was already correct.
       const placeholders = embedded.map((_, i) => `?${i + 1}`).join(',');
       await env.DB
         .prepare(
           `UPDATE articles
               SET embedding_status = 'failed', embedded_at = NULL
-            WHERE id IN (${placeholders})`,
+            WHERE id IN (${placeholders})
+              AND embedding_status != 'embedded'`,
         )
         .bind(...embedded.map((a) => a.id))
         .run();

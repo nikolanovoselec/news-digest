@@ -127,20 +127,20 @@ export function buildMergeStatements(
 
 /**
  * Merge a newly-arrived article into an existing one as an alt-source.
- * Used by REQ-PIPE-003's semantic-dedup path in the finalize-consumer:
- * when a fresh article's embedding scores >= cosine threshold against
- * an older article in Vectorize, the older article ALWAYS wins
- * (regardless of published_at). The newer article's primary source row
- * lands in `article_sources` under the existing article and the new
- * row is deleted.
+ * Used by REQ-PIPE-003's semantic-dedup path in the finalize-consumer
+ * and the admin historical-dedup sweep. Both callers pre-select an
+ * older `existingId` and a strictly-newer `loserId` (equal-published_at
+ * pairs are deferred — neither caller merges them) so the policy in
+ * the single sentence is "older wins; equal-time pairs are not merged
+ * at all". The function itself is policy-agnostic — it just pipes the
+ * two ids straight into `buildMergeStatements` — and the caller is
+ * responsible for picking the older id.
  *
- * Why existing-wins for this path: the older article is the canonical
- * record. Users may already have starred it, read it, opened a notify
- * email linking to it, or shared its URL — flipping the canonical id
- * mid-flight would orphan all that. The standard winner-by-publish-time
- * rule from `buildMergeStatements` only applies to BATCH merges within
- * a single tick where neither candidate has had time to accrue user
- * state; that rule still owns REQ-PIPE-008 AC 2.
+ * Why this caller-side rule: the older article has had time to accrue
+ * user state (stars, reads, shared URLs, email links). Folding the
+ * newer arrival in as an alt-source preserves that state by construction;
+ * any callers that flip the rule to "newer wins" must therefore re-point
+ * stars and reads forwards rather than just re-using this helper.
  *
  * Statement order matches `buildMergeStatements` so the same
  * idempotency-on-retry guarantees hold (every INSERT...SELECT filters

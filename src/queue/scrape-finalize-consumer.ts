@@ -143,10 +143,13 @@ export async function processOneFinalize(
   const statements: D1PreparedStatement[] = [];
   const mergedNewIds = new Set<string>();
   let losersDeleted = 0;
+  let queriesAttempted = 0;
+  let queriesFailed = 0;
 
   for (const self of rows) {
     if (mergedNewIds.has(self.id)) continue; // already merged this pass
 
+    queriesAttempted += 1;
     let queryResult: VectorizeMatches;
     try {
       // queryById queries the stored vector by id — semantically
@@ -156,6 +159,7 @@ export async function processOneFinalize(
         returnMetadata: 'all',
       });
     } catch (err) {
+      queriesFailed += 1;
       log('warn', 'digest.generation', {
         status: 'finalize_vectorize_query_failed',
         scrape_run_id: body.scrape_run_id,
@@ -236,7 +240,29 @@ export async function processOneFinalize(
     }
   }
 
-  // Step 5 — flip the per-run idempotency gate + record losers count.
+  // Step 5 — refuse to flip the gate when Vectorize was hard-down for
+  // the whole pass. If every queryById threw, we have no information
+  // about cross-tick duplicates for this run — flipping the gate now
+  // would commit "finalized with zero merges" forever (the upfront
+  // SELECT short-circuits future redeliveries on finalize_recorded=1).
+  // Throwing instead lets the queue redelivery path retry the whole
+  // pass when Vectorize recovers.
+  if (
+    queriesAttempted > 0 &&
+    queriesFailed === queriesAttempted
+  ) {
+    log('error', 'digest.generation', {
+      status: 'finalize_vectorize_unavailable',
+      scrape_run_id: body.scrape_run_id,
+      queries_attempted: queriesAttempted,
+      queries_failed: queriesFailed,
+    });
+    throw new Error(
+      `finalize: Vectorize.queryById failed for all ${queriesAttempted} articles in run ${body.scrape_run_id}`,
+    );
+  }
+
+  // Step 6 — flip the per-run idempotency gate + record losers count.
   // Tokens / cost are zero (bge-base is free on Workers AI as of
   // 2026-05-06) so the cost-recording branch from the previous LLM
   // path is gone — the gate just needs to flip.
