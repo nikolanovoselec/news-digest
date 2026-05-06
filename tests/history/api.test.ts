@@ -35,6 +35,9 @@ interface ArticleRow {
   ingested_at: number;
   details_json: string | null;
   tags_json: string | null;
+  /** Drives the dashboard card's `+N` source-label suffix. `COUNT(*)
+   *  FROM article_sources WHERE article_id = a.id`. */
+  alt_source_count: number;
   // REQ-STAR-001 — `EXISTS(...) AS starred` returns INTEGER 0/1; the
   // production handler maps `row.starred === 1` to a boolean. Fakes
   // default to 0 (un-starred); tests asserting on starred state can
@@ -82,6 +85,7 @@ function fakeArticle(id: string, publishedAt: number, tags: string[]): ArticleRo
     ingested_at: publishedAt,
     details_json: JSON.stringify(['details']),
     tags_json: JSON.stringify(tags),
+    alt_source_count: 0,
     starred: 0,
   };
 }
@@ -278,6 +282,33 @@ describe('GET /api/history — REQ-HIST-001', () => {
     const params = articleBind!.params;
     expect(params.length).toBe(4); // user_id + cutoff + 2 tags
     expect(params.slice(2)).toEqual(['ai', 'cloudflare']);
+  });
+
+  it('REQ-HIST-001 / REQ-READ-001 AC 7: alt_source_count from the SQL row surfaces on the wire payload (drives the dashboard card "+N" suffix)', async () => {
+    const token = await authedToken();
+    const dayStartUtc = Math.floor(Date.UTC(2026, 3, 22, 0, 0, 0) / 1000);
+    const articles: ArticleRow[] = [
+      { ...fakeArticle('a-zero', dayStartUtc + 3600, ['ai']), alt_source_count: 0 },
+      { ...fakeArticle('a-one', dayStartUtc + 7200, ['ai']), alt_source_count: 1 },
+      { ...fakeArticle('a-three', dayStartUtc + 10800, ['ai']), alt_source_count: 3 },
+    ];
+    const { db } = makeDb(baseRow('UTC'), articles, []);
+    const req = await historyRequest(token);
+    const res = await GET(makeContext(req, env(db)) as never);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      days: Array<{
+        articles: Array<{ id: string; alt_source_count: number }>;
+      }>;
+    };
+    const day = body.days.find(
+      (d) => Array.isArray(d.articles) && d.articles.length === 3,
+    );
+    expect(day, 'expected the seeded day to round-trip three articles').toBeDefined();
+    const byId = new Map(day!.articles.map((a) => [a.id, a.alt_source_count]));
+    expect(byId.get('a-zero')).toBe(0);
+    expect(byId.get('a-one')).toBe(1);
+    expect(byId.get('a-three')).toBe(3);
   });
 
   it('REQ-HIST-001: empty pool returns { days: [] }', async () => {

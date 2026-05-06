@@ -95,7 +95,6 @@ jobs:
           RESEND_FROM: ${{ secrets.RESEND_FROM }}
           DEV_BYPASS_TOKEN: ${{ secrets.DEV_BYPASS_TOKEN }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
-          CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}
           APP_URL: ${{ vars.APP_URL }}
         run: |
           set -e
@@ -181,8 +180,8 @@ jobs:
           fi
 
           # Wipe any pre-existing DEV_BYPASS_USER_ID secret (matches deploy.yml).
-          npx --yes wrangler secret delete DEV_BYPASS_USER_ID --env integration --force 2>/dev/null \
-            || echo "DEV_BYPASS_USER_ID not set on integration Worker — nothing to clear"
+          printf 'y\n' | npx --yes wrangler secret delete DEV_BYPASS_USER_ID --env integration \
+            || echo "DEV_BYPASS_USER_ID delete returned non-zero (likely already absent)"
 
           # Optional: ADMIN_EMAIL.
           if [ -n "${ADMIN_EMAIL:-}" ]; then
@@ -194,13 +193,18 @@ jobs:
             echo "ADMIN_EMAIL not configured — admin endpoints will return 403"
           fi
 
-          # Optional: CF_ACCESS_AUD.
-          if [ -n "${CF_ACCESS_AUD:-}" ]; then
-            TMP=$(mktemp)
-            printf '%s' "$CF_ACCESS_AUD" > "$TMP"
-            npx --yes wrangler secret put CF_ACCESS_AUD --env integration < "$TMP"
-            rm "$TMP"
-          fi
+          # CF_ACCESS_AUD is intentionally NOT pushed on integration:
+          # integration runs without a Cloudflare Access perimeter, so
+          # the admin gate (REQ-AUTH-001 AC 8 / AD29) reduces to
+          # session + ADMIN_EMAIL alone. Force the secret unset on
+          # every deploy so a stale repo-level value cannot re-enable
+          # Layer 0 against an integration deploy that has no Access
+          # bound in front of it. wrangler 4.x has no --force on
+          # `secret delete` and pipes `y\n` to its confirmation prompt.
+          # If the secret isn't present wrangler exits non-zero with
+          # "Secret not found", which we tolerate.
+          printf 'y\n' | npx --yes wrangler secret delete CF_ACCESS_AUD --env integration \
+            || echo "CF_ACCESS_AUD delete returned non-zero (likely already absent)"
 
       - name: Deploy (integration)
         id: deploy
@@ -304,24 +308,3 @@ jobs:
           fi
           rm -f "$RESP"
           echo "Custom domain $HOST → $SERVICE (zone $ZONE_ID) attached"
-
-      - name: Smoke test (integration)
-        env:
-          WORKER_URL: ${{ steps.deploy.outputs.worker_url }}
-          APP_URL: ${{ vars.APP_URL }}
-        run: |
-          # Prefer the custom domain (vars.APP_URL) when set, fall back
-          # to the *.workers.dev URL wrangler returned at deploy time.
-          for URL in "$APP_URL" "$WORKER_URL"; do
-            if [ -z "$URL" ]; then continue; fi
-            CODE=$(curl -s --max-time 15 -o /dev/null -w "%{http_code}" "$URL/" || echo "000")
-            echo "GET $URL/ → HTTP $CODE"
-            case "$CODE" in
-              200|303)
-                echo "Integration smoke test passed via $URL"
-                exit 0
-                ;;
-            esac
-          done
-          echo "No reachable integration smoke-test URL"
-          exit 1

@@ -12,9 +12,9 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 **Acceptance Criteria:**
 1. A Cron Trigger fires every 4 hours on the hour (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC) and kicks off a single coordinator run for all users.
-2. The coordinator enqueues one chunk job per ~100 candidates so LLM calls stay within the model's context window and partial failures only lose one chunk.
+2. The coordinator partitions candidates across one or more chunk jobs whose size is capped to fit the model's context window so LLM calls stay within budget and partial failures only lose one chunk.
 3. Each run is tracked by a `scrape_runs` row that transitions `running` → `ready` on success (or `failed` on abort), with a chunk counter that drops to zero when the last chunk finishes.
-4. Candidates whose canonical URL is already present in the article pool are skipped on subsequent ticks so the same story is never re-summarised. When a re-discovered URL arrives from a source that wasn't already on the article's source list, the new source is appended (multi-source aggregation); the article's first-ingestion timestamp is preserved across every subsequent re-discovery so the dashboard ordering reflects when each story first entered the pool, not how recently a feed re-emitted it.
+4. Candidates whose canonical URL is already present in the article pool are skipped on subsequent ticks so the same story is never re-summarised. When a re-discovered URL arrives from a source that wasn't already on the article's source list, the new source is appended (multi-source aggregation); the article's first-ingestion timestamp is preserved across every subsequent re-discovery so the dashboard ordering reflects when each story first entered the pool, not how recently a feed re-emitted it. When a feed entry identifies a per-item publisher distinct from the feed itself (for example a Google News item that names the underlying outlet), the per-item publisher is used as the source name in the article's source list; absent or empty per-item publishers fall back to the feed-level name.
 5. The pipeline is independent of individual user accounts — it runs once per tick regardless of how many users are signed up, and adding users does not multiply LLM spend.
 6. Each candidate's published-at timestamp reflects the source feed's real publish date (parsed from the feed entry) rather than the ingestion tick time, so a story first published three weeks ago is never displayed as "today" on the dashboard. When a feed entry provides no usable publish date, or the parsed value is implausible (pre-2000 or more than one day in the future), the ingestion time is used as a safe fallback.
 7. Candidates whose parsed publish date is older than 48 hours before the current tick are dropped before LLM summarisation so stale backlog items do not consume LLM budget or clutter the dashboard. Candidates with no parsable publish date (which fall back to the ingestion time) are kept — a missing date is not treated the same as a stale date.
@@ -36,16 +36,16 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 ### REQ-PIPE-002: Chunked LLM processing with JSON output contract
 
-**Intent:** Candidate articles are summarised in batches of ~100 per LLM call so prompt size stays under the model's context window and partial failures only lose one chunk, not the whole tick.
+**Intent:** Candidate articles are summarised in batches sized to fit the model's context window so prompt size stays within budget and partial failures only lose one chunk, not the whole tick.
 
 **Applies To:** System
 
 **Acceptance Criteria:**
-1. Each chunk yields a JSON payload shaped `{articles: [{title, details[], tags[]}], dedup_groups: [[…]]}` and no other top-level keys.
+1. Each chunk yields a JSON payload shaped `{articles: [{title, details[], tags[]}]}` and no other top-level keys. Cross-source dedup is performed in a separate finalize pass over the full tick rather than at the chunk level, so the chunk pass is summarisation-only (every input candidate gets its own entry).
 2. Titles are NYT-style headlines, 45–80 characters, active voice, rewritten rather than copied from the source feed. The 45–80 range is the prompt-side target; the consumer additionally enforces a hard sanity range of 5–500 characters server-side, dropping titles outside that range so genuinely broken cases (single-character labels, paragraph-as-title) never reach the reading surface.
-3. `details` is a plaintext body of 150–200 words split into 2 or 3 paragraphs (WHAT happened, HOW it works, and optionally IMPACT for the reader), each 3–5 sentences, with no lists, HTML, or Markdown. The 150–200 range is the prompt-side contract; the consumer additionally enforces an 80-word backstop server-side, dropping responses below that threshold so a model that ships a single-sentence stub cannot reach the reading surface. The backstop is a true sanity floor (genuinely truncated outputs), not the model's normal operating range.
+3. `details` is a plaintext body of 100–150 words split into 2 or 3 paragraphs (WHAT happened, HOW it works, and optionally IMPACT for the reader), each 2–4 sentences, with no lists, HTML, or Markdown. The 100–150 range is the prompt-side contract; the consumer additionally enforces an 80-word backstop server-side, dropping responses below that threshold so a model that ships a single-sentence stub cannot reach the reading surface. The backstop is a true sanity floor (genuinely truncated outputs), not the model's normal operating range.
 4. `tags` values come exclusively from the system-approved allowlist — the union of the default-seed hashtag list shared with new accounts plus every tag for which a discovered-source cache currently exists. Any tag the LLM invents outside that union is discarded server-side before persistence, and an article that ends up with zero valid tags is dropped.
-5. Intra-chunk duplicates collapse via the `dedup_groups` hints: the earliest-published source becomes the primary article and the others are recorded as alternative sources.
+5. Same-story collapse runs in the cross-chunk finalize pass (REQ-PIPE-008), not in the per-chunk call. The chunk pass emits one entry per input candidate; the finalize pass over the full tick is the single point where same-story groups are formed and the earliest-published source becomes the primary article with the others recorded as alternative sources.
 6. A chunk failure marks only that chunk's portion of the run as failed; other chunks in the same tick still persist their articles.
 7. Every article returned by the LLM echoes its input candidate's index; the consumer aligns output back to the input by that echoed value, dropping any article whose index is missing, invalid, or does not match an input candidate so a summary can never be stapled to the wrong canonical URL.
 8. Before a summary is persisted, the consumer verifies the LLM-generated title shares at least one substantive non-stopword token with the source candidate's headline; summaries with zero topical overlap are dropped so a mis-wired LLM response can never appear as a real article.
@@ -66,7 +66,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 **Acceptance Criteria:**
 1. URLs are canonicalised by stripping `utm_*` and `fbclid` tracking parameters, trimming trailing slashes, and removing default ports before any comparison.
-2. Clusters are merged per the LLM's `dedup_groups` hints, not only by canonical-URL equality.
+2. Clusters are merged per the LLM's same-story hints from the cross-chunk finalize pass (REQ-PIPE-008), not only by canonical-URL equality. The finalize pass is the single point of LLM-driven same-story collapse — chunk-level passes emit one entry per candidate.
 3. Within a cluster the earliest-published source becomes the primary article; the remaining members are persisted as alternative sources for that article.
 4. A canonical URL already present in the article pool is skipped on subsequent ticks — re-ingestion never produces a duplicate primary card.
 5. A single-source article (no cluster members) is persisted with zero alternative-source rows.
@@ -186,6 +186,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
    c. When the lock-clearing step itself fails after a successful handoff, a structured operator-visible log entry records the stranded lock alongside the original send error.
    d. On any failure path above, the original send error is the one surfaced to the queue retry path so the underlying cause is not masked.
 10. Operator-visible log statuses distinguish the three redelivery outcomes so per-attempt counters are not misread as merges that just happened: a redelivery that the upfront idempotency check skips before the LLM call is logged separately from a redelivery whose post-LLM atomic gate loses a genuine race, and both are logged separately from a successful first-pass finalize that actually performed the merges. A "skipped" log entry never carries the per-row counters from the winning attempt.
+11. Two studies, audits, or benchmarks on the same topic that cite different numbers, methodologies, or authors are treated as distinct stories and never merged — even when they discuss identical subject matter — so conflicting findings on the same topic remain visible as separate cards on the dashboard. This rule overrides the same-content clustering described in AC 1 for the specific case of research outputs whose numerical specificity is the load-bearing signal.
 
 **Constraints:** CON-LLM-001
 **Priority:** P1

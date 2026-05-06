@@ -1,70 +1,37 @@
 // Implements REQ-PIPE-002
 // Implements REQ-PIPE-008
 //
-// Single LLM-call entrypoint with primary-then-fallback retry, used
-// by every Workers-AI site that expects a JSON response. Replaces
-// three near-identical try/parse/track-waste/retry blocks in
-// scrape-chunk-consumer.ts, scrape-finalize-consumer.ts, and
-// (eventually) discovery.ts (CF-009).
+// Single LLM-call entrypoint used by every Workers-AI site that expects
+// a JSON response (chunk consumer, finalize consumer, discovery).
+//
+// Single-model architecture (2026-05-06): the helper runs ONE model
+// per call. The previous primary-then-fallback path (Gemma → 120b)
+// was removed when the project consolidated on a single model;
+// swapping models means changing `DEFAULT_MODEL_ID` in `~/lib/models`,
+// not threading two model ids through every call site.
 //
 // Why a helper, not three copies:
 //   - Token-cost accounting was subtly different at each site (only
 //     the chunk consumer tracked wasted cost on primary failure;
 //     discovery dropped the cost entirely). Centralising fixes that
 //     by construction.
-//   - The primary-vs-fallback decision is cross-cutting: if a future
-//     change adds a third tier or a different fallback model, every
-//     site needs to update in lock-step. One implementation, one
-//     change.
 //   - Tests only need to pin the contract here, not at every site.
 //
 // Behavior:
-//   1. Run the primary model. If `narrow` returns a non-null T, return
-//      `{ ok: true, fallbackUsed: false }` with token counts.
-//   2. Else accumulate waste counters from the primary attempt and run
-//      the fallback model. If `narrow` succeeds, return
-//      `{ ok: true, fallbackUsed: true }` with both attempts' costs
-//      separated (live = fallback's tokens; wasted = primary's).
-//   3. If the fallback also fails, return `{ ok: false }` with both
-//      attempts' raw responses so the caller can write a site-specific
-//      diagnostic log line.
+//   1. Run the model. If `narrow` returns a non-null T, return
+//      `{ ok: true }` with the parsed payload and token counts.
+//   2. If the call throws (AiError 3046 timeout, network errors,
+//      capacity failures) OR `narrow` returns null, return
+//      `{ ok: false }` with the raw response so the caller can write
+//      a site-specific diagnostic log line.
 
-import { DEFAULT_MODEL_ID, FALLBACK_MODEL_ID, estimateCost } from '~/lib/models';
-import { log } from '~/lib/log';
+import { DEFAULT_MODEL_ID, estimateCost } from '~/lib/models';
 import {
   extractResponsePayload,
   extractTokensIn,
   extractTokensOut,
   type AIRunResponse,
 } from '~/lib/generate';
-
-// CF-052 — rolling-window fallback counter. Each entry is a unix-ms
-// timestamp of when a fallback fired. Entries older than 5 minutes
-// are pruned on every fallback invocation. When the window contains
-// ≥10 entries the circuit-breaker log fires once (alert-only; no
-// automatic action in v1). Workers are single-threaded so mutation
-// here is safe without a mutex.
-const CIRCUIT_BREAKER_WINDOW_MS = 5 * 60 * 1_000; // 5 minutes
-const CIRCUIT_BREAKER_THRESHOLD = 10;
-const fallbackTimestamps: number[] = [];
-
-function recordFallbackAndMaybeOpenCircuit(primaryModel: string, fallbackModel: string): void {
-  const now = Date.now();
-  // Prune timestamps outside the rolling window.
-  const cutoff = now - CIRCUIT_BREAKER_WINDOW_MS;
-  while (fallbackTimestamps.length > 0 && (fallbackTimestamps[0] ?? 0) < cutoff) {
-    fallbackTimestamps.shift();
-  }
-  fallbackTimestamps.push(now);
-  if (fallbackTimestamps.length >= CIRCUIT_BREAKER_THRESHOLD) {
-    log('error', 'llm.circuit_breaker_open', {
-      fallbacks_in_window: fallbackTimestamps.length,
-      window_ms: CIRCUIT_BREAKER_WINDOW_MS,
-      primary_model: primaryModel,
-      fallback_model: fallbackModel,
-    });
-  }
-}
 
 /** Minimal Workers-AI binding shape. We intentionally do not import
  *  the platform-typed `Ai` here so this helper is trivial to mock. */
@@ -79,7 +46,7 @@ export function asAiBinding(ai: unknown): AiBinding {
   return ai as AiBinding;
 }
 
-interface AttemptInfo {
+export interface AttemptInfo {
   modelUsed: string;
   tokensIn: number;
   tokensOut: number;
@@ -95,19 +62,11 @@ export type LlmRunResult<T> =
       tokensIn: number;
       tokensOut: number;
       costUsd: number;
-      fallbackUsed: boolean;
-      wastedTokensIn: number;
-      wastedTokensOut: number;
-      wastedCostUsd: number;
       rawResponse: unknown;
     }
   | {
       ok: false;
-      primary: AttemptInfo;
-      fallback: AttemptInfo;
-      wastedTokensIn: number;
-      wastedTokensOut: number;
-      wastedCostUsd: number;
+      attempt: AttemptInfo;
     };
 
 export interface RunJsonOptions<T> {
@@ -116,114 +75,57 @@ export interface RunJsonOptions<T> {
   /** Caller-supplied parser. Returns the narrowed payload or null. */
   narrow: (rawResponse: unknown) => T | null;
   /** Optional override; defaults to DEFAULT_MODEL_ID. */
-  primaryModel?: string;
-  /** Optional override; defaults to FALLBACK_MODEL_ID. */
-  fallbackModel?: string;
-  /** Optional hook invoked with primary-call waste counters before the
-   *  fallback runs. Useful when the call site wants to log a "trying
-   *  fallback" breadcrumb with a custom event name. */
-  onPrimaryFailure?: (info: AttemptInfo) => void;
+  model?: string;
 }
 
-export async function runJsonWithFallback<T>(
+export async function runJson<T>(
   options: RunJsonOptions<T>,
 ): Promise<LlmRunResult<T>> {
-  const primaryModel = options.primaryModel ?? DEFAULT_MODEL_ID;
-  const fallbackModel = options.fallbackModel ?? FALLBACK_MODEL_ID;
+  const model = options.model ?? DEFAULT_MODEL_ID;
 
   // The Workers-AI binding's contract is `Promise<unknown>` because
   // every model emits a slightly different envelope. The shared
   // helpers in ~/lib/generate accept the wider AIRunResponse shape
   // (which has an index signature) and gracefully tolerate missing
   // fields, so a single cast at the boundary is safe.
-  const primaryResult = (await options.ai.run(primaryModel, options.params)) as AIRunResponse;
-  const primaryRaw = extractResponsePayload(primaryResult);
-  const primaryParsed = options.narrow(primaryRaw);
-  const primaryTokensIn = extractTokensIn(primaryResult);
-  const primaryTokensOut = extractTokensOut(primaryResult);
-  const primaryCostUsd = estimateCost(primaryModel, primaryTokensIn, primaryTokensOut);
-
-  if (primaryParsed !== null) {
-    return {
-      ok: true,
-      parsed: primaryParsed,
-      modelUsed: primaryModel,
-      tokensIn: primaryTokensIn,
-      tokensOut: primaryTokensOut,
-      costUsd: primaryCostUsd,
-      fallbackUsed: false,
-      wastedTokensIn: 0,
-      wastedTokensOut: 0,
-      wastedCostUsd: 0,
-      rawResponse: primaryRaw,
-    };
+  //
+  // Throws (AiError 3046 timeout, network errors, capacity failures)
+  // are caught and surfaced as `ok: false` so the caller can decide
+  // whether to retry the queue message or surface a structured log.
+  let result: AIRunResponse | null = null;
+  let threwError: string | null = null;
+  try {
+    result = (await options.ai.run(model, options.params)) as AIRunResponse;
+  } catch (err) {
+    threwError = String(err).slice(0, 500);
   }
+  const raw = result === null ? null : extractResponsePayload(result);
+  const parsed = result === null ? null : options.narrow(raw);
+  const tokensIn = result === null ? 0 : extractTokensIn(result);
+  const tokensOut = result === null ? 0 : extractTokensOut(result);
+  const costUsd = estimateCost(model, tokensIn, tokensOut);
 
-  const primaryAttempt: AttemptInfo = {
-    modelUsed: primaryModel,
-    tokensIn: primaryTokensIn,
-    tokensOut: primaryTokensOut,
-    costUsd: primaryCostUsd,
-    rawResponse: primaryRaw,
-  };
-  options.onPrimaryFailure?.(primaryAttempt);
-
-  // CF-022 — emit a structured log every time fallback fires so the
-  // operator can `wrangler tail | grep llm.fallback_invoked` and spot
-  // a degraded primary BEFORE the cost spike of full primary+fallback
-  // tokens accumulates over many ticks.
-  log('warn', 'llm.fallback_invoked', {
-    primary_model: primaryModel,
-    fallback_model: fallbackModel,
-    wasted_tokens_in: primaryTokensIn,
-    wasted_tokens_out: primaryTokensOut,
-    wasted_cost_usd: primaryCostUsd,
-  });
-
-  // CF-052 — rolling-window circuit-breaker alert. Fires when ≥10
-  // fallbacks occur in a 5-minute window; v1 is alert-only.
-  recordFallbackAndMaybeOpenCircuit(primaryModel, fallbackModel);
-
-  const fallbackResult = (await options.ai.run(fallbackModel, options.params)) as AIRunResponse;
-  const fallbackRaw = extractResponsePayload(fallbackResult);
-  const fallbackParsed = options.narrow(fallbackRaw);
-  const fallbackTokensIn = extractTokensIn(fallbackResult);
-  const fallbackTokensOut = extractTokensOut(fallbackResult);
-  const fallbackCostUsd = estimateCost(
-    fallbackModel,
-    fallbackTokensIn,
-    fallbackTokensOut,
-  );
-
-  if (fallbackParsed !== null) {
+  if (parsed !== null) {
     return {
       ok: true,
-      parsed: fallbackParsed,
-      modelUsed: fallbackModel,
-      tokensIn: fallbackTokensIn,
-      tokensOut: fallbackTokensOut,
-      costUsd: fallbackCostUsd,
-      fallbackUsed: true,
-      wastedTokensIn: primaryTokensIn,
-      wastedTokensOut: primaryTokensOut,
-      wastedCostUsd: primaryCostUsd,
-      rawResponse: fallbackRaw,
+      parsed,
+      modelUsed: model,
+      tokensIn,
+      tokensOut,
+      costUsd,
+      rawResponse: raw,
     };
   }
 
   return {
     ok: false,
-    primary: primaryAttempt,
-    fallback: {
-      modelUsed: fallbackModel,
-      tokensIn: fallbackTokensIn,
-      tokensOut: fallbackTokensOut,
-      costUsd: fallbackCostUsd,
-      rawResponse: fallbackRaw,
+    attempt: {
+      modelUsed: model,
+      tokensIn,
+      tokensOut,
+      costUsd,
+      rawResponse: threwError !== null ? { error: threwError } : raw,
     },
-    wastedTokensIn: primaryTokensIn,
-    wastedTokensOut: primaryTokensOut,
-    wastedCostUsd: primaryCostUsd,
   };
 }
 

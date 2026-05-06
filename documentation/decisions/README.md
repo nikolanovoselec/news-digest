@@ -38,10 +38,13 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD22 | SSRF defence relies on Workers network sandbox; static IP allowlist is best-effort only | Security | 2026-05-05 |
 | AD23 | Auth-rate-limit fail-closed without WAF backstop | Security | 2026-05-05 |
 | AD24 | Single OAUTH_JWT_SECRET for both session signing and CSRF state | Security | 2026-05-05 |
-| AD25 | Cloudflare Access JWT signature unverified server-side; trust Access edge | Security | 2026-05-05 |
+| AD25 | Cloudflare Access JWT signature unverified server-side; trust Access edge *(Superseded by AD29)* | Security | 2026-05-05 |
 | AD26 | REQUIREMENTS.md preserved as historical artefact | Documentation | 2026-05-05 |
 | AD27 | All KV writers route through `src/lib/kv/<family>.ts` helpers | Storage | 2026-05-05 |
 | AD28 | npm audit gating: HIGH advisory, CRITICAL blocking | Operations | 2026-05-05 |
+| AD29 | Cloudflare Access is opt-in additive perimeter; ADMIN_EMAIL gates admin alone | Security | 2026-05-05 |
+| AD30 | Cloudflare Access (when bound) MUST cover `*.workers.dev` too; not enforced in worker code | Security | 2026-05-05 |
+| AD31 | Google News baseline ownership: coordinator owns per-tag GN fan-out; discovery LLM no longer emits GN fallback | Architecture | 2026-05-06 |
 
 ---
 
@@ -655,7 +658,7 @@ PR #185 attempted to compensate with `margin-top: -0.3em`. The user reported thi
 
 ### AD25: Cloudflare Access JWT signature unverified server-side; trust Access edge
 
-**Status:** Accepted (2026-05-05)
+**Status:** Superseded by AD29 (2026-05-05)
 
 **Decision:** Rely on the platform guarantee that requests reaching the worker have already passed Cloudflare Access verification when `CF_ACCESS_AUD` is set. Skip in-worker JWT signature validation in `decodeAccessJwt` (`src/middleware/admin-auth.ts:49-68`).
 
@@ -754,6 +757,71 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - Re-tightening HIGH+ to blocking requires either (a) eliminating all transitive build-tool CVEs from the dep tree, OR (b) adopting a tool with finer-grained scoping than `npm audit`.
 
 **Related requirements:** none (operational policy; no REQ binding).
+
+---
+
+### AD29: Cloudflare Access is opt-in additive perimeter; ADMIN_EMAIL gates admin alone
+
+**Status:** Accepted (2026-05-05)
+**Supersedes:** AD25
+**Overrides:** behavioral-policy:REQ-AUTH-001
+
+**Decision:** The admin gate (`requireAdminSession` in `src/middleware/admin-auth.ts`) treats Cloudflare Access as an opt-in additive perimeter. The Cloudflare Access assertion check (Layer 0) enforces only when `env.CF_ACCESS_AUD` is configured. When `CF_ACCESS_AUD` is unset, Layer 0 is skipped entirely and admin is gated by Layer A (signed-in worker session) plus Layer B (`ADMIN_EMAIL` match) alone. REQ-AUTH-001 AC 8 was rewritten on the same day to describe the new opt-in policy in user-observable terms; this ADR documents the architectural decision behind that AC change.
+
+**Context:** The original three-layer admin gate (CF-001) made `Cf-Access-Jwt-Assertion` mandatory regardless of configuration. Integration deploys without Cloudflare Access bound in front of the worker therefore had admin permanently unreachable: the header is never present, so Layer 1 always rejected with 401 and the operator could not trigger `/api/admin/force-refresh` even when authenticated as the configured `ADMIN_EMAIL`. The same pattern blocks any fork that runs without an Access zone (cost, complexity, or simply not needed at small scale).
+
+**Alternatives considered:**
+
+- **Keep CF Access mandatory; require operators to bind Access on every environment.** Rejected — forces a Zero Trust deploy as a prerequisite for using force-refresh, even on isolated test/staging instances where the perimeter is not warranted. Increases setup friction for forks.
+- **Hard-coded dev bypass via `DEV_BYPASS_TOKEN` for admin routes.** Rejected — `/api/dev/trigger-scrape` already exists for unattended pipeline drives, but threading a bypass into the admin middleware confuses the auth model and forks the policy across two paths. Keeping admin policy declarative (one env var) is cleaner.
+- **Require `CF_ACCESS_AUD` to be set even in environments without Access.** Rejected — that conflates "perimeter configured" (operator decision) with "perimeter enforced server-side" (code policy). The two should be coupled: setting the var IS the way the operator opts into perimeter enforcement.
+
+**Rationale:** ADMIN_EMAIL gating + signed-in OAuth session is sufficient as the baseline admin policy. CF Access is a defence-in-depth perimeter that an operator may add when the security profile warrants it (production, larger deployments). Coupling Layer 0 enforcement to `CF_ACCESS_AUD` presence makes the opt-in explicit: setting the var means the operator has bound Access in front and wants the worker to verify the JWT's `aud` claim; clearing the var means the worker should not assume Access is present and should not reject on its absence.
+
+**Consequences:**
+
+- Production deploys with Access bound MUST set `CF_ACCESS_AUD` AND must satisfy AD30 (Access bound to the `*.workers.dev` URL too, or that subdomain disabled). Without both, the perimeter is forgeable from anywhere on the public internet and admin reduces to ADMIN_EMAIL alone.
+- Integration and forks without Access keep `CF_ACCESS_AUD` unset and rely on session + ADMIN_EMAIL.
+- Discovery retry endpoints (`/api/admin/discovery/*`) inherit the same gate. Their existing tests pass an opaque assertion value that is now ignored unless `CF_ACCESS_AUD` is set in the test env — no behaviour change there.
+- Future review passes that grep the admin path for unconditional Cloudflare Access enforcement should match this ADR's `Overrides:` line and not flag the conditional check as a missing perimeter.
+
+**Related requirements:** REQ-AUTH-001 AC 8.
+
+---
+
+### AD30: `*.workers.dev` perimeter coverage is the operator's responsibility — accepted risk
+
+**Status:** Accepted (2026-05-05)
+**Overrides:** workers-dev-exposure:REQ-AUTH-001
+
+**Decision:** Whether the auto-assigned `*.workers.dev` subdomain sits behind Cloudflare Access is the operator's responsibility, not the worker's. The application code does NOT detect the request host or reject `workers.dev` traffic, and reviewers MUST NOT flag this as a perimeter gap. When an operator binds Access on the custom domain they are expected to also bind it on the `workers.dev` hostname (or disable that hostname) at the Cloudflare dashboard; failing to do so is an accepted risk owned by the operator.
+
+**Related requirements:** REQ-AUTH-001 AC 8.
+
+---
+
+### AD31: Google News baseline ownership lives at the coordinator, not in discovery
+
+**Status:** Accepted (2026-05-06)
+
+**Decision:** The per-tag Google News query-RSS baseline is owned by the coordinator (REQ-PIPE-001 AC 9), which synthesises a GN source for every tag in the union of (defaults ∪ curated ∪ discovered KV) on every tick. The discovery LLM (REQ-DISC-001 AC 3) is the legacy producer of the same kind of URL, written once into KV `sources:{tag}` for tags without a first-party feed; its prompt instruction to emit a Google News fallback is now redundant. Discovery LLM should be retrained on first-party sources only in a follow-up pass; until then both paths coexist and the prefer-direct-source pass absorbs any minor overlap.
+
+**Context:** Two independent code paths produce a Google News query-RSS source for the same tag. The discovery-LLM path persists per-tag once at first discovery. The coordinator-baseline path synthesises every tick. A discovered non-curated tag without a first-party feed therefore fans out a GN query twice — once via the KV-cached discovery URL, once via coordinator synthesis. The query strings differ slightly (LLM-crafted phrasing vs. tag-with-dashes-as-spaces), so canonical-URL dedup may miss the overlap; the prefer-direct-source pass cleans up downstream when a direct copy lands in the same tick. This was flagged as an unresolved architectural question in the PR #201 review.
+
+**Alternatives considered:**
+
+- **Discovery owns GN, coordinator skips tags whose KV entry already contains GN** — rejected. Discovery runs once per tag at settings save; the KV cache can drift if a tag's needs change. Centralising GN at the coordinator means the baseline is recomputed every tick from the live tag union.
+- **Both paths coexist permanently** — rejected as a stable end-state. The redundant fan-out wastes a small amount of LLM and fetch budget and complicates future debugging when a GN URL turns out to be wrong (which path produced it?).
+
+**Rationale:** The coordinator already owns the per-tick source list; making it the single owner of the GN baseline matches the "coordinator decides which sources fan out" concept. Discovery's job becomes "find first-party feeds for this tag" — a narrower, more useful prompt that should produce better results. Keeping the legacy LLM-emitted GN fallback as a transitional state avoids a same-PR rewrite of the discovery prompt and its tests.
+
+**Consequences:**
+
+- REQ-PIPE-001 AC 9 is the canonical home of GN baseline behaviour; reviewers MUST NOT flag the discovery LLM's GN fallback as a missing capability — it is intentionally redundant during the transition.
+- A follow-up issue should retrain the discovery LLM prompt on first-party sources only and remove the GN fallback instruction. Until then, the existing KV entries continue to fan out and the coordinator-baseline pass absorbs the duplicate.
+- The aggregator-vs-direct dedup pass continues to absorb GN-vs-direct overlap as it does today; no new behaviour is required of it.
+
+**Related requirements:** REQ-PIPE-001 AC 9, REQ-DISC-001 AC 3.
 
 ---
 

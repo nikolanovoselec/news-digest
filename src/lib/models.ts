@@ -6,6 +6,14 @@
 // from its per-million-token prices. Updating the catalog is a code edit +
 // deploy; there is no runtime fetch, no KV cache, no Cloudflare API token
 // path. See /sdd/settings.md REQ-SET-004 and REQUIREMENTS.md "Model selection".
+//
+// Single-model architecture (2026-05-06): the chunk/finalize/discovery
+// pipelines run one model per call, no fallback. Swapping models means
+// changing `DEFAULT_MODEL_ID` to a different entry; every other tuning
+// constant (max_tokens, char budgets) stays put as long as the chosen
+// model's `contextTokens` is large enough to absorb them. `contextTokens`
+// is the single per-model knob — every other number in the pipeline
+// stays identical across models.
 
 export interface ModelOption {
   id: string;
@@ -15,55 +23,56 @@ export interface ModelOption {
   inputPricePerMtok: number;
   /** USD per million output tokens. */
   outputPricePerMtok: number;
+  /** Total context window size in tokens (input + output combined).
+   *  Workers AI enforces `prompt_tokens + max_tokens <= contextTokens`
+   *  per call. The chunk packer + LLM_PARAMS are tuned to fit inside
+   *  the smallest reasonable context (~128K). Larger contexts simply
+   *  leave more headroom. This is the single number that varies per
+   *  model — every other tuning constant in the pipeline stays the
+   *  same when swapping. */
+  contextTokens: number;
   category: 'featured' | 'budget';
 }
 
-// Default model: @cf/openai/gpt-oss-120b. Native OpenAI JSON mode
-// (response_format: json_object is HARD-guaranteed), 128K context,
-// $0.35/$0.75 per M tokens. Promoted from fallback to default after
-// @cf/openai/gpt-oss-20b consistently produced ~145-word summaries
-// against the then-current 200-250 word target — even after the
-// structured prompt rewrite and temperature bump to 0.5. 20B has
-// the context window but not the long-form coherence; 120B hits
-// the current 150-200 band reliably. The earlier target was later
-// tightened (REQ-PIPE-002 AC 3) but the model choice still stands.
-//
-// Fallback stays at @cf/openai/gpt-oss-20b — cheaper and faster for
-// the malformed-JSON retry path where we just need a parsable payload,
-// not maximum verbosity.
+// Default model: @cf/openai/gpt-oss-120b. 128K context, native JSON
+// mode, $0.35/$0.75 per Mtok. Picked 2026-05-06 after Gemma 4 26B
+// timed out (AiError 3046) on chunk-sized prompts in production —
+// timeouts collapsed yield to ~4% even though Gemma's 256K context
+// looked attractive on paper. gpt-oss-120b's published-pricing native
+// JSON mode + reliable wall-clock gives consistent yield at the cost
+// of higher per-token spend. Single-model run; no fallback.
 export const DEFAULT_MODEL_ID = '@cf/openai/gpt-oss-120b';
-
-/** Fallback model the chunk consumer retries with on malformed-JSON
- * output. `@cf/openai/gpt-oss-20b` is the smaller sibling — cheaper
- * and faster, used only when the 120B output fails JSON parsing. */
-export const FALLBACK_MODEL_ID = '@cf/openai/gpt-oss-20b';
 
 export const MODELS: ModelOption[] = [
   // Featured — the four headline choices users see at the top of the dropdown.
   {
+    id: '@cf/openai/gpt-oss-120b',
+    name: 'GPT OSS 120B',
+    description:
+      'Default. OpenAI 120B MoE with native JSON mode, 128K context. Reliable wall-clock for chunk-sized prompts.',
+    inputPricePerMtok: 0.35,
+    outputPricePerMtok: 0.75,
+    contextTokens: 128_000,
+    category: 'featured',
+  },
+  {
     id: '@cf/google/gemma-4-26b-a4b-it',
     name: 'Gemma 4 26B',
     description:
-      'Default. 256K context, reasoning, Google-instruction-tuned, cheapest output.',
+      'Google instruction-tuned, 256K context. Cheaper than 120B but timed out on chunk-sized prompts in 2026-05 production runs.',
     inputPricePerMtok: 0.10,
     outputPricePerMtok: 0.30,
+    contextTokens: 256_000,
     category: 'featured',
   },
   {
     id: '@cf/openai/gpt-oss-20b',
     name: 'GPT OSS 20B',
     description:
-      'Failover. Native JSON mode, 128K context — the chunk consumer retries here on malformed-JSON output.',
+      'Native JSON mode, 128K context. Cheaper sibling of 120B.',
     inputPricePerMtok: 0.20,
     outputPricePerMtok: 0.30,
-    category: 'featured',
-  },
-  {
-    id: '@cf/openai/gpt-oss-120b',
-    name: 'GPT OSS 120B',
-    description: 'OpenAI 120B MoE. Native JSON mode, 128K context.',
-    inputPricePerMtok: 0.35,
-    outputPricePerMtok: 0.75,
+    contextTokens: 128_000,
     category: 'featured',
   },
   {
@@ -73,6 +82,7 @@ export const MODELS: ModelOption[] = [
       'Frontier MoE from Moonshot AI. 256K context, vision, reasoning.',
     inputPricePerMtok: 0.60,
     outputPricePerMtok: 3.00,
+    contextTokens: 256_000,
     category: 'featured',
   },
 
@@ -83,6 +93,7 @@ export const MODELS: ModelOption[] = [
     description: 'Cheapest option. Short summaries only.',
     inputPricePerMtok: 0.027,
     outputPricePerMtok: 0.201,
+    contextTokens: 128_000,
     category: 'budget',
   },
   {
@@ -91,6 +102,7 @@ export const MODELS: ModelOption[] = [
     description: 'Balanced small model',
     inputPricePerMtok: 0.11,
     outputPricePerMtok: 0.19,
+    contextTokens: 32_768,
     category: 'budget',
   },
   {
@@ -99,6 +111,7 @@ export const MODELS: ModelOption[] = [
     description: 'Small Meta model',
     inputPricePerMtok: 0.051,
     outputPricePerMtok: 0.335,
+    contextTokens: 128_000,
     category: 'budget',
   },
   {
@@ -107,6 +120,7 @@ export const MODELS: ModelOption[] = [
     description: 'Mid-size Meta model, 128K context.',
     inputPricePerMtok: 0.049,
     outputPricePerMtok: 0.676,
+    contextTokens: 128_000,
     category: 'budget',
   },
   {
@@ -115,6 +129,7 @@ export const MODELS: ModelOption[] = [
     description: 'Mistral mid-size, 128K context.',
     inputPricePerMtok: 0.35,
     outputPricePerMtok: 0.56,
+    contextTokens: 128_000,
     category: 'budget',
   },
   {
@@ -123,6 +138,7 @@ export const MODELS: ModelOption[] = [
     description: 'Reasoning-distilled model',
     inputPricePerMtok: 0.497,
     outputPricePerMtok: 4.881,
+    contextTokens: 80_000,
     category: 'budget',
   },
   {
@@ -131,6 +147,7 @@ export const MODELS: ModelOption[] = [
     description: 'Budget Meta model (8K context). Kept for legacy settings.',
     inputPricePerMtok: 0.045,
     outputPricePerMtok: 0.384,
+    contextTokens: 8_192,
     category: 'budget',
   },
 ];

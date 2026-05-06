@@ -541,6 +541,18 @@ const GOOGLE_NEWS_CURATED_TAGS: ReadonlySet<string> = new Set(
 );
 
 /**
+ * Tags whose brand name collides with unrelated companies in Google News
+ * results — the auto-synthesised GN query for these tags would pull in
+ * articles about a different entity (e.g., the `graymatter` tag matches
+ * "Graymatter Robotics", a different company). These tags are served
+ * EXCLUSIVELY by their curated brand source; the coordinator does NOT
+ * fan out to Google News for them. Wide GN fan-out remains the default
+ * for every other tag because `prefer-direct-source` drops the GN copy
+ * when a direct publisher copy lands in the same tick.
+ */
+export const BRAND_ONLY_TAGS: ReadonlySet<string> = new Set(['graymatter']);
+
+/**
  * True iff a bespoke `google-news-*` curated entry already covers
  * {@link tag}. Used by {@link googleNewsSourceForTag} to skip
  * auto-synthesis for tags that already have a hand-tuned GN query
@@ -565,7 +577,7 @@ export function hasCuratedGoogleNews(tag: string): boolean {
  * a generous GN fan-out costs nothing on the dedup side.
  */
 export function googleNewsSourceForTag(tag: string): CuratedSource | null {
-  if (tag === '' || hasCuratedGoogleNews(tag)) return null;
+  if (tag === '' || hasCuratedGoogleNews(tag) || BRAND_ONLY_TAGS.has(tag)) return null;
   // Reuse the canonical hashtag shape (2-32 chars, lowercase letters /
   // digits / dashes) so this helper stays in lockstep with the
   // user-facing tag validator. Permissive-regex drift here would let a

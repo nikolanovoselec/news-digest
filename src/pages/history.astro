@@ -233,6 +233,7 @@ function formatCostUsd(value: number | null | undefined): string {
           title={a.title}
           sourceName={a.primary_source_name}
           sourceUrl={a.primary_source_url}
+          altCount={a.alt_source_count}
           oneLiner={a.details[0] ?? ''}
           tags={a.tags.filter((t) => userTagSet.has(t))}
           starred={a.starred}
@@ -291,6 +292,7 @@ function formatCostUsd(value: number | null | undefined): string {
                           oneLiner={a.details[0] ?? ''}
                           sourceName={a.primary_source_name}
                           sourceUrl={a.primary_source_url}
+                          altCount={a.alt_source_count}
                           tags={a.tags.filter((t) => userTagSet.has(t))}
                           starred={a.starred}
                           index={i}

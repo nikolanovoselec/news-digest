@@ -22,7 +22,10 @@ interface SqlRecord {
 interface ArticleRow {
   id: string;
   title: string;
-  details: string;
+  /** JSON-encoded paragraph array — production schema column
+   *  `details_json`. The finalize consumer parses this back into
+   *  a joined body string before sending it to the dedup LLM. */
+  details_json: string;
   published_at: number;
   ingested_at: number;
 }
@@ -127,14 +130,16 @@ function makeEnv(
   return { env, aiCalls };
 }
 
-function row(overrides: Partial<ArticleRow> = {}): ArticleRow {
+function row(overrides: Partial<ArticleRow> & { details?: string } = {}): ArticleRow {
+  const { details, ...rest } = overrides;
+  const detailsBody = details ?? 'Two-sentence default summary body. Not used by most assertions.';
   return {
     id: 'a-default',
     title: 'Default title',
-    details: 'Two-sentence default summary body. Not used by most assertions.',
+    details_json: JSON.stringify([detailsBody]),
     published_at: 1_700_000_000,
     ingested_at: 1_700_000_000,
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -734,30 +739,25 @@ describe('scrape-finalize-consumer — REQ-PIPE-008', () => {
     expect(newBatches).toBe(0);
   });
 
-  it('REQ-PIPE-008: falls back to the secondary model when the primary returns unparseable JSON', async () => {
+  it('REQ-PIPE-008: throws on unparseable JSON so the queue retries (single-model arch)', async () => {
+    // Single-model architecture (2026-05-06): the previous primary→
+    // fallback flow was removed. A single bad-JSON response now
+    // throws finalize_invalid_json straight to the queue handler,
+    // which redelivers the message under the standard retry budget.
     const rows = [
       row({ id: 'a', published_at: 100 }),
       row({ id: 'b', published_at: 200 }),
     ];
     const { db } = makeDb(rows);
-    // Primary returns garbage; fallback returns valid JSON with no
-    // dedup pairs (we only need to assert the second call happened with
-    // a different model).
     const garbage = {
       response: 'not json at all {[',
       usage: { input_tokens: 60, output_tokens: 4 },
     };
-    const { env, aiCalls } = makeEnv(db, [garbage, aiOk([])]);
-    await processOneFinalize(env, MSG);
-
-    expect(aiCalls.length).toBe(2);
-    // Both calls must include the FINALIZE_DEDUP_SYSTEM prompt; the
-    // models must differ (primary → fallback).
+    const { env, aiCalls } = makeEnv(db, [garbage]);
+    await expect(processOneFinalize(env, MSG)).rejects.toThrow(/finalize_invalid_json/);
+    expect(aiCalls.length).toBe(1);
     const sys0 = (aiCalls[0]!.params.messages as Array<{ content: string }>)[0]!.content;
-    const sys1 = (aiCalls[1]!.params.messages as Array<{ content: string }>)[0]!.content;
     expect(sys0).toBe(FINALIZE_DEDUP_SYSTEM);
-    expect(sys1).toBe(FINALIZE_DEDUP_SYSTEM);
-    expect(aiCalls[0]!.model).not.toBe(aiCalls[1]!.model);
   });
 
   it('REQ-PIPE-008: deduplicates indices within a group so a malformed [0, 1, 1] does not over-count', async () => {
@@ -784,19 +784,22 @@ describe('scrape-finalize-consumer — REQ-PIPE-008', () => {
     expect(statsUpdate!.params[5]).toBe(1);
   });
 
-  it('REQ-PIPE-008: throws after fallback also fails so the queue retries the message', async () => {
+  it('REQ-PIPE-008: ai.run throwing surfaces as finalize_invalid_json (single-model arch)', async () => {
+    // AiError 3046 timeout / capacity errors: runJson catches the
+    // throw and returns ok=false. The consumer then throws
+    // finalize_invalid_json so the queue handler retries.
     const rows = [
       row({ id: 'a', published_at: 100 }),
       row({ id: 'b', published_at: 200 }),
     ];
     const { db } = makeDb(rows);
-    const garbage = {
-      response: 'still not json',
-      usage: { input_tokens: 60, output_tokens: 4 },
-    };
-    const { env } = makeEnv(db, [garbage, garbage]);
-    await expect(processOneFinalize(env, MSG)).rejects.toThrow(
-      /finalize_invalid_json/,
-    );
+    const { env } = makeEnv(db, []);
+    // Override AI binding to throw on call.
+    env.AI = {
+      run: () => {
+        throw new Error('AiError: 3046: Request timeout');
+      },
+    } as unknown as typeof env.AI;
+    await expect(processOneFinalize(env, MSG)).rejects.toThrow(/finalize_invalid_json/);
   });
 });

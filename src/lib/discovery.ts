@@ -25,8 +25,7 @@
 
 import { XMLParser } from 'fast-xml-parser';
 import { DISCOVERY_SYSTEM, discoveryUserPrompt, DISCOVERY_LLM_PARAMS } from '~/lib/prompts';
-import { FALLBACK_MODEL_ID } from '~/lib/models';
-import { runJsonWithFallback, asAiBinding } from '~/lib/llm-json';
+import { runJson, asAiBinding } from '~/lib/llm-json';
 import { isUrlSafe } from '~/lib/ssrf';
 import { log } from '~/lib/log';
 import type { DiscoveredFeed, SourcesCacheValue } from '~/lib/types';
@@ -56,10 +55,10 @@ interface LLMDiscoveryPayload {
 }
 
 /** Narrow the raw response envelope to LLMDiscoveryPayload. Returns
- *  null when the response was empty or unparseable so runJsonWithFallback
- *  retries with the fallback model. The returned object's `feeds` key
- *  may still be missing/malformed — that's a "we got JSON but the
- *  model ignored the schema" case and is logged at the call site. */
+ *  null when the response was empty or unparseable so runJson surfaces
+ *  the failure as `ok: false`. The returned object's `feeds` key may
+ *  still be missing/malformed — that's a "we got JSON but the model
+ *  ignored the schema" case and is logged at the call site. */
 function narrowDiscoveryPayload(raw: unknown): LLMDiscoveryPayload | null {
   if (raw === null || raw === undefined) return null;
   if (typeof raw === 'string') {
@@ -81,13 +80,12 @@ function narrowDiscoveryPayload(raw: unknown): LLMDiscoveryPayload | null {
  * to do with that; this function has no side effects).
  */
 export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed[]> {
-  // 1. Ask the LLM via runJsonWithFallback so discovery shares the
-  // primary→fallback retry, cost accounting, and waste tracking that
-  // chunk + finalize already use. The narrow function inspects the
-  // raw envelope and returns the validated payload (or null to signal
-  // "this attempt failed, try the fallback").
+  // 1. Ask the LLM via runJson so discovery shares the cost accounting
+  // and single-attempt narrowing that chunk + finalize already use.
+  // The narrow function inspects the raw envelope and returns the
+  // validated payload (or null to signal a parse failure).
   const userPrompt = discoveryUserPrompt(tag);
-  const llmRun = await runJsonWithFallback<LLMDiscoveryPayload>({
+  const llmRun = await runJson<LLMDiscoveryPayload>({
     ai: asAiBinding(env.AI),
     params: {
       messages: [
@@ -97,17 +95,6 @@ export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed
       ...DISCOVERY_LLM_PARAMS,
     },
     narrow: (raw) => narrowDiscoveryPayload(raw),
-    onPrimaryFailure: (info) => {
-      log('warn', 'discovery.completed', {
-        tag,
-        status: 'discovery_invalid_json_fallback_try',
-        primary_model: info.modelUsed,
-        fallback_model: FALLBACK_MODEL_ID,
-        primary_tokens_in: info.tokensIn,
-        primary_tokens_out: info.tokensOut,
-        primary_cost_usd: info.costUsd,
-      });
-    },
   }).catch((err: unknown) => {
     log('error', 'discovery.completed', {
       tag,
@@ -122,8 +109,7 @@ export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed
     log('warn', 'discovery.completed', {
       tag,
       status: 'llm_invalid_json',
-      primary_model: llmRun.primary.modelUsed,
-      fallback_model: llmRun.fallback.modelUsed,
+      model_used: llmRun.attempt.modelUsed,
     });
     return [];
   }

@@ -13,9 +13,10 @@
 //   - 1 MB response cap.
 //   - 20-worker concurrency bucket when called in bulk so 500
 //     candidates don't stampede the network.
-//   - Plaintext output capped at 3000 characters — enough for a
-//     150-200 word summary with context, not so much that the
-//     per-chunk prompt balloons.
+//   - Plaintext output capped at 15000 characters — long-form
+//     essays (Substack/Medium-style posts) need the headroom; a
+//     2-3K cap was clipping at the article's preamble before any
+//     concrete content reached the LLM.
 
 import { isUrlSafe } from '~/lib/ssrf';
 import { mapConcurrent } from '~/lib/concurrency';
@@ -31,7 +32,7 @@ import {
 const ARTICLE_BODY_FETCH_CONCURRENCY = 20;
 
 // CF-056: use the imported names directly instead of local re-aliases.
-const SNIPPET_CAP = 3000;
+const SNIPPET_CAP = 15000;
 
 /**
  * Extract readable text from raw HTML. Runs the heuristic through

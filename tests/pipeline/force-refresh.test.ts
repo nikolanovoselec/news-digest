@@ -3,8 +3,10 @@
 // every-4-hours cron), REQ-AUTH-001 AC 8 (three-layer admin gate).
 //
 // Coverage:
-//   - REQ-AUTH-001 AC 8 admin gate: missing Cf-Access-Jwt-Assertion → 401,
-//     missing session → 401, non-admin email → 403.
+//   - REQ-AUTH-001 AC 8 admin gate: missing session → 401, non-admin
+//     email → 403, missing Cf-Access-Jwt-Assertion → 401 only when
+//     CF_ACCESS_AUD is configured (CF Access is opt-in additive
+//     perimeter; AD29 captures the rationale).
 //   - POST rejects missing/foreign Origin (REQ-AUTH-003 CSRF defence)
 //   - REQ-OPS-005 AC 1+2: POST and GET both kick startRun + SCRAPE_COORDINATOR.send.
 //   - REQ-OPS-005 AC 4: POST happy path returns 303, GET with Accept JSON returns 200 JSON.
@@ -134,13 +136,18 @@ function makeQueue(fixture: QueueFixture): Queue<unknown> {
   } as unknown as Queue<unknown>;
 }
 
-function makeEnv(db: D1Database, queue: Queue<unknown>): Partial<Env> {
+function makeEnv(
+  db: D1Database,
+  queue: Queue<unknown>,
+  options: { cfAccessAud?: string } = {},
+): Partial<Env> {
   return {
     APP_URL,
     DB: db,
     SCRAPE_COORDINATOR: queue as unknown as Env['SCRAPE_COORDINATOR'],
     ADMIN_EMAIL,
     OAUTH_JWT_SECRET: SECRET,
+    ...(options.cfAccessAud !== undefined ? { CF_ACCESS_AUD: options.cfAccessAud } : {}),
   };
 }
 
@@ -186,7 +193,26 @@ async function refreshRequest(
 }
 
 describe('admin-auth gate (CF-001)', () => {
-  it('CF-001: returns 401 when Cf-Access-Jwt-Assertion is missing', async () => {
+  it('CF-001: returns 401 when CF_ACCESS_AUD is set and Cf-Access-Jwt-Assertion is missing', async () => {
+    const fixture: DbFixture = { calls: [] };
+    const db = makeDb(fixture);
+    const queue = makeQueue({ sent: [] });
+    const req = await refreshRequest('POST', {
+      origin: APP_ORIGIN,
+      accessJwt: null,
+    });
+    const res = await POST(
+      makeContext(req, makeEnv(db, queue, { cfAccessAud: 'tenant-aud-tag' })) as never,
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('CF-001: succeeds when CF_ACCESS_AUD is unset and Cf-Access-Jwt-Assertion is missing (perimeter is opt-in)', async () => {
+    // refreshRequest defaults to a valid admin session cookie (see line ~178);
+    // we override only the access JWT to confirm Layer 0 is genuinely opt-in.
+    // Layers A (session) + B (ADMIN_EMAIL) still apply — and pass — via the
+    // default cookie. A 200 (JSON ok) or 303 (redirect) both mean the gate
+    // accepted the request.
     const fixture: DbFixture = { calls: [] };
     const db = makeDb(fixture);
     const queue = makeQueue({ sent: [] });
@@ -195,7 +221,7 @@ describe('admin-auth gate (CF-001)', () => {
       accessJwt: null,
     });
     const res = await POST(makeContext(req, makeEnv(db, queue)) as never);
-    expect(res.status).toBe(401);
+    expect([200, 303]).toContain(res.status);
   });
 
   it('CF-001: returns 401 when the session cookie is missing', async () => {

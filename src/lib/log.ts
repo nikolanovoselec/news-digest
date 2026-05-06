@@ -41,7 +41,6 @@ export type LogEvent =
   | 'settings.update.failed'
   | 'article.star.failed'
   | 'admin.auth.denied'
-  | 'admin.auth.aud_unset_warning'
   | 'rate.limit.exceeded'
   | 'jwt.secret.weak'
   | 'digest.today.query_failed'
@@ -62,16 +61,7 @@ export type LogEvent =
   | 'auth.refresh.over_bump'
   | 'auth.logout.refresh_revoke_failed'
   | 'auth.logout.sv_bump_failed'
-  | 'rate.limit.kv_error'
-  // CF-022 — emitted whenever runJsonWithFallback takes the fallback
-  // model after the primary's parse failed. Operators grep this in
-  // wrangler tail to spot a degraded primary BEFORE the per-tick cost
-  // spike compounds.
-  | 'llm.fallback_invoked'
-  // CF-052 — emitted when ≥10 fallbacks occur within a 5-minute
-  // rolling window. v1 is alert-only; the operator decides whether
-  // to flip a feature flag or swap the primary model manually.
-  | 'llm.circuit_breaker_open';
+  | 'rate.limit.kv_error';
 
 /** Shape of every emitted log line. */
 export interface LogRecord {

@@ -1,5 +1,6 @@
 ---
 // Implements REQ-READ-001, REQ-READ-002
+// Implements REQ-READ-001 AC 7 (alt-source "+N" suffix via formatAltSourceLabel)
 // Implements REQ-STAR-001
 // Implements REQ-PIPE-002 (renders per-article tag list from validated tag allowlist)
 //
@@ -8,6 +9,8 @@
 // and an inline `#` disclosure that opens a non-interactive popover
 // with the article's tag list (REQ-READ-001 AC 6).
 //
+import { formatAltSourceLabel } from '~/lib/alt-source-label';
+
 // View Transitions: cards carry the slug as `data-vt-slug` so a single
 // name can be assigned at click time (forward nav) or pre-swap (back
 // nav). NO default `transition:name` is emitted server-side: pages like
@@ -37,6 +40,12 @@ interface Props {
    * fallback when sourceName is null so the card never renders
    * without any source attribution. */
   sourceUrl?: string | null;
+  /** Number of additional sources beyond the primary that reported
+   *  the same story (rows in `article_sources` for this article).
+   *  When > 0 the card renders the source label with a `+N` suffix
+   *  (e.g. "MASHABLE +1") so readers can see at a glance that the
+   *  story was syndicated. Defaults to 0 = no suffix. */
+  altCount?: number;
   /** Article tag list validated against the system allowlist. Empty array when no tags. */
   tags?: string[];
   /** Initial star state for the session user. Drives the button's
@@ -79,6 +88,7 @@ const {
   oneLiner,
   sourceName,
   sourceUrl = null,
+  altCount = 0,
   tags = [],
   starred = false,
   index = 0,
@@ -118,6 +128,7 @@ function resolveDisplaySource(): string {
   return '';
 }
 const displaySourceName = resolveDisplaySource();
+const altLabel = formatAltSourceLabel(altCount);
 ---
 
 <article
@@ -143,7 +154,12 @@ const displaySourceName = resolveDisplaySource();
     <span class="digest-card__footer-left">
       {
         displaySourceName !== null && displaySourceName !== '' && (
-          <span class="digest-card__source">{displaySourceName}</span>
+          <span class="digest-card__source">
+            {displaySourceName}
+            {altLabel.suffix !== '' && (
+              <span class="digest-card__alt-count" aria-label={altLabel.ariaLabel}>{altLabel.suffix}</span>
+            )}
+          </span>
         )
       }
     </span>
@@ -453,6 +469,15 @@ const displaySourceName = resolveDisplaySource();
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
+  }
+  /* "+N" suffix sits inline with the source name. Same metadata
+     treatment (small-caps, muted text) but slightly de-emphasised
+     via reduced opacity so the publisher name stays the primary
+     attribution and the count reads as a secondary annotation. */
+  .digest-card__alt-count {
+    opacity: 0.7;
+    font-weight: 500;
+    letter-spacing: 0.08em;
   }
 
   /* Popover — always in the DOM, hidden via visibility + opacity so

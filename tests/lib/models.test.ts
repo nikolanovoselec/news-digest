@@ -21,6 +21,8 @@ describe('MODELS catalog', () => {
       expect(typeof model.description).toBe('string');
       expect(typeof model.inputPricePerMtok).toBe('number');
       expect(typeof model.outputPricePerMtok).toBe('number');
+      expect(typeof model.contextTokens).toBe('number');
+      expect(model.contextTokens).toBeGreaterThan(0);
       expect(['featured', 'budget']).toContain(model.category);
     }
   });
@@ -43,12 +45,13 @@ describe('MODELS catalog', () => {
 });
 
 describe('DEFAULT_MODEL_ID', () => {
-  it('REQ-SET-004: DEFAULT_MODEL_ID is @cf/openai/gpt-oss-120b — native OpenAI JSON mode, long-form coherent at 150-200 words', () => {
-    // Promoted from fallback to default after @cf/openai/gpt-oss-20b
-    // consistently produced ~145-word summaries against the earlier
-    // 200-250 target, even after the structured prompt rewrite and
-    // the temperature bump. 20B has the context window but not the
-    // long-form coherence; 120B hits the 150-200 band reliably.
+  it('REQ-SET-004: DEFAULT_MODEL_ID is @cf/openai/gpt-oss-120b — 128K context, native JSON, single-model arch', () => {
+    // Switched 2026-05-06 after Gemma 4 26B timed out (AiError 3046)
+    // on chunk-sized prompts in production — yield collapsed to ~4%
+    // even though Gemma's 256K context looked attractive on paper.
+    // gpt-oss-120b's published-pricing native JSON mode + reliable
+    // wall-clock gives consistent yield. The fallback layer was
+    // dropped in the same commit; runs are single-model now.
     expect(DEFAULT_MODEL_ID).toBe('@cf/openai/gpt-oss-120b');
   });
 
@@ -56,6 +59,7 @@ describe('DEFAULT_MODEL_ID', () => {
     const found = MODELS.find((m) => m.id === DEFAULT_MODEL_ID);
     expect(found).toBeDefined();
     expect(found?.category).toBe('featured');
+    expect(found?.contextTokens).toBeGreaterThanOrEqual(128_000);
   });
 });
 
@@ -113,6 +117,7 @@ describe('ModelOption type', () => {
       description: 'x',
       inputPricePerMtok: 0,
       outputPricePerMtok: 0,
+      contextTokens: 128_000,
       category: 'budget',
     };
     expect(sample.category).toBe('budget');

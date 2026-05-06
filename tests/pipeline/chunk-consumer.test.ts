@@ -906,10 +906,10 @@ describe('scrape-chunk-consumer — REQ-PIPE-002', () => {
   });
 
   it('REQ-PIPE-002 AC3: drops articles whose details word count falls under the 80-word backstop floor', async () => {
-    // The prompt's contract is 150-200 words; the server enforces an
+    // The prompt's contract is 100-150 words; the server enforces an
     // 80-word backstop so genuinely truncated outputs (single-paragraph
     // 30-word stubs) get dropped without rejecting the model's natural
-    // 100-130 lower-end distribution. A passing sibling article in the
+    // 90-120 lower-end distribution. A passing sibling article in the
     // same chunk proves only the malformed entry is dropped, not the
     // whole batch.
     const tooShort = 'Short body sentence one. Sentence two. Sentence three.';

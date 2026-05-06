@@ -24,7 +24,7 @@
  * - `temperature: 0.6` — warm enough for the model to pick longer
  *   completions over minimum-entropy short replies, cool enough for
  *   stable JSON output. 0.7 was working but 0.6 trims variance on
- *   the shorter 150-200 word target.
+ *   the shorter 100-150 word target.
  * - `response_format` — force JSON output on models that support it.
  */
 const LLM_BASE_PARAMS = {
@@ -33,13 +33,22 @@ const LLM_BASE_PARAMS = {
 } as const;
 
 /**
- * Chunk-prompt budget — ~50 articles × 150-200 words each
- * (~280 toks/article → ~14K total with JSON overhead). Input side is
- * ~8K tokens for the prompt + candidate list.
+ * Chunk-prompt OUTPUT budget. The chunk consumer runs `DEFAULT_MODEL_ID`
+ * once per chunk (single-model architecture; no fallback). The Workers
+ * AI runtime enforces `prompt_tokens + max_tokens ≤ contextTokens`, and
+ * the smallest reasonable context in `MODELS` (128K for gpt-oss-120b)
+ * is the binding constraint. Observed chunk output is ~14K tokens at
+ * typical chunk sizes (50-100 candidates × ~120-word summaries + JSON
+ * overhead, per the budget-aware packer in `scrape-coordinator.ts`);
+ * 32K reserves ~2x output headroom and leaves ~96K for input
+ * (~280K chars at ~3.5 chars/token), which the coordinator's greedy
+ * chunk packer (`scrape-coordinator.ts:CHUNK_INPUT_CHARS_BUDGET`)
+ * honours. Larger-context models simply leave more headroom.
+ * User-selected budget models in `MODELS` are never wired here.
  */
 export const CHUNK_LLM_PARAMS = {
   ...LLM_BASE_PARAMS,
-  max_tokens: 50_000,
+  max_tokens: 32_000,
 } as const;
 
 /**
@@ -84,16 +93,13 @@ export const PROCESS_CHUNK_SYSTEM = `You summarise scraped news candidates into 
 Return ONE JSON object, nothing else. No prose, no code fences, no text before "{" or after "}".
 
 Shape:
-{"articles":[{"index":N,"title":"...","details":"...","tags":["..."]},...],"dedup_groups":[[0,3],[1,2,5]]}
+{"articles":[{"index":N,"title":"...","details":"...","tags":["..."]},...]}
 
 - "articles": one entry per input candidate. Each entry MUST include its "index" field echoing the input candidate's bracketed index (the [N] in the user message). The consumer aligns output to input BY THIS INDEX, not by position — an entry without a correct "index" is dropped, so every summary you write is lost.
 - Never change an entry's index. "index": 47 means "this entry summarises the candidate that appeared as [47] in the input list". Title, details, and tags in that entry MUST be about THAT specific candidate's URL and snippet — never mix facts across candidates.
 - For an unusable candidate, still emit its entry with the correct index and empty tags so the consumer knows you saw it.
-- "dedup_groups": arrays of input-candidate indices that describe THE SAME NEWS EVENT — not just the same topic. The bar is: would a reasonable reader say "I already read about this exact thing"? Only group when the answer is unambiguously yes. Only groups of size ≥ 2. Omit the field as [] when none.
-- DO group: vendor blog post + HN/Lobsters mirror of that exact post; press release + reporter's write-up of that release; two outlets covering one announcement on the same day with overlapping facts.
-- DO NOT group: two studies on the same topic citing different numbers (e.g. "25% of MCP servers vulnerable" and "6.2% of MCP servers vulnerable" are DIFFERENT studies — different methodology, different findings, never merge); two different incidents in the same product family; two opinion pieces about the same topic by different authors; rumour + later confirmation (these are separate events).
-- When in doubt, leave the candidate ungrouped. A false split is cheap (two cards in the digest), a false merge is expensive (one of two real stories disappears).
-- Empty input → {"articles":[],"dedup_groups":[]}.
+- DO NOT cluster, group, or merge candidates. Every input candidate gets its own entry in "articles". Cross-source duplicate detection happens in a later pipeline step that sees the full corpus — your job here is summarisation only.
+- Empty input → {"articles":[]}.
 
 # TITLE RULES
 
@@ -104,21 +110,21 @@ Shape:
 
 # DETAILS RULES — THIS IS THE CORE TASK
 
-LENGTH — 150 to 200 WORDS (NON-NEGOTIABLE CONTRACT):
+LENGTH — 100 to 150 WORDS (NON-NEGOTIABLE CONTRACT):
 
-  - The summary MUST be 150-200 words. This is the contract; do not
-    ship under 150. If the snippet feels thin, extend the WHAT and
+  - The summary MUST be 100-150 words. This is the contract; do not
+    ship under 100. If the snippet feels thin, extend the WHAT and
     HOW paragraphs with concrete grounded facts — never pad with
     filler, never repeat, but never cut short either.
-  - Maximum 200 words. Do not exceed.
+  - Maximum 150 words. Do not exceed.
   - Truncated outputs are rejected server-side as malformed. Your
-    target is 150-200; aim for the middle of that range.
+    target is 100-150; aim for the middle of that range.
 
 STRUCTURE — 2 to 3 PARAGRAPHS:
 
   - 2 short paragraphs for a simple story; 3 paragraphs when there is real technical substance to unpack.
   - Paragraph breaks use the JSON escape sequence \\n (one backslash + n).
-  - Each paragraph 3-5 full sentences.
+  - Each paragraph 2-4 full sentences.
   - No bullet lists, no Markdown, no HTML — plaintext only.
 
 PARAGRAPH ROLES:
@@ -127,11 +133,20 @@ PARAGRAPH ROLES:
   2. HOW it works — the technical substance: architecture, API, mechanism, numbers.
   3. IMPACT for the reader (optional third paragraph when the story warrants it) — cost, migration effort, security posture, performance, or a concrete use case.
 
-GROUNDING: Every sentence MUST be grounded in the candidate's snippet. Do not state facts that contradict the snippet. If the snippet is thin, keep the summary short rather than invent detail.
+SOURCE-GROUNDING (read this twice):
 
-Format example — a 3-paragraph, ~170-word summary in the exact format your output must follow:
+  - Every claim must be traceable to a single passage in the snippet. If the candidate snippet does not state a fact, you do not state it either — even if the fact would round out the summary.
+  - Never weld facts from different sections of the article into one sentence. If the article describes mechanism A in §1 and mechanism B in §3, do not write "A with B" — that fuses two distinct claims and corrupts the meaning.
+  - Use the article's own terminology for named mechanisms, products, and protocols. Do not paraphrase them into generic phrasing.
 
-  "Cloudflare released Emdash, an open-source WordPress-inspired platform for Workers. The announcement lands with a public GitHub repo, a curated plugin compatibility layer, and a managed D1-backed content schema. Emdash targets small teams that want the WordPress authoring UX without the self-hosted maintenance burden of running PHP.\\nTechnically, Emdash replaces PHP + MySQL with a TypeScript runtime and an R2-backed media store. The editor is a Gutenberg-style block editor; every block serialises to structured JSON and renders at the edge with no round-trip to an origin database. A compatibility layer imports Yoast, Advanced Custom Fields, and a curated set of popular plugins, giving migrating sites a realistic path forward.\\nFor developers, the practical effect is a WordPress-grade editing UI without the PHP tax. Sites deploy as a single Worker with sub-100ms TTFB globally, the managed schema removes the 'plugin updated, site broke' operations class, and hashed-asset CDN caching is automatic. Teams running WordPress for marketing sites can pilot Emdash on a single domain without retraining the editors they hired."
+PRESERVE-NOVELTY:
+
+  - Identify the most distinctive technical mechanism the article introduces (named protocol, architecture component, named pattern, specific number). Make sure that mechanism appears by name in your summary — do not smooth it into generic "enterprise AI" or "cloud security" phrasing.
+  - If the article's contribution is a specific number (token-reduction percentage, latency, cost figure), keep the number.
+
+Format example — a 2-paragraph, ~120-word summary in the exact format your output must follow:
+
+  "Cloudflare released Emdash, an open-source WordPress-style content platform for Workers. The announcement ships with a public GitHub repo, a curated plugin compatibility layer for Yoast and Advanced Custom Fields, and a managed D1-backed content schema. Emdash targets small teams that want WordPress authoring without the PHP self-hosting burden.\\nTechnically, Emdash replaces PHP + MySQL with a TypeScript runtime and an R2-backed media store. The editor is a Gutenberg-style block editor that serialises every block to structured JSON and renders at the edge with no round-trip to an origin database. Sites deploy as a single Worker with sub-100ms TTFB globally, and hashed-asset CDN caching is automatic."
 
 # TAGS RULES
 
@@ -166,7 +181,11 @@ Examples (assume the tag is in the allowlist):
 const TITLE_MAX_CHARS = 300;
 const SOURCE_NAME_MAX_CHARS = 100;
 const URL_MAX_CHARS = 1000;
-const BODY_SNIPPET_MAX_CHARS = 2000;
+// Sized strictly above the upstream `SNIPPET_CAP` (15000 in
+// article-fetch.ts) so this layered cap remains meaningful — an
+// upstream regression that produced a 30K-char snippet would still
+// be clamped here. Defense-in-depth, per CF-013.
+const BODY_SNIPPET_MAX_CHARS = 16000;
 const DETAILS_MAX_CHARS = 4000;
 
 function sanitizePromptField(value: string, maxChars: number): string {
@@ -223,11 +242,10 @@ Return JSON:
     {
       "index": 0,
       "title": "punchy NYT-style headline, 45-80 characters, about candidate [0] specifically",
-      "details": "2-3 paragraphs of 3-5 sentences each, 150-200 words total, separated by \\n (WHAT happened / HOW it works / IMPACT for the reader) — grounded in candidate [0]'s snippet only",
+      "details": "2-3 paragraphs of 2-4 sentences each, 100-150 words total, separated by \\n (WHAT happened / HOW it works / IMPACT for the reader) — grounded in candidate [0]'s snippet only, every claim traceable to a single passage, distinctive mechanism named",
       "tags": ["only tags from the allowlist above"]
     }
-  ],
-  "dedup_groups": [[0, 3], [1, 2, 5]]
+  ]
 }`;
 }
 

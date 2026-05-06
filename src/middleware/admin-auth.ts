@@ -1,30 +1,27 @@
 // Implements REQ-AUTH-001
 //
-// Three-layer admin gate for `/api/admin/*` (CF-001). Each admin route
-// calls {@link requireAdminSession} as its first action.
+// Admin gate for `/api/admin/*` (CF-001). Each admin route calls
+// {@link requireAdminSession} as its first action.
 //
-// Layer 1 — `Cf-Access-Jwt-Assertion` header presence.
-//   Cloudflare Access stamps this header on every request that passes
-//   its zone-level rule. A request without it is either coming via
-//   `*.workers.dev` (no Access binding) or via a misconfigured zone.
-//   Reject in both cases.
+// Baseline (always enforced):
+//   Layer A — Worker-side session. The user must be signed in via OAuth.
+//   Layer B — `ADMIN_EMAIL` match. The signed-in user's email must equal
+//             `env.ADMIN_EMAIL`. This limits admin actions to a single
+//             operator account; more granular policy (multiple admins,
+//             per-action permissions) is future work.
 //
-// Layer 2 — Worker-side session.
-//   The user must be signed in. Bare presence of the Access JWT is
-//   not enough — Access only proves the request crossed the perimeter,
-//   not who's on the other end of the keyboard.
+// Optional perimeter (Cloudflare Access — additive security on top):
+//   Layer 0 — When `env.CF_ACCESS_AUD` is set, the helper enforces both
+//             `Cf-Access-Jwt-Assertion` header presence AND that the JWT's
+//             `aud` claim matches `env.CF_ACCESS_AUD`. The signature is
+//             not re-verified (Cloudflare already verified it before
+//             forwarding); the aud check defends against a forged header
+//             on a request that didn't actually traverse Access.
 //
-// Layer 3 — `ADMIN_EMAIL` match.
-//   The signed-in user's email must equal `env.ADMIN_EMAIL`. This
-//   limits admin actions to a single operator account; more granular
-//   policy (multiple admins, per-action permissions) is future work.
-//
-// Optional layer — `CF_ACCESS_AUD` audience match.
-//   When `env.CF_ACCESS_AUD` is set, the helper additionally decodes the
-//   Access JWT payload (without verifying the signature — Cloudflare
-//   already verified it before forwarding) and asserts the `aud` claim
-//   matches. Defends against an attacker forging the header on a route
-//   that didn't actually traverse Access.
+//   When `CF_ACCESS_AUD` is unset, Layer 0 is skipped entirely. This is
+//   the deliberate semantics for environments without Access bound (e.g.
+//   integration): ADMIN_EMAIL gating is sufficient by itself, and CF
+//   Access is opt-in additive perimeter.
 
 import type { APIContext } from 'astro';
 import type { AuthenticatedUser } from '~/lib/types';
@@ -90,74 +87,46 @@ function audMatches(
   return false;
 }
 
-// Per-isolate hourly stamp so the AUD-unset warning fires roughly
-// once per hour per Worker isolate, not on every admin probe. The
-// gate is best-effort: workerd freezes `Date.now()` between I/O
-// boundaries within one request, so two probes received in the same
-// I/O-quiescent slot can both pass the check-then-write. Worst case
-// is a duplicate log line (two instead of one); the goal is "don't
-// flood Logpush under brute-force probes" not "exactly once per
-// hour". Re-emitting hourly keeps the operator alerted while the
-// misconfiguration persists, which is the property that matters.
-const AUD_WARN_INTERVAL_MS = 60 * 60 * 1000;
-let lastAudWarnAt = 0;
-
 /**
- * Run the three-layer admin gate. Returns `{ ok: true, ... }` only when
- * all enforced layers pass; otherwise returns a pre-built `Response`
- * the caller should return verbatim.
+ * Run the admin gate. Layers A (session) and B (ADMIN_EMAIL) always
+ * enforce; Layer 0 (CF Access JWT + aud match) enforces only when
+ * `env.CF_ACCESS_AUD` is configured. Returns `{ ok: true, ... }` only
+ * when every enforced layer passes; otherwise returns a pre-built
+ * `Response` the caller should return verbatim.
  */
 export async function requireAdminSession(
   context: APIContext,
 ): Promise<AdminAuthResult> {
   const env = context.locals.runtime.env;
 
-  // Layer 1: Cloudflare Access header presence.
-  const accessJwt = context.request.headers.get('Cf-Access-Jwt-Assertion');
-  if (accessJwt === null || accessJwt === '') {
-    log('warn', 'admin.auth.denied', { reason: 'missing_access_jwt' });
-    return {
-      ok: false,
-      response: new Response('Unauthorized', { status: 401 }),
-    };
-  }
-
-  // Layer 1b (optional): aud claim match.
-  if (typeof env.CF_ACCESS_AUD === 'string' && env.CF_ACCESS_AUD !== '') {
+  // Optional perimeter (Layer 0): only enforced when CF_ACCESS_AUD is
+  // configured. Without it, CF Access is treated as additive security
+  // that an operator can bind in front of the worker but is not
+  // mandatory — Layers A+B (session + ADMIN_EMAIL) gate admin alone.
+  const expectedAud =
+    typeof env.CF_ACCESS_AUD === 'string' && env.CF_ACCESS_AUD !== ''
+      ? env.CF_ACCESS_AUD
+      : null;
+  if (expectedAud !== null) {
+    const accessJwt = context.request.headers.get('Cf-Access-Jwt-Assertion');
+    if (accessJwt === null || accessJwt === '') {
+      log('warn', 'admin.auth.denied', { reason: 'missing_access_jwt' });
+      return {
+        ok: false,
+        response: new Response('Unauthorized', { status: 401 }),
+      };
+    }
     const claims = decodeAccessJwt(accessJwt);
-    if (claims === null || !audMatches(claims.aud, env.CF_ACCESS_AUD)) {
+    if (claims === null || !audMatches(claims.aud, expectedAud)) {
       log('warn', 'admin.auth.denied', { reason: 'access_aud_mismatch' });
       return {
         ok: false,
         response: new Response('Unauthorized', { status: 401 }),
       };
     }
-  } else {
-    // CF_ACCESS_AUD is unset — Layer 1 is checking header presence
-    // only. Forks without Access bound run with admin unreachable
-    // (Layer 1 always rejects). The risky configuration is a
-    // production deploy where Access IS bound to the custom domain
-    // but the *.workers.dev subdomain remains live AND CF_ACCESS_AUD
-    // is unset — an attacker can forge any JWT-shaped header on
-    // workers.dev and pass Layer 1. Layers 2+3 still gate, but the
-    // perimeter check is missing. Surfacing the warn log lets the
-    // operator catch this misconfiguration via tail/Logpush.
-    //
-    // Re-emit at most once per hour per isolate so a long-lived
-    // isolate doesn't hide a permanent misconfiguration after a
-    // single fire.
-    const nowMs = Date.now();
-    if (nowMs - lastAudWarnAt > AUD_WARN_INTERVAL_MS) {
-      lastAudWarnAt = nowMs;
-      log('warn', 'admin.auth.aud_unset_warning', {
-        detail:
-          'Cf-Access-Jwt-Assertion present but CF_ACCESS_AUD is unset; ' +
-          'set CF_ACCESS_AUD or disable the *.workers.dev subdomain.',
-      });
-    }
   }
 
-  // Layer 2: Worker-side session.
+  // Layer A: Worker-side session.
   const session = await loadSession(
     context.request,
     env.DB,
@@ -176,7 +145,7 @@ export async function requireAdminSession(
   }
   const sessionUser = session.user;
 
-  // Layer 3: ADMIN_EMAIL match. Configured email is required; a deploy
+  // Layer B: ADMIN_EMAIL match. Configured email is required; a deploy
   // that forgot to set it locks /api/admin/* down rather than opening
   // it up.
   if (typeof env.ADMIN_EMAIL !== 'string' || env.ADMIN_EMAIL === '') {

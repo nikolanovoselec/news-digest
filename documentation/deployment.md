@@ -117,7 +117,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 2. GitHub → Actions → "Deploy Integration" → "Run workflow" → green button.
 3. The branch dropdown in the dispatch dialog is irrelevant — the workflow always pulls `develop`'s current HEAD.
 4. ~3 minutes for first-deploy (resources provisioned), ~2 minutes for subsequent deploys.
-5. Smoke at the URL you set in `vars.APP_URL` (or the `*.workers.dev` URL the deploy log prints).
+5. After the deploy completes, hit the URL manually. There is no automated smoke step on integration — GHA runner IPs are blocked by Cloudflare bot management at the edge, so a curl from CI reliably returns `403` regardless of worker health. `wrangler deploy` exit code is the authoritative success signal. Open `vars.APP_URL` (or the `*.workers.dev` URL the deploy log prints) in a browser to confirm the worker is reachable.
 
 **Triggering a scrape on integration** (since crons are off):
 
@@ -126,7 +126,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 curl -i ${APP_URL}/api/admin/force-refresh
 ```
 
-**Promotion path** is one-way: develop → integration smoke → develop merged to main → production auto-deploy. No path pushes integration changes back to develop.
+**Promotion path** is one-way: develop → integration verify → develop merged to main → production auto-deploy. No path pushes integration changes back to develop.
 
 **Secret resolution.** `environment: integration` enables GitHub's standard secret-resolution fallback: env-scoped secret wins when defined, otherwise the repo-level secret is used. Default state with no env-scoped secrets matches running without env scoping at all — which is exactly what you want when reusing prod credentials on integration.
 
@@ -168,18 +168,20 @@ When the REQ backlink gate fails, either the referenced REQ-ID needs to be added
 
 ## Admin-only routes (Cloudflare Access gating)
 
-A handful of operator endpoints drive LLM calls or queue work on demand — budget-sensitive operations reachable only by the site operator. Two independent layers protect them, and the layers play different roles:
+A handful of operator endpoints drive LLM calls or queue work on demand — budget-sensitive operations reachable only by the site operator. The Worker gate is the security boundary; Cloudflare Access (when bound) is an additive perimeter that improves UX:
 
 | Layer | Role | Implementation |
 |---|---|---|
-| **Worker-side gate** (`src/middleware/admin-auth.ts`) | **Security boundary.** Sufficient on its own. | Enforces three checks — Access JWT header present, valid Worker session cookie, session email matches `ADMIN_EMAIL` (case-insensitive). With `CF_ACCESS_AUD` set, a fourth check validates the JWT `aud` claim. Each layer returns at the first failure with no observable side effect. Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8. |
-| **Cloudflare Access** (zone-level) | **UX layer.** Redirects unauthenticated browsers to the Access login page instead of returning a bare 403. | Every request to `/api/admin/*` must carry a valid `Cf-Access-Jwt-Assertion` header; Access enforces this at the edge before the Worker is invoked. |
+| **Worker-side gate** (`src/middleware/admin-auth.ts`) | **Security boundary.** Always enforced; sufficient on its own. | Baseline: session cookie + `ADMIN_EMAIL` match. Optional Layer 0 (AD29): `aud`-claim check when `CF_ACCESS_AUD` is set. Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8. |
+| **Cloudflare Access** (zone-level) | **Optional UX + perimeter layer.** When bound, redirects unauthenticated browsers to the Access login page. | Not required for the Worker gate to function. Forks and integration deploys without Access bound use the baseline Worker gate alone (AD29). |
 
-Because the Worker gate alone is sufficient, a misconfigured or disabled Access policy does not silently open the endpoints. The two layers complement each other: Access improves the UX of unauthorized access (login redirect, no bare 403); the Worker gate provides the actual security guarantee.
+The Worker gate enforces checks in order: when `CF_ACCESS_AUD` is set, the request must carry a Cloudflare Access assertion whose `aud` claim matches before the baseline session check runs; returns at the first failing layer with no observable side effect.
 
-### Setting `CF_ACCESS_AUD` (strongly recommended in production)
+### Setting `CF_ACCESS_AUD` and the `*.workers.dev` perimeter (production)
 
-See [Configuration: Setting `CF_ACCESS_AUD`](configuration.md#setting-cf_access_aud-strongly-recommended-in-production) for the threat model, setup steps, and the `admin.auth.aud_unset_warning` log signal.
+When Access is bound to the custom domain, follow AD30: also bind it to the auto-assigned `*.workers.dev` URL OR disable that subdomain in Workers & Pages → Settings → Domains & Routes. Without this, an attacker hitting the worker via the unbound `workers.dev` URL bypasses the Access perimeter entirely (the baseline Worker gate still enforces session + ADMIN_EMAIL, but the Access layer's promise is broken).
+
+See [Configuration: Setting `CF_ACCESS_AUD`](configuration.md#setting-cf_access_aud-production-when-binding-cloudflare-access) for the full setup flow.
 
 ### Paths to gate
 

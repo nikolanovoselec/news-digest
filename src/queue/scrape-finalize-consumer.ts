@@ -44,10 +44,9 @@
 
 import { log } from '~/lib/log';
 import { applyForeignKeysPragma } from '~/lib/db';
-import { FALLBACK_MODEL_ID } from '~/lib/models';
 import { FINALIZE_DEDUP_SYSTEM, finalizeDedupUserPrompt, FINALIZE_LLM_PARAMS } from '~/lib/prompts';
 import { parseLLMJson } from '~/lib/generate';
-import { runJsonWithFallback, asAiBinding } from '~/lib/llm-json';
+import { runJson, asAiBinding } from '~/lib/llm-json';
 import { pickWinner, buildMergeStatements, type FinalizeRow } from '~/lib/finalize-merge';
 import { normaliseRawDedupGroups } from '~/lib/dedupe';
 import { handleBatch } from '~/lib/queue-handler';
@@ -63,13 +62,14 @@ export interface FinalizeJobMessage {
   scrape_run_id: string;
 }
 
-/** Row shape returned by the per-run article fetch. `details` is the
- *  full summary body the chunk consumer wrote; the dedup prompt
- *  consumes it directly (REQ-PIPE-008 AC 1). */
+/** Row shape returned by the per-run article fetch. `details_json`
+ *  is the JSON-encoded paragraph array the chunk consumer wrote
+ *  (column `details_json` in migration 0003). The dedup prompt
+ *  consumes the joined paragraphs directly (REQ-PIPE-008 AC 1). */
 interface ArticleRow {
   id: string;
   title: string;
-  details: string;
+  details_json: string;
   published_at: number;
   ingested_at: number;
 }
@@ -126,7 +126,7 @@ export async function processOneFinalize(
   // the cap bites.
   const result = await env.DB
     .prepare(
-      `SELECT id, title, details, published_at, ingested_at
+      `SELECT id, title, details_json, published_at, ingested_at
          FROM articles
         WHERE scrape_run_id = ?1
         ORDER BY ingested_at DESC
@@ -150,17 +150,30 @@ export async function processOneFinalize(
   // so the LLM's dedup_groups indices map directly back. Title +
   // full body per REQ-PIPE-008 AC 1; source name deliberately
   // omitted as a non-signal.
-  const candidates = rows.map((r, idx) => ({
-    index: idx,
-    title: r.title,
-    details: r.details,
-    published_at: r.published_at,
-  }));
+  const candidates = rows.map((r, idx) => {
+    let body = '';
+    try {
+      const parsed = JSON.parse(r.details_json) as unknown;
+      if (Array.isArray(parsed)) {
+        body = parsed.filter((p): p is string => typeof p === 'string').join('\n\n');
+      } else if (typeof parsed === 'string') {
+        body = parsed;
+      }
+    } catch {
+      body = '';
+    }
+    return {
+      index: idx,
+      title: r.title,
+      details: body,
+      published_at: r.published_at,
+    };
+  });
 
-  // Step 4 — primary-then-fallback retry centralised in
+  // Step 4 — single-model LLM call centralised in
   // src/lib/llm-json.ts (CF-009) so chunk + finalize share identical
-  // waste-cost accounting and single-attempt narrowing.
-  const llmRun = await runJsonWithFallback({
+  // cost accounting and single-attempt narrowing.
+  const llmRun = await runJson({
     ai: asAiBinding(env.AI),
     params: {
       messages: [
@@ -170,33 +183,19 @@ export async function processOneFinalize(
       ...FINALIZE_LLM_PARAMS,
     },
     narrow: (raw) => parseLLMJson(raw),
-    onPrimaryFailure: (info) => {
-      log('warn', 'digest.generation', {
-        status: 'finalize_invalid_json_fallback_try',
-        scrape_run_id: body.scrape_run_id,
-        primary_model: info.modelUsed,
-        fallback_model: FALLBACK_MODEL_ID,
-        primary_tokens_in: info.tokensIn,
-        primary_tokens_out: info.tokensOut,
-        primary_cost_usd: info.costUsd,
-      });
-    },
   });
 
   if (!llmRun.ok) {
     log('error', 'digest.generation', {
       status: 'finalize_invalid_json',
       scrape_run_id: body.scrape_run_id,
-      fallback_model: llmRun.fallback.modelUsed,
+      model_used: llmRun.attempt.modelUsed,
     });
     throw new Error('finalize_invalid_json');
   }
 
   const parsed = llmRun.parsed;
   const modelUsed = llmRun.modelUsed;
-  const wastedTokensIn = llmRun.wastedTokensIn;
-  const wastedTokensOut = llmRun.wastedTokensOut;
-  const wastedCostUsd = llmRun.wastedCostUsd;
 
   // Step 5 — extract dedup_groups from the parsed payload.
   const dedupGroups = normaliseRawDedupGroups(
@@ -259,10 +258,10 @@ export async function processOneFinalize(
   // failure mode: a transient error inside the statement rolls
   // back BOTH the gate flip and the cost add, so a retry can
   // re-record cleanly. AC 5 + AC 7. Counters from
-  // runJsonWithFallback (CF-009).
-  const tokensIn = llmRun.tokensIn + wastedTokensIn;
-  const tokensOut = llmRun.tokensOut + wastedTokensOut;
-  const costUsd = llmRun.costUsd + wastedCostUsd;
+  // runJson (CF-009).
+  const tokensIn = llmRun.tokensIn;
+  const tokensOut = llmRun.tokensOut;
+  const costUsd = llmRun.costUsd;
   // Single atomic UPDATE that flips the gate AND adds the stats only
   // when the row's `finalize_recorded` is currently 0. On the first
   // successful pass the WHERE matches and every SET clause fires

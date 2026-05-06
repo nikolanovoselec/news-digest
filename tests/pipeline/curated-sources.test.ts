@@ -10,6 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  BRAND_ONLY_TAGS,
   CURATED_SOURCES,
   googleNewsSourceForTag,
   hasCuratedGoogleNews,
@@ -75,7 +76,7 @@ describe('curated-sources — REQ-PIPE-004', () => {
   });
 });
 
-describe('googleNewsSourceForTag — auto-synthesised per-tag GN feeds', () => {
+describe('googleNewsSourceForTag — REQ-PIPE-001 AC 9 auto-synthesised per-tag GN feeds', () => {
   it('builds a Google News query-RSS source for an uncovered tag with dashes converted to spaces and URL-encoded', () => {
     const synth = googleNewsSourceForTag('supply-chain-security');
     expect(synth).not.toBeNull();
@@ -126,19 +127,43 @@ describe('googleNewsSourceForTag — auto-synthesised per-tag GN feeds', () => {
     }
   });
 
-  it('every DEFAULT_HASHTAGS tag is either bespoke-GN-covered OR auto-synthesisable (no tag falls through both)', () => {
-    // Exactly one of (a) covered by a bespoke `google-news-*` curated
-    // entry, or (b) a synth source is built. Two named branches read
-    // more clearly on failure than an XOR boolean would.
+  it('every DEFAULT_HASHTAGS tag is either bespoke-GN-covered OR brand-only OR auto-synthesisable (exactly one branch)', () => {
+    // Three valid branches:
+    //   (a) covered by a bespoke `google-news-*` curated entry
+    //       (`hasCuratedGoogleNews(tag) === true`),
+    //   (b) listed in BRAND_ONLY_TAGS — feed comes ONLY from the
+    //       brand's curated source; the auto-synth GN search-feed
+    //       would namespace-collide with unrelated entities sharing
+    //       the brand name, so we deliberately suppress it,
+    //   (c) auto-synthesisable via `googleNewsSourceForTag`.
     for (const tag of DEFAULT_HASHTAGS) {
       const covered = hasCuratedGoogleNews(tag);
+      const brandOnly = BRAND_ONLY_TAGS.has(tag);
       const synth = googleNewsSourceForTag(tag);
       if (covered) {
+        expect(synth).toBeNull();
+        expect(brandOnly).toBe(false);
+      } else if (brandOnly) {
         expect(synth).toBeNull();
       } else {
         expect(synth).not.toBeNull();
         expect(synth!.tags).toContain(tag);
       }
+    }
+  });
+
+  it('BRAND_ONLY_TAGS suppresses auto-synthesised Google News fan-out (CF brand-collision)', () => {
+    // A brand-name tag like `graymatter` matches unrelated companies
+    // ("Graymatter Robotics", "Graymatter Capital") in Google News —
+    // the auto-synth GN search-feed would surface those even though
+    // we only want news from the brand's own RSS feed. Pinning the
+    // suppression: every BRAND_ONLY tag MUST return null from
+    // googleNewsSourceForTag and MUST be backed by at least one
+    // bespoke curated source (otherwise the tag has zero coverage).
+    for (const tag of BRAND_ONLY_TAGS) {
+      expect(googleNewsSourceForTag(tag)).toBeNull();
+      const bespoke = CURATED_SOURCES.filter((s) => s.tags.includes(tag));
+      expect(bespoke.length).toBeGreaterThan(0);
     }
   });
 });

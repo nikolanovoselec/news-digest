@@ -85,6 +85,7 @@ const userTagSet = new Set<string>(parseHashtags(user.hashtags_json));
               oneLiner={a.details[0] ?? ''}
               sourceName={a.primary_source_name}
               sourceUrl={a.primary_source_url}
+              altCount={a.alt_source_count}
               tags={a.tags.filter((t) => userTagSet.has(t))}
               starred={true}
               index={i}

@@ -46,6 +46,10 @@ interface ArticleRow {
   ingested_at: number;
   details_json: string | null;
   tags_json: string | null;
+  /** Number of additional sources beyond the primary
+   *  (`COUNT(*) FROM article_sources WHERE article_id = a.id`).
+   *  Drives the `+N` suffix on the dashboard card source label. */
+  alt_source_count: number | null;
   /** 1 when a row exists in `article_stars` for this (user, article),
    *  0 otherwise. SQLite returns INTEGER from EXISTS. */
   starred: number;
@@ -74,6 +78,9 @@ export interface WireArticle {
   published_at: number;
   details: string[];
   tags: string[];
+  /** Number of additional sources beyond the primary. Drives the
+   *  `+N` suffix on the dashboard card source label. */
+  alt_source_count: number;
   /** Per-user star state. Drives the DigestCard's initial
    *  aria-pressed + filled/outline glyph render on /history. Without
    *  this, articles the user has already starred render as un-starred
@@ -154,6 +161,7 @@ export async function GET(context: APIContext): Promise<Response> {
       `a.published_at, a.ingested_at, a.details_json, ` +
       `(SELECT json_group_array(DISTINCT at.tag) FROM article_tags at ` +
       `WHERE at.article_id = a.id) AS tags_json, ` +
+      `(SELECT COUNT(*) FROM article_sources s WHERE s.article_id = a.id) AS alt_source_count, ` +
       `EXISTS(SELECT 1 FROM article_stars st WHERE st.article_id = a.id AND st.user_id = ?1) AS starred ` +
       `FROM articles a ` +
       `WHERE a.ingested_at >= ?2 ` +
@@ -216,6 +224,8 @@ export async function GET(context: APIContext): Promise<Response> {
       published_at: row.published_at,
       details: parseStringArray(row.details_json),
       tags: parseStringArray(row.tags_json),
+      alt_source_count:
+        typeof row.alt_source_count === 'number' ? row.alt_source_count : 0,
       starred: row.starred === 1,
     });
     group.article_count += 1;
