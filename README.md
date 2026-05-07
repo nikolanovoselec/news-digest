@@ -111,8 +111,8 @@ The Zone scopes are skipped automatically when `APP_URL` is a `*.workers.dev` UR
 <details>
 <summary><strong>What the workflow does</strong></summary>
 
-1. Idempotently creates queues (`scrape-coordinator`, `scrape-chunks`, `scrape-finalize`, `dedup-sweep`) via inline `wrangler queues info ... || wrangler queues create ...` steps. D1 and KV must be created once per fork via `wrangler d1 create` / `wrangler kv namespace create` and pinned in `wrangler.toml` (see [`documentation/deployment.md`](documentation/deployment.md))
-2. Idempotently creates the `ai-news-embeddings` Vectorize index (768-dim cosine) via inline `wrangler vectorize get ... || wrangler vectorize create ...`
+1. Idempotently looks up (or creates) the D1 database, KV namespace, queues (`scrape-coordinator`, `scrape-chunks`, `scrape-finalize`, `dedup-sweep`), and the `ai-news-embeddings` Vectorize index. All resolved IDs are patched into a CI-only copy of `wrangler.toml` so the deploy binds the right resources without committing back to the repo.
+2. (D1 + KV are looked up by name; the workflow creates them on first deploy if they don't exist yet.)
 3. Applies D1 migrations
 4. Pushes Worker secrets (Resend pair skipped when unset)
 5. `wrangler deploy`

@@ -15,11 +15,12 @@ workers_dev = false
 # for news.graymatter.ch. Running `wrangler` against this file from an
 # unaudited fork or unfamiliar environment can corrupt prod state in
 # ways that are hard to reverse (e.g., `wrangler d1 migrations apply
-# DB --remote` will mutate the production schema). Forks MUST create
-# their own resources via `wrangler d1 create ai-news-digest` and
-# `wrangler kv namespace create ai-news-digest-kv`, then replace both
-# IDs below before any remote `wrangler` command. Queues and the
-# Vectorize index are auto-created idempotently by the deploy workflow.
+# DB --remote` will mutate the production schema). Forks do not need
+# to edit these IDs manually: the deploy workflow looks up the D1
+# database, KV namespace, queues, and Vectorize index by name (creating
+# any that don't exist) and patches the resolved IDs into a copy of
+# this file in the ephemeral CI workspace before `wrangler deploy`.
+# The committed IDs are owner-pinned so local `wrangler dev` works.
 
 # Custom domain is NOT declared here. Hardcoding the hostname here would
 # force every fork to edit this file before deploy. Instead, the Deploy
@@ -147,11 +148,12 @@ DEDUP_RERANK_FLOOR = "0.72"
 # without touching production. All resources carry the `-integration`
 # suffix; cron triggers are intentionally OFF (no autonomous LLM spend on
 # integration; force-refresh via /api/admin/force-refresh for manual runs).
-# First-deploy setup: forks create the integration D1 and KV manually
-# via `wrangler d1 create ai-news-digest-integration` and
-# `wrangler kv namespace create ai-news-digest-integration-kv`, then
-# pin both IDs below. Integration queues and Vectorize index are
-# auto-created idempotently by the deploy-integration workflow.
+# First-deploy setup: nothing to do. The deploy-integration workflow
+# looks up `ai-news-digest-integration` (D1), `ai-news-digest-integration-kv`,
+# the four `*-integration` queues, and the integration Vectorize index
+# by name, creating any that don't exist, and patches the resolved
+# IDs into the env.integration sections of wrangler.toml in the
+# ephemeral CI workspace before `wrangler deploy --env integration`.
 # ---------------------------------------------------------------------------
 
 [env.integration]

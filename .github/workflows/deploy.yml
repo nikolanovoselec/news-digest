@@ -64,12 +64,52 @@ jobs:
           printf '_worker.js\n_routes.json\n' > dist/.assetsignore
 
       # Provision Cloudflare resources idempotently before deploy.
-      # Pattern: `wrangler X info/get NAME` exits 0 when the resource
-      # exists, errors when missing — so a `||` fallback creates only
-      # on first deploy of a fork. D1 and KV are NOT auto-created
-      # because their bindings reference an account-scoped UUID that
-      # must be pinned in wrangler.toml; forks create those once
-      # manually (see documentation/deployment.md → first-deploy setup).
+      # Pattern: look up by name; create if missing; for D1 + KV,
+      # patch wrangler.toml in the ephemeral CI workspace with the
+      # resolved id so wrangler deploy binds the right resource.
+
+      - name: Provision D1 - ai-news-digest
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -e
+          DB_ID=$(npx --yes wrangler d1 list --json 2>/dev/null \
+            | jq -r '.[] | select(.name == "ai-news-digest") | .uuid' | head -1)
+          if [ -z "$DB_ID" ]; then
+            DB_ID=$(npx --yes wrangler d1 create ai-news-digest 2>&1 \
+              | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+          fi
+          [ -n "$DB_ID" ] || { echo "::error::Failed to resolve D1 id"; exit 1; }
+          awk -v new="$DB_ID" '
+            $0 == "[[d1_databases]]" { in_sec=1; print; next }
+            /^\[/ && in_sec && $0 != "[[d1_databases]]" { in_sec=0 }
+            in_sec && $1 == "database_id" { print "database_id = \"" new "\""; next }
+            { print }
+          ' wrangler.toml > wrangler.toml.tmp && mv wrangler.toml.tmp wrangler.toml
+          echo "D1 ai-news-digest = $DB_ID"
+
+      - name: Provision KV - ai-news-digest-kv
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -e
+          KV_ID=$(npx --yes wrangler kv namespace list 2>/dev/null \
+            | jq -r '.[] | select(.title == "ai-news-digest-kv") | .id' | head -1)
+          if [ -z "$KV_ID" ]; then
+            KV_ID=$(npx --yes wrangler kv namespace create ai-news-digest-kv 2>&1 \
+              | grep -oE '"id": *"[a-f0-9]+"' | head -1 | grep -oE '[a-f0-9]+$')
+          fi
+          [ -n "$KV_ID" ] || { echo "::error::Failed to resolve KV id"; exit 1; }
+          awk -v new="$KV_ID" '
+            $0 == "[[kv_namespaces]]" { in_sec=1; print; next }
+            /^\[/ && in_sec && $0 != "[[kv_namespaces]]" { in_sec=0 }
+            in_sec && $1 == "id" { print "id = \"" new "\""; next }
+            { print }
+          ' wrangler.toml > wrangler.toml.tmp && mv wrangler.toml.tmp wrangler.toml
+          echo "KV ai-news-digest-kv = $KV_ID"
+
       - name: Provision queue - scrape-coordinator
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

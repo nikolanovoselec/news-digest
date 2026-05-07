@@ -144,7 +144,7 @@ curl -i ${APP_URL}/api/admin/force-refresh
 | Resource | Type | Name | Purpose |
 |---|---|---|---|
 | `DB` | D1 database | `ai-news-digest` | Primary store |
-| `KV` | KV namespace | `ai-news-digest-kv` (created once per fork via `wrangler kv namespace create ai-news-digest-kv`; the returned id is pinned in `wrangler.toml`) | Caches (headlines, sources, health) |
+| `KV` | KV namespace | `ai-news-digest-kv` (auto-created on first deploy by the deploy workflow's inline `wrangler kv namespace list / create` block; the resolved id is patched into wrangler.toml in CI) | Caches (headlines, sources, health) |
 | `SCRAPE_COORDINATOR` | Queue | `scrape-coordinator` | Every-4-hours coordinator dispatch (00/04/08/12/16/20 UTC) |
 | `SCRAPE_CHUNKS` | Queue | `scrape-chunks` | LLM chunk jobs |
 | `SCRAPE_FINALIZE` | Queue | `scrape-finalize` | Same-story dedup pass; one message enqueued by the last chunk consumer per scrape run ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
