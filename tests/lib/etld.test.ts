@@ -43,17 +43,17 @@ describe('etldPlusOne', () => {
 });
 
 describe('sameVendor', () => {
-  it('returns true for same eTLD+1 across subdomains', () => {
-    expect(
-      sameVendor(
-        'https://cloud.google.com/blog/foo',
-        'https://news.google.com/bar',
-      ),
-    ).toBe(true);
+  it('returns true for same eTLD+1 across publisher subdomains', () => {
     expect(
       sameVendor(
         'https://blog.workos.com/best-mcp-server',
         'https://workos.com/blog/another',
+      ),
+    ).toBe(true);
+    expect(
+      sameVendor(
+        'https://cloud.google.com/blog/foo',
+        'https://research.google.com/papers/bar',
       ),
     ).toBe(true);
   });
@@ -78,6 +78,28 @@ describe('sameVendor', () => {
       sameVendor(
         'https://crowdstrike.com/blog/foo',
         'https://cloud.google.com/blog/bar',
+      ),
+    ).toBe(false);
+  });
+
+  it('returns false when EITHER URL is on news.google.com (aggregator)', () => {
+    // news.google.com wraps redirect URLs to many distinct publishers
+    // — applying the same-vendor cosine penalty between two GN
+    // redirect URLs missed the 2026-05-07 Palo Alto duplicate cluster
+    // (cosine 0.86 dropped to 0.81, below the 0.85 auto-merge band).
+    expect(
+      sameVendor(
+        'https://news.google.com/rss/articles/CBMi-aaa',
+        'https://news.google.com/rss/articles/CBMi-bbb',
+      ),
+    ).toBe(false);
+    // Cross-pairs with a real publisher on the other side are also
+    // safe to leave as different vendors — the GN side carries no
+    // identity signal at the URL level.
+    expect(
+      sameVendor(
+        'https://news.google.com/rss/articles/CBMi-aaa',
+        'https://cloud.google.com/blog/foo',
       ),
     ).toBe(false);
   });
