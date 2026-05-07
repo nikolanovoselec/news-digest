@@ -56,7 +56,7 @@ npx wrangler deploy
 CI/CD: `.github/workflows/deploy.yml` triggers on a `workflow_run` event — fires only when "PR Checks" on `main` completes with `success`. `workflow_dispatch` is retained for manual re-runs.
 
 The deploy job:
-1. Applies D1 migrations (idempotent).
+1. Applies D1 migrations (drift-tolerant). SQLite has no `ADD COLUMN IF NOT EXISTS`, so a migration manually run out-of-band leaves the column in place but unrecorded in `d1_migrations`. The CI step handles this with a retry loop: on a "duplicate column" or "already exists" error it stamps the failing migration name into `d1_migrations` and retries, up to 5 attempts. Real SQL errors (syntax, constraint violations) surface immediately. Both `deploy.yml` (production) and `deploy-integration.yml` run the same loop.
 2. Runs the same two-step security audit as PR Checks (advisory HIGH+, blocking CRITICAL) as a defence-in-depth gate — catches CVEs introduced between the merge and the deploy (transient transitive bumps, Dependabot lockfile regenerations, etc.).
 3. Pushes Worker secrets via `wrangler secret put` (file-redirect form). Conditional secrets (`ADMIN_EMAIL`, `CF_ACCESS_AUD`, `DEV_BYPASS_USER_ID`) are pushed only when the corresponding GitHub Actions secret is non-empty.
 4. Deploys the Worker.
@@ -91,7 +91,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 | Environment | Branch | Hostname source | Trigger | Crons |
 |---|---|---|---|---|
 | Development | `develop` | (no deploy) | PR Checks (`test.yml`) fire on every push | n/a |
-| Integration | `develop` | `vars.APP_URL` on the `integration` GitHub Environment | Manual (Actions → Deploy Integration) | OFF |
+| Integration | `develop` | `vars.APP_URL` on the `integration` GitHub Environment | Manual (Actions → Deploy Integration) | OFF (explicit `[env.integration.triggers] crons = []` in `wrangler.toml` — omitting the block would inherit the top-level cron array) |
 | Production | `main` | `secrets.APP_URL` (repo-level) | Auto on merge to main, gated on PR Checks success | ON |
 
 ## Integration deployment
@@ -128,8 +128,10 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 
 **Triggering a scrape on integration** (since crons are off):
 
+Use the **Run pipeline now** button on `/settings` (admin section) — it chains force-refresh, embed backfill, and historical dedup in one browser-side flow. For scripted or headless runs:
+
 ```bash
-# Sign in at your APP_URL, then:
+# Sign in at your APP_URL (or use the dev-bypass runbook below), then:
 curl -i ${APP_URL}/api/admin/force-refresh
 ```
 
@@ -197,7 +199,10 @@ Every admin endpoint sits under `/api/admin/*` so a **single wildcard rule** cov
 
 | Path | What it does |
 |---|---|
-| `/api/admin/force-refresh` | Manually kicks the global-feed coordinator (every-4-hours cron). Implements [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint). |
+| `/api/admin/force-refresh` | Manually kicks the global-feed coordinator (every-4-hours cron). Implements [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint). Backs phase 1 of the **Run pipeline now** button. |
+| `/api/admin/embed-backfill` | Resumable embedding backfill. `POST ?reembed=1` re-embeds the entire corpus (backs the optional wipe phase); plain `POST` drains only `NULL`/`'failed'` rows. Backs phases 0 and 3 of **Run pipeline now**. Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history). See [API Reference](api-reference.md#post-apiadminembed-backfill). |
+| `/api/admin/historical-dedup` | Oldest-first cross-article same-story sweep. Backs phase 4 of **Run pipeline now**. Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9. See [API Reference](api-reference.md#post-apiadminhistorical-dedup). |
+| `/api/admin/dedup-diag` | Returns cosine similarity, adjusted score, same-vendor penalty, and merge decision for a given article pair. Diagnostic only; no writes. Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 10-11. See [API Reference](api-reference.md#get-apiadmindedup-diag-req-pipe-003-ac-10-ac-11). |
 | `/api/admin/discovery/retry` | Re-queues a single tag for LLM-assisted source discovery. |
 | `/api/admin/discovery/retry-bulk` | Re-queues every "stuck" (empty-feeds) tag for the session user in one shot — backs the **Discover missing sources** button on `/settings`. |
 
