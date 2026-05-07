@@ -18,6 +18,8 @@ interface MockDb {
   /** Article rows the SELECT will return (in order). */
   articleRows: Array<{
     id: string;
+    title?: string;
+    source_snippet?: string | null;
     published_at: number;
     ingested_at: number;
     primary_source_url: string;
@@ -26,6 +28,11 @@ interface MockDb {
   finalizeRecorded: number;
   /** id-existence rows for the existence guard query. */
   existsIds: Set<string>;
+  /** Title + snippet rows the rerank existence-fetch returns. */
+  existingArticleData: Map<
+    string,
+    { title: string; source_snippet: string | null }
+  >;
   /** Last-flipped wonRecording outcome. */
   flipChanges: number;
 }
@@ -34,11 +41,13 @@ function makeMockDb(opts: {
   articleRows: MockDb['articleRows'];
   finalizeRecorded?: number;
   existsIds?: Set<string>;
+  existingArticleData?: MockDb['existingArticleData'];
   flipChanges?: number;
 }): MockDb {
   const calls: DbCall[] = [];
   const finalizeRecorded = opts.finalizeRecorded ?? 0;
   const existsIds = opts.existsIds ?? new Set<string>();
+  const existingArticleData = opts.existingArticleData ?? new Map();
   const flipChanges = opts.flipChanges ?? 1;
 
   const prepare = vi.fn().mockImplementation((sql: string) => {
@@ -57,6 +66,18 @@ function makeMockDb(opts: {
               return existsIds.has(id)
                 ? Promise.resolve({ present: 1 })
                 : Promise.resolve(null);
+            }
+            if (sql.includes('SELECT id, title, source_snippet FROM articles')) {
+              const id = params[0] as string;
+              const data = existingArticleData.get(id);
+              if (data !== undefined) {
+                return Promise.resolve({
+                  id,
+                  title: data.title,
+                  source_snippet: data.source_snippet,
+                });
+              }
+              return Promise.resolve(null);
             }
             return Promise.resolve(null);
           }),
@@ -98,6 +119,7 @@ function makeMockDb(opts: {
     articleRows: opts.articleRows,
     finalizeRecorded,
     existsIds,
+    existingArticleData,
     flipChanges,
   };
 }
@@ -131,13 +153,21 @@ function makeMockVectorize(matchesById: Map<string, VectorizeMatch[]>): MockVect
 function makeEnv(
   db: D1Database,
   vectorize: Vectorize,
-  opts: { sameVendorPenalty?: string } = {},
+  opts: {
+    sameVendorPenalty?: string;
+    rerankFloor?: string;
+    aiBinding?: { run: (model: string, params: Record<string, unknown>) => Promise<unknown> };
+  } = {},
 ): Env {
   return {
     DB: db,
     VECTORIZE: vectorize,
+    AI: opts.aiBinding ?? {
+      run: vi.fn().mockResolvedValue({ response: '{"same_event":false}' }),
+    },
     DEDUP_COSINE_THRESHOLD: '0.85',
     DEDUP_SAME_VENDOR_PENALTY: opts.sameVendorPenalty ?? '0.05',
+    DEDUP_RERANK_FLOOR: opts.rerankFloor ?? '0.72',
   } as unknown as Env;
 }
 
@@ -467,5 +497,179 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
       c.sql.includes('UPDATE scrape_runs'),
     );
     expect(gateUpdate).toBeDefined();
+  });
+
+  it('REQ-PIPE-009: borderline cosine with LLM yes -> merges as alt-source', async () => {
+    const newId = 'new-1';
+    const oldId = 'old-1';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: newId,
+          title: 'Romania PM Ousted in No-Confidence Vote',
+          source_snippet: 'Bolojan removed after coalition collapse.',
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://newsite.example/post/2',
+        },
+      ],
+      existsIds: new Set([oldId]),
+      existingArticleData: new Map([
+        [
+          oldId,
+          {
+            title: 'Romania Government Collapses as Far-Right Coalition Forms',
+            source_snippet: 'Government falls; far-right coalition takes over.',
+          },
+        ],
+      ]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    matches.set(newId, [
+      {
+        id: oldId,
+        score: 0.78,
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://oldsite.example/post/1',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const aiRun = vi
+      .fn()
+      .mockResolvedValue({ response: '{"same_event":true}' });
+    const env = makeEnv(mockDb.db, mockVec.binding, {
+      aiBinding: { run: aiRun },
+    });
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    expect(aiRun).toHaveBeenCalledTimes(1);
+    expect(mockVec.deleteMock).toHaveBeenCalledWith([newId]);
+  });
+
+  it('REQ-PIPE-009: borderline cosine with LLM no -> stays standalone', async () => {
+    const newId = 'new-1';
+    const oldId = 'old-1';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: newId,
+          title: 'OpenAI Releases GPT-7',
+          source_snippet: 'New model with multimodal grounding.',
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://newsite.example/post/2',
+        },
+      ],
+      existsIds: new Set([oldId]),
+      existingArticleData: new Map([
+        [
+          oldId,
+          {
+            title: 'OpenAI Announces Sora 2',
+            source_snippet: 'Improved video generation model.',
+          },
+        ],
+      ]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    matches.set(newId, [
+      {
+        id: oldId,
+        score: 0.78,
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://oldsite.example/post/1',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const aiRun = vi
+      .fn()
+      .mockResolvedValue({ response: '{"same_event":false}' });
+    const env = makeEnv(mockDb.db, mockVec.binding, {
+      aiBinding: { run: aiRun },
+    });
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    expect(aiRun).toHaveBeenCalledTimes(1);
+    expect(mockVec.deleteMock).not.toHaveBeenCalled();
+  });
+
+  it('REQ-PIPE-009: auto-merge band (>= threshold) bypasses LLM rerank', async () => {
+    const newId = 'new-1';
+    const oldId = 'old-1';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: newId,
+          title: 'Anthropic Ships Claude 5',
+          source_snippet: 'New flagship model.',
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://newsite.example/post/2',
+        },
+      ],
+      existsIds: new Set([oldId]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    matches.set(newId, [
+      {
+        id: oldId,
+        score: 0.92,
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://oldsite.example/post/1',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const aiRun = vi.fn();
+    const env = makeEnv(mockDb.db, mockVec.binding, {
+      aiBinding: { run: aiRun },
+    });
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    expect(aiRun).not.toHaveBeenCalled();
+    expect(mockVec.deleteMock).toHaveBeenCalledWith([newId]);
+  });
+
+  it('REQ-PIPE-009: cosine below floor never invokes LLM', async () => {
+    const newId = 'new-1';
+    const oldId = 'old-1';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: newId,
+          title: 'Article A',
+          source_snippet: 'snippet a',
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://newsite.example/post/2',
+        },
+      ],
+      existsIds: new Set([oldId]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    matches.set(newId, [
+      {
+        id: oldId,
+        score: 0.5,
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://oldsite.example/post/1',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const aiRun = vi.fn();
+    const env = makeEnv(mockDb.db, mockVec.binding, {
+      aiBinding: { run: aiRun },
+    });
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    expect(aiRun).not.toHaveBeenCalled();
+    expect(mockVec.deleteMock).not.toHaveBeenCalled();
   });
 });

@@ -118,6 +118,12 @@ DEDUP_COSINE_THRESHOLD = "0.85"
 # the LLM-summary embeddings (the dominant FP class in the 2026-05-06
 # integration sweep). Float, string-typed; clamp [0,1] in code.
 DEDUP_SAME_VENDOR_PENALTY = "0.05"
+# REQ-PIPE-009 - lower bound of the LLM-rerank borderline band.
+# Cosines in [DEDUP_RERANK_FLOOR, DEDUP_COSINE_THRESHOLD) are sent
+# to the LLM for a binary same-event check; below the floor the
+# pair stays distinct without an LLM call. 0.72 matches the upper
+# edge of "unrelated topics" in the 2026-05-06 validation sweep.
+DEDUP_RERANK_FLOOR = "0.72"
 
 # ---------------------------------------------------------------------------
 # Integration environment — `wrangler deploy --env integration` targets a
@@ -144,6 +150,8 @@ QUEUE_MAX_RETRIES = "3"
 DEDUP_COSINE_THRESHOLD = "0.85"
 # REQ-PIPE-003 AC 11 — see top-level vars block for rationale.
 DEDUP_SAME_VENDOR_PENALTY = "0.05"
+# REQ-PIPE-009 - see top-level vars block for rationale.
+DEDUP_RERANK_FLOOR = "0.72"
 
 [env.integration.observability]
 enabled = true

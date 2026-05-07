@@ -1,4 +1,5 @@
 // Implements REQ-PIPE-003
+// Implements REQ-PIPE-009
 // Implements REQ-AUTH-001
 //
 // Operator-only historical-dedup sweep. POST
@@ -40,6 +41,7 @@ import {
   readSameVendorPenalty,
   deleteVectorsBatched,
 } from '~/lib/embeddings';
+import { readRerankFloor, rerankBorderlinePair } from '~/lib/dedup-rerank';
 import { sameVendor } from '~/lib/etld';
 
 /** Default articles scanned per call when the caller omits `batch`. */
@@ -56,6 +58,8 @@ const VECTORIZE_TOPK = 5;
 
 interface ArticleRow {
   id: string;
+  title: string;
+  source_snippet: string | null;
   published_at: number;
   primary_source_url: string;
 }
@@ -233,6 +237,7 @@ async function runHistoricalDedupBatch(
 ): Promise<DedupResult> {
   const threshold = readCosineThreshold(env);
   const sameVendorPenalty = readSameVendorPenalty(env);
+  const rerankFloor = readRerankFloor(env);
 
   // Walk articles by ascending published_at, starting strictly after
   // the supplied cursor (or from the beginning when null). Only
@@ -241,7 +246,7 @@ async function runHistoricalDedupBatch(
   const cursorBind = cursor ?? -1;
   const result = await env.DB
     .prepare(
-      `SELECT id, published_at, primary_source_url
+      `SELECT id, title, source_snippet, published_at, primary_source_url
          FROM articles
         WHERE embedding_status = 'embedded'
           AND published_at > ?1
@@ -265,6 +270,8 @@ async function runHistoricalDedupBatch(
 
   const removedIds = new Set<string>();
   let merged = 0;
+  let rerankCallsThisBatch = 0;
+  let rerankAccepts = 0;
 
   for (const self of rows) {
     if (removedIds.has(self.id)) continue;
@@ -308,22 +315,55 @@ async function runHistoricalDedupBatch(
       const adjustedScore = sameEtld1
         ? match.score - sameVendorPenalty
         : match.score;
-      if (adjustedScore < threshold) continue;
       // We're walking oldest-first: any match with strictly NEWER
       // published_at is a candidate to fold into self. Older or
       // equal-time matches are skipped — they were either already
       // processed (so `match.id` would have absorbed self in a prior
       // step) or would orphan equal-time pairs (out of scope).
       if (matchPublishedAt <= self.published_at) continue;
+      const isAutoMerge = adjustedScore >= threshold;
+      const isBorderline =
+        !isAutoMerge && adjustedScore >= rerankFloor;
+      if (!isAutoMerge && !isBorderline) continue;
 
       // Confirm the newer article still exists in D1; Vectorize may
       // hold a vector whose D1 row was retention-deleted in the
-      // narrow window since the SELECT above.
+      // narrow window since the SELECT above. For the borderline
+      // path we also need title + snippet for the LLM rerank, so
+      // SELECT them in one round-trip rather than two.
       const stillThere = await env.DB
-        .prepare(`SELECT 1 AS present FROM articles WHERE id = ?1`)
+        .prepare(
+          `SELECT id, title, source_snippet FROM articles WHERE id = ?1`,
+        )
         .bind(match.id)
-        .first<{ present: number }>();
+        .first<{ id: string; title: string; source_snippet: string | null }>();
       if (stillThere === null) continue;
+
+      if (isBorderline) {
+        rerankCallsThisBatch += 1;
+        const sameEvent = await rerankBorderlinePair(
+          env,
+          {
+            id: self.id,
+            title: self.title,
+            snippet: self.source_snippet,
+          },
+          {
+            id: stillThere.id,
+            title: stillThere.title,
+            snippet: stillThere.source_snippet,
+          },
+        );
+        log('info', 'digest.generation', {
+          status: 'historical_dedup_rerank_decision',
+          older_article_id: self.id,
+          newer_article_id: match.id,
+          cosine: adjustedScore,
+          same_event: sameEvent,
+        });
+        if (!sameEvent) continue;
+        rerankAccepts += 1;
+      }
 
       // Run each 6-statement merge as its own D1.batch so the route
       // never approaches D1's per-batch statement cap regardless of
@@ -382,6 +422,9 @@ async function runHistoricalDedupBatch(
     merged,
     next_cursor: nextCursor,
     remaining,
+    rerank_floor: rerankFloor,
+    rerank_calls_this_batch: rerankCallsThisBatch,
+    rerank_accepts_this_batch: rerankAccepts,
   });
 
   return {

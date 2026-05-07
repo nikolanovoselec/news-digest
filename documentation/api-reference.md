@@ -405,7 +405,9 @@ Resumable embedding backfill for articles whose `embedding_status` is `NULL` or 
 
 ### POST /api/admin/historical-dedup
 
-Cross-article same-story sweep. Walks the article pool oldest-first by `published_at`; for each article, queries Vectorize for top-K matches above `DEDUP_COSINE_THRESHOLD` whose `published_at` is strictly newer, then folds every qualifying newer match into the current (older) article via `mergeAsAltSource`. The handler keeps batching inside a single isolate until `done: true` or the platform tears the request down (Cloudflare's edge cuts at ~100s with 524). Browser callers get a 303 redirect back to `/settings?dedup=done|partial&scanned=N&merged=M&remaining=K`; scripted callers opting in with `Accept: application/json` get the cumulative JSON shape and may pass `{ cursor, batch }` to seed the starting cursor and per-iteration batch size.
+Cross-article same-story sweep. Walks the article pool oldest-first by `published_at`; for each article, queries Vectorize for top-K matches whose `published_at` is strictly newer. Auto-merge-band matches (>= `DEDUP_COSINE_THRESHOLD`) fold into the current (older) article via `mergeAsAltSource` without an LLM call. Borderline-band matches (>= `DEDUP_RERANK_FLOOR`, < `DEDUP_COSINE_THRESHOLD`) go to a binary same-event judgment by the language model and merge only on a positive verdict. Each invocation caps rerank calls to prevent budget exhaustion; the cap is logged when hit.
+
+The handler keeps batching inside a single isolate until `done: true` or the platform tears the request down (Cloudflare edge cuts at ~100s with 524). Browser callers get a 303 redirect back to `/settings?dedup=done|partial&scanned=N&merged=M&remaining=K`; scripted callers opting in with `Accept: application/json` get the cumulative JSON shape and may pass `{ cursor, batch }` to seed the starting cursor and per-iteration batch size.
 
 | Method | Auth | Request body |
 |---|---|---|
@@ -415,7 +417,7 @@ Cross-article same-story sweep. Walks the article pool oldest-first by `publishe
 
 **Error responses:** `401 unauthorized` | `403 forbidden` | `500 historical_dedup_failed`.
 
-**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9, [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phase 4)
+**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9, [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phase 4)
 
 ---
 

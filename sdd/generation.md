@@ -171,6 +171,28 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 ---
 
+### REQ-PIPE-009: LLM re-rank pass for borderline same-story candidates
+
+**Intent:** When two articles describe the same news event but their summaries take different angles (e.g., one frames the event as "PM ousted in no-confidence vote" and another as "government collapses as far-right coalition forms"), embedding similarity alone places them in a borderline band that is too low to auto-merge but too high to safely call them distinct. A targeted same-event judgment by the language model decides those borderline pairs without lowering the auto-merge bar that protects against false merges between distinct same-day stories from the same source.
+
+**Applies To:** System
+
+**Acceptance Criteria:**
+1. Same-story candidates whose similarity falls in a configured borderline band (above a floor and below the auto-merge threshold from REQ-PIPE-003) trigger a single same-event judgment by the language model. Pairs at or above the auto-merge threshold are merged without an LLM call; pairs below the floor stay distinct without an LLM call.
+2. The same-event judgment receives only the two articles' titles and short body excerpts. The judgment is binary and conservative: an unparseable, ambiguous, or failed response is treated as "different events" so a borderline pair never collapses on the strength of an unreliable model answer.
+3. A pair the model marks as the same event is merged using the same first-source-wins rule as REQ-PIPE-003: the earlier-published article survives as the primary card and the later one becomes an alternative source on it.
+4. The same borderline gate runs on both the per-tick cross-tick pass and the operator-initiated historical re-run sweep, so re-running the sweep after a threshold change picks up borderline pairs the original ingest missed.
+5. Each invocation caps the number of borderline judgments it will issue. Once the cap is hit, additional borderline pairs in the same invocation stay distinct and an operator-visible log entry records that the cap fired so the operator can re-run the sweep or raise the cap as needed.
+6. The borderline floor is operator-tunable at runtime through the same configuration mechanism as the auto-merge threshold, so an operator can widen or narrow the LLM-judgment band without a code change.
+
+**Constraints:** CON-LLM-001
+**Priority:** P1
+**Dependencies:** REQ-PIPE-003
+**Verification:** Automated test
+**Status:** Implemented
+
+---
+
 ### REQ-PIPE-008: Cross-chunk semantic dedup pass
 
 Superseded by REQ-PIPE-003's same-story dedupe across the entire article history (2026-05-06). The LLM-based finalize pass is gone; semantic same-story matching now runs against an embedding index over every surviving article rather than only against the current scrape tick's titles.
