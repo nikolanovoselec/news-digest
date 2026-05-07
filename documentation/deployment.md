@@ -107,7 +107,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 | Worker | `ai-news-digest-integration` |
 | D1 | `ai-news-digest-integration` |
 | KV | `ai-news-digest-integration-kv` (auto-derived) |
-| Queues | `scrape-coordinator-integration`, `scrape-chunks-integration`, `scrape-finalize-integration` |
+| Queues | `scrape-coordinator-integration`, `scrape-chunks-integration`, `scrape-finalize-integration`, `dedup-sweep-integration` |
 | Workers AI | shared `AI` binding (no per-env isolation needed) |
 | Vectorize | `ai-news-embeddings-integration` |
 
@@ -148,6 +148,7 @@ curl -i ${APP_URL}/api/admin/force-refresh
 | `SCRAPE_COORDINATOR` | Queue | `scrape-coordinator` | Every-4-hours coordinator dispatch (00/04/08/12/16/20 UTC) |
 | `SCRAPE_CHUNKS` | Queue | `scrape-chunks` | LLM chunk jobs |
 | `SCRAPE_FINALIZE` | Queue | `scrape-finalize` | Same-story dedup pass; one message enqueued by the last chunk consumer per scrape run ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
+| `DEDUP_SWEEP` | Queue | `dedup-sweep` | Self-chaining historical-dedup sweep; the kicker enqueues the first message and the consumer re-enqueues a continuation per batch until the corpus tail is reached ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9) |
 | `AI` | Workers AI | (account-level) | LLM inference and bge-base-en-v1.5 embedding generation |
 | `VECTORIZE` | Vectorize index | `ai-news-embeddings` | 768-dim cosine index for same-story dedup; provisioned by the deploy workflow via `wrangler vectorize create` ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
 
@@ -201,7 +202,8 @@ Every admin endpoint sits under `/api/admin/*` so a **single wildcard rule** cov
 |---|---|
 | `/api/admin/force-refresh` | Manually kicks the global-feed coordinator (every-4-hours cron). Implements [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint). Backs phase 1 of **Full pipeline run** and the entirety of **Refresh feeds** ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)). |
 | `/api/admin/embed-backfill` | Resumable embedding backfill. `POST ?reembed=1` re-embeds the entire corpus (backs the optional wipe phase); plain `POST` drains only `NULL`/`'failed'` rows. Backs phases 0 and 3 of **Full pipeline run** ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)). Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history). See [API Reference](api-reference.md#post-apiadminembed-backfill). |
-| `/api/admin/historical-dedup` | Oldest-first cross-article same-story sweep. Backs phase 4 of **Full pipeline run** ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)). Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 3, AC 9, AC 11. See [API Reference](api-reference.md#post-apiadminhistorical-dedup). |
+| `/api/admin/historical-dedup` | Kicks an oldest-first cross-article same-story sweep on the `DEDUP_SWEEP` queue. Empty-body POST is the kicker (returns `{run_id, enqueued}`); body with `{cursor, batch}` runs one batch synchronously (legacy/dev-bypass). Backs phase 4 of **Full pipeline run** ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)). Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 3, AC 9, AC 11. See [API Reference](api-reference.md#post-apiadminhistorical-dedup). |
+| `/api/admin/dedup-status` | Polls the `dedup_runs` audit row for a queue-driven sweep. GET with `?run_id=<ULID>` returns running counters and terminal status. Backs the operator-surface progress banner. Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9. See [API Reference](api-reference.md#get-apiadmindedup-status). |
 | `/api/admin/dedup-diag` | Returns cosine similarity, adjusted score, same-vendor penalty, and merge decision for a given article pair. Diagnostic only; no writes. Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 10-11. See [API Reference](api-reference.md#get-apiadmindedup-diag-req-pipe-003-ac-10-ac-11). |
 | `/api/admin/discovery/retry` | Re-queues a single tag for LLM-assisted source discovery. |
 | `/api/admin/discovery/retry-bulk` | Re-queues every "stuck" (empty-feeds) tag for the session user in one shot — backs the **Discover missing sources** button on `/settings`. |
@@ -271,6 +273,20 @@ curl -s -X POST "https://news.novoselec.ch/api/admin/embed-backfill" \
   -b /tmp/cookies.txt \
   -H "Origin: https://news.novoselec.ch" \
   -H "Accept: application/json"
+
+# Kick a queue-driven historical-dedup sweep (no body = kicker mode); poll status by run_id.
+RUN_ID=$(curl -s -X POST "https://news.novoselec.ch/api/admin/historical-dedup" \
+  -b /tmp/cookies.txt \
+  -H "Origin: https://news.novoselec.ch" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{}' | jq -r '.run_id')
+
+curl -s "https://news.novoselec.ch/api/admin/dedup-status?run_id=$RUN_ID" \
+  -b /tmp/cookies.txt \
+  -H "Origin: https://news.novoselec.ch" \
+  -H "Accept: application/json" \
+  | jq '{status, scanned, merged, remaining, done, failed, error}'
 ```
 
 **Failure-mode quick-reference:**

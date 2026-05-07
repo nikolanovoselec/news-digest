@@ -48,6 +48,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD32 | Same-story dedup uses Workers AI embeddings + Vectorize (replaces LLM finalize dedup) | Architecture | 2026-05-06 |
 | AD33 | Embed source-text (not LLM rewrite) and apply a same-vendor cosine penalty for dedup | Architecture | 2026-05-06 |
 | AD34 | LLM same-event rerank for borderline cosine pairs (between auto-merge and distinct bands) | Architecture | 2026-05-07 |
+| AD35 | Operator historical-dedup sweep self-chains via Cloudflare Queue, not the operator's browser tab | Architecture | 2026-05-07 |
 
 ---
 
@@ -913,6 +914,35 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - Validation will be cumulative: the dedup-diag diagnostic does not directly surface rerank verdicts, so confirmation comes from observing per-run `rerank_calls` and `rerank_accepts` counters in structured logs across multiple ticks.
 
 **Related requirements:** REQ-PIPE-009, REQ-PIPE-003.
+
+---
+
+### AD35: Operator historical-dedup sweep self-chains via Cloudflare Queue
+
+**Status:** Accepted (2026-05-07)
+
+**Decision:** The operator-triggered historical-dedup sweep is driven by a self-chaining Cloudflare Queue (`DEDUP_SWEEP`) plus a `dedup_runs` audit table. The admin route is a kicker: it inserts the audit row, enqueues one starter message, and returns immediately with a `run_id`. The consumer processes one batch via `runHistoricalDedupBatch`, updates the audit row, and re-enqueues a continuation message until the corpus tail is reached. The operator surface polls `/api/admin/dedup-status?run_id=…` for progress; closing the browser tab does not interrupt the sweep.
+
+**Context:** REQ-PIPE-003 AC 9 requires the operator to re-run same-story matching across the entire historical pool on demand. The previous shape ran a `while(true) fetch(/api/admin/historical-dedup, {cursor})` loop in the browser. On 2026-05-06 a production run produced 4 visible duplicates of one story (BTIG/Palo Alto, Anthropic financial-services AI agents) that subsequent dedup runs did not collapse. Even before root-causing the BTIG miss specifically, the architectural fragility was clear: the entire sweep depended on the operator's browser tab staying open for as long as the corpus took to scan. Tab close, network blip, or accidental navigation aborted the sweep mid-corpus and there was no audit trail of how far it got.
+
+**Alternatives considered:**
+
+- **Cloudflare Cron Trigger** — overkill for an operator-triggered, on-demand sweep; cron schedules are discouraged for one-shot work and can't take a `run_id` parameter.
+- **Durable Object with `setAlarm`** — viable but adds a new primitive (no DOs in this project today) and storage that isn't queryable from D1 for the operator surface.
+- **`ctx.waitUntil` with self-fetch chaining** — bounded by the Worker invocation lifetime (~30s); a multi-thousand-article sweep would not finish in one invocation, and there's no built-in retry or visibility.
+- **Queue-driven self-chain** *(chosen)* — reuses an existing primitive (the project already runs three queues for the scrape pipeline), inherits Cloudflare Queues' built-in retry and DLQ semantics, and the `dedup_runs` audit row gives the operator surface a queryable progress signal that survives a browser refresh or fresh visit.
+
+**Rationale:** The queue primitive is already part of the system's mental model and operational vocabulary; adding a fourth queue is cheaper than introducing a Durable Object. Self-chaining (consumer re-enqueues continuation) is a well-known pattern with predictable failure modes — terminal failure flips the audit row to `'failed'` with the error string. The `dedup_runs` table makes the sweep observable from any admin surface, not just the tab that started it, and the polling endpoint cleanly separates execution (queue) from observability (D1).
+
+**Consequences:**
+
+- Provisioned `dedup-sweep` (production) and `dedup-sweep-integration` queues out-of-band; deploys depend on these existing.
+- Migration `0013_dedup_runs.sql` adds the audit table; must be applied to integration and production D1 before the consumer ships, or the consumer's first UPDATE fails and the message ends up in DLQ.
+- The synchronous body-driven path on `POST /api/admin/historical-dedup` is preserved (when `cursor`/`batch` is in the body) so dev-bypass curl scripts and the existing test suite continue to work without rewriting.
+- The browser-driven `while(true)` loop on `/settings` is replaced by a 5-second poll on `/api/admin/dedup-status`; the page can resume mid-sweep on tab reload by reading the persisted `runId` from pipeline state.
+- Future sweeps (e.g., re-embed + dedup) can be modelled the same way without re-litigating the shape.
+
+**Related requirements:** REQ-PIPE-003 AC 9, REQ-OPS-008.
 
 ---
 

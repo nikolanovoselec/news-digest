@@ -410,19 +410,43 @@ Resumable embedding backfill for articles whose `embedding_status` is `NULL` or 
 
 ### POST /api/admin/historical-dedup
 
-Cross-article same-story sweep. Walks the article pool oldest-first by `published_at`; for each article, queries Vectorize for top-K matches whose `published_at` is strictly newer. Auto-merge-band matches (>= `DEDUP_COSINE_THRESHOLD`) fold into the current (older) article via `mergeAsAltSource` without an LLM call. Borderline-band matches (>= `DEDUP_RERANK_FLOOR`, < `DEDUP_COSINE_THRESHOLD`) go to a binary same-event judgment by the language model and merge only on a positive verdict. Each invocation caps rerank calls to prevent budget exhaustion; the cap is logged when hit.
+Cross-article same-story sweep. Walks the article pool oldest-first by `(published_at, id)`; for each article, queries Vectorize for top-K matches. Auto-merge-band matches (>= `DEDUP_COSINE_THRESHOLD`) fold into the current (older) article via `mergeAsAltSource` without an LLM call. Borderline-band matches (>= `DEDUP_RERANK_FLOOR`, < `DEDUP_COSINE_THRESHOLD`) go to a binary same-event judgment by the language model and merge only on a positive verdict. Each batch caps rerank calls to prevent budget exhaustion; the cap is logged when hit.
 
-Each call runs exactly one bounded batch and returns. The browser-side loop in `/settings` drives iteration via the returned `next_cursor` so no single request risks exceeding Cloudflare's ~100s edge cut. Browser callers (the `/settings` Full pipeline run button) get a 303 redirect back to `/settings?dedup=done|partial&scanned=N&merged=M&remaining=K`; scripted callers opting in with `Accept: application/json` get the per-batch JSON shape and may pass `{ cursor, batch }` to seed the starting cursor and per-batch size.
+The default path (empty body) is **kicker-only**: it inserts a `dedup_runs` audit row, enqueues exactly one `dedup-sweep` queue message, and returns immediately with `{ ok, run_id, enqueued, started_at }`. The queue consumer (`src/queue/dedup-sweep-consumer.ts`) drives the per-batch loop server-side and re-enqueues continuation messages until the corpus tail is reached. The sweep keeps running even if the `/settings` browser tab is closed; clients poll [GET /api/admin/dedup-status](#get-apiadmindedup-status) with the returned `run_id` for live progress.
+
+A scripted caller may opt into the legacy synchronous path by sending `{ "cursor"?, "batch"? }` in the body — that runs exactly ONE bounded batch and returns the per-batch JSON shape, used by tests and dev-bypass curl flows that drive iteration manually. Browser callers without `Accept: application/json` get a 303 redirect back to `/settings?dedup=...`.
 
 | Method | Auth | Request body |
 |---|---|---|
-| `POST` | Admin session | empty (browser button) or `{ "cursor"?: { "pa": number, "id": string }, "batch"?: number }` for scripted single-batch calls (composite cursor — `pa` is a `published_at` Unix-second lower bound, `id` is the ULID lower bound for equal-time tie-breaking; batch defaults to 100, cap 500) |
+| `POST` | Admin session | empty (browser button) → enqueue-and-return; OR `{ "cursor"?: { "pa": number, "id": string }, "batch"?: number }` for scripted single-batch calls (composite cursor — `pa` is a `published_at` Unix-second lower bound, `id` is the ULID lower bound for equal-time tie-breaking; batch defaults to 25, cap 500) |
 
-**Success (200):** `{ ok: true, scanned: N, merged: M, remaining: K, next_cursor: { pa: number, id: string } | null, done: boolean, elapsed_ms: T }`. `next_cursor` is the composite resume token to seed the next call; `null` when the sweep is complete (`done: true`). Pass the object verbatim as `cursor` in the next request body.
+**Success (200, kicker path):** `{ ok: true, run_id: string, enqueued: true, started_at: number }`.
 
-**Error responses:** `401 unauthorized` | `403 forbidden` | `500 historical_dedup_failed`.
+**Success (200, sync batch path):** `{ ok: true, scanned: N, merged: M, remaining: K, next_cursor: { pa: number, id: string } | null, done: boolean, elapsed_ms: T }`.
+
+**Error responses:** `401 unauthorized` | `403 forbidden` | `500 historical_dedup_kick_failed` | `500 historical_dedup_failed` (sync path only).
 
 **Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 3, AC 9, AC 11, [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phase 4)
+
+---
+
+### GET /api/admin/dedup-status
+
+Polling endpoint for the queue-driven historical-dedup sweep. Returns a snapshot of the named `dedup_runs` row so the `/settings` surface can paint live progress while the queue consumer chains across batches. The settings JS hits this every 5 seconds while a sweep is in flight; the queue consumer updates the underlying row after each batch.
+
+**Auth:** Admin session required (same three-layer gate as every other `/api/admin/*` route). No Origin check (read-only GET).
+
+**Query parameters:**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `run_id` | string | Yes | ULID returned by the kicker call to `POST /api/admin/historical-dedup`. |
+
+**Success (200):** `{ ok: true, run_id: string, status: 'running'|'done'|'failed', scanned: N, merged: M, batch_count: B, remaining: K, last_cursor: { pa, id } | null, done: boolean, failed: boolean, error: string | null, started_at: number, updated_at: number }`.
+
+**Error responses:** `400 missing_run_id` | `401 unauthorized` | `403 forbidden` | `404 run_not_found` | `500 dedup_status_select_failed` | `500 invalid_stored_status`.
+
+**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9, [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)
 
 ---
 

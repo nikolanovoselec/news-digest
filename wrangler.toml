@@ -56,6 +56,14 @@ queue = "scrape-chunks"
 binding = "SCRAPE_FINALIZE"
 queue = "scrape-finalize"
 
+# REQ-PIPE-003 AC 9: queue-driven historical-dedup sweep. Decouples the
+# corpus-wide sweep from the operator's browser tab — the kicker
+# enqueues one message; the consumer runs one bounded batch per
+# message and re-enqueues a continuation until done.
+[[queues.producers]]
+binding = "DEDUP_SWEEP"
+queue = "dedup-sweep"
+
 [[queues.consumers]]
 queue = "scrape-coordinator"
 max_batch_size = 1
@@ -68,6 +76,11 @@ max_retries = 3
 
 [[queues.consumers]]
 queue = "scrape-finalize"
+max_batch_size = 1
+max_retries = 3
+
+[[queues.consumers]]
+queue = "dedup-sweep"
 max_batch_size = 1
 max_retries = 3
 
@@ -178,6 +191,10 @@ queue = "scrape-chunks-integration"
 binding = "SCRAPE_FINALIZE"
 queue = "scrape-finalize-integration"
 
+[[env.integration.queues.producers]]
+binding = "DEDUP_SWEEP"
+queue = "dedup-sweep-integration"
+
 [[env.integration.queues.consumers]]
 queue = "scrape-coordinator-integration"
 max_batch_size = 1
@@ -190,6 +207,11 @@ max_retries = 3
 
 [[env.integration.queues.consumers]]
 queue = "scrape-finalize-integration"
+max_batch_size = 1
+max_retries = 3
+
+[[env.integration.queues.consumers]]
+queue = "dedup-sweep-integration"
 max_batch_size = 1
 max_retries = 3
 
