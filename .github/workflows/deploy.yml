@@ -63,29 +63,46 @@ jobs:
         run: |
           printf '_worker.js\n_routes.json\n' > dist/.assetsignore
 
-      - name: Bootstrap Cloudflare resources (idempotent)
+      # Provision Cloudflare resources idempotently before deploy.
+      # Pattern: `wrangler X info/get NAME` exits 0 when the resource
+      # exists, errors when missing — so a `||` fallback creates only
+      # on first deploy of a fork. D1 and KV are NOT auto-created
+      # because their bindings reference an account-scoped UUID that
+      # must be pinned in wrangler.toml; forks create those once
+      # manually (see documentation/deployment.md → first-deploy setup).
+      - name: Provision queue - scrape-coordinator
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: bash scripts/bootstrap-resources.sh
+        run: npx --yes wrangler queues info scrape-coordinator >/dev/null 2>&1 || npx --yes wrangler queues create scrape-coordinator
+
+      - name: Provision queue - scrape-chunks
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler queues info scrape-chunks >/dev/null 2>&1 || npx --yes wrangler queues create scrape-chunks
+
+      - name: Provision queue - scrape-finalize
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler queues info scrape-finalize >/dev/null 2>&1 || npx --yes wrangler queues create scrape-finalize
+
+      - name: Provision queue - dedup-sweep
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler queues info dedup-sweep >/dev/null 2>&1 || npx --yes wrangler queues create dedup-sweep
 
       # REQ-PIPE-003 — Vectorize index for semantic same-story dedup.
-      # Idempotent: `wrangler vectorize get` returns 0 when the index
-      # already exists; the create runs only on the first deploy of a
-      # fork. 768-dim cosine matches the @cf/baai/bge-base-en-v1.5
-      # embedding model. Forks that swap the model must update both
-      # this step and src/lib/embeddings.ts in the same change.
+      # 768-dim cosine matches the @cf/baai/bge-base-en-v1.5 embedding
+      # model. Forks that swap the model must update both this step
+      # and src/lib/embeddings.ts in the same change.
       - name: Provision Vectorize index
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          if npx --yes wrangler vectorize get ai-news-embeddings >/dev/null 2>&1; then
-            echo "Vectorize: ai-news-embeddings already exists"
-          else
-            npx --yes wrangler vectorize create ai-news-embeddings \
-              --dimensions=768 --metric=cosine
-          fi
+        run: npx --yes wrangler vectorize get ai-news-embeddings >/dev/null 2>&1 || npx --yes wrangler vectorize create ai-news-embeddings --dimensions=768 --metric=cosine
 
       # Drift-tolerant migration apply. SQLite has no `ADD COLUMN IF
       # NOT EXISTS`, so a migration manually run out-of-band (during

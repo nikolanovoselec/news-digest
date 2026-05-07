@@ -334,7 +334,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - Operator must remember to manually trigger. There's no automation enforcing "test on integration before merging to main"; that discipline is on the human.
 - Per-env GitHub Environment scoping is in place (`environment: integration`) so any secret can later be overridden without touching workflow code (e.g., a separate `OAUTH_JWT_SECRET` to isolate cross-env JWT identity confusion).
 - Integration's `APP_URL` is sourced from a GitHub Environment **variable** (`vars.APP_URL` on the `integration` environment), NOT a secret and NOT hardcoded in `wrangler.toml`. The codeflare pattern: variables for non-sensitive per-environment config, secrets for credentials. Any fork sets their own integration hostname under Settings → Environments → integration → Variables → APP_URL without touching code.
-- The bootstrap script (`scripts/bootstrap-resources.sh`) accepts an `ENV_NAME` env var to operate on env-scoped sections; placeholder IDs in wrangler.toml (`TBD-bootstrap-on-first-deploy`) trigger create-or-lookup-by-name on the first run.
+- Queues and the Vectorize index are provisioned by inline `wrangler queues info ... || wrangler queues create ...` (and the equivalent `wrangler vectorize` block) steps directly in both deploy workflows. D1 + KV bindings reference account-scoped UUIDs that must be pinned in `wrangler.toml`; forks create those resources once via `wrangler d1 create` / `wrangler kv namespace create` and pin the returned IDs.
 
 **Related requirements:** [REQ-OPS-006](../../sdd/observability.md#req-ops-006-integration-deployment-target)
 
@@ -936,7 +936,7 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Consequences:**
 
-- New queues `dedup-sweep` (production) and `dedup-sweep-integration` are declared in `wrangler.toml`; the existing `scripts/bootstrap-resources.sh` step in both deploy workflows iterates every `[[queues.producers]]` and creates any missing queue idempotently, so a fresh fork's first deploy provisions both without manual setup.
+- New queues `dedup-sweep` (production) and `dedup-sweep-integration` are declared in `wrangler.toml` and provisioned by inline `wrangler queues info ... || wrangler queues create ...` steps in both deploy workflows. A fresh fork's first deploy provisions both without manual setup.
 - Migration `0013_dedup_runs.sql` adds the audit table and is picked up by the existing drift-tolerant migration step in both deploy workflows; the consumer's first UPDATE depends on the table existing, so the migration must run before the deploy lands the consumer code (the workflows enforce this ordering).
 - The synchronous body-driven path on `POST /api/admin/historical-dedup` is preserved (when `cursor`/`batch` is in the body) so dev-bypass curl scripts and the existing test suite continue to work without rewriting.
 - The browser-driven `while(true)` loop on `/settings` is replaced by a 5-second poll on `/api/admin/dedup-status`; the page can resume mid-sweep on tab reload by reading the persisted `runId` from pipeline state.

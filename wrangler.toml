@@ -15,9 +15,11 @@ workers_dev = false
 # for news.graymatter.ch. Running `wrangler` against this file from an
 # unaudited fork or unfamiliar environment can corrupt prod state in
 # ways that are hard to reverse (e.g., `wrangler d1 migrations apply
-# DB --remote` will mutate the production schema). Forks MUST bootstrap
-# their own resources via `scripts/bootstrap-resources.sh` and replace
-# both IDs before any remote `wrangler` command.
+# DB --remote` will mutate the production schema). Forks MUST create
+# their own resources via `wrangler d1 create ai-news-digest` and
+# `wrangler kv namespace create ai-news-digest-kv`, then replace both
+# IDs below before any remote `wrangler` command. Queues and the
+# Vectorize index are auto-created idempotently by the deploy workflow.
 
 # Custom domain is NOT declared here. Hardcoding the hostname here would
 # force every fork to edit this file before deploy. Instead, the Deploy
@@ -145,8 +147,11 @@ DEDUP_RERANK_FLOOR = "0.72"
 # without touching production. All resources carry the `-integration`
 # suffix; cron triggers are intentionally OFF (no autonomous LLM spend on
 # integration; force-refresh via /api/admin/force-refresh for manual runs).
-# Bootstrap on first deploy: scripts/bootstrap-resources.sh creates the
-# resources by name, captures their IDs, and patches this file in CI.
+# First-deploy setup: forks create the integration D1 and KV manually
+# via `wrangler d1 create ai-news-digest-integration` and
+# `wrangler kv namespace create ai-news-digest-integration-kv`, then
+# pin both IDs below. Integration queues and Vectorize index are
+# auto-created idempotently by the deploy-integration workflow.
 # ---------------------------------------------------------------------------
 
 [env.integration]
