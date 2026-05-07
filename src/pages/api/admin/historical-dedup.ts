@@ -10,14 +10,15 @@
 // `published_at >` comparison; the older article always wins so
 // users' stars / reads / canonical URLs are preserved.
 //
-// One request drives the whole sweep. The handler keeps batching
-// inside a single isolate until `done` (or the platform tears the
-// request down — Cloudflare's edge cuts requests at ~100s with a
-// 524). Browser callers (the /settings button) get a 303 redirect
-// back with `?dedup=done|partial&scanned=N&merged=N`; scripted
-// callers opting in with `Accept: application/json` get the
-// cumulative JSON shape and may pass `{ cursor, batch }` to drive
-// the sweep manually.
+// One request runs ONE bounded batch and returns. The browser-side
+// loop in /settings drives iteration via the next_cursor returned
+// in the JSON shape — single-batch-per-request avoids the case
+// where one batch's LLM-rerank fan-out itself exceeds Cloudflare's
+// ~100s edge cut, which surfaced as "Failed to fetch" on a 1300-
+// article corpus. Browser callers (the /settings button) get a 303
+// redirect with `?dedup=done|partial&scanned=N&merged=N`; scripted
+// callers opting in with `Accept: application/json` get the JSON
+// shape and may pass `{ cursor, batch }` to drive the sweep manually.
 //
 // Idempotent: a second pass over the same window finds nothing to
 // merge because the previous pass already removed those vectors and
@@ -55,19 +56,14 @@ const DEFAULT_BATCH = 25;
  *  budget. */
 const MAX_BATCH = 500;
 
-/** Wall-clock budget for the OUTER loop, between batches. Cloudflare
- *  cuts requests at ~100s; this returns partial progress before
- *  that. The smaller per-batch budget protects against any SINGLE
- *  batch exceeding 100s on a paraphrase-heavy slice. */
-const ELAPSED_BUDGET_MS = 60_000;
-
 /** Hard ceiling on LLM rerank calls inside a single batch. The most
- *  variable cost in the inner loop — gpt-oss-120b at temp=0 typically
- *  2-5s per call but can spike to 10-15s under load. Bounding this
- *  prevents one batch's worst case from blowing past the edge cut.
- *  Borderline pairs skipped because of the cap stay in the corpus and
- *  will be re-evaluated on the next operator-driven sweep. */
-const MAX_RERANKS_PER_BATCH = 8;
+ *  variable cost — gpt-oss-120b at temp=0 typically 2-5s per call
+ *  but can spike to 10-15s under load. With one-batch-per-request
+ *  and 25 articles per batch (~10s of Vectorize+D1 work) plus this
+ *  cap of 4 × ~10s LLM, total worst case ~50s — solidly under the
+ *  ~100s edge cut. Skipped borderline pairs are re-evaluated on
+ *  later sweeps when the corpus has shifted. */
+const MAX_RERANKS_PER_BATCH = 4;
 
 /** TopK for each Vectorize query. Five gives the dedup loop enough
  *  signal to pick the best newer match while keeping per-call
@@ -158,37 +154,22 @@ async function handle(context: APIContext): Promise<Response> {
   let totalScanned = 0;
   let totalMerged = 0;
   let lastRemaining = 0;
-  let iterations = 0;
+  let iterations = 1;
   let done = false;
 
+  // Single-batch-per-request. The previous server-side for(;;) loop
+  // was the source of "Failed to fetch": one batch hitting many
+  // borderline LLM reranks could itself exceed Cloudflare's ~100s
+  // edge cut before any inter-batch budget check fired. The browser-
+  // side loop in /settings now drives iteration via next_cursor —
+  // each request runs exactly one bounded batch, returning quickly.
   try {
-    for (;;) {
-      const result = await runHistoricalDedupBatch(env, cursor, batch);
-      iterations += 1;
-      totalScanned += result.scanned;
-      totalMerged += result.merged;
-      lastRemaining = result.remaining;
-      cursor = result.next_cursor;
-      if (result.done) {
-        done = true;
-        break;
-      }
-      // Forward-progress guard: bail when a batch scanned ZERO rows.
-      // The cursor advances per batch by published_at of the last
-      // scanned row, so a zero-scan batch means the SELECT predicate
-      // is exhausted (or Vectorize is degraded enough that no rows
-      // are processable). Either way the loop should stop and let
-      // the operator click again rather than busy-spin.
-      if (result.scanned === 0) {
-        break;
-      }
-      // Wall-clock budget — return partial progress before the
-      // Cloudflare edge cut so the browser-side loop can drive
-      // forward instead of seeing a 524 / "Failed to fetch".
-      if (Date.now() - startedAt >= ELAPSED_BUDGET_MS) {
-        break;
-      }
-    }
+    const result = await runHistoricalDedupBatch(env, cursor, batch);
+    totalScanned = result.scanned;
+    totalMerged = result.merged;
+    lastRemaining = result.remaining;
+    cursor = result.next_cursor;
+    done = result.done;
   } catch (err) {
     log('error', 'digest.generation', {
       status: 'historical_dedup_failed',
