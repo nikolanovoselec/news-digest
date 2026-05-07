@@ -61,7 +61,8 @@ export function etldPlusOne(host: string): string {
  *  host). The 2026-05-07 audit on prod found pair-A
  *  (BTIG / Palo Alto) at cosine 0.9516 and pair-B (Premium-valuation /
  *  Palo Alto) at 0.8615 — the 0.05 same-vendor penalty knocked B
- *  below the 0.85 auto-merge threshold. Aggregator hosts are exempt.
+ *  below the (then 0.85, now 0.78 per AD36) auto-merge threshold.
+ *  Aggregator hosts are exempt.
  *
  *  Scope assumption: the curated source registry (`src/lib/curated-
  *  sources.ts`) and the auto-synthesised tag-fallback in

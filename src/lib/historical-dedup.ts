@@ -30,21 +30,14 @@ import { sameVendor } from '~/lib/etld';
 
 /** Default articles scanned per call when the caller omits `batch`.
  *  Sized so a single batch's worst-case (25 × Vectorize.queryById +
- *  up to MAX_RERANKS_PER_BATCH LLM reranks at p99 ~1.5s each) stays
- *  well under Cloudflare's ~100s edge cut. The queue-driven sweep
- *  drives many short batches via continuation messages. */
+ *  up to 25 × topK LLM reranks at p99 ~1.5s each) stays well within
+ *  the queue consumer's 15-minute wall-clock budget. The queue-driven
+ *  sweep drives many short batches via continuation messages. */
 export const DEFAULT_BATCH = 25;
 
 /** Hard cap so a malformed `batch: 99999` doesn't blow the isolate
  *  budget. */
 export const MAX_BATCH = 500;
-
-/** Hard ceiling on LLM rerank calls inside a single batch. Direct
- *  Workers AI probes show gpt-oss-120b at p99 ~1.5s per call; capping
- *  at 4 keeps the rerank contribution to a batch under ~6s on the
- *  long tail. Borderline pairs skipped because the cap was hit are
- *  re-evaluated on later sweeps when the corpus has shifted. */
-const MAX_RERANKS_PER_BATCH = 4;
 
 /** TopK for each Vectorize query. Five gives the dedup loop enough
  *  signal to pick the best newer match while keeping per-call latency
@@ -209,11 +202,12 @@ export async function runHistoricalDedupBatch(
       if (stillThere === null) continue;
 
       if (isBorderline) {
-        // Cap LLM rerank calls per batch — the variable cost ceiling
-        // that keeps any single batch under Cloudflare's edge cut.
-        // Skipped borderline pairs are not merged in this sweep but
-        // are re-evaluated on the next operator-driven run.
-        if (rerankCallsThisBatch >= MAX_RERANKS_PER_BATCH) continue;
+        // No per-batch rerank cap — the queue consumer has a 15-min
+        // wall-clock budget per message; the prior 4-rerank cap was
+        // a leftover from the synchronous browser-loop era and was
+        // silently dropping merges (2026-05-07 prod audit: PANW
+        // valuation cluster, 6 borderline pairs in one batch, 2 of 6
+        // reached rerank, the rest were dropped).
         rerankCallsThisBatch += 1;
         const sameEvent = await rerankBorderlinePair(
           env,

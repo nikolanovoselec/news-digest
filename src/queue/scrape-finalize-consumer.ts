@@ -16,9 +16,9 @@
 //      their vectors land.
 //   2. For each article, runs `VECTORIZE.query(topK=5)` and filters
 //      matches to (a) different article id, (b) cosine score >=
-//      DEDUP_COSINE_THRESHOLD (default 0.85, validated 2026-05-06),
-//      (c) match `published_at < self.published_at` so older articles
-//      always win.
+//      DEDUP_COSINE_THRESHOLD (default 0.78 per the 2026-05-07 prod
+//      audit; see AD36), (c) match `published_at < self.published_at`
+//      so older articles always win.
 //   3. When at least one match qualifies: pick the OLDEST match by
 //      `published_at`, batch the 6-statement `mergeAsAltSource` SQL
 //      (existing wins, new becomes alt-source, new row deleted), and
@@ -32,9 +32,10 @@
 // independent LLM-rewritten summaries of the same event share
 // almost no token vocabulary (Jaccard ~0.10-0.13 measured against
 // production data), so the previous LLM call could not catch them at
-// scale. bge-base-en-v1.5 cosine 0.85 catches the same-event cluster
-// reliably; see `documentation/decisions/AD33...` (Vectorize +
-// embeddings ADR) for evidence.
+// scale. bge-base-en-v1.5 cosine at 0.78 (post-2026-05-07 calibration)
+// catches the same-event cluster reliably; see
+// `documentation/decisions/AD33...` (Vectorize + embeddings ADR) and
+// AD36 (2026-05-07 threshold recalibration) for evidence.
 
 import { log } from '~/lib/log';
 import { applyForeignKeysPragma } from '~/lib/db';
@@ -207,7 +208,7 @@ export async function processOneFinalize(
       // cosines on LLM-summary embeddings because the model carried
       // publisher-style boilerplate; the offset neutralises that
       // without forbidding genuine same-publisher merges (a very
-      // strong source-text match still clears 0.85 + 0.05 = 0.90).
+      // strong source-text match still clears 0.78 + 0.05 = 0.83).
       const matchUrl =
         typeof meta?.primary_source_url === 'string'
           ? meta.primary_source_url

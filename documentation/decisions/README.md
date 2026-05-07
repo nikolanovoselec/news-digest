@@ -946,6 +946,35 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 ---
 
+### AD36: Lower dedup auto-merge threshold to 0.78 and remove the per-batch rerank cap
+
+**Status:** Accepted (2026-05-07)
+
+**Decision:** `DEDUP_COSINE_THRESHOLD` drops from `"0.85"` to `"0.78"` and `DEDUP_RERANK_FLOOR` drops from `"0.72"` to `"0.70"` on both production and integration. The per-batch rerank cap (`MAX_RERANKS_PER_BATCH = 4`) is removed from `runHistoricalDedupBatch`; the queue consumer's wall-clock budget bounds the work per message instead. The rerank prompt is loosened from "SAME news event" to "SAME news cycle for the SAME subject" with explicit examples of close follow-on coverage (multiple analyst takes published the same week, multiple security outlets covering the same vulnerability) so genuine same-cycle pairs that are not literally the same announcement still merge.
+
+**Context:** A 2026-05-07 production audit on `news.graymatter.ch` after AD32-AD35 had landed found two clusters that the calibration based on a single Anthropic financial-AI cluster (pairwise cosine 0.81-0.91 — an outlier) had silently left unmerged. A PAN-OS zero-day cluster spanning four security outlets sat at pairwise cosine 0.75-0.78. A Palo Alto Networks valuation-week cluster spanning analyst notes published the same week sat at 0.73-0.80. Both clusters were entirely below the 0.85 auto-merge bar; the larger valuation cluster also produced six borderline pairs in a single batch, of which only two reached the LLM rerank because the per-batch cap of 4 (a leftover from the synchronous browser-loop era when the operator's tab paid the wall-clock cost) silently dropped the rest. After the manual sweep on prod with the old constants the cluster was still visibly duplicated on the digest surface.
+
+**Alternatives considered:**
+
+- **Keep 0.85 and rely on rerank to catch same-cycle pairs in [0.72, 0.85).** Rejected. 6/8 PAN-OS pairs and most PANW pairs sat below 0.78, and the rerank cap dropped the rest. With the cap removed and the floor lowered, the borderline band still does the headline-paraphrase work it was designed for, but the auto-merge band absorbs the upper half of legitimate same-cycle clusters that don't need an LLM call.
+- **Keep 0.85 and lower only the rerank floor.** Rejected. Same-cycle pairs at 0.78-0.85 would still pay the LLM cost on every batch when the embedding signal alone is already strong enough; we'd be spending ~5 LLM calls per batch on pairs the embedding model already separates from unrelated content.
+- **Drop to 0.75.** Rejected. Phase-0 dedup-diag showed unrelated articles clustering up to 0.71 with the LLM-summary input and same-publisher boilerplate inflated cosines further; 0.75 leaves no margin against the unrelated-pair tail. 0.78 sits in the gap between the unrelated upper tail and the same-cycle lower tail with the same-vendor penalty doing the rest of the same-publisher protection.
+- **Keep the rerank cap at a higher number (e.g., 25).** Rejected. The cap was the wrong shape, not the wrong number — the queue consumer has a 15-minute wall-clock budget per message; the rerank loop is bounded by the outer batch size (≤500) × topK (5) which is already much smaller than that budget at p99 LLM latency.
+
+**Rationale:** The 0.85 number was tuned against a single outlier cluster (pairwise 0.81-0.91) and never had a population behind it. Real same-cycle clusters at production scale span 0.73-0.80 and the calibration evidence is now broad enough (two distinct subject domains, eight outlets, two clusters) to set a defensible auto-merge bar at 0.78. The rerank cap was a synchronous-loop-era safety belt that quietly degraded recall once the sweep moved to queues; removing it restores the documented behaviour ("rerank every borderline pair") without touching the cost ceiling (the consumer's wall-clock budget already bounds it).
+
+**Consequences:**
+
+- The integration env mirrors the production constants so a fork tuning its own corpus has one place to override (the env var defaults).
+- The same-vendor cosine penalty (default 0.05) now lifts the effective same-publisher threshold from 0.78 to 0.83 instead of 0.85 to 0.90; same-publisher pairs still need a stronger signal than cross-publisher pairs but the ceiling is lower in absolute terms.
+- The first sweep after this lands will produce a one-shot wave of merges as the existing corpus collapses against the new bar; the `dedup_runs` audit row records the count.
+- If false-merges surface in the new band, the lever is the `DEDUP_COSINE_THRESHOLD` env var (no code change). The dedup-diag diagnostic and per-run rerank counters are the observation surfaces.
+- The rerank prompt loosening is the smaller knob: a future tightening (back toward "exact same announcement only") is a drop-in env-or-prompt change without revisiting the threshold.
+
+**Related requirements:** REQ-PIPE-003 (AC 1, AC 2, AC 11), REQ-PIPE-009.
+
+---
+
 ## Related Documentation
 
 - [Architecture](../architecture.md) — System overview and component map

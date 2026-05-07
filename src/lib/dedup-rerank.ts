@@ -25,11 +25,12 @@ import { runJson, asAiBinding } from '~/lib/llm-json';
 import { log } from '~/lib/log';
 
 /** Default lower bound of the borderline band. Cosines strictly below
- *  this value skip the LLM and stay distinct. Validated against the
- *  same 2026-05-06 sweep that pinned the upper threshold: pairs scoring
- *  below 0.72 in production were unrelated topics, never legitimate
- *  duplicates. */
-export const DEFAULT_RERANK_FLOOR = 0.72;
+ *  this value skip the LLM and stay distinct. Lowered from 0.72 to
+ *  0.70 on 2026-05-07 alongside the threshold drop (0.85 → 0.78) so
+ *  same-news-cycle pairs in the lower tail (PANW valuation week at
+ *  0.7286-0.7293) reach the LLM rather than being filtered out
+ *  pre-rerank. */
+export const DEFAULT_RERANK_FLOOR = 0.70;
 
 /** Hard cap on snippet bytes sent per article. Keeps the prompt under
  *  ~1k tokens regardless of upstream body length so the LLM call stays
@@ -79,10 +80,10 @@ function narrowRerankPayload(raw: unknown): RerankPayload | null {
 
 const RERANK_SYSTEM = [
   'You are a news deduplication assistant.',
-  'Decide whether two article snippets describe the SAME news event.',
+  'Decide whether two article snippets are part of the SAME news cycle for the SAME subject.',
   'Answer ONLY with strict JSON: {"same_event": true} or {"same_event": false}.',
-  'Same event = same underlying real-world occurrence (e.g. the same vote, the same product launch, the same acquisition), even when the headlines frame it differently.',
-  'Different events = different occurrences in the same domain (e.g. two distinct product launches by the same company, two separate funding rounds).',
+  'Same news cycle = either (a) reporting on the same underlying real-world occurrence (e.g. the same vote, the same product launch, the same CVE advisory, the same acquisition), OR (b) closely-coupled follow-on coverage of one subject within the same news cycle (e.g. multiple analyst takes on the same company\'s outlook published the same week, multiple security outlets covering the same vulnerability, multiple write-ups of the same earnings call).',
+  'Different = different occurrences with no shared underlying news driver (e.g. an acquisition versus a product launch by the same company, a CVE advisory versus a marketing announcement, a Q1 earnings call versus a Q2 earnings call).',
   'When unsure, prefer false. False is the conservative answer.',
 ].join(' ');
 

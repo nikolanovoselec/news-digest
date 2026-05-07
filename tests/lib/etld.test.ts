@@ -86,7 +86,11 @@ describe('sameVendor', () => {
     // news.google.com wraps redirect URLs to many distinct publishers
     // — applying the same-vendor cosine penalty between two GN
     // redirect URLs missed the 2026-05-07 Palo Alto duplicate cluster
-    // (cosine 0.86 dropped to 0.81, below the 0.85 auto-merge band).
+    // (cosine 0.83 dropped to 0.78, on the auto-merge edge under the
+    // pre-2026-05-07 threshold of 0.85; even after the threshold drop
+    // to 0.78, treating GN-vs-GN as same-vendor would still wrongly
+    // penalise legitimate cross-publisher pairs that both arrived via
+    // the GN redirect).
     expect(
       sameVendor(
         'https://news.google.com/rss/articles/CBMi-aaa',

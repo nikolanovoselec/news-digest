@@ -119,27 +119,28 @@ index_name = "ai-news-embeddings"
 # strings here; the consumer `Number.parseInt`s them.
 QUEUE_MAX_RETRIES = "3"
 
-# REQ-PIPE-003 — cosine threshold for semantic dedup. Validated
-# 2026-05-06 against 11 production articles: 0.85 catches the
-# same-event Anthropic financial-AI cluster (pairwise 0.81-0.91)
-# without false-merging different events (Verisk announcement,
-# EPAM hiring at 0.77-0.84). Operators may tune via the same key
-# without a code change. Float, string-typed for parity with
-# QUEUE_MAX_RETRIES.
-DEDUP_COSINE_THRESHOLD = "0.85"
+# REQ-PIPE-003 — cosine threshold for semantic dedup. The 2026-05-06
+# value of 0.85 was tuned on a single Anthropic financial-AI cluster
+# (pairwise 0.81-0.91) and turned out to be an outlier; the 2026-05-07
+# prod audit found same-event security clusters (PAN-OS zero-day) at
+# 0.75-0.78 and same-cycle financial coverage (PANW valuation week)
+# at 0.73-0.80, ALL below 0.85. Lowered to 0.78 — auto-merges the
+# upper half of these clusters; the rest go to LLM rerank.
+DEDUP_COSINE_THRESHOLD = "0.78"
 # REQ-PIPE-003 AC 11 — same-vendor cosine penalty, subtracted from
 # the raw cosine before the threshold gate when both articles share
-# an eTLD+1. Lifts the effective same-publisher threshold to 0.90,
+# an eTLD+1. Lifts the effective same-publisher threshold to 0.83,
 # neutralising publisher-style boilerplate that inflated cosines on
 # the LLM-summary embeddings (the dominant FP class in the 2026-05-06
 # integration sweep). Float, string-typed; clamp [0,1] in code.
 DEDUP_SAME_VENDOR_PENALTY = "0.05"
 # REQ-PIPE-009 - lower bound of the LLM-rerank borderline band.
 # Cosines in [DEDUP_RERANK_FLOOR, DEDUP_COSINE_THRESHOLD) are sent
-# to the LLM for a binary same-event check; below the floor the
-# pair stays distinct without an LLM call. 0.72 matches the upper
-# edge of "unrelated topics" in the 2026-05-06 validation sweep.
-DEDUP_RERANK_FLOOR = "0.72"
+# to the LLM for a binary same-cycle check; below the floor the
+# pair stays distinct without an LLM call. Lowered 2026-05-07 from
+# 0.72 to 0.70 to capture the lower tail of same-cycle financial
+# coverage (PANW valuation week pairs at 0.7286-0.7293).
+DEDUP_RERANK_FLOOR = "0.70"
 
 # ---------------------------------------------------------------------------
 # Integration environment — `wrangler deploy --env integration` targets a
@@ -167,11 +168,11 @@ assets = { directory = "./dist", binding = "ASSETS" }
 QUEUE_MAX_RETRIES = "3"
 # REQ-PIPE-003 — same threshold as production. Forks tuning their
 # own corpus may override here without touching prod.
-DEDUP_COSINE_THRESHOLD = "0.85"
+DEDUP_COSINE_THRESHOLD = "0.78"
 # REQ-PIPE-003 AC 11 — see top-level vars block for rationale.
 DEDUP_SAME_VENDOR_PENALTY = "0.05"
 # REQ-PIPE-009 - see top-level vars block for rationale.
-DEDUP_RERANK_FLOOR = "0.72"
+DEDUP_RERANK_FLOOR = "0.70"
 
 [env.integration.observability]
 enabled = true

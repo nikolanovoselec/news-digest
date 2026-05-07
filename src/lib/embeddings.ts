@@ -5,11 +5,13 @@
 // embed-backfill / historical-dedup routes.
 //
 // Model is pinned to `@cf/baai/bge-base-en-v1.5` — 768-dim, English-
-// pretrained, cosine-metric. Validated against 11 production articles
-// 2026-05-06: same-event Anthropic financial-AI cluster pairwise cosine
-// 0.81-0.91; different events 0.77-0.84; unrelated topic <0.73. Threshold
-// 0.85 (DEDUP_COSINE_THRESHOLD) catches the cluster cleanly without
-// false-merges.
+// pretrained, cosine-metric. Initial calibration 2026-05-06 against an
+// 11-article Anthropic financial-AI cluster (pairwise 0.81-0.91); a
+// 2026-05-07 prod audit found that cluster was an outlier and that real
+// same-news-cycle clusters span 0.73-0.80 (PAN-OS zero-day, PANW
+// valuation week). DEDUP_COSINE_THRESHOLD is now 0.78 (AD36); the
+// borderline band [DEDUP_RERANK_FLOOR, threshold) goes to LLM rerank
+// (REQ-PIPE-009).
 //
 // All functions are pure I/O: no D1, no KV, no Vectorize. Callers thread
 // the resulting vectors into Vectorize.upsert / Vectorize.query.
@@ -39,13 +41,17 @@ const MAX_BATCH_SIZE = 100;
 const VECTORIZE_DELETE_BATCH_SIZE = 100;
 
 /** Default cosine threshold when DEDUP_COSINE_THRESHOLD is unset.
- *  Validated 2026-05-06; see the file header for evidence. */
-export const DEFAULT_COSINE_THRESHOLD = 0.85;
+ *  Lowered from 0.85 to 0.78 on 2026-05-07 after a prod audit found
+ *  same-news-cycle clusters (PAN-OS zero-day reporting at 0.75-0.78,
+ *  PANW valuation week at 0.73-0.80) sat below the previous threshold.
+ *  See documentation/decisions/ for the calibration write-up. */
+export const DEFAULT_COSINE_THRESHOLD = 0.78;
 
 /** Default same-vendor cosine penalty when DEDUP_SAME_VENDOR_PENALTY is
  *  unset. Subtracted from the raw cosine when both articles resolve to
  *  the same eTLD+1, lifting the effective threshold for same-publisher
- *  pairs to 0.90 against the 0.85 default. Calibrated against the
+ *  pairs to 0.83 against the 0.78 default (AD36; previously 0.90 over
+ *  the 2026-05-06 calibration of 0.85). Calibrated against the
  *  2026-05-06 integration sweep where 3/4 of the historical false-
  *  positive merges were same-vendor pairs whose cosine was inflated by
  *  publisher-style boilerplate (WorkOS, Google AI, CrowdStrike). */

@@ -11,7 +11,7 @@
 // drove the same logic via POST):
 //   1. empty corpus → done:true, scanned:0, merged:0
 //   2. happy path → merge SQL + Vectorize.deleteByIds for matched duplicate
-//   3. threshold filter — score < 0.85 is NOT merged; merged:0
+//   3. threshold filter — score < 0.78 is NOT merged; merged:0
 //   4. newer match required — strictly older skipped; equal-time tie-broken by ULID
 //   5. stale D1 row guard — match id in Vectorize but not in D1; merged:0, no delete
 //   6. cursor pagination — composite cursor recovers equal-time pair across batches
@@ -22,7 +22,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { runHistoricalDedupBatch } from '~/lib/historical-dedup';
 
-const DEFAULT_THRESHOLD = 0.85;
+const DEFAULT_THRESHOLD = 0.78;
 
 interface ArticleRow {
   id: string;
@@ -468,6 +468,11 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
   it('REQ-PIPE-003 AC 11: same-vendor pair just above threshold falls below penalty (no merge)', async () => {
     const SELF_ID = 'self';
     const MATCH_ID = 'old';
+    // score=0.82 is just above DEFAULT_COSINE_THRESHOLD=0.78; the
+    // same-vendor penalty (-0.05) pushes the adjusted score to 0.77,
+    // which is below threshold but above DEFAULT_RERANK_FLOOR=0.70 so
+    // the LLM rerank fires. With the default `same_event:false` mock
+    // the pair stays distinct (merged=0).
     const { result, fixture, vectorize } = await callBatch({
       articles: [
         {
@@ -480,7 +485,7 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
       queryByIdResults: {
         [SELF_ID]: singleMatch({
           id: MATCH_ID,
-          score: 0.87,
+          score: 0.82,
           published_at: 1_700_001_000,
           primary_source_url: 'https://news.example.com/old',
         }),
@@ -545,6 +550,9 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
     const SELF_ID = 'older';
     const MATCH_ID = 'newer';
     const aiRun = vi.fn().mockResolvedValue({ response: '{"same_event":true}' });
+    // score=0.74 sits in the [DEFAULT_RERANK_FLOOR=0.70,
+    // DEFAULT_COSINE_THRESHOLD=0.78) borderline band so the LLM is
+    // invoked. Above 0.78 the auto-merge path runs without rerank.
     const { result, fixture, vectorize } = await callBatch({
       articles: [
         {
@@ -565,7 +573,7 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
       queryByIdResults: {
         [SELF_ID]: singleMatch({
           id: MATCH_ID,
-          score: 0.78,
+          score: 0.74,
           published_at: 1_700_001_000,
           primary_source_url: 'https://newsite.example/y',
         }),
@@ -598,7 +606,7 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
       queryByIdResults: {
         [SELF_ID]: singleMatch({
           id: MATCH_ID,
-          score: 0.78,
+          score: 0.74,
           published_at: 1_700_001_000,
           primary_source_url: 'https://newsite.example/y',
         }),
