@@ -230,7 +230,9 @@ async function buildContextAndCall(opts: BuildContextOpts): Promise<{
     remainingCount: opts.remainingCount ?? 0,
     batchCalls: [],
     allCalls: [],
-    paginatedRemaining: opts.paginatedRemaining,
+    ...(opts.paginatedRemaining !== undefined
+      ? { paginatedRemaining: opts.paginatedRemaining }
+      : {}),
   };
 
   const db = makeDb(fixture);
