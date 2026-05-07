@@ -56,11 +56,10 @@ const DEFAULT_BATCH = 25;
  *  budget. */
 const MAX_BATCH = 500;
 
-/** Hard ceiling on LLM rerank calls inside a single batch. The most
- *  variable cost — gpt-oss-120b at temp=0 typically 2-5s per call
- *  but can spike to 10-15s under load. With one-batch-per-request
- *  and 25 articles per batch (~10s of Vectorize+D1 work) plus this
- *  cap of 4 × ~10s LLM, total worst case ~50s — solidly under the
+/** Hard ceiling on LLM rerank calls inside a single batch. With one-
+ *  batch-per-request and 25 articles per batch (~10s of Vectorize+D1
+ *  work) plus this cap of 4 × ≤10s LLM (per-call timeout enforced in
+ *  rerankBorderlinePair), total worst case ~50s — solidly under the
  *  ~100s edge cut. Skipped borderline pairs are re-evaluated on
  *  later sweeps when the corpus has shifted. */
 const MAX_RERANKS_PER_BATCH = 4;
