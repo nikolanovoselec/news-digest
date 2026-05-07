@@ -8,6 +8,7 @@ Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are a
 
 ## 2026-05-07
 
+- REQ-PIPE-003 AC 9 extended: the historical-dedup sweep's articles-scanned, duplicates-merged, and remaining counters now advance exactly once per batch regardless of queue redelivery, so a redelivered batch never inflates the operator-visible totals.
 - REQ-PIPE-003 AC 11 refined: same-publisher now means both URLs identify a real publisher; pairs whose URLs route through an aggregator-wrapper host (currently news.google.com) are treated as cross-publisher so two aggregator-wrapped copies of the same story can fold instead of being blocked by the same-publisher penalty.
 - REQ-PIPE-003 AC 3 extended: same-story pairs that share an identical publication time now collapse via a deterministic tie-break instead of being silently kept apart by the strict-greater filter.
 - REQ-PIPE-003 AC 9 reshaped: the operator-triggered historical-dedup sweep now runs in the background and is no longer dependent on the operator's browser tab staying open. Triggering the sweep returns immediately with a run identifier; progress (articles scanned, duplicates merged, articles remaining) is observable while the sweep is in flight and on the next visit to the surface.

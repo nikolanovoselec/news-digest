@@ -174,6 +174,11 @@ describe('processOneDedupSweep — REQ-PIPE-003 AC 9', () => {
     // Update keeps status='running' because remaining > 0.
     expect(calls.updateCalls.length).toBe(1);
     expect(calls.updateCalls[0]!.params[1]).toBe('running');
+    // CAS guard binds the incoming message cursor at positions 9/10
+    // (params[8]/[9]) — null for the first batch — so redelivery of
+    // the same message can be detected and skipped.
+    expect(calls.updateCalls[0]!.params[8]).toBeNull();
+    expect(calls.updateCalls[0]!.params[9]).toBeNull();
     // Exactly one continuation message; cursor advances to the last
     // scanned article, batch is preserved verbatim.
     expect(sends.length).toBe(1);
@@ -223,6 +228,101 @@ describe('processOneDedupSweep — REQ-PIPE-003 AC 9', () => {
     expect(sends.length).toBe(0);
     expect(calls.selectStatus.length).toBe(1);
     expect(calls.selectStatus[0]!.result).toBeNull();
+  });
+
+  it('CAS-skips counter increment on queue redelivery but still sends continuation', async () => {
+    // Simulate a redelivery where the audit row's last_cursor was
+    // already advanced by the original successful run. The UPDATE's
+    // CAS guard (last_cursor_pa IS ?prev AND last_cursor_id IS ?prev)
+    // should not match → D1 reports meta.changes=0. The consumer
+    // logs the skip but still issues the continuation send because
+    // the original send may itself have failed (which is what caused
+    // the redelivery).
+    const ARTICLE = {
+      id: '01ARTICLE000000000000000B2',
+      published_at: 1_700_000_000,
+      primary_source_url: 'https://example.com/b',
+    };
+    const updateCalls: Array<{ sql: string; params: unknown[] }> = [];
+    const casMissDb = {
+      prepare: vi.fn().mockImplementation((sql: string) => {
+        const bound: unknown[] = [];
+        const ops = {
+          first: vi.fn().mockImplementation(async () => {
+            if (sql.includes('SELECT status FROM dedup_runs')) {
+              return { status: 'running' };
+            }
+            if (sql.includes('SELECT COUNT(*) AS c')) {
+              return { c: 50 };
+            }
+            return null;
+          }),
+          all: vi.fn().mockImplementation(async () => {
+            if (
+              sql.includes('SELECT id, title, source_snippet, published_at') &&
+              sql.includes("embedding_status = 'embedded'")
+            ) {
+              return {
+                results: [
+                  {
+                    id: ARTICLE.id,
+                    title: 'title',
+                    source_snippet: null,
+                    published_at: ARTICLE.published_at,
+                    primary_source_url: ARTICLE.primary_source_url,
+                  },
+                ],
+              };
+            }
+            return { results: [] };
+          }),
+          run: vi.fn().mockImplementation(async () => {
+            if (sql.includes('UPDATE dedup_runs')) {
+              updateCalls.push({ sql, params: [...bound] });
+              // CAS miss: zero rows affected because the saved
+              // last_cursor no longer matches the incoming cursor.
+              return { success: true, meta: { changes: 0 } };
+            }
+            return { success: true, meta: { changes: 1 } };
+          }),
+        };
+        const stmt = {
+          ...ops,
+          bind: (...params: unknown[]) => {
+            bound.push(...params);
+            return { ...ops, sql, params };
+          },
+        };
+        return stmt as unknown as D1PreparedStatement;
+      }),
+      batch: vi.fn(),
+    } as unknown as D1Database;
+    const { queue, sends } = makeQueue();
+    const env = {
+      DB: casMissDb,
+      VECTORIZE: makeVectorize(),
+      AI: { run: vi.fn() },
+      DEDUP_SWEEP: queue,
+    } as unknown as Env;
+    await processOneDedupSweep(env, {
+      run_id: '01TESTRUNID0000000000000AA',
+      cursor: null,
+      batch: 1,
+    });
+    // UPDATE was issued (with CAS predicate); it just didn't match.
+    expect(updateCalls.length).toBe(1);
+    // CAS predicate carries the incoming message cursor at param
+    // positions 9/10 (1-indexed in SQL → 8/9 in the JS bind array).
+    // body.cursor was null for this redelivered first-batch case.
+    expect(updateCalls[0]!.params[8]).toBeNull();
+    expect(updateCalls[0]!.params[9]).toBeNull();
+    // Continuation still fires — chain stays alive.
+    expect(sends.length).toBe(1);
+    expect(sends[0]).toEqual({
+      run_id: '01TESTRUNID0000000000000AA',
+      cursor: { pa: ARTICLE.published_at, id: ARTICLE.id },
+      batch: 1,
+    });
   });
 
   it('rethrows on Vectorize failure but stamps error onto audit row', async () => {
