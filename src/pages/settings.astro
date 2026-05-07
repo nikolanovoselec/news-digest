@@ -518,24 +518,32 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           </fieldset>
           {isAdmin && (
             <fieldset class="settings__section">
-              <legend class="settings__legend">Force refresh</legend>
+              <legend class="settings__legend">Run pipeline now</legend>
               <p class="settings__hint">
-                Fire the global scrape pipeline immediately instead of
-                waiting for the next 4-hour tick. Useful after a deploy
-                to verify the coordinator + chunk consumer end-to-end.
-                This endpoint is gated by Cloudflare Access — only
-                operators with an Access session can reach it.
+                Trigger the full scrape → embed → dedup pipeline
+                immediately instead of waiting for the next 4-hour
+                cron tick. Useful after a deploy to verify the change
+                end-to-end. Admin-only; gated by Cloudflare Access.
               </p>
+              <label class="settings__hint" style="display:block;margin:0.5rem 0 0.75rem">
+                <input type="checkbox" data-pipeline-wipe />
+                {' '}Wipe & re-embed all existing articles (post-deploy only — slow)
+              </label>
               <div class="settings__actions-row">
-                <form method="post" action="/api/admin/force-refresh">
-                  <button
-                    type="submit"
-                    class="settings__secondary-button"
-                  >
-                    Force refresh now
-                  </button>
-                </form>
+                <button
+                  type="button"
+                  class="settings__secondary-button"
+                  data-pipeline-run
+                >
+                  Run now
+                </button>
               </div>
+              <p
+                class="settings__status"
+                data-pipeline-status
+                aria-live="polite"
+                hidden
+              ></p>
               {/* Live progress line for any in-flight scrape run. Hidden
                   by default; the script at the bottom of this page polls
                   /api/scrape-status every 5s and fills it with a
@@ -544,64 +552,6 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               <p
                 class="settings__status"
                 data-scrape-progress
-                aria-live="polite"
-                hidden
-              ></p>
-            </fieldset>
-          )}
-          {isAdmin && (
-            <fieldset class="settings__section">
-              <legend class="settings__legend">Embed historic articles</legend>
-              <p class="settings__hint">
-                Generate Vectorize embeddings for every D1 article that
-                doesn't have one yet. Drives the full backfill in one
-                request — the server loops in batches until done, then
-                redirects back here with the outcome. If the platform
-                cuts the request before draining the backlog, click
-                again to resume. Safe to re-run; idempotent.
-              </p>
-              <div class="settings__actions-row">
-                <form method="post" action="/api/admin/embed-backfill">
-                  <button
-                    type="submit"
-                    class="settings__secondary-button"
-                  >
-                    Embed all historic articles
-                  </button>
-                </form>
-              </div>
-              <p
-                class="settings__status"
-                data-embed-status
-                aria-live="polite"
-                hidden
-              ></p>
-            </fieldset>
-          )}
-          {isAdmin && (
-            <fieldset class="settings__section">
-              <legend class="settings__legend">Dedupe historic articles</legend>
-              <p class="settings__hint">
-                Walk the embedded corpus oldest-first and merge any
-                newer near-duplicates into the older article as
-                alt-sources. Same one-request loop shape as the embed
-                button — re-clickable if the platform cuts the request.
-                Idempotent; running it again on a clean corpus merges
-                nothing.
-              </p>
-              <div class="settings__actions-row">
-                <form method="post" action="/api/admin/historical-dedup">
-                  <button
-                    type="submit"
-                    class="settings__secondary-button"
-                  >
-                    Dedupe historic articles
-                  </button>
-                </form>
-              </div>
-              <p
-                class="settings__status"
-                data-dedup-status
                 aria-live="polite"
                 hidden
               ></p>
@@ -947,6 +897,203 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     }
   }
 
+  /** Orchestrate a manual cron-equivalent pipeline run from the
+   *  Settings page. Replaces the three separate admin buttons (force
+   *  refresh, embed backfill, historical dedup) with one chained
+   *  client-side flow that consumes the existing JSON endpoints.
+   *
+   *  Phases:
+   *    0. (optional) Wipe + re-embed all articles via
+   *       POST /api/admin/embed-backfill?reembed=1, looped on
+   *       remaining > 0 in case the platform cuts the request.
+   *    1. Kick the scrape coordinator via
+   *       GET /api/admin/force-refresh (Accept: application/json).
+   *    2. Poll /api/scrape-status?run_id=… every 5s until the run
+   *       reports running:false. The existing pollScrapeProgress()
+   *       paints the live "X% — N articles ingested" line into
+   *       [data-scrape-progress] in parallel.
+   *    3. Drain any new NULL/failed embeddings via
+   *       POST /api/admin/embed-backfill (no reembed flag).
+   *    4. Run the oldest-first dedup sweep via
+   *       POST /api/admin/historical-dedup until done.
+   *
+   *  Status text streams into [data-pipeline-status] one phase at a
+   *  time; the button is disabled until the chain finishes (or
+   *  errors). All endpoints are gated by Cloudflare Access + the
+   *  three-layer admin auth helper, so an unauthenticated tab here
+   *  surfaces the auth failure as a "Failed: HTTP 401" line. */
+  async function runPipeline(wipe: boolean): Promise<void> {
+    const status = document.querySelector<HTMLElement>('[data-pipeline-status]');
+    const button = document.querySelector<HTMLButtonElement>('[data-pipeline-run]');
+    if (status === null || button === null) return;
+    const setStatus = (msg: string): void => {
+      status.hidden = false;
+      status.textContent = msg;
+    };
+    button.disabled = true;
+    try {
+      // Phase 0 — wipe + re-embed all (optional). The server marks
+      // every row 'failed' on the first request, then re-embeds in
+      // batches inside that same request until remaining=0 (or it
+      // hits the platform request-time ceiling). The while-loop
+      // resumes from where the cut left off.
+      if (wipe) {
+        setStatus('Wiping & re-embedding all articles…');
+        let total = 0;
+        let firstCall = true;
+        while (true) {
+          const url = firstCall
+            ? '/api/admin/embed-backfill?reembed=1'
+            : '/api/admin/embed-backfill';
+          const res = await fetch(url, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json' },
+          });
+          if (!res.ok) throw new Error(`re-embed HTTP ${res.status}`);
+          const body = (await res.json()) as {
+            processed: number;
+            remaining: number;
+            done: boolean;
+          };
+          total += body.processed;
+          if (body.done) break;
+          // Server's forward-progress guard returns done:false +
+          // processed:0 when an entire batch failed (Workers AI or
+          // Vectorize outage). Re-clicking won't help right now —
+          // bail with a useful message instead of looping.
+          if (body.processed === 0) {
+            throw new Error(
+              `re-embed stalled at ${body.remaining} remaining (upstream outage?)`,
+            );
+          }
+          firstCall = false;
+          setStatus(`Re-embedded ${total} articles, ${body.remaining} remaining…`);
+        }
+        setStatus(`Re-embedded ${total} articles. Kicking scrape…`);
+      } else {
+        setStatus('Kicking scrape…');
+      }
+
+      // Phase 1 — force refresh. GET path supports JSON; POST always
+      // 303-redirects, which fetch can't read across origin without
+      // following the redirect into HTML. GET is idempotent enough
+      // here (the underlying coordinator dispatch is the side effect
+      // either way; admin auth still gates).
+      const frRes = await fetch('/api/admin/force-refresh', {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+      });
+      if (!frRes.ok) throw new Error(`force-refresh HTTP ${frRes.status}`);
+      const frBody = (await frRes.json()) as {
+        scrape_run_id: string;
+        reused: boolean;
+      };
+      pinnedRunId = frBody.scrape_run_id;
+      setStatus(
+        frBody.reused
+          ? 'Scrape already running; waiting for it to finish…'
+          : 'Scrape kicked; waiting for it to finish…',
+      );
+
+      // Phase 2 — wait for the scrape run to complete. The existing
+      // pollScrapeProgress() already polls every 5s and paints the
+      // live progress into [data-scrape-progress]; here we just
+      // sample running state with the same cadence and exit when it
+      // flips false.
+      while (true) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        const sRes = await fetch(
+          `/api/scrape-status?run_id=${encodeURIComponent(frBody.scrape_run_id)}`,
+          { credentials: 'same-origin', headers: { Accept: 'application/json' } },
+        );
+        if (!sRes.ok) break;
+        const sBody = (await sRes.json()) as { running: boolean };
+        if (!sBody.running) break;
+      }
+      setStatus('Scrape finished. Embedding new articles…');
+
+      // Phase 3 — drain any embeddings the chunk-consumer didn't
+      // land (rare; only if the embed call inside the consumer threw
+      // and left rows at 'failed'). Loop on remaining for the same
+      // platform-cut reason as Phase 0.
+      let embedTotal = 0;
+      while (true) {
+        const eRes = await fetch('/api/admin/embed-backfill', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+        });
+        if (!eRes.ok) throw new Error(`embed HTTP ${eRes.status}`);
+        const eBody = (await eRes.json()) as {
+          processed: number;
+          remaining: number;
+          done: boolean;
+        };
+        embedTotal += eBody.processed;
+        if (eBody.done) break;
+        if (eBody.processed === 0) {
+          throw new Error(
+            `embed stalled at ${eBody.remaining} remaining (upstream outage?)`,
+          );
+        }
+        setStatus(`Embedded ${embedTotal}, ${eBody.remaining} remaining…`);
+      }
+      setStatus(`Embedded ${embedTotal} new articles. Running dedup…`);
+
+      // Phase 4 — historical dedup, oldest-first. Same loop shape.
+      let scanned = 0;
+      let merged = 0;
+      while (true) {
+        const dRes = await fetch('/api/admin/historical-dedup', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+        });
+        if (!dRes.ok) throw new Error(`dedup HTTP ${dRes.status}`);
+        const dBody = (await dRes.json()) as {
+          scanned: number;
+          merged: number;
+          remaining: number;
+          done: boolean;
+        };
+        scanned += dBody.scanned;
+        merged += dBody.merged;
+        if (dBody.done) break;
+        if (dBody.scanned === 0) {
+          throw new Error(
+            `dedup stalled at ${dBody.remaining} remaining (upstream outage?)`,
+          );
+        }
+        setStatus(
+          `Dedup: scanned ${scanned}, merged ${merged}, ${dBody.remaining} remaining…`,
+        );
+      }
+      setStatus(
+        `Done — embedded ${embedTotal} new, scanned ${scanned}, merged ${merged} duplicates.`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatus(`Failed: ${msg}`);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  /** Wire the [data-pipeline-run] button to runPipeline(). Idempotent —
+   *  the data-bound guard prevents double-binding on Astro SPA
+   *  navigation back to /settings. */
+  function wirePipelineButton(): void {
+    const button = document.querySelector<HTMLButtonElement>('[data-pipeline-run]');
+    if (button === null) return;
+    if (button.dataset['bound'] === '1') return;
+    button.dataset['bound'] = '1';
+    button.addEventListener('click', () => {
+      const wipe = document.querySelector<HTMLInputElement>('[data-pipeline-wipe]');
+      void runPipeline(wipe?.checked === true);
+    });
+  }
+
   function init(): void {
     // Restore + delete forms live OUTSIDE the main settings form (they
     // were hoisted to fix a nested-<form> bug). Wire them first so they
@@ -954,6 +1101,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     wireRestoreForm();
     wireDeleteForm();
     wireScrapeProgress();
+    wirePipelineButton();
     relabelHoursIfTwelveHourLocale();
 
     const form = document.querySelector<HTMLFormElement>('[data-settings-form]');

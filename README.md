@@ -22,14 +22,14 @@ News Digest hires the LLM. It remembers so you don't. This isn't enlightenment. 
 
 - **A curated default tag set preloaded** (`#cloudflare`, `#ai-agents`, `#mcp`, `#zero-trust`, `#supply-chain-security`, `#graymatter`…). My opinions, helpfully pre-formed for you. Add a tag the registry doesn't know and it goes feed-hunting in the background — finds sources or admits it couldn't, so you're never waiting on a ghost.
 - **Composable filters on Search & History**: tag + search + date AND together, all in the URL.
-- **Two-stage dedupe** — within a chunk and across chunks. One Anthropic launch should not become six articles just because six sites found the publish button.
+- **Two-stage dedupe** — URL-canonical clustering, then semantic. Every article gets a 768-dim embedding the moment it lands; near-duplicates collapse into a single card with the alternate publishers attached as alt-sources. One Anthropic launch should not become six articles just because six sites found the publish button. Same-publisher pairs get a small cosine penalty so two genuinely different stories from the same outlet don't get glued together by house style.
 - **Summaries that earn their word count**: 150–200 words, *what happened → how it works → why you care*.
 - **Hallucinations dropped on sight**: every LLM output has to point back to a real source, or it doesn't touch the database. Ask me how I learned that.
 - **Daily digest email** (optional): when there's news, you get headlines; when there isn't, your inbox stays quiet. Once per day in your timezone, never zero-content. Push notifications were considered. Pushed back.
 - **Starred articles outlive the cron**: 14-day retention, unless you starred it. Your saved list is forever; your unread list was a lie anyway.
 - **Federated sign-in**: GitHub or Google. Wire up one, both, or neither — the app tells the truth either way. A verified email shared across providers maps to a single account, so stars, read marks, pending discoveries, and the daily digest all live in one place no matter which button you signed in with.
 - **Looks like a real product when shared**: paste the URL into iMessage, WhatsApp, Slack, LinkedIn, or Discord — you get a brand card, not a naked URL. Surprisingly hard. Don't ask.
-- **One Worker, no servers**: Cloudflare D1 + KV + Queues + Workers AI. Ships in 30 seconds. Rollback is `wrangler rollback`, which I've used more times than I'd like to admit.
+- **One Worker, no servers**: Cloudflare D1 + KV + Queues + Workers AI + Vectorize. The vector index is the new arrival — 768 dimensions of cosine-flavoured opinion about whether two articles are secretly the same article. It's been right enough times that I no longer fight it. Ships in 30 seconds. Rollback is `wrangler rollback`, which I've used more times than I'd like to admit.
 
 ## What's *not* in it
 
@@ -99,7 +99,8 @@ Custom token via [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflar
 | Account | Workers KV Storage | Edit | Auto-creates the KV namespace |
 | Account | D1 | Edit | Auto-creates the D1 database and applies migrations |
 | Account | Queues | Edit | Auto-creates `scrape-coordinator`, `scrape-chunks`, and `scrape-finalize` |
-| Account | Workers AI | Read | LLM inference for summaries + source discovery |
+| Account | Workers AI | Read | LLM inference for summaries + source discovery; bge-base-en-v1.5 for article embeddings |
+| Account | Vectorize | Edit | Auto-creates the `ai-news-embeddings` index; stores + queries 768-dim cosine embeddings for semantic dedup |
 | Zone | Zone | Read | Only when binding a custom domain; discovers the zone |
 | Zone | Workers Routes | Edit | Only when binding a custom domain; attaches the hostname |
 
@@ -111,11 +112,12 @@ The Zone scopes are skipped automatically when `APP_URL` is a `*.workers.dev` UR
 <summary><strong>What the workflow does</strong></summary>
 
 1. Resolves (or creates) the D1 database, KV namespace, and queues (`scrape-coordinator`, `scrape-chunks`, `scrape-finalize`) via [`scripts/bootstrap-resources.sh`](scripts/bootstrap-resources.sh)
-2. Applies D1 migrations
-3. Pushes Worker secrets (Resend pair skipped when unset)
-4. `wrangler deploy`
-5. Binds `APP_URL` to the Worker (skipped on `*.workers.dev`)
-6. Smoke-tests `GET /` returns 200
+2. Resolves (or creates) the `ai-news-embeddings` Vectorize index (768-dim cosine)
+3. Applies D1 migrations
+4. Pushes Worker secrets (Resend pair skipped when unset)
+5. `wrangler deploy`
+6. Binds `APP_URL` to the Worker (skipped on `*.workers.dev`)
+7. Smoke-tests `GET /` returns 200
 
 </details>
 

@@ -197,8 +197,14 @@ binding = "AI"
 binding = "VECTORIZE"
 index_name = "ai-news-embeddings-integration"
 
-# No [env.integration.triggers] block — crons are intentionally disabled
-# on integration. Trigger scrape runs manually via /api/admin/force-refresh.
+# Crons are intentionally disabled on integration. Trigger scrape runs
+# manually via /api/admin/force-refresh (or the consolidated "Run
+# pipeline now" button on /settings). Note: omitting this section
+# would NOT disable crons — wrangler inherits the top-level
+# `crons = [...]` array into every env that doesn't override it.
+# The empty array below is the actual override.
+[env.integration.triggers]
+crons = []
 
 # APP_URL for integration is NOT hardcoded here. The deploy workflow
 # reads `vars.APP_URL` from the GitHub Environment named "integration"
