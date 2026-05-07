@@ -78,11 +78,14 @@ jobs:
           fi
           [ -n "$DB_ID" ] || { echo "::error::Failed to resolve integration D1 id"; exit 1; }
           awk -v new="$DB_ID" '
+            BEGIN { patched=0 }
             $0 == "[[env.integration.d1_databases]]" { in_sec=1; print; next }
             /^\[/ && in_sec && $0 != "[[env.integration.d1_databases]]" { in_sec=0 }
-            in_sec && $1 == "database_id" { print "database_id = \"" new "\""; next }
+            in_sec && $1 == "database_id" { print "database_id = \"" new "\""; patched=1; next }
             { print }
-          ' wrangler.toml > wrangler.toml.tmp && mv wrangler.toml.tmp wrangler.toml
+            END { if (!patched) exit 1 }
+          ' wrangler.toml > wrangler.toml.tmp || { echo "::error::wrangler.toml missing [[env.integration.d1_databases]] database_id line"; exit 1; }
+          mv wrangler.toml.tmp wrangler.toml
           echo "D1 ai-news-digest-integration = $DB_ID"
 
       - name: Provision KV - ai-news-digest-integration-kv
@@ -95,15 +98,18 @@ jobs:
             | jq -r '.[] | select(.title == "ai-news-digest-integration-kv") | .id' | head -1)
           if [ -z "$KV_ID" ]; then
             KV_ID=$(npx --yes wrangler kv namespace create ai-news-digest-integration-kv 2>&1 \
-              | grep -oE '"id": *"[a-f0-9]+"' | head -1 | grep -oE '[a-f0-9]+$')
+              | sed -nE 's/.*"id":[[:space:]]*"([a-f0-9]+)".*/\1/p' | head -1)
           fi
           [ -n "$KV_ID" ] || { echo "::error::Failed to resolve integration KV id"; exit 1; }
           awk -v new="$KV_ID" '
+            BEGIN { patched=0 }
             $0 == "[[env.integration.kv_namespaces]]" { in_sec=1; print; next }
             /^\[/ && in_sec && $0 != "[[env.integration.kv_namespaces]]" { in_sec=0 }
-            in_sec && $1 == "id" { print "id = \"" new "\""; next }
+            in_sec && $1 == "id" { print "id = \"" new "\""; patched=1; next }
             { print }
-          ' wrangler.toml > wrangler.toml.tmp && mv wrangler.toml.tmp wrangler.toml
+            END { if (!patched) exit 1 }
+          ' wrangler.toml > wrangler.toml.tmp || { echo "::error::wrangler.toml missing [[env.integration.kv_namespaces]] id line"; exit 1; }
+          mv wrangler.toml.tmp wrangler.toml
           echo "KV ai-news-digest-integration-kv = $KV_ID"
 
       - name: Provision queue - scrape-coordinator-integration
