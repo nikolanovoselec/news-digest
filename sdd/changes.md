@@ -6,6 +6,12 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are archived in [`changes-archive-2026-04.md`](changes-archive-2026-04.md).
 
+## 2026-05-07
+
+- REQ-READ-001 AC 2 extended: the dashboard countdown now flips to an "Update in progress…" indicator at first paint when a scrape run is already in flight, so readers landing mid-run see live state instead of a misleading countdown until the next tick.
+- REQ-OPS-005 AC 1 reworded: the parenthetical caller attribution ("from the Settings page button" / "for direct URL visits and operator scripts") was stale once the unified pipeline button switched to GET-with-Accept-JSON, so the AC now states the dual-method contract without naming specific callers.
+- REQ-OPS-008 added (Status: Partial): the settings surface exposes a single "Run pipeline now" action that chains scrape, embed-backfill, and oldest-first dedup with an optional pre-phase that wipes and re-embeds the entire pool. Status text streams per phase and an in-flight run survives navigation away from the surface so the operator can return mid-run and see where the pipeline is.
+
 ## 2026-05-06
 
 - REQ-PIPE-003 AC 11 + AC 12 added: same-publisher article pairs now have to clear a stricter same-story bar than cross-publisher pairs so a publisher's recurring writing style cannot push unrelated stories from the same outlet over the same-story threshold, and operators can re-run embedding generation across the entire historical article pool on demand to rebuild the corpus against an improved embedding input without waiting for natural churn.

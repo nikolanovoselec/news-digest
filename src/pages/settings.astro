@@ -525,9 +525,12 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
                 cron tick. Useful after a deploy to verify the change
                 end-to-end. Admin-only; gated by Cloudflare Access.
               </p>
-              <label class="settings__hint" style="display:block;margin:0.5rem 0 0.75rem">
+              <label
+                class="settings__hint"
+                style="display:flex;align-items:center;gap:0.5rem;margin:0.5rem 0 0.75rem"
+              >
                 <input type="checkbox" data-pipeline-wipe />
-                {' '}Wipe & re-embed all existing articles (post-deploy only — slow)
+                <span>Wipe & re-embed all existing articles</span>
               </label>
               <div class="settings__actions-row">
                 <button
@@ -922,6 +925,50 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
    *  errors). All endpoints are gated by Cloudflare Access + the
    *  three-layer admin auth helper, so an unauthenticated tab here
    *  surfaces the auth failure as a "Failed: HTTP 401" line. */
+  // localStorage-persisted pipeline status so navigating away from
+  // /settings mid-run doesn't lose the live phase text. The operator
+  // returns and sees the last status the run reported (plus a "while
+  // you were away" suffix once the scrape itself has completed). State
+  // older than 30 min is treated as stale and dropped on read.
+  const PIPELINE_STORAGE_KEY = 'pipeline:state';
+  const PIPELINE_MAX_AGE_MS = 30 * 60 * 1000;
+  interface PipelineState {
+    msg: string;
+    ts: number;
+    runId?: string;
+    done?: boolean;
+  }
+  function readPipelineState(): PipelineState | null {
+    try {
+      const raw = window.localStorage.getItem(PIPELINE_STORAGE_KEY);
+      if (raw === null) return null;
+      const parsed = JSON.parse(raw) as PipelineState;
+      if (Date.now() - parsed.ts > PIPELINE_MAX_AGE_MS) {
+        window.localStorage.removeItem(PIPELINE_STORAGE_KEY);
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+  function writePipelineState(patch: Partial<PipelineState>): void {
+    try {
+      const prev = readPipelineState() ?? { msg: '', ts: Date.now() };
+      const next: PipelineState = { ...prev, ...patch, ts: Date.now() };
+      window.localStorage.setItem(PIPELINE_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* localStorage may be disabled - silent no-op */
+    }
+  }
+  function clearPipelineState(): void {
+    try {
+      window.localStorage.removeItem(PIPELINE_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function runPipeline(wipe: boolean): Promise<void> {
     const status = document.querySelector<HTMLElement>('[data-pipeline-status]');
     const button = document.querySelector<HTMLButtonElement>('[data-pipeline-run]');
@@ -929,6 +976,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     const setStatus = (msg: string): void => {
       status.hidden = false;
       status.textContent = msg;
+      writePipelineState({ msg });
     };
     button.disabled = true;
     try {
@@ -990,6 +1038,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
         reused: boolean;
       };
       pinnedRunId = frBody.scrape_run_id;
+      writePipelineState({ runId: frBody.scrape_run_id });
       setStatus(
         frBody.reused
           ? 'Scrape already running; waiting for it to finish…'
@@ -1072,9 +1121,11 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       setStatus(
         `Done — embedded ${embedTotal} new, scanned ${scanned}, merged ${merged} duplicates.`,
       );
+      writePipelineState({ done: true });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setStatus(`Failed: ${msg}`);
+      writePipelineState({ done: true });
     } finally {
       button.disabled = false;
     }
@@ -1092,6 +1143,47 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       const wipe = document.querySelector<HTMLInputElement>('[data-pipeline-wipe]');
       void runPipeline(wipe?.checked === true);
     });
+
+    // Restore the most recent pipeline status on page load so an
+    // operator who navigated away mid-run sees the last phase text
+    // (and a follow-up "completed while you were away" if the scrape
+    // has since finished). Clears stale state automatically.
+    const saved = readPipelineState();
+    if (saved === null) return;
+    const status = document.querySelector<HTMLElement>('[data-pipeline-status]');
+    if (status === null) return;
+    status.hidden = false;
+    status.textContent = saved.msg;
+    if (saved.done === true) {
+      // Run finished in this tab before navigation - leave the message
+      // as-is and forget the state on next reload.
+      clearPipelineState();
+      return;
+    }
+    const savedRunId = saved.runId;
+    if (savedRunId === undefined) return;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/scrape-status?run_id=${encodeURIComponent(savedRunId)}`,
+          { credentials: 'same-origin', headers: { Accept: 'application/json' } },
+        );
+        if (!res.ok) return;
+        const body = (await res.json()) as { running: boolean };
+        if (!body.running) {
+          status.textContent = `${saved.msg} - completed while you were away.`;
+          clearPipelineState();
+        } else {
+          // Re-pin scrape progress polling for the in-flight run so the
+          // existing 5s pollScrapeProgress() interval (started by
+          // wireScrapeProgress earlier in init()) starts using the
+          // saved run_id on its next tick.
+          pinnedRunId = savedRunId;
+        }
+      } catch {
+        /* ignore - stale state will age out */
+      }
+    })();
   }
 
   function init(): void {

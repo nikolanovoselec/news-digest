@@ -172,11 +172,15 @@ function isCardHidden(articleTags: readonly string[]): boolean {
         class="digest-page__meta"
         data-countdown
         data-next-at={String(today.next_scrape_at)}
+        data-running={today.scrape_running ? '1' : undefined}
       >
         <span
           class="digest-page__meta-label"
           data-countdown-header
-        >Next update in </span><span class="digest-page__meta-countdown" data-countdown-text>…</span>
+        >{today.scrape_running ? 'Update ' : 'Next update in '}</span><span
+          class="digest-page__meta-countdown"
+          data-countdown-text
+        >{today.scrape_running ? 'in progress…' : '…'}</span>
       </p>
     </header>
 

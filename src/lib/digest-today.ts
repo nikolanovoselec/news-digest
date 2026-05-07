@@ -60,6 +60,11 @@ export interface TodayResponse {
    *  lastRun is null because the schedule is independent of any
    *  completed run. */
   next_scrape_at: number;
+  /** True when a `scrape_runs` row currently has `status='running'`.
+   *  Lets the dashboard server-render "Update in progress…" on first
+   *  paint instead of flashing the next-tick countdown until the
+   *  client-side `pollScrapeStatus` poll lands ~1 second later. */
+  scrape_running: boolean;
 }
 
 /**
@@ -107,11 +112,33 @@ export async function loadTodayPayload(
 
   const nextScrapeAt = computeNextScrapeAt();
 
+  // Flag any in-flight scrape so the dashboard renders "Update in
+  // progress…" on first paint without waiting for the client poll.
+  // scrape_runs is a global, fan-out-for-all-users table (no user_id
+  // column) — the scrape pipeline runs once per cron tick across the
+  // whole corpus, so this probe is correctly user-agnostic.
+  let scrapeRunning = false;
+  try {
+    const runningRow = await db
+      .prepare(
+        `SELECT 1 FROM scrape_runs WHERE status = 'running' LIMIT 1`,
+      )
+      .first<{ '1': number }>();
+    scrapeRunning = runningRow !== null;
+  } catch (err) {
+    log('error', 'digest.today.query_failed', {
+      user_id: userId,
+      query: 'running_scrape_run',
+      detail: String(err).slice(0, 200),
+    });
+  }
+
   if (userTags.length === 0) {
     return {
       articles: [],
       last_scrape_run: lastRun,
       next_scrape_at: nextScrapeAt,
+      scrape_running: scrapeRunning,
     };
   }
 
@@ -171,6 +198,7 @@ export async function loadTodayPayload(
     articles,
     last_scrape_run: lastRun,
     next_scrape_at: nextScrapeAt,
+    scrape_running: scrapeRunning,
   };
 }
 
