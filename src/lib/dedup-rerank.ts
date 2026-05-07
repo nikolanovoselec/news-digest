@@ -121,10 +121,6 @@ export async function rerankBorderlinePair(
         { role: 'system', content: RERANK_SYSTEM },
         { role: 'user', content: buildRerankUser(a, b) },
       ],
-      // Tight token budget: the answer is one boolean wrapped in JSON.
-      // Higher max_tokens just lets the model ramble before emitting
-      // the JSON we need.
-      max_tokens: 32,
       temperature: 0,
     },
     narrow: (raw) => narrowRerankPayload(raw),

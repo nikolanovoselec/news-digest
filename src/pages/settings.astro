@@ -1090,12 +1090,12 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       }
       setStatus(`Embedded ${embedTotal} new articles. Running dedup…`);
 
-      // Phase 4 — historical dedup, oldest-first. The server bounds
-      // its inner loop on a wall-clock budget so each call returns
-      // partial progress before the Cloudflare edge cut, and we
-      // thread `next_cursor` between calls so we don't rescan
-      // already-visited articles. The browser-side loop is what
-      // actually drives the sweep to completion.
+      // Phase 4 — historical dedup, oldest-first. Each server call
+      // runs exactly one bounded batch and returns; this loop drives
+      // iteration via `next_cursor` so we don't rescan already-visited
+      // articles and we avoid putting the long-running loop inside the
+      // Worker (which would blow Cloudflare's ~100s edge cut and surface
+      // as a "Failed to fetch" with no partial progress).
       let scanned = 0;
       let merged = 0;
       let cursor: number | null = null;
