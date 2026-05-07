@@ -73,7 +73,7 @@ Structured JSON logging as the single operational surface — no external observ
 **Applies To:** Admin
 
 **Acceptance Criteria:**
-1. The endpoint accepts both POST (from the Settings page button) and GET (for direct URL visits and operator scripts). Both methods do the same work.
+1. The endpoint accepts both POST and GET. Both methods do the same work, so callers can pick whichever fits their context (form submissions, JSON fetches, and direct URL visits all reach the same coordinator dispatch).
 2. Triggering the endpoint starts a fresh scrape run with status running and sends one coordinator message — the same work the every-four-hours cron does.
 3. If a run started by an earlier cron tick or a previous manual trigger is still running and started within the last two minutes, the endpoint reuses that run rather than starting a new one. This protects against accidental double-clicks and tab-restore replays.
 4. The response is content-negotiated. Browsers and direct URL visits get a `303 See Other` redirect to `/settings?force_refresh=ok&run_id=...`. Operator scripts that send `Accept: application/json` get `200 OK` with `{ ok: true, scrape_run_id, reused }`.
@@ -151,3 +151,27 @@ Structured JSON logging as the single operational surface — no external observ
 **Dependencies:** —
 **Verification:** Unit test
 **Status:** Implemented
+
+---
+
+### REQ-OPS-008: Unified admin pipeline run from the settings surface
+
+**Intent:** An operator can run the complete cron-equivalent pipeline (scrape, embed any leftovers, then collapse cross-article duplicates) from one button on the settings surface instead of clicking three separate admin actions in sequence and having to remember the right order. An optional pre-phase wipes and re-embeds the entire surviving article pool so a change to the embedding model or input recipe can be rolled out across the whole corpus on demand. Live progress is visible while the run is in flight, and progress survives navigation away from the surface so the operator can return mid-run and see where the pipeline currently is rather than a blank surface.
+
+**Applies To:** Admin
+
+**Acceptance Criteria:**
+1. The settings surface exposes a single primary action labelled to the effect of "Run pipeline now" that, when activated by an admin, sequentially executes: an optional wipe-and-re-embed of the entire surviving article pool, a fresh scrape tick equivalent to the every-four-hours cron, a backfill of any embeddings the scrape did not land, and an oldest-first cross-article same-story sweep across the surviving pool. Each phase only begins after the previous phase reports done.
+2. A toggle adjacent to the action lets the operator opt into the wipe-and-re-embed pre-phase. With the toggle off, the run skips that pre-phase and starts at the scrape tick. With the toggle on, the run first wipes and re-embeds every surviving article, then proceeds to the scrape tick.
+3. While the run is in flight the action is disabled and a status line reports the current phase in user-readable prose ("Re-embedded N articles, M remaining…", "Scrape kicked; waiting for it to finish…", "Embedded N new articles. Running dedup…", "Done — embedded N new, scanned X, merged Y duplicates."). The status line updates as each phase advances; the action re-enables when the run finishes or errors.
+4. If any phase reports zero forward progress on a request that returned a remaining count greater than zero (an upstream outage left work undone), the run halts with a status line naming the phase and the remaining count rather than looping indefinitely. The operator can re-click the action to resume from where the cut left off once the upstream is healthy.
+5. If the operator navigates away from the surface while a run is in flight and returns within the last-thirty-minutes freshness window, the surface restores the most recent status line. When the underlying scrape run has completed in the meantime, the restored status is annotated to indicate the run finished while the operator was away. State older than the freshness window is forgotten and the surface paints fresh on return.
+6. A run that finished cleanly while the operator was on the surface is not restored as "in flight" on a subsequent visit; the persisted state is cleared once a terminal status is recorded so the next visit starts from a clean slate.
+7. Every phase consumes the same admin-gated endpoints documented in REQ-OPS-005 (scrape) and REQ-PIPE-003 AC 9 / AC 12 (embed and dedup). An unauthenticated tab where the admin gate has lapsed surfaces the auth failure as a user-readable failed-status line rather than silently no-op'ing.
+
+**Constraints:** CON-AUTH-001, CON-SEC-001
+**Priority:** P2
+**Dependencies:** REQ-OPS-005, REQ-PIPE-003, REQ-AUTH-001
+**Verification:** Integration test
+**Status:** Partial
+**Notes:** UI orchestrator and cross-navigation persistence ship in `src/pages/settings.astro`; no automated test references REQ-OPS-008 yet, so coverage is binary-undetected.

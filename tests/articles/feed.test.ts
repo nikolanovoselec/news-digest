@@ -74,6 +74,9 @@ interface MockOpts {
   user: UserRow | null;
   articles: RawArticle[];
   lastRun: ScrapeRunRow | null;
+  /** When true, the mock reports an in-flight scrape (status='running'
+   *  probe returns a non-null row). Default false. */
+  runningRun?: boolean;
   /** Record of bound query parameters by query kind — used to verify the
    * user_id is bound on the pool query, which guarantees `starred`/
    * `read` subqueries are user-scoped (no cross-user leaks). */
@@ -94,7 +97,15 @@ function makeDb(opts: MockOpts): D1Database {
     // prepare() (no .bind() hop), so this factory mirrors both paths.
     const directFirst = vi.fn().mockImplementation(async () => {
       if (sql.startsWith('SELECT id, email, gh_login')) return opts.user;
-      if (sql.includes('FROM scrape_runs')) return opts.lastRun ?? null;
+      if (sql.includes('FROM scrape_runs')) {
+        // Distinguish the running-probe (SELECT 1 ... status='running')
+        // from the most-recent-ready lookup so tests don't conflate
+        // them. Default: no in-flight run.
+        if (sql.includes("status = 'running'")) {
+          return opts.runningRun === true ? { '1': 1 } : null;
+        }
+        return opts.lastRun ?? null;
+      }
       return null;
     });
     return {
@@ -104,7 +115,12 @@ function makeDb(opts: MockOpts): D1Database {
         return {
           first: vi.fn().mockImplementation(async () => {
             if (sql.startsWith('SELECT id, email, gh_login')) return opts.user;
-            if (sql.includes('FROM scrape_runs')) return opts.lastRun ?? null;
+            if (sql.includes('FROM scrape_runs')) {
+              if (sql.includes("status = 'running'")) {
+                return opts.runningRun === true ? { '1': 1 } : null;
+              }
+              return opts.lastRun ?? null;
+            }
             return null;
           }),
           all: vi.fn().mockImplementation(async () => {
@@ -206,6 +222,7 @@ interface WireResponse {
   articles: WireArticle[];
   last_scrape_run: ScrapeRunRow | null;
   next_scrape_at: number;
+  scrape_running: boolean;
 }
 
 describe('GET /api/digest/today — REQ-READ-001', () => {
@@ -341,6 +358,35 @@ describe('GET /api/digest/today — REQ-READ-001', () => {
     const body = (await res.json()) as WireResponse;
     expect(body.articles[0]?.id).toBe('same-batch-newer-pub');
     expect(body.articles[1]?.id).toBe('same-batch-older-pub');
+  });
+
+  it('REQ-READ-001: scrape_running flag is true when an in-flight scrape_runs row exists, false otherwise', async () => {
+    // No in-flight run: flag is false even when a previous ready run exists.
+    const dbIdle = makeDb({
+      user: baseUser(),
+      articles: [],
+      lastRun: {
+        id: 'prev',
+        started_at: 0,
+        finished_at: 0,
+        status: 'ready',
+      },
+    });
+    const idleRes = await GET(makeContext(await authedRequest(), makeEnv(dbIdle)) as never);
+    const idleBody = (await idleRes.json()) as WireResponse;
+    expect(idleBody.scrape_running).toBe(false);
+
+    // In-flight run present: flag is true so the dashboard SSR can paint
+    // "Update in progress…" on first paint instead of the countdown.
+    const dbBusy = makeDb({
+      user: baseUser(),
+      articles: [],
+      lastRun: null,
+      runningRun: true,
+    });
+    const busyRes = await GET(makeContext(await authedRequest(), makeEnv(dbBusy)) as never);
+    const busyBody = (await busyRes.json()) as WireResponse;
+    expect(busyBody.scrape_running).toBe(true);
   });
 
   it('REQ-READ-001: returns last_scrape_run metadata and next_scrape_at on the next 4-hour UTC cron boundary', async () => {

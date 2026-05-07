@@ -235,7 +235,7 @@ Up to 29 articles from the article pool filtered by the user's active hashtags. 
 
 Both responses carry a `Set-Cookie` refresh when the session is within 5 minutes of expiry, so polling during a long scrape never expires the session.
 
-**Polled by:** `/digest` (swaps countdown for "Update in progress"), `/settings` Force Refresh section (5 s poll for live progress).
+**Polled by:** `/digest` (swaps countdown for "Update in progress"), `/settings` Run pipeline now section (5 s poll for live scrape-run progress; also consumed by the pipeline orchestrator to gate phase transitions ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface))).
 
 **Implements:** [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress), [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation) AC 4, [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection)
 
@@ -376,13 +376,13 @@ POST enforces Origin; GET is exempt (so operators can bookmark or `curl`).
 
 | Method | Caller | Success response |
 |---|---|---|
-| `POST` | `/settings` form submit | `303` → `/settings?force_refresh={ok\|reused}` |
-| `GET` | Browser | `303` → `/settings?force_refresh={ok\|reused\|denied}` |
-| `GET` | Scripted (`Accept: application/json`) | `200 { ok: true, scrape_run_id, reused }` |
+| `POST` | Form submit (legacy; the **Run pipeline now** button on `/settings` uses `GET` with `Accept: application/json`) | `303` → `/settings?force_refresh={ok\|reused}` |
+| `GET` | Browser direct | `303` → `/settings?force_refresh={ok\|reused\|denied}` |
+| `GET` | Scripted or **Run pipeline now** orchestrator (`Accept: application/json`) | `200 { ok: true, scrape_run_id, reused }` |
 
 **Error responses:** `401 unauthorized` | `403 forbidden` | `500 "Failed to dispatch coordinator"`.
 
-**Implements:** [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint), [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+**Implements:** [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phase 1), [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
 
 ---
 
@@ -399,7 +399,7 @@ Resumable embedding backfill for articles whose `embedding_status` is `NULL` or 
 
 **Error responses:** `401 unauthorized` | `403 forbidden` | `405 "reembed requires POST"` (GET with `?reembed=1`) | `500 "Backfill failed"`.
 
-**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 12 for `?reembed=1`)
+**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 12 for `?reembed=1`), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phases 0 and 3)
 
 ---
 
@@ -415,7 +415,7 @@ Cross-article same-story sweep. Walks the article pool oldest-first by `publishe
 
 **Error responses:** `401 unauthorized` | `403 forbidden` | `500 historical_dedup_failed`.
 
-**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9
+**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9, [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phase 4)
 
 ---
 
