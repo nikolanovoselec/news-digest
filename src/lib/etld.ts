@@ -53,19 +53,40 @@ export function etldPlusOne(host: string): string {
   return parts.slice(-2).join('.');
 }
 
+/** Hosts that are aggregator wrappers, not real publishers. Two URLs
+ *  on the same aggregator host route to potentially different
+ *  underlying publishers; treating them as same-vendor and applying
+ *  the dedup cosine penalty inflated false-negatives on Google News
+ *  duplicates of the same story (paraphrased headlines, same vendor
+ *  host). The 2026-05-07 audit on prod found pair-A
+ *  (BTIG / Palo Alto) at cosine 0.9516 and pair-B (Premium-valuation /
+ *  Palo Alto) at 0.8615 — the 0.05 same-vendor penalty knocked B
+ *  below the 0.85 auto-merge threshold. Aggregator hosts are exempt.
+ *
+ *  Scope assumption: the curated source registry (`src/lib/curated-
+ *  sources.ts`) and the auto-synthesised tag-fallback in
+ *  `googleNewsSourceForTag` only emit `news.google.com` URLs today.
+ *  If a future feed adds `news.google.co.uk`, Apple News redirects, a
+ *  Flipboard wrapper, or any other publisher-aggregator, add the host
+ *  here so it benefits from the same exemption. */
+const AGGREGATOR_HOSTS = new Set(['news.google.com']);
+
 /** Returns true when both URLs have the same registrable domain.
  *  Treats malformed URLs as different vendors (defensive — better to
  *  leave the cosine alone than to fold an unparseable URL with
- *  anything). */
+ *  anything). Returns false when EITHER URL is on an aggregator host
+ *  (see {@link AGGREGATOR_HOSTS}) since the eTLD+1 doesn't carry
+ *  publisher signal in that case. */
 export function sameVendor(urlA: string, urlB: string): boolean {
   let hostA: string;
   let hostB: string;
   try {
-    hostA = new URL(urlA).host;
-    hostB = new URL(urlB).host;
+    hostA = new URL(urlA).host.toLowerCase();
+    hostB = new URL(urlB).host.toLowerCase();
   } catch {
     return false;
   }
   if (hostA === '' || hostB === '') return false;
+  if (AGGREGATOR_HOSTS.has(hostA) || AGGREGATOR_HOSTS.has(hostB)) return false;
   return etldPlusOne(hostA) === etldPlusOne(hostB);
 }

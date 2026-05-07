@@ -1134,7 +1134,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       // as a "Failed to fetch" with no partial progress).
       let scanned = 0;
       let merged = 0;
-      let cursor: number | null = null;
+      let cursor: { pa: number; id: string } | null = null;
       while (true) {
         const dRes = await fetch('/api/admin/historical-dedup', {
           method: 'POST',
@@ -1150,7 +1150,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           scanned: number;
           merged: number;
           remaining: number;
-          next_cursor: number | null;
+          next_cursor: { pa: number; id: string } | null;
           done: boolean;
         };
         scanned += dBody.scanned;

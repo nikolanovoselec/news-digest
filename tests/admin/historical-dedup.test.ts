@@ -79,15 +79,19 @@ function makeDb(fixture: DbFixture): D1Database {
 
         // Remaining-count SELECT. When opt-in via paginated mode
         // (fixture.paginatedRemaining=true), compute remaining from the
-        // cursor bind so multi-iteration tests can drive the loop until
-        // the corpus is fully walked. Otherwise fall back to the static
-        // fixture value used by single-batch tests.
+        // composite cursor bind (?1=published_at, ?2=id) so multi-
+        // iteration tests can drive the loop until the corpus is fully
+        // walked. Otherwise fall back to the static fixture value used
+        // by single-batch tests.
         if (sql.includes('SELECT COUNT(*) AS c')) {
           if (fixture.paginatedRemaining) {
-            const cursorBind =
+            const cursorPa =
               typeof bound[0] === 'number' ? (bound[0] as number) : -1;
+            const cursorId = typeof bound[1] === 'string' ? bound[1] : '';
             const remaining = fixture.articles.filter(
-              (row) => row.published_at > cursorBind,
+              (row) =>
+                row.published_at > cursorPa ||
+                (row.published_at === cursorPa && row.id > cursorId),
             ).length;
             return { c: remaining };
           }
@@ -114,26 +118,34 @@ function makeDb(fixture: DbFixture): D1Database {
         // Main article page SELECT - only fires for the articles query.
         // SELECT shape: id, title, source_snippet, published_at,
         // primary_source_url FROM articles WHERE embedding_status =
-        // 'embedded' AND published_at > ?1 ORDER BY published_at ASC
-        // LIMIT ?2.
+        // 'embedded' AND (published_at > ?1 OR (published_at = ?1 AND
+        // id > ?2)) ORDER BY published_at ASC, id ASC LIMIT ?3.
         if (
           sql.includes('SELECT id, title, source_snippet, published_at') &&
           sql.includes("embedding_status = 'embedded'")
         ) {
           fixture.allCalls.push({ sql, params: [...bound] });
-          // Honor cursor + batch so multi-iteration tests can drive the
-          // loop. cursorBind = -1 on the first call (cursor=null in
-          // production); subsequent iterations pass the last scanned
-          // published_at.
-          const cursorBind =
+          // Honor composite cursor + batch so multi-iteration tests can
+          // drive the loop. cursorPa = -1 on the first call (cursor=null
+          // in production); subsequent iterations pass the last scanned
+          // (published_at, id) tuple.
+          const cursorPa =
             typeof bound[0] === 'number' ? (bound[0] as number) : -1;
+          const cursorId = typeof bound[1] === 'string' ? bound[1] : '';
           const limit =
-            typeof bound[1] === 'number' ? (bound[1] as number) : 100;
-          const sorted = [...fixture.articles].sort(
-            (a, b) => a.published_at - b.published_at,
-          );
+            typeof bound[2] === 'number' ? (bound[2] as number) : 100;
+          const sorted = [...fixture.articles].sort((a, b) => {
+            if (a.published_at !== b.published_at) {
+              return a.published_at - b.published_at;
+            }
+            return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+          });
           const page = sorted
-            .filter((row) => row.published_at > cursorBind)
+            .filter(
+              (row) =>
+                row.published_at > cursorPa ||
+                (row.published_at === cursorPa && row.id > cursorId),
+            )
             .slice(0, limit);
           return { results: page };
         }
@@ -427,18 +439,60 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
   });
 
   // -----------------------------------------------------------------------
-  // AC 4: Newer match required — equal or older published_at is skipped
+  // AC 4: Newer match required — older published_at always skipped; equal-
+  // time matches are tie-broken by ULID (lower id wins). Without the tie-
+  // break, two articles ingested in the same scrape tick that share a
+  // `published_at` could never fold into each other (the strict `>` filter
+  // rejected both directions), which is what stuck the 2026-05-07 Palo
+  // Alto / BTIG-$216 cluster on prod.
   // -----------------------------------------------------------------------
-  it('REQ-PIPE-003: match with published_at <= self.published_at is skipped; merged:0', async () => {
+  it('REQ-PIPE-003: older match (strictly less published_at) is skipped; merged:0', async () => {
     const SELF_ID = 'article-self';
-    const MATCH_ID = 'article-same-age';
-    const PUBLISHED_AT = 1_700_000_000;
+    const OLDER_ID = 'article-older';
 
     const { res, fixture, vectorize } = await buildContextAndCall({
       articles: [
         {
           id: SELF_ID,
-          published_at: PUBLISHED_AT,
+          published_at: 1_700_000_000,
+          primary_source_url: 'https://acme.example/self',
+        },
+      ],
+      // Existence guard never invoked here — the strictly-older skip
+      // returns from the inner-loop before the SELECT-by-id fires. Kept
+      // as documentation of the fixture shape symmetric with the other
+      // AC-4 cases below.
+      existenceGuardResults: {
+        [OLDER_ID]: { present: 1 },
+      },
+      remainingCount: 0,
+      queryByIdResults: {
+        [SELF_ID]: singleMatch({
+          id: OLDER_ID,
+          score: 0.95,
+          published_at: 1_699_999_900,
+        }),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { merged: number };
+    expect(body.merged).toBe(0);
+    expect(fixture.batchCalls.length).toBe(0);
+    const deleteByIds = vectorize.deleteByIds as ReturnType<typeof vi.fn>;
+    expect(deleteByIds).not.toHaveBeenCalled();
+  });
+
+  it('REQ-PIPE-003: equal-time match with HIGHER ULID is merged into self', async () => {
+    // self.id < match.id at the same published_at → self wins, match folds.
+    const SELF_ID = '01AAAAAAAAAAAAAAAAAAAAAAAA';
+    const MATCH_ID = '01ZZZZZZZZZZZZZZZZZZZZZZZZ';
+
+    const { res, fixture, vectorize } = await buildContextAndCall({
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: 1_700_000_000,
           primary_source_url: 'https://acme.example/self',
         },
       ],
@@ -450,8 +504,43 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
         [SELF_ID]: singleMatch({
           id: MATCH_ID,
           score: 0.95,
-          // same timestamp as self — the route requires strictly NEWER
-          published_at: PUBLISHED_AT,
+          published_at: 1_700_000_000,
+        }),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { merged: number };
+    expect(body.merged).toBe(1);
+    expect(fixture.batchCalls.length).toBe(1);
+    const deleteByIds = vectorize.deleteByIds as ReturnType<typeof vi.fn>;
+    expect(deleteByIds).toHaveBeenCalledWith([MATCH_ID]);
+  });
+
+  it('REQ-PIPE-003: equal-time match with LOWER ULID is skipped (tie-break)', async () => {
+    // self.id > match.id at the same published_at → match is "older" by
+    // tie-break. self does not absorb match (the other direction will,
+    // when self becomes the match in a later iteration).
+    const SELF_ID = '01ZZZZZZZZZZZZZZZZZZZZZZZZ';
+    const MATCH_ID = '01AAAAAAAAAAAAAAAAAAAAAAAA';
+
+    const { res, fixture, vectorize } = await buildContextAndCall({
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: 1_700_000_000,
+          primary_source_url: 'https://acme.example/self',
+        },
+      ],
+      existenceGuardResults: {
+        [MATCH_ID]: { present: 1 },
+      },
+      remainingCount: 0,
+      queryByIdResults: {
+        [SELF_ID]: singleMatch({
+          id: MATCH_ID,
+          score: 0.95,
+          published_at: 1_700_000_000,
         }),
       },
     });
@@ -459,7 +548,6 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { merged: number };
     expect(body.merged).toBe(0);
-
     expect(fixture.batchCalls.length).toBe(0);
     const deleteByIds = vectorize.deleteByIds as ReturnType<typeof vi.fn>;
     expect(deleteByIds).not.toHaveBeenCalled();
@@ -504,25 +592,84 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
   });
 
   // -----------------------------------------------------------------------
-  // AC 6: Cursor pagination — the SQL WHERE clause uses the cursor value
+  // AC 6: Cursor pagination — the SQL WHERE clause uses the composite
+  // cursor (published_at, id) so equal-time pairs that straddle a batch
+  // boundary aren't silently dropped by a single-key resume predicate.
   // -----------------------------------------------------------------------
-  it('REQ-PIPE-003: cursor is forwarded as the lower bound in the article SELECT', async () => {
-    const CURSOR = 1_700_000_500;
+  it('REQ-PIPE-003: composite cursor is forwarded as the lower bound in the article SELECT', async () => {
+    const CURSOR_PA = 1_700_000_500;
+    const CURSOR_ID = '01HZZZZZZZZZZZZZZZZZZZZZZZ';
 
     const { fixture } = await buildContextAndCall({
       articles: [],
       remainingCount: 0,
-      body: { cursor: CURSOR },
+      body: { cursor: { pa: CURSOR_PA, id: CURSOR_ID } },
     });
 
     // The main article SELECT must have been issued
     expect(fixture.allCalls.length).toBeGreaterThanOrEqual(1);
     const articleSelectCall = fixture.allCalls[0]!;
-    // Cursor is bound as the first positional param (cursorBind = cursor ?? -1)
-    expect(articleSelectCall.params[0]).toBe(CURSOR);
-    // SQL shape: WHERE published_at > ?1 ORDER BY published_at ASC
+    // Composite cursor binds as (?1=pa, ?2=id)
+    expect(articleSelectCall.params[0]).toBe(CURSOR_PA);
+    expect(articleSelectCall.params[1]).toBe(CURSOR_ID);
+    // SQL shape: WHERE (pa > ?1) OR (pa = ?1 AND id > ?2) ORDER BY pa ASC, id ASC
     expect(articleSelectCall.sql).toContain('published_at > ?1');
-    expect(articleSelectCall.sql).toContain('ORDER BY published_at ASC');
+    expect(articleSelectCall.sql).toContain('published_at = ?1 AND id > ?2');
+    expect(articleSelectCall.sql).toContain('ORDER BY published_at ASC, id ASC');
+  });
+
+  it('REQ-PIPE-003: equal-time pair straddling a batch boundary is recovered by the composite cursor', async () => {
+    // Three articles share the exact same published_at. Batch size 2
+    // forces the third into a second batch. With a single-key cursor
+    // (pa-only) the third would have been silently excluded by the
+    // strict-greater filter; with the composite cursor it is picked up
+    // on the next call.
+    const SHARED_PA = 1_700_000_000;
+    const ARTICLES = [
+      { id: '01AAA0000000000000000000A1', published_at: SHARED_PA, primary_source_url: 'https://x.example/a' },
+      { id: '01AAA0000000000000000000A2', published_at: SHARED_PA, primary_source_url: 'https://x.example/b' },
+      { id: '01AAA0000000000000000000A3', published_at: SHARED_PA, primary_source_url: 'https://x.example/c' },
+    ];
+
+    // First call (cursor=null, batch=2): scans the first two.
+    const { res: res1, fixture: fix1 } = await buildContextAndCall({
+      articles: ARTICLES,
+      remainingCount: 0,
+      paginatedRemaining: true,
+      body: { batch: 2 },
+    });
+    expect(res1.status).toBe(200);
+    const body1 = (await res1.json()) as {
+      scanned: number;
+      next_cursor: { pa: number; id: string } | null;
+      done: boolean;
+    };
+    expect(body1.scanned).toBe(2);
+    expect(body1.next_cursor).toEqual({ pa: SHARED_PA, id: ARTICLES[1]!.id });
+    expect(body1.done).toBe(false);
+
+    // Second call: the composite resume should yield exactly the 3rd article.
+    const { res: res2 } = await buildContextAndCall({
+      articles: ARTICLES,
+      remainingCount: 0,
+      paginatedRemaining: true,
+      body: { batch: 2, cursor: body1.next_cursor },
+    });
+    const body2 = (await res2.json()) as {
+      scanned: number;
+      done: boolean;
+      next_cursor: { pa: number; id: string } | null;
+    };
+    expect(body2.scanned).toBe(1);
+    expect(body2.done).toBe(true);
+    // When the sweep is done, next_cursor is null so the client loop
+    // breaks instead of looping forever on a stale resume key.
+    expect(body2.next_cursor).toBeNull();
+    // Sanity check: silence unused-binding warning on fix1 by asserting
+    // its allCalls captured the expected SQL shape on the first batch.
+    const firstSelect = fix1.allCalls[0]!;
+    expect(firstSelect.params[0]).toBe(-1);
+    expect(firstSelect.params[1]).toBe('');
   });
 
   // -----------------------------------------------------------------------

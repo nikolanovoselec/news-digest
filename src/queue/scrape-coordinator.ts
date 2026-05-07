@@ -986,9 +986,14 @@ async function fetchAllSources(
           '',
           kv,
         );
-        const capped = headlines.slice(0, PER_SOURCE_ITEM_CAP).map((h) => ({
-          headline: { ...h, source_name: job.sourceName },
-        }));
+        // Preserve `headline.source_name` set by `itemToHeadline`
+        // (per-item RSS `<source>` publisher when present, feed-level
+        // `job.sourceName` fallback otherwise). Earlier shape forced
+        // `job.sourceName` here, which silently clobbered the per-item
+        // publisher and undid the 289656d fix in production.
+        const capped = headlines
+          .slice(0, PER_SOURCE_ITEM_CAP)
+          .map((h) => ({ headline: h }));
         let eviction: FeedEviction | null = null;
         // Only record health for live fetches on discovered feeds —
         // cache hits are neither a liveness signal nor a failure.

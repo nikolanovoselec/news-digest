@@ -416,13 +416,13 @@ Each call runs exactly one bounded batch and returns. The browser-side loop in `
 
 | Method | Auth | Request body |
 |---|---|---|
-| `POST` | Admin session | empty (browser button) or `{ "cursor"?: number, "batch"?: number }` for scripted single-batch calls (cursor = `published_at` lower bound; batch defaults to 25, cap 500) |
+| `POST` | Admin session | empty (browser button) or `{ "cursor"?: { "pa": number, "id": string }, "batch"?: number }` for scripted single-batch calls (composite cursor — `pa` is a `published_at` Unix-second lower bound, `id` is the ULID lower bound for equal-time tie-breaking; batch defaults to 100, cap 500) |
 
-**Success (200):** `{ ok: true, scanned: N, merged: M, remaining: K, done: boolean, next_cursor: number | null, elapsed_ms: T }`.
+**Success (200):** `{ ok: true, scanned: N, merged: M, remaining: K, next_cursor: { pa: number, id: string } | null, done: boolean, elapsed_ms: T }`. `next_cursor` is the composite resume token to seed the next call; `null` when the sweep is complete (`done: true`). Pass the object verbatim as `cursor` in the next request body.
 
 **Error responses:** `401 unauthorized` | `403 forbidden` | `500 historical_dedup_failed`.
 
-**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9, [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phase 4)
+**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 3, AC 9, AC 11, [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phase 4)
 
 ---
 
@@ -462,7 +462,7 @@ Returns the cosine similarity between two articles' stored Vectorize embeddings,
 }
 ```
 
-`same_etld1` is `true` when both articles' `primary_source_url` values resolve to the same registrable domain via `src/lib/etld.ts`. `threshold` is the value of `DEDUP_COSINE_THRESHOLD` in effect at request time. `same_vendor_penalty` is the value of `DEDUP_SAME_VENDOR_PENALTY`. `adjusted_score` is `cosine - same_vendor_penalty` when `same_etld1` is true, otherwise equals `cosine`; it is the value the dedup decision actually compares to the threshold. `above_threshold` is `adjusted_score >= threshold`.
+`same_etld1` is `true` when both articles' `primary_source_url` values resolve to the same registrable domain via `src/lib/etld.ts:sameVendor` AND neither URL routes through a known aggregator-wrapper host (currently `news.google.com`). Aggregator-wrapper URLs carry no publisher identity at the URL level, so pairs where either article comes from an aggregator host return `same_etld1: false` and do not pay the same-publisher penalty regardless of eTLD+1 match. `threshold` is the value of `DEDUP_COSINE_THRESHOLD` in effect at request time. `same_vendor_penalty` is the value of `DEDUP_SAME_VENDOR_PENALTY`. `adjusted_score` is `cosine - same_vendor_penalty` when `same_etld1` is true, otherwise equals `cosine`; it is the value the dedup decision actually compares to the threshold. `above_threshold` is `adjusted_score >= threshold`.
 
 **Error responses:**
 

@@ -76,11 +76,23 @@ interface ArticleRow {
   primary_source_url: string;
 }
 
+/** Composite cursor — `published_at` alone is insufficient because the
+ *  corpus has many articles per second (one scrape tick can land
+ *  several at the exact same epoch second). The previous single-value
+ *  cursor advanced via strict `published_at > ?` and lost any
+ *  same-second tail past the batch boundary; the secondary `id` key
+ *  closes that gap by extending the resume predicate to
+ *  `(pa > ?1) OR (pa = ?1 AND id > ?2)`. */
+interface DedupCursor {
+  pa: number;
+  id: string;
+}
+
 interface DedupResult {
   ok: true;
   scanned: number;
   merged: number;
-  next_cursor: number | null;
+  next_cursor: DedupCursor | null;
   remaining: number;
   done: boolean;
 }
@@ -90,10 +102,11 @@ interface CumulativeResult {
   scanned: number;
   merged: number;
   remaining: number;
-  /** Cursor to thread into the next call so the browser-side loop in
-   *  /settings doesn't rescan already-visited articles. null when
-   *  the sweep is complete. */
-  next_cursor: number | null;
+  /** Composite cursor to thread into the next call so the browser-
+   *  side loop in /settings doesn't rescan already-visited articles
+   *  AND doesn't silently skip equal-time pairs at batch boundaries.
+   *  null when the sweep is complete. */
+  next_cursor: DedupCursor | null;
   done: boolean;
   elapsed_ms: number;
 }
@@ -121,7 +134,7 @@ async function handle(context: APIContext): Promise<Response> {
     });
   }
 
-  let cursor: number | null = null;
+  let cursor: DedupCursor | null = null;
   let batch = DEFAULT_BATCH;
 
   // JSON callers may seed cursor/batch via the request body. The
@@ -132,8 +145,27 @@ async function handle(context: APIContext): Promise<Response> {
     const raw = await context.request.text();
     if (raw !== '') {
       const body = JSON.parse(raw) as { cursor?: unknown; batch?: unknown };
-      if (typeof body.cursor === 'number' && Number.isFinite(body.cursor)) {
-        cursor = body.cursor;
+      if (body.cursor !== undefined) {
+        if (
+          typeof body.cursor === 'object' &&
+          body.cursor !== null &&
+          typeof (body.cursor as { pa?: unknown }).pa === 'number' &&
+          Number.isFinite((body.cursor as { pa: number }).pa) &&
+          typeof (body.cursor as { id?: unknown }).id === 'string'
+        ) {
+          const c = body.cursor as { pa: number; id: string };
+          cursor = { pa: c.pa, id: c.id };
+        } else {
+          // A legacy `cursor: <number>` shape (from a tab held open
+          // across the 2026-05-07 deploy) silently fails this guard
+          // and `cursor` stays null, so the sweep restarts from the
+          // beginning of the corpus. Log so the case surfaces if it
+          // ever happens in production.
+          log('warn', 'digest.generation', {
+            status: 'historical_dedup_invalid_cursor',
+            cursor_type: typeof body.cursor,
+          });
+        }
       }
       if (
         typeof body.batch === 'number' &&
@@ -235,28 +267,36 @@ async function handle(context: APIContext): Promise<Response> {
 
 async function runHistoricalDedupBatch(
   env: Env,
-  cursor: number | null,
+  cursor: DedupCursor | null,
   batch: number,
 ): Promise<DedupResult> {
   const threshold = readCosineThreshold(env);
   const sameVendorPenalty = readSameVendorPenalty(env);
   const rerankFloor = readRerankFloor(env);
 
-  // Walk articles by ascending published_at, starting strictly after
-  // the supplied cursor (or from the beginning when null). Only
-  // already-embedded articles participate — un-embedded articles need
-  // the embed-backfill route first.
-  const cursorBind = cursor ?? -1;
+  // Walk articles by ascending (published_at, id), starting strictly
+  // after the supplied composite cursor (or from the beginning when
+  // null). Only already-embedded articles participate — un-embedded
+  // articles need the embed-backfill route first. The composite
+  // resume predicate (`pa > ?1` OR `pa = ?1 AND id > ?2`) ensures
+  // equal-time pairs that straddle a batch boundary are still picked
+  // up on the next call instead of being silently dropped by the
+  // strict-greater filter.
+  const cursorPaBind = cursor?.pa ?? -1;
+  const cursorIdBind = cursor?.id ?? '';
   const result = await env.DB
     .prepare(
       `SELECT id, title, source_snippet, published_at, primary_source_url
          FROM articles
         WHERE embedding_status = 'embedded'
-          AND published_at > ?1
-        ORDER BY published_at ASC
-        LIMIT ?2`,
+          AND (
+            published_at > ?1
+            OR (published_at = ?1 AND id > ?2)
+          )
+        ORDER BY published_at ASC, id ASC
+        LIMIT ?3`,
     )
-    .bind(cursorBind, batch)
+    .bind(cursorPaBind, cursorIdBind, batch)
     .all<ArticleRow>();
   const rows = result.results ?? [];
 
@@ -319,11 +359,19 @@ async function runHistoricalDedupBatch(
         ? match.score - sameVendorPenalty
         : match.score;
       // We're walking oldest-first: any match with strictly NEWER
-      // published_at is a candidate to fold into self. Older or
-      // equal-time matches are skipped — they were either already
-      // processed (so `match.id` would have absorbed self in a prior
-      // step) or would orphan equal-time pairs (out of scope).
-      if (matchPublishedAt <= self.published_at) continue;
+      // published_at is a candidate to fold into self. Older matches
+      // were already processed (so `match.id` would have absorbed
+      // self in a prior step). Equal-time pairs are tie-broken by
+      // ULID — lower ULID = older creation = wins. Without the tie-
+      // break, two articles ingested in the same scrape tick that
+      // share a `published_at` timestamp could never fold into each
+      // other (the strict `>` filter rejected both directions). The
+      // 2026-05-07 prod audit found Palo Alto / BTIG-$216 pair stuck
+      // at the same `published_at = 1778082516` for exactly this
+      // reason; the tie-break unblocks it.
+      if (matchPublishedAt < self.published_at) continue;
+      if (matchPublishedAt === self.published_at && self.id >= match.id)
+        continue;
       const isAutoMerge = adjustedScore >= threshold;
       const isBorderline =
         !isAutoMerge && adjustedScore >= rerankFloor;
@@ -407,20 +455,29 @@ async function runHistoricalDedupBatch(
     );
   }
 
-  // Cursor advances to the LAST scanned article's published_at so the
-  // next call resumes immediately after.
+  // Cursor advances to the LAST scanned article's (published_at, id)
+  // so the next call resumes immediately after — the secondary id key
+  // closes the equal-time gap that caused same-second pairs at batch
+  // boundaries to be silently dropped under the previous single-key
+  // cursor.
   const last = rows[rows.length - 1];
-  const nextCursor = last !== undefined ? last.published_at : null;
+  const nextCursor: DedupCursor | null =
+    last !== undefined ? { pa: last.published_at, id: last.id } : null;
 
   // remaining = how many articles past the new cursor still qualify.
+  const remainingPaBind = nextCursor?.pa ?? -1;
+  const remainingIdBind = nextCursor?.id ?? '';
   const remainingRow = await env.DB
     .prepare(
       `SELECT COUNT(*) AS c
          FROM articles
         WHERE embedding_status = 'embedded'
-          AND published_at > ?1`,
+          AND (
+            published_at > ?1
+            OR (published_at = ?1 AND id > ?2)
+          )`,
     )
-    .bind(nextCursor ?? -1)
+    .bind(remainingPaBind, remainingIdBind)
     .first<{ c: number }>();
   const remaining = remainingRow?.c ?? 0;
 
@@ -428,7 +485,8 @@ async function runHistoricalDedupBatch(
     status: 'historical_dedup_batch_completed',
     scanned: rows.length,
     merged,
-    next_cursor: nextCursor,
+    next_cursor_pa: nextCursor?.pa ?? null,
+    next_cursor_id: nextCursor?.id ?? null,
     remaining,
     rerank_floor: rerankFloor,
     rerank_calls_this_batch: rerankCallsThisBatch,
