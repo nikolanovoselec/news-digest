@@ -263,7 +263,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     return `${h}h ${m}m`;
   }
 
-  async function refetchAndReplace(): Promise<void> {
+  async function refetchAndReplace(opts?: { reload?: boolean }): Promise<void> {
     try {
       const res = await fetch('/api/digest/today', {
         credentials: 'same-origin',
@@ -279,14 +279,16 @@ function isCardHidden(articleTags: readonly string[]): boolean {
       if (el !== null) {
         el.dataset['nextAt'] = String(body.next_scrape_at);
       }
-      // If the article set changed, a full reload is the simplest way
-      // to pick up the new server render — the page is lightweight and
-      // this only fires once per hour.
-      if (Array.isArray(body.articles)) {
+      // Only reload when the caller is the running -> idle transition
+      // in pollScrapeStatus. The countdown-zero path must NOT reload
+      // unconditionally: when next_scrape_at keeps returning in the
+      // past (cron lag, unset, clock skew), a blanket reload here puts
+      // the page in an infinite reload loop on first paint.
+      if (opts?.reload === true) {
         window.location.reload();
       }
     } catch {
-      /* ignore — the next tick retries */
+      /* ignore -- the next tick retries */
     }
   }
 
@@ -344,9 +346,9 @@ function isCardHidden(articleTags: readonly string[]): boolean {
         headerEl.textContent = 'Update ';
         textEl.textContent = 'in progress…';
       } else if (el.dataset['running'] === '1') {
-        // Run just finished — pull in fresh articles + next_scrape_at.
+        // Run just finished -- pull in fresh articles + next_scrape_at.
         delete el.dataset['running'];
-        void refetchAndReplace();
+        void refetchAndReplace({ reload: true });
         tickCountdown();
       }
     } catch {

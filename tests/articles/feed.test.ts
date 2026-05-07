@@ -74,9 +74,17 @@ interface MockOpts {
   user: UserRow | null;
   articles: RawArticle[];
   lastRun: ScrapeRunRow | null;
-  /** When true, the mock reports an in-flight scrape (status='running'
-   *  probe returns a non-null row). Default false. */
+  /** When true, the unified most-recent-row probe returns a row whose
+   * status is 'running'. Convenience for the common "scrape in flight"
+   * case. Default false. Mutually exclusive with `mostRecentRun`. */
   runningRun?: boolean;
+  /** Row returned by the unified `SELECT status FROM scrape_runs ORDER
+   * BY started_at DESC LIMIT 1` probe. Lets a test exercise the
+   * divergence case where an older `running` row coexists with a
+   * newer `ready`/`failed` row — the SSR predicate must consult the
+   * most-recent row only, NOT "any running row exists", or it diverges
+   * from /api/scrape-status and a reload loop ensues. */
+  mostRecentRun?: { status: string } | null;
   /** Record of bound query parameters by query kind — used to verify the
    * user_id is bound on the pool query, which guarantees `starred`/
    * `read` subqueries are user-scoped (no cross-user leaks). */
@@ -87,10 +95,21 @@ interface MockOpts {
 
 /** D1 mock that branches on SQL shape. Queries we stub:
  *  - SELECT id, email, gh_login ... FROM users ...  → user row
- *  - SELECT id, started_at, finished_at, status FROM scrape_runs ... → lastRun
+ *  - SELECT ... FROM scrape_runs WHERE status = 'ready' ... → lastRun
+ *  - SELECT status FROM scrape_runs ORDER BY started_at DESC LIMIT 1
+ *    → mostRecentRun (unified probe; aligns with /api/scrape-status)
  *  - SELECT a.id, a.canonical_url, ... FROM articles a ... → filtered pool
  */
 function makeDb(opts: MockOpts): D1Database {
+  // The unified most-recent-row probe must NEVER fall through to lastRun
+  // — that's the exact bug PR #220 fixed (SSR vs API predicate
+  // divergence). Resolve it once here so both .first() paths share the
+  // same logic.
+  const resolveMostRecent = (): { status: string } | null => {
+    if (opts.mostRecentRun !== undefined) return opts.mostRecentRun;
+    if (opts.runningRun === true) return { status: 'running' };
+    return null;
+  };
   const prepare = vi.fn().mockImplementation((sql: string) => {
     const binds: unknown[] = [];
     // The scrape_runs lookup in today.ts calls .first() directly on
@@ -98,13 +117,14 @@ function makeDb(opts: MockOpts): D1Database {
     const directFirst = vi.fn().mockImplementation(async () => {
       if (sql.startsWith('SELECT id, email, gh_login')) return opts.user;
       if (sql.includes('FROM scrape_runs')) {
-        // Distinguish the running-probe (SELECT 1 ... status='running')
-        // from the most-recent-ready lookup so tests don't conflate
-        // them. Default: no in-flight run.
-        if (sql.includes("status = 'running'")) {
-          return opts.runningRun === true ? { '1': 1 } : null;
+        // The lastRun query has `WHERE status = 'ready'`; the unified
+        // running-probe has no WHERE clause and selects only `status`.
+        // Distinguish on the 'ready' literal so tests don't conflate
+        // them.
+        if (sql.includes("status = 'ready'")) {
+          return opts.lastRun ?? null;
         }
-        return opts.lastRun ?? null;
+        return resolveMostRecent();
       }
       return null;
     });
@@ -116,10 +136,10 @@ function makeDb(opts: MockOpts): D1Database {
           first: vi.fn().mockImplementation(async () => {
             if (sql.startsWith('SELECT id, email, gh_login')) return opts.user;
             if (sql.includes('FROM scrape_runs')) {
-              if (sql.includes("status = 'running'")) {
-                return opts.runningRun === true ? { '1': 1 } : null;
+              if (sql.includes("status = 'ready'")) {
+                return opts.lastRun ?? null;
               }
-              return opts.lastRun ?? null;
+              return resolveMostRecent();
             }
             return null;
           }),
@@ -387,6 +407,31 @@ describe('GET /api/digest/today — REQ-READ-001', () => {
     const busyRes = await GET(makeContext(await authedRequest(), makeEnv(dbBusy)) as never);
     const busyBody = (await busyRes.json()) as WireResponse;
     expect(busyBody.scrape_running).toBe(true);
+  });
+
+  it('REQ-READ-001: scrape_running consults the MOST-RECENT scrape_runs row, not "any running row exists" — regression test for the 2026-05-07 prod reload loop', async () => {
+    // Production failure: a 13-day-old `running` row was stuck. SSR
+    // probed "any running row exists" and reported scrape_running=true;
+    // /api/scrape-status probed the most-recent row and reported
+    // scrape_running=false. The dashboard's running→idle transition
+    // reload-loop fired on every first paint, reloading every second.
+    // This test pins the predicate alignment: when the most-recent row
+    // is `ready` (scrape finished cleanly), the flag must be false even
+    // if older `running` rows still exist in the table.
+    const dbStuckOlder = makeDb({
+      user: baseUser(),
+      articles: [],
+      lastRun: {
+        id: 'recent-ready',
+        started_at: 200,
+        finished_at: 250,
+        status: 'ready',
+      },
+      mostRecentRun: { status: 'ready' },
+    });
+    const res = await GET(makeContext(await authedRequest(), makeEnv(dbStuckOlder)) as never);
+    const body = (await res.json()) as WireResponse;
+    expect(body.scrape_running).toBe(false);
   });
 
   it('REQ-READ-001: returns last_scrape_run metadata and next_scrape_at on the next 4-hour UTC cron boundary', async () => {
