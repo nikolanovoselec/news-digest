@@ -87,11 +87,45 @@ jobs:
               --dimensions=768 --metric=cosine
           fi
 
-      - name: Apply D1 migrations
+      # Drift-tolerant migration apply. SQLite has no `ADD COLUMN IF
+      # NOT EXISTS`, so a migration manually run out-of-band (during
+      # debugging, a hotfix, or a prior failed deploy) leaves the
+      # column in place but unrecorded in `d1_migrations`. The next
+      # `wrangler d1 migrations apply` then errors on "duplicate
+      # column" / "table already exists" and aborts the deploy.
+      # We retry: on each drift error, parse the migration filename
+      # from the output, stamp it into `d1_migrations` as applied
+      # (the schema already reflects it), and re-run wrangler. Real
+      # SQL errors (constraint violations, syntax) bubble up.
+      - name: Apply D1 migrations (drift-tolerant)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx --yes wrangler d1 migrations apply DB --remote
+        run: |
+          set -uo pipefail
+          for try in 1 2 3 4 5; do
+            OUT=$(npx --yes wrangler d1 migrations apply DB --remote 2>&1) && RC=0 || RC=$?
+            echo "$OUT"
+            if [ "$RC" -eq 0 ]; then
+              echo "Migrations applied cleanly (try $try)"
+              exit 0
+            fi
+            if echo "$OUT" | grep -qiE 'duplicate column|already exists'; then
+              MIG=$(echo "$OUT" | grep -oE '[0-9]{4}_[A-Za-z0-9_]+\.sql' | head -1)
+              if [ -z "$MIG" ]; then
+                echo "::error::Drift detected but could not parse failing migration name"
+                exit 1
+              fi
+              echo "::warning::Schema drift on $MIG — marking as applied and retrying"
+              npx --yes wrangler d1 execute DB --remote --command \
+                "INSERT OR IGNORE INTO d1_migrations (name, applied_at) VALUES ('$MIG', datetime('now'))"
+              continue
+            fi
+            echo "::error::Migration apply failed with non-drift error"
+            exit "$RC"
+          done
+          echo "::error::Migrations did not converge after 5 retries"
+          exit 1
 
       - name: Push Worker secrets
         env:
