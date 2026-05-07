@@ -61,7 +61,14 @@ export function etldPlusOne(host: string): string {
  *  host). The 2026-05-07 audit on prod found pair-A
  *  (BTIG / Palo Alto) at cosine 0.9516 and pair-B (Premium-valuation /
  *  Palo Alto) at 0.8615 — the 0.05 same-vendor penalty knocked B
- *  below the 0.85 auto-merge threshold. Aggregator hosts are exempt. */
+ *  below the 0.85 auto-merge threshold. Aggregator hosts are exempt.
+ *
+ *  Scope assumption: the curated source registry (`src/lib/curated-
+ *  sources.ts`) and the auto-synthesised tag-fallback in
+ *  `googleNewsSourceForTag` only emit `news.google.com` URLs today.
+ *  If a future feed adds `news.google.co.uk`, Apple News redirects, a
+ *  Flipboard wrapper, or any other publisher-aggregator, add the host
+ *  here so it benefits from the same exemption. */
 const AGGREGATOR_HOSTS = new Set(['news.google.com']);
 
 /** Returns true when both URLs have the same registrable domain.
