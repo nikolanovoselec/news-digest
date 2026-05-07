@@ -76,4 +76,9 @@ interface Env {
   // when both articles' primary_source_url resolve to the same eTLD+1
   // (REQ-PIPE-003 AC 11). Default 0.05; clamped to [0, 1] at runtime.
   DEDUP_SAME_VENDOR_PENALTY?: string;
+  // Lower bound of the LLM-rerank borderline band (REQ-PIPE-009).
+  // Cosines in [DEDUP_RERANK_FLOOR, DEDUP_COSINE_THRESHOLD) are sent
+  // to the LLM for a binary same-event judgment. Below the floor:
+  // distinct, no LLM call. Default 0.72; clamped to [0, 1] at runtime.
+  DEDUP_RERANK_FLOOR?: string;
 }

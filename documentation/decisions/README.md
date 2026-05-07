@@ -47,6 +47,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD31 | Google News baseline ownership: coordinator owns per-tag GN fan-out; discovery LLM no longer emits GN fallback | Architecture | 2026-05-06 |
 | AD32 | Same-story dedup uses Workers AI embeddings + Vectorize (replaces LLM finalize dedup) | Architecture | 2026-05-06 |
 | AD33 | Embed source-text (not LLM rewrite) and apply a same-vendor cosine penalty for dedup | Architecture | 2026-05-06 |
+| AD34 | LLM same-event rerank for borderline cosine pairs (between auto-merge and distinct bands) | Architecture | 2026-05-07 |
 
 ---
 
@@ -883,6 +884,35 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - The eTLD+1 helper (`src/lib/etld.ts`) is the same-publisher decision; it intentionally avoids the Public Suffix List dependency. If the corpus ingests UK / AU / NZ regional press, swap to PSL.
 
 **Related requirements:** REQ-PIPE-003 (AC 11, AC 12).
+
+---
+
+### AD34: LLM same-event rerank for borderline cosine pairs
+
+**Status:** Accepted (2026-05-07)
+
+**Decision:** Pairs whose adjusted cosine falls in `[DEDUP_RERANK_FLOOR, DEDUP_COSINE_THRESHOLD)` (default `[0.72, 0.85)`) go to a single binary same-event judgment by the language model. A positive verdict triggers `mergeAsAltSource` (existing-article-wins), a negative or unparseable verdict keeps the pair distinct. Pairs at or above the threshold auto-merge without an LLM call; pairs below the floor stay distinct without an LLM call. A per-invocation rerank cap (default 25) bounds worst-case cost; once hit, additional borderline pairs in the same invocation stay distinct and the cap is logged.
+
+**Context:** First production scrape after AD33 landed (run `01KR14ZGF1SD7YH0Y7DW0ZEJPY`, 2026-05-07) ingested 23 articles with zero alt-source merges. Two of those articles described the same Romania political event under different framings: "Romania PM Ousted in No-Confidence Vote" and "Romania Government Collapses as Far-Right Coalition Forms" - pairwise cosine 0.7499, below the 0.85 auto-merge bar. A separate same-day pair on the Manus / Meta acquisition (April 28) showed similar drift. The 0.85 threshold is correctly tuned: lowering it would re-introduce the false-merges that AD32 was set up to prevent (validation showed distinct same-publisher announcements clustering in 0.77-0.84). The miss is in the borderline band where embeddings alone cannot decide and threshold tuning trades misses 1:1 for false-merges.
+
+**Alternatives considered:**
+
+- **Lower `DEDUP_COSINE_THRESHOLD` to 0.78.** Rejected. The 0.81-0.91 same-event band overlaps with the 0.77-0.84 distinct-same-publisher band; lowering the auto-merge bar to catch the borderline misses re-introduces the false-merge class AD32 was tuned to prevent.
+- **Cross-encoder reranker (`@cf/baai/bge-reranker-base`).** Deferred. The same-event question is a semantic equivalence call, not just a similarity sharpening - bge-reranker-base was trained for relevance ranking, not event identity. A general-purpose LLM with a one-shot system prompt is the simpler path; if cost or latency becomes a problem the reranker becomes the next gate.
+- **Always rerank every match (regardless of cosine).** Rejected. Per-tick cost would scale with the auto-merge band's volume (the dominant case); the borderline band is small and the LLM call only adds value where embeddings alone are inconclusive.
+
+**Rationale:** The LLM judgment is the only signal that distinguishes "same event, different framing" from "same domain, different event" without lowering the auto-merge bar. A conservative-on-failure default (treat parse failure / network error as "different events") preserves the property that no pair is merged on the strength of an unreliable model answer. The per-invocation cap is a hard safety net for bad-day clusters (a feed pushing 100 near-duplicates in one tick) so the rerank pass cannot exhaust the isolate budget.
+
+**Consequences:**
+
+- New env var `DEDUP_RERANK_FLOOR` (default `"0.72"`) is read at runtime by both the per-tick finalize pass and the historical re-run sweep. Setting it to the same value as `DEDUP_COSINE_THRESHOLD` disables rerank without removing the code path.
+- New module `src/lib/dedup-rerank.ts` owns the prompt + narrow-JSON parser. The LLM call piggybacks on the existing `runJson` helper so token / cost accounting is unchanged.
+- Per-tick cost adds ~2-5 LLM calls in the typical case (small fraction of the existing chunk-pass spend). Worst-case per-call cost is bounded by the rerank cap (default 25 calls).
+- Borderline matches require a one-extra D1 read per pair to fetch the existing article's `title` + `source_snippet` for the prompt (the existing finalize SELECT already pulls these for the new article).
+- The historical re-run sweep benefits without code changes: re-running the operator-initiated sweep after this decision lands picks up borderline pairs the original ingest missed (Romania, Manus, future cases of the same shape).
+- Validation will be cumulative: the dedup-diag diagnostic does not directly surface rerank verdicts, so confirmation comes from observing per-run `rerank_calls` and `rerank_accepts` counters in structured logs across multiple ticks.
+
+**Related requirements:** REQ-PIPE-009, REQ-PIPE-003.
 
 ---
 
