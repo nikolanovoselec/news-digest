@@ -61,6 +61,11 @@ interface DbFixture {
   batchCalls: Array<Array<{ sql: string; params: unknown[] }>>;
   /** Captured all() calls with their bound sql. */
   allCalls: Array<{ sql: string; params: unknown[] }>;
+  /** When true, the remaining-count SELECT and the paginated articles
+   *  SELECT both honor the cursor bind, so the handler's outer loop
+   *  walks the corpus across multiple iterations. Used by per-invocation
+   *  cap tests that need to verify budget carries across batches. */
+  paginatedRemaining?: boolean;
 }
 
 function makeDb(fixture: DbFixture): D1Database {
@@ -72,8 +77,20 @@ function makeDb(fixture: DbFixture): D1Database {
         // Admin user lookup
         if (sql.includes('FROM users')) return ADMIN_USER_ROW;
 
-        // Remaining-count SELECT
+        // Remaining-count SELECT. When opt-in via paginated mode
+        // (fixture.paginatedRemaining=true), compute remaining from the
+        // cursor bind so multi-iteration tests can drive the loop until
+        // the corpus is fully walked. Otherwise fall back to the static
+        // fixture value used by single-batch tests.
         if (sql.includes('SELECT COUNT(*) AS c')) {
+          if (fixture.paginatedRemaining) {
+            const cursorBind =
+              typeof bound[0] === 'number' ? (bound[0] as number) : -1;
+            const remaining = fixture.articles.filter(
+              (row) => row.published_at > cursorBind,
+            ).length;
+            return { c: remaining };
+          }
           return { c: fixture.remainingCount };
         }
 
@@ -97,13 +114,28 @@ function makeDb(fixture: DbFixture): D1Database {
         // Main article page SELECT - only fires for the articles query.
         // SELECT shape: id, title, source_snippet, published_at,
         // primary_source_url FROM articles WHERE embedding_status =
-        // 'embedded'.
+        // 'embedded' AND published_at > ?1 ORDER BY published_at ASC
+        // LIMIT ?2.
         if (
           sql.includes('SELECT id, title, source_snippet, published_at') &&
           sql.includes("embedding_status = 'embedded'")
         ) {
           fixture.allCalls.push({ sql, params: [...bound] });
-          return { results: fixture.articles };
+          // Honor cursor + batch so multi-iteration tests can drive the
+          // loop. cursorBind = -1 on the first call (cursor=null in
+          // production); subsequent iterations pass the last scanned
+          // published_at.
+          const cursorBind =
+            typeof bound[0] === 'number' ? (bound[0] as number) : -1;
+          const limit =
+            typeof bound[1] === 'number' ? (bound[1] as number) : 100;
+          const sorted = [...fixture.articles].sort(
+            (a, b) => a.published_at - b.published_at,
+          );
+          const page = sorted
+            .filter((row) => row.published_at > cursorBind)
+            .slice(0, limit);
+          return { results: page };
         }
         return { results: [] };
       }),
@@ -182,6 +214,8 @@ interface BuildContextOpts {
    *  the auto-merge path. */
   aiRun?: (model: string, params: Record<string, unknown>) => Promise<unknown>;
   rerankFloor?: string;
+  /** Forwarded to DbFixture so the mock paginates and tracks cursor. */
+  paginatedRemaining?: boolean;
 }
 
 async function buildContextAndCall(opts: BuildContextOpts): Promise<{
@@ -196,6 +230,7 @@ async function buildContextAndCall(opts: BuildContextOpts): Promise<{
     remainingCount: opts.remainingCount ?? 0,
     batchCalls: [],
     allCalls: [],
+    paginatedRemaining: opts.paginatedRemaining,
   };
 
   const db = makeDb(fixture);
@@ -793,10 +828,17 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
     expect(deleteByIds).not.toHaveBeenCalled();
   });
 
-  it('REQ-PIPE-009 AC 5: rerank cap is per-invocation; 26th borderline pair stays distinct', async () => {
+  it('REQ-PIPE-009 AC 5: rerank cap is per-invocation, not per-batch (cap survives across iterations)', async () => {
     // The cap is RERANK_BATCH_CAP=25. Build 26 articles each with one
-    // newer borderline match. The 26th must NOT trigger an LLM call
-    // and must NOT merge, proving the cap fires.
+    // newer borderline match and force the handler to iterate the
+    // outer loop multiple times by setting batch=10. With cursor-aware
+    // pagination the handler walks 10 + 10 + 6 articles across THREE
+    // invocations of runHistoricalDedupBatch. The cap must carry
+    // across those iterations: total LLM calls across the whole sweep
+    // must be exactly 25, total merges must be exactly 25, and the
+    // 26th borderline pair must remain distinct. A regression that
+    // re-introduces per-batch counting would issue 25 calls in
+    // iteration-1, plus more in iterations 2 and 3, blowing the cap.
     const N = 26;
     const articles: ArticleRow[] = [];
     const guards: Record<string, ExistenceGuardEntry> = {};
@@ -829,13 +871,24 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
     const { res, fixture } = await buildContextAndCall({
       articles,
       existenceGuardResults: guards,
-      remainingCount: 0,
       queryByIdResults,
       aiRun,
+      paginatedRemaining: true,
+      body: { batch: 10 },
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { merged: number };
-    // Cap is 25; the 26th borderline pair never reached the merge step.
+    const body = (await res.json()) as {
+      merged: number;
+      iterations: number;
+      scanned: number;
+    };
+    // The mock paginates by cursor; with batch=10 and N=26 the handler
+    // must run >=2 iterations or the per-invocation property is not
+    // exercised. Pin the iteration count explicitly.
+    expect(body.iterations).toBeGreaterThanOrEqual(2);
+    expect(body.scanned).toBe(N);
+    // Cap is 25; the 26th borderline pair never reached the merge step
+    // even though it lands in a later batch.
     expect(aiRun).toHaveBeenCalledTimes(25);
     expect(body.merged).toBe(25);
     expect(fixture.batchCalls.length).toBe(25);
