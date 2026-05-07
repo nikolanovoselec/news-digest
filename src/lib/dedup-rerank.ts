@@ -18,9 +18,11 @@
 // so the fast-path bands stay clean.
 //
 // Cost. Per scrape tick: ~20-30 new articles, expected 2-5 borderline
-// pairs => 2-5 LLM calls. Per historical-dedup batch (size 100):
-// bounded by RERANK_BATCH_CAP so a worst-case sweep cannot blow the
-// isolate budget.
+// pairs => 2-5 LLM calls. Per historical-dedup OPERATOR INVOCATION:
+// bounded by RERANK_BATCH_CAP across every batch in that invocation
+// (REQ-PIPE-009 AC 5 mandates per-invocation, not per-batch). The cap
+// is enforced by the caller threading a shared budget object into
+// every batch; this helper itself is stateless.
 
 import { runJson, asAiBinding } from '~/lib/llm-json';
 import { log } from '~/lib/log';

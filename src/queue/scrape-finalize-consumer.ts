@@ -249,6 +249,7 @@ export async function processOneFinalize(
     }
 
     let bestMatchId = autoMatchId;
+    let bestMatchAlreadyConfirmedExists = false;
     if (bestMatchId === null && borderMatchId !== null) {
       if (rerankCalls >= RERANK_BATCH_CAP) {
         if (!rerankCapHit) {
@@ -293,6 +294,10 @@ export async function processOneFinalize(
       if (!sameEvent) continue;
       rerankAccepts += 1;
       bestMatchId = borderMatchId;
+      // The borderline path already issued SELECT id, title,
+      // source_snippet against bestMatchId and confirmed it exists; no
+      // need to re-issue the existence guard below.
+      bestMatchAlreadyConfirmedExists = true;
     }
 
     if (bestMatchId === null) continue;
@@ -301,18 +306,22 @@ export async function processOneFinalize(
     // hold a vector whose D1 row was already retention-deleted in the
     // narrow window between the cleanup pass and the next finalize.
     // Without this guard, the merge SQL would write FK violations.
-    const existsRow = await env.DB
-      .prepare(`SELECT 1 AS present FROM articles WHERE id = ?1`)
-      .bind(bestMatchId)
-      .first<{ present: number }>();
-    if (existsRow === null) {
-      log('warn', 'digest.generation', {
-        status: 'finalize_vectorize_stale_match',
-        scrape_run_id: body.scrape_run_id,
-        new_article_id: self.id,
-        existing_article_id: bestMatchId,
-      });
-      continue;
+    // Skipped on the borderline path because the rerank-data fetch
+    // above already confirmed existence.
+    if (!bestMatchAlreadyConfirmedExists) {
+      const existsRow = await env.DB
+        .prepare(`SELECT 1 AS present FROM articles WHERE id = ?1`)
+        .bind(bestMatchId)
+        .first<{ present: number }>();
+      if (existsRow === null) {
+        log('warn', 'digest.generation', {
+          status: 'finalize_vectorize_stale_match',
+          scrape_run_id: body.scrape_run_id,
+          new_article_id: self.id,
+          existing_article_id: bestMatchId,
+        });
+        continue;
+      }
     }
 
     const merge = mergeAsAltSource(env.DB, bestMatchId, self.id);

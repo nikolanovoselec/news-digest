@@ -793,6 +793,54 @@ describe('POST /api/admin/historical-dedup — REQ-PIPE-003', () => {
     expect(deleteByIds).not.toHaveBeenCalled();
   });
 
+  it('REQ-PIPE-009 AC 5: rerank cap is per-invocation; 26th borderline pair stays distinct', async () => {
+    // The cap is RERANK_BATCH_CAP=25. Build 26 articles each with one
+    // newer borderline match. The 26th must NOT trigger an LLM call
+    // and must NOT merge, proving the cap fires.
+    const N = 26;
+    const articles: ArticleRow[] = [];
+    const guards: Record<string, ExistenceGuardEntry> = {};
+    const queryByIdResults: Record<string, VectorizeMatches> = {};
+    for (let i = 0; i < N; i++) {
+      const selfId = `self-${i}`;
+      const matchId = `match-${i}`;
+      articles.push({
+        id: selfId,
+        title: `Article ${i}`,
+        source_snippet: 'snippet',
+        published_at: 1_700_000_000 + i,
+        primary_source_url: `https://oldsite.example/${i}`,
+      });
+      guards[matchId] = {
+        present: 1,
+        title: `Other ${i}`,
+        source_snippet: 'other',
+      };
+      queryByIdResults[selfId] = singleMatch({
+        id: matchId,
+        score: 0.78,
+        published_at: 1_700_001_000 + i,
+        primary_source_url: `https://newsite.example/${i}`,
+      });
+    }
+    const aiRun = vi
+      .fn()
+      .mockResolvedValue({ response: '{"same_event":true}' });
+    const { res, fixture } = await buildContextAndCall({
+      articles,
+      existenceGuardResults: guards,
+      remainingCount: 0,
+      queryByIdResults,
+      aiRun,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { merged: number };
+    // Cap is 25; the 26th borderline pair never reached the merge step.
+    expect(aiRun).toHaveBeenCalledTimes(25);
+    expect(body.merged).toBe(25);
+    expect(fixture.batchCalls.length).toBe(25);
+  });
+
   it('REQ-PIPE-009: cosine below floor does not invoke LLM', async () => {
     const SELF_ID = 'older';
     const MATCH_ID = 'newer';
