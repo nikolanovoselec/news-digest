@@ -36,6 +36,18 @@ export const DEFAULT_RERANK_FLOOR = 0.72;
  *  fast and cheap. */
 const SNIPPET_CHAR_CAP = 600;
 
+/** Per-rerank wall-clock timeout. Workers AI gpt-oss-120b at temp=0
+ *  is typically 2-5s per call but can stall for 30s+ when the gateway
+ *  is under load. Without a timeout, a single stalled rerank can
+ *  blow past Cloudflare's ~100s edge cut even with one-batch-per-
+ *  request, surfacing in the browser as "Failed to fetch" with no
+ *  partial progress. 10s lets normal P75 calls through but caps the
+ *  long tail. A timeout returns null via the existing catch handler
+ *  below; the outer `if (llmRun === null) return false` then treats
+ *  the pair as not-same-event (conservative skip), so the merge is
+ *  simply not made — no error leak, no aborted sweep. */
+const RERANK_TIMEOUT_MS = 10_000;
+
 /** Read the runtime rerank floor from env, with a safe fallback. Same
  *  shape as readCosineThreshold: string-typed in wrangler.toml, parsed
  *  to float, clamped to [0, 1]. An invalid value falls back to the
@@ -114,21 +126,35 @@ export async function rerankBorderlinePair(
   a: RerankArticle,
   b: RerankArticle,
 ): Promise<boolean> {
-  const llmRun = await runJson<RerankPayload>({
-    ai: asAiBinding(env.AI),
-    params: {
-      messages: [
-        { role: 'system', content: RERANK_SYSTEM },
-        { role: 'user', content: buildRerankUser(a, b) },
-      ],
-      // Tight token budget: the answer is one boolean wrapped in JSON.
-      // Higher max_tokens just lets the model ramble before emitting
-      // the JSON we need.
-      max_tokens: 32,
-      temperature: 0,
-    },
-    narrow: (raw) => narrowRerankPayload(raw),
-  }).catch((err: unknown) => {
+  // Race the LLM call against a wall-clock timer. The runJson promise
+  // is the legitimate result; the timer rejects with 'rerank_timeout'
+  // after RERANK_TIMEOUT_MS to bound the long tail. The losing
+  // promise leaks as a zombie subrequest, which is fine — the only
+  // thing that matters for the edge cut is that the handler returns.
+  const timer = new Promise<never>((_resolve, reject) => {
+    setTimeout(
+      () => reject(new Error('rerank_timeout')),
+      RERANK_TIMEOUT_MS,
+    );
+  });
+  const llmRun = await Promise.race([
+    runJson<RerankPayload>({
+      ai: asAiBinding(env.AI),
+      params: {
+        messages: [
+          { role: 'system', content: RERANK_SYSTEM },
+          { role: 'user', content: buildRerankUser(a, b) },
+        ],
+        // Tight token budget: the answer is one boolean wrapped in
+        // JSON. Higher max_tokens just lets the model ramble before
+        // emitting the JSON we need.
+        max_tokens: 32,
+        temperature: 0,
+      },
+      narrow: (raw) => narrowRerankPayload(raw),
+    }),
+    timer,
+  ]).catch((err: unknown) => {
     log('warn', 'digest.generation', {
       status: 'dedup_rerank_failed',
       article_a: a.id,
