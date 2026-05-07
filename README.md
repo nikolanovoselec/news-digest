@@ -23,7 +23,7 @@ News Digest hires the LLM. It remembers so you don't. This isn't enlightenment. 
 - **A curated default tag set preloaded** (`#cloudflare`, `#ai-agents`, `#mcp`, `#zero-trust`, `#supply-chain-security`, `#graymatter`…). My opinions, helpfully pre-formed for you. Add a tag the registry doesn't know and it goes feed-hunting in the background — finds sources or admits it couldn't, so you're never waiting on a ghost.
 - **Composable filters on Search & History**: tag + search + date AND together, all in the URL.
 - **Two-stage dedupe** — URL-canonical clustering, then semantic. Every article gets a 768-dim embedding the moment it lands; near-duplicates collapse into a single card with the alternate publishers attached as alt-sources. One Anthropic launch should not become six articles just because six sites found the publish button. Same-publisher pairs get a small cosine penalty so two genuinely different stories from the same outlet don't get glued together by house style.
-- **Summaries that earn their word count**: 150–200 words, *what happened → how it works → why you care*.
+- **Summaries that earn their word count**: 100-150 words, *what happened, how it works, why you care*.
 - **Hallucinations dropped on sight**: every LLM output has to point back to a real source, or it doesn't touch the database. Ask me how I learned that.
 - **Daily digest email** (optional): when there's news, you get headlines; when there isn't, your inbox stays quiet. Once per day in your timezone, never zero-content. Push notifications were considered. Pushed back.
 - **Starred articles outlive the cron**: 14-day retention, unless you starred it. Your saved list is forever; your unread list was a lie anyway.

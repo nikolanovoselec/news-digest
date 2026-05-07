@@ -194,13 +194,16 @@ Returns the set of hashtags the authenticated user has queued for background sou
     "alt_source_count": 0, "starred": false, "read": false
   }],
   "last_scrape_run": { "id": "string", "started_at": 0, "finished_at": 0, "status": "ready" } | null,
-  "next_scrape_at": 1234567890 | null
+  "next_scrape_at": 1234567890 | null,
+  "scrape_running": false
 }
 ```
 
 Up to 29 articles from the article pool filtered by the user's active hashtags. Ordered by `ingested_at DESC, published_at DESC` — the canonical URL's earliest-known ingestion time (since re-discoveries don't re-stamp `ingested_at`), with `published_at` as the tiebreaker for stories ingested in the same second. `next_scrape_at` is the next UTC quadrant-hour boundary (`HH:00` where `HH ∈ {0,4,8,12,16,20}`), derived from the cron schedule rather than from the last run's start time, so a delayed run does not push the next tick out.
 
-**Implements:** [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) AC 5, AC 7 (the `alt_source_count` field drives the `+N` suffix on source labels)
+`scrape_running` is the SSR first-paint indicator for the "Update in progress" banner. It is `true` only when the **most-recent** `scrape_runs` row has `status = 'running'` — the same predicate used by `GET /api/scrape-status`. Using the most-recent row (rather than "any running row exists") keeps SSR and the client poll in agreement: a stuck older row with `status = 'running'` that coexists with a newer `ready` row does not trigger the banner, matching what the poll would return.
+
+**Implements:** [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) AC 5, AC 7 (the `alt_source_count` field drives the `+N` suffix on source labels), [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress)
 
 ### GET /api/digest/:id
 
@@ -232,6 +235,8 @@ Up to 29 articles from the article pool filtered by the user's active hashtags. 
 ```
 
 `chunks_remaining` and `chunks_total` are `null` when the coordinator has not yet written the chunk count to KV. `articles_ingested` defaults to `0`. The KV counter is a display mirror; the authoritative completion gate is in D1 (`scrape_chunk_completions`).
+
+**Running predicate:** `running: true` is returned only when the **most-recent** `scrape_runs` row has `status = 'running'` (with an optional `?run_id=` parameter to pin to a specific run). This is the same predicate used by the SSR `scrape_running` field in `GET /api/digest/today` — both consult the most-recent row so that a stuck older row with `status = 'running'` never causes the two sources to disagree. A "any running row exists" probe would diverge here and cause the running-to-idle transition in `digest.astro` to fire a reload loop on first paint (regression fixed in PR #220, 2026-05-07).
 
 Both responses carry a `Set-Cookie` refresh when the session is within 5 minutes of expiry, so polling during a long scrape never expires the session.
 
