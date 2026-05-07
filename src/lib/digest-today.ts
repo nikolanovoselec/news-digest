@@ -112,19 +112,22 @@ export async function loadTodayPayload(
 
   const nextScrapeAt = computeNextScrapeAt();
 
-  // Flag any in-flight scrape so the dashboard renders "Update in
-  // progress…" on first paint without waiting for the client poll.
-  // scrape_runs is a global, fan-out-for-all-users table (no user_id
-  // column) — the scrape pipeline runs once per cron tick across the
-  // whole corpus, so this probe is correctly user-agnostic.
+  // Flag the dashboard "Update in progress" first-paint indicator only
+  // when the MOST-RECENT scrape_runs row is still running. /api/scrape-
+  // status uses the same predicate, so SSR and the client poll never
+  // disagree. A blanket "any running row exists" probe diverges from
+  // the API when an older run died mid-flight without resolving to
+  // 'ready'/'failed': SSR renders running=true, the client poll
+  // reports running=false, and the running-to-idle transition path in
+  // digest.astro triggers a reload loop on first paint.
   let scrapeRunning = false;
   try {
     const runningRow = await db
       .prepare(
-        `SELECT 1 FROM scrape_runs WHERE status = 'running' LIMIT 1`,
+        `SELECT status FROM scrape_runs ORDER BY started_at DESC LIMIT 1`,
       )
-      .first<{ '1': number }>();
-    scrapeRunning = runningRow !== null;
+      .first<{ status: string }>();
+    scrapeRunning = runningRow !== null && runningRow.status === 'running';
   } catch (err) {
     log('error', 'digest.today.query_failed', {
       user_id: userId,
