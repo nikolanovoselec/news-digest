@@ -90,7 +90,7 @@ Every source file annotates the REQ-IDs it implements via `// Implements REQ-X-N
 | Path | Role | Implements |
 |---|---|---|
 | `canonical-url.ts` | URL canonicalization for cross-source dedup | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
-| `etld.ts` | Naive eTLD+1 helper (`etldPlusOne`, `sameVendor`): extracts the registrable domain from a host for same-publisher detection in dedup and the diagnostic. Known aggregator-wrapper hosts (`news.google.com`) return `false` from `sameVendor` regardless of eTLD+1 match — they carry no publisher identity. Covers the corpus's dominant TLDs; does not pull the full Public Suffix List. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 11 |
+| `etld.ts` | Naive eTLD+1 helper (`etldPlusOne`, `sameVendor`): extracts the registrable domain for same-publisher detection. Aggregator hosts (`news.google.com`) always return `false` from `sameVendor` — they carry no publisher identity. Covers dominant TLDs; does not use the full Public Suffix List. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 11 |
 | `crypto.ts` | base64url codec, constant-time HMAC compare, cookie reader | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation) |
 | `db.ts` | D1 wrapper with FK pragma | (shared) |
 | `email.ts` | Resend renderer and transport | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email), [REQ-MAIL-002](../sdd/email.md#req-mail-002-non-blocking-email-failure) |
