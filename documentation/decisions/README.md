@@ -936,8 +936,8 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Consequences:**
 
-- Provisioned `dedup-sweep` (production) and `dedup-sweep-integration` queues out-of-band; deploys depend on these existing.
-- Migration `0013_dedup_runs.sql` adds the audit table; must be applied to integration and production D1 before the consumer ships, or the consumer's first UPDATE fails and the message ends up in DLQ.
+- New queues `dedup-sweep` (production) and `dedup-sweep-integration` are declared in `wrangler.toml`; the existing `scripts/bootstrap-resources.sh` step in both deploy workflows iterates every `[[queues.producers]]` and creates any missing queue idempotently, so a fresh fork's first deploy provisions both without manual setup.
+- Migration `0013_dedup_runs.sql` adds the audit table and is picked up by the existing drift-tolerant migration step in both deploy workflows; the consumer's first UPDATE depends on the table existing, so the migration must run before the deploy lands the consumer code (the workflows enforce this ordering).
 - The synchronous body-driven path on `POST /api/admin/historical-dedup` is preserved (when `cursor`/`batch` is in the body) so dev-bypass curl scripts and the existing test suite continue to work without rewriting.
 - The browser-driven `while(true)` loop on `/settings` is replaced by a 5-second poll on `/api/admin/dedup-status`; the page can resume mid-sweep on tab reload by reading the persisted `runId` from pipeline state.
 - Future sweeps (e.g., re-embed + dedup) can be modelled the same way without re-litigating the shape.
