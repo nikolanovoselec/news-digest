@@ -18,11 +18,8 @@
 // so the fast-path bands stay clean.
 //
 // Cost. Per scrape tick: ~20-30 new articles, expected 2-5 borderline
-// pairs => 2-5 LLM calls. Per historical-dedup OPERATOR INVOCATION:
-// bounded by RERANK_BATCH_CAP across every batch in that invocation
-// (REQ-PIPE-009 AC 5 mandates per-invocation, not per-batch). The cap
-// is enforced by the caller threading a shared budget object into
-// every batch; this helper itself is stateless.
+// pairs => 2-5 LLM calls. Per historical-dedup operator invocation:
+// bounded by the actual count of borderline pairs in the corpus.
 
 import { runJson, asAiBinding } from '~/lib/llm-json';
 import { log } from '~/lib/log';
@@ -33,14 +30,6 @@ import { log } from '~/lib/log';
  *  below 0.72 in production were unrelated topics, never legitimate
  *  duplicates. */
 export const DEFAULT_RERANK_FLOOR = 0.72;
-
-/** Hard cap on rerank calls per finalize / historical-dedup invocation.
- *  Once hit, the route logs `dedup_rerank_cap_hit` and treats remaining
- *  borderline pairs as distinct rather than blowing the isolate budget
- *  on a bad-day cluster (e.g. a feed pushing 100 near-duplicates in one
- *  tick). The cap is intentionally generous - normal ticks see <10
- *  borderline calls. */
-export const RERANK_BATCH_CAP = 25;
 
 /** Hard cap on snippet bytes sent per article. Keeps the prompt under
  *  ~1k tokens regardless of upstream body length so the LLM call stays

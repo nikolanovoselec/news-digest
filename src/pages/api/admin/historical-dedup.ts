@@ -41,11 +41,7 @@ import {
   readSameVendorPenalty,
   deleteVectorsBatched,
 } from '~/lib/embeddings';
-import {
-  readRerankFloor,
-  rerankBorderlinePair,
-  RERANK_BATCH_CAP,
-} from '~/lib/dedup-rerank';
+import { readRerankFloor, rerankBorderlinePair } from '~/lib/dedup-rerank';
 import { sameVendor } from '~/lib/etld';
 
 /** Default articles scanned per call when the caller omits `batch`. */
@@ -66,16 +62,6 @@ interface ArticleRow {
   source_snippet: string | null;
   published_at: number;
   primary_source_url: string;
-}
-
-/** Per-invocation rerank budget shared across every batch in one
- *  operator HTTP call. Hoisted out of runHistoricalDedupBatch so the
- *  REQ-PIPE-009 AC 5 cost cap is genuinely per-invocation, not
- *  per-batch (otherwise a 10k-article sweep at batch=100 would issue
- *  up to 100 × RERANK_BATCH_CAP LLM calls). */
-interface RerankBudget {
-  used: number;
-  capLogged: boolean;
 }
 
 interface DedupResult {
@@ -152,24 +138,10 @@ async function handle(context: APIContext): Promise<Response> {
   let lastRemaining = 0;
   let iterations = 0;
   let done = false;
-  // REQ-PIPE-009 AC 5: the rerank cap is per OPERATOR INVOCATION, not
-  // per-batch. A single invocation that walks 10k articles in 100-row
-  // batches must NOT issue 100 × RERANK_BATCH_CAP LLM calls. The
-  // counter is hoisted here and threaded into runHistoricalDedupBatch
-  // by reference so every batch shares the same budget.
-  const rerankBudget: RerankBudget = {
-    used: 0,
-    capLogged: false,
-  };
 
   try {
     for (;;) {
-      const result = await runHistoricalDedupBatch(
-        env,
-        cursor,
-        batch,
-        rerankBudget,
-      );
+      const result = await runHistoricalDedupBatch(env, cursor, batch);
       iterations += 1;
       totalScanned += result.scanned;
       totalMerged += result.merged;
@@ -262,7 +234,6 @@ async function runHistoricalDedupBatch(
   env: Env,
   cursor: number | null,
   batch: number,
-  rerankBudget: RerankBudget,
 ): Promise<DedupResult> {
   const threshold = readCosineThreshold(env);
   const sameVendorPenalty = readSameVendorPenalty(env);
@@ -369,17 +340,6 @@ async function runHistoricalDedupBatch(
       if (stillThere === null) continue;
 
       if (isBorderline) {
-        if (rerankBudget.used >= RERANK_BATCH_CAP) {
-          if (!rerankBudget.capLogged) {
-            rerankBudget.capLogged = true;
-            log('warn', 'digest.generation', {
-              status: 'historical_dedup_rerank_cap_hit',
-              cap: RERANK_BATCH_CAP,
-            });
-          }
-          continue;
-        }
-        rerankBudget.used += 1;
         rerankCallsThisBatch += 1;
         const sameEvent = await rerankBorderlinePair(
           env,
@@ -464,7 +424,6 @@ async function runHistoricalDedupBatch(
     remaining,
     rerank_floor: rerankFloor,
     rerank_calls_this_batch: rerankCallsThisBatch,
-    rerank_calls_invocation_total: rerankBudget.used,
     rerank_accepts_this_batch: rerankAccepts,
   });
 

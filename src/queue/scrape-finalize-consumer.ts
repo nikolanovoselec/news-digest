@@ -45,11 +45,7 @@ import {
   readSameVendorPenalty,
   deleteVectorsBatched,
 } from '~/lib/embeddings';
-import {
-  readRerankFloor,
-  rerankBorderlinePair,
-  RERANK_BATCH_CAP,
-} from '~/lib/dedup-rerank';
+import { readRerankFloor, rerankBorderlinePair } from '~/lib/dedup-rerank';
 import { sameVendor } from '~/lib/etld';
 
 /** Hard cap on candidates per finalize call. Comfortable headroom over
@@ -166,7 +162,6 @@ export async function processOneFinalize(
   let queriesFailed = 0;
   let rerankCalls = 0;
   let rerankAccepts = 0;
-  let rerankCapHit = false;
 
   for (const self of rows) {
     if (mergedNewIds.has(self.id)) continue; // already merged this pass
@@ -251,17 +246,6 @@ export async function processOneFinalize(
     let bestMatchId = autoMatchId;
     let bestMatchAlreadyConfirmedExists = false;
     if (bestMatchId === null && borderMatchId !== null) {
-      if (rerankCalls >= RERANK_BATCH_CAP) {
-        if (!rerankCapHit) {
-          rerankCapHit = true;
-          log('warn', 'digest.generation', {
-            status: 'finalize_rerank_cap_hit',
-            scrape_run_id: body.scrape_run_id,
-            cap: RERANK_BATCH_CAP,
-          });
-        }
-        continue;
-      }
       const existingArticle = await env.DB
         .prepare(
           `SELECT id, title, source_snippet FROM articles WHERE id = ?1`,

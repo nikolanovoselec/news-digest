@@ -635,65 +635,6 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     expect(mockVec.deleteMock).toHaveBeenCalledWith([newId]);
   });
 
-  it('REQ-PIPE-009 AC 5: rerank cap caps LLM calls within one finalize message', async () => {
-    // Build 26 new articles each with one borderline match, where 25
-    // is the configured cap. The 26th borderline pair must NOT invoke
-    // the LLM and must NOT merge.
-    const N = 26;
-    const newIds = Array.from({ length: N }, (_, i) => `new-${i}`);
-    const oldIds = Array.from({ length: N }, (_, i) => `old-${i}`);
-    const articleRows = newIds.map((id, i) => ({
-      id,
-      title: `Article ${i}`,
-      source_snippet: 'snippet',
-      published_at: 2000 + i,
-      ingested_at: 2000 + i,
-      primary_source_url: `https://newsite.example/post-${i}`,
-    }));
-    const existingArticleData = new Map(
-      oldIds.map((id, i) => [
-        id,
-        { title: `Old ${i}`, source_snippet: 'old snippet' },
-      ]),
-    );
-    const mockDb = makeMockDb({
-      articleRows,
-      existsIds: new Set(oldIds),
-      existingArticleData,
-    });
-    const matches = new Map<string, VectorizeMatch[]>();
-    for (let i = 0; i < N; i++) {
-      const newId = newIds[i] as string;
-      const oldId = oldIds[i] as string;
-      matches.set(newId, [
-        {
-          id: oldId,
-          score: 0.78,
-          metadata: {
-            published_at: 1000 + i,
-            primary_source_url: `https://oldsite.example/post-${i}`,
-          },
-        } as unknown as VectorizeMatch,
-      ]);
-    }
-    const mockVec = makeMockVectorize(matches);
-    const aiRun = vi
-      .fn()
-      .mockResolvedValue({ response: '{"same_event":true}' });
-    const env = makeEnv(mockDb.db, mockVec.binding, {
-      aiBinding: { run: aiRun },
-    });
-
-    await processOneFinalize(env, { scrape_run_id: 'r1' });
-    // Cap is 25; the 26th borderline pair must not call the LLM.
-    expect(aiRun).toHaveBeenCalledTimes(25);
-    // Vectorize.deleteByIds is called once with the 25 merged ids.
-    expect(mockVec.deleteMock).toHaveBeenCalledTimes(1);
-    expect(
-      (mockVec.deleteMock.mock.calls[0] as unknown as [string[]])[0],
-    ).toHaveLength(25);
-  });
-
   it('REQ-PIPE-009: cosine below floor never invokes LLM', async () => {
     const newId = 'new-1';
     const oldId = 'old-1';
