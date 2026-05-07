@@ -98,7 +98,7 @@ Custom token via [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflar
 | Account | Workers Scripts | Edit | Deploys the Worker |
 | Account | Workers KV Storage | Edit | Auto-creates the KV namespace |
 | Account | D1 | Edit | Auto-creates the D1 database and applies migrations |
-| Account | Queues | Edit | Auto-creates `scrape-coordinator`, `scrape-chunks`, and `scrape-finalize` |
+| Account | Queues | Edit | Auto-creates `scrape-coordinator`, `scrape-chunks`, `scrape-finalize`, and `dedup-sweep` |
 | Account | Workers AI | Read | LLM inference for summaries + source discovery; bge-base-en-v1.5 for article embeddings |
 | Account | Vectorize | Edit | Auto-creates the `ai-news-embeddings` index; stores + queries 768-dim cosine embeddings for semantic dedup |
 | Zone | Zone | Read | Only when binding a custom domain; discovers the zone |
@@ -111,8 +111,8 @@ The Zone scopes are skipped automatically when `APP_URL` is a `*.workers.dev` UR
 <details>
 <summary><strong>What the workflow does</strong></summary>
 
-1. Resolves (or creates) the D1 database, KV namespace, and queues (`scrape-coordinator`, `scrape-chunks`, `scrape-finalize`) via [`scripts/bootstrap-resources.sh`](scripts/bootstrap-resources.sh)
-2. Resolves (or creates) the `ai-news-embeddings` Vectorize index (768-dim cosine)
+1. Idempotently looks up (or creates) the D1 database, KV namespace, queues (`scrape-coordinator`, `scrape-chunks`, `scrape-finalize`, `dedup-sweep`), and the `ai-news-embeddings` Vectorize index. All resolved IDs are patched into a CI-only copy of `wrangler.toml` so the deploy binds the right resources without committing back to the repo.
+2. (D1 + KV are looked up by name; the workflow creates them on first deploy if they don't exist yet.)
 3. Applies D1 migrations
 4. Pushes Worker secrets (Resend pair skipped when unset)
 5. `wrangler deploy`

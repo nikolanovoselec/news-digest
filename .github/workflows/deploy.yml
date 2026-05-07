@@ -63,29 +63,92 @@ jobs:
         run: |
           printf '_worker.js\n_routes.json\n' > dist/.assetsignore
 
-      - name: Bootstrap Cloudflare resources (idempotent)
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: bash scripts/bootstrap-resources.sh
+      # Provision Cloudflare resources idempotently before deploy.
+      # Pattern: look up by name; create if missing; for D1 + KV,
+      # patch wrangler.toml in the ephemeral CI workspace with the
+      # resolved id so wrangler deploy binds the right resource.
 
-      # REQ-PIPE-003 — Vectorize index for semantic same-story dedup.
-      # Idempotent: `wrangler vectorize get` returns 0 when the index
-      # already exists; the create runs only on the first deploy of a
-      # fork. 768-dim cosine matches the @cf/baai/bge-base-en-v1.5
-      # embedding model. Forks that swap the model must update both
-      # this step and src/lib/embeddings.ts in the same change.
-      - name: Provision Vectorize index
+      - name: Provision D1 - ai-news-digest
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          if npx --yes wrangler vectorize get ai-news-embeddings >/dev/null 2>&1; then
-            echo "Vectorize: ai-news-embeddings already exists"
-          else
-            npx --yes wrangler vectorize create ai-news-embeddings \
-              --dimensions=768 --metric=cosine
+          set -e
+          DB_ID=$(npx --yes wrangler d1 list --json 2>/dev/null \
+            | jq -r '.[] | select(.name == "ai-news-digest") | .uuid' | head -1)
+          if [ -z "$DB_ID" ]; then
+            DB_ID=$(npx --yes wrangler d1 create ai-news-digest 2>&1 \
+              | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
           fi
+          [ -n "$DB_ID" ] || { echo "::error::Failed to resolve D1 id"; exit 1; }
+          awk -v new="$DB_ID" '
+            BEGIN { patched=0 }
+            $0 == "[[d1_databases]]" { in_sec=1; print; next }
+            /^\[/ && in_sec && $0 != "[[d1_databases]]" { in_sec=0 }
+            in_sec && $1 == "database_id" { print "database_id = \"" new "\""; patched=1; next }
+            { print }
+            END { if (!patched) exit 1 }
+          ' wrangler.toml > wrangler.toml.tmp || { echo "::error::wrangler.toml missing [[d1_databases]] database_id line"; exit 1; }
+          mv wrangler.toml.tmp wrangler.toml
+          echo "D1 ai-news-digest = $DB_ID"
+
+      - name: Provision KV - ai-news-digest-kv
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -e
+          KV_ID=$(npx --yes wrangler kv namespace list 2>/dev/null \
+            | jq -r '.[] | select(.title == "ai-news-digest-kv") | .id' | head -1)
+          if [ -z "$KV_ID" ]; then
+            KV_ID=$(npx --yes wrangler kv namespace create ai-news-digest-kv 2>&1 \
+              | sed -nE 's/.*"id":[[:space:]]*"([a-f0-9]+)".*/\1/p' | head -1)
+          fi
+          [ -n "$KV_ID" ] || { echo "::error::Failed to resolve KV id"; exit 1; }
+          awk -v new="$KV_ID" '
+            BEGIN { patched=0 }
+            $0 == "[[kv_namespaces]]" { in_sec=1; print; next }
+            /^\[/ && in_sec && $0 != "[[kv_namespaces]]" { in_sec=0 }
+            in_sec && $1 == "id" { print "id = \"" new "\""; patched=1; next }
+            { print }
+            END { if (!patched) exit 1 }
+          ' wrangler.toml > wrangler.toml.tmp || { echo "::error::wrangler.toml missing [[kv_namespaces]] id line"; exit 1; }
+          mv wrangler.toml.tmp wrangler.toml
+          echo "KV ai-news-digest-kv = $KV_ID"
+
+      - name: Provision queue - scrape-coordinator
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler queues info scrape-coordinator >/dev/null 2>&1 || npx --yes wrangler queues create scrape-coordinator
+
+      - name: Provision queue - scrape-chunks
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler queues info scrape-chunks >/dev/null 2>&1 || npx --yes wrangler queues create scrape-chunks
+
+      - name: Provision queue - scrape-finalize
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler queues info scrape-finalize >/dev/null 2>&1 || npx --yes wrangler queues create scrape-finalize
+
+      - name: Provision queue - dedup-sweep
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler queues info dedup-sweep >/dev/null 2>&1 || npx --yes wrangler queues create dedup-sweep
+
+      # REQ-PIPE-003 — Vectorize index for semantic same-story dedup.
+      # 768-dim cosine matches the @cf/baai/bge-base-en-v1.5 embedding
+      # model. Forks that swap the model must update both this step
+      # and src/lib/embeddings.ts in the same change.
+      - name: Provision Vectorize index
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler vectorize get ai-news-embeddings >/dev/null 2>&1 || npx --yes wrangler vectorize create ai-news-embeddings --dimensions=768 --metric=cosine
 
       # Drift-tolerant migration apply. SQLite has no `ADD COLUMN IF
       # NOT EXISTS`, so a migration manually run out-of-band (during

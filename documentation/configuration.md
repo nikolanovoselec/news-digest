@@ -76,11 +76,12 @@ Declared in `wrangler.toml`:
 | `SCRAPE_COORDINATOR` | Queue producer | Producer binding — one message per every-4-hours cron tick kicks the coordinator |
 | `SCRAPE_CHUNKS` | Queue producer | Producer binding — one message per ~100-candidate LLM chunk |
 | `SCRAPE_FINALIZE` | Queue producer | Producer binding — one message per scrape run, enqueued by the last chunk consumer after the run is stamped `ready`; triggers the same-story dedup pass ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
+| `DEDUP_SWEEP` | Queue producer + consumer | Self-chaining queue carrying operator-triggered historical-dedup sweep messages. The kicker (admin route) sends the first message; the consumer processes one batch then re-enqueues a continuation until the corpus tail is reached, decoupling the sweep from the operator's browser tab ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9) |
 | `AI` | Workers AI | LLM inference for chunk summarization and source discovery, plus bge-base-en-v1.5 embedding generation for same-story dedup |
 | `VECTORIZE` | Vectorize index | 768-dim cosine index over every surviving article's embedding; queried in the finalize pass and by the historical re-run sweep ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
 | `ASSETS` | Fetcher (static assets) | Cloudflare static-asset binding for serving the Astro-built output; falls back to `new Response('news-digest')` in tests |
 
-All three queue consumers run with `max_batch_size = 1` (one isolate per message) and `max_retries = 3`.
+All four queue consumers (`SCRAPE_COORDINATOR`, `SCRAPE_CHUNKS`, `SCRAPE_FINALIZE`, `DEDUP_SWEEP`) run with `max_batch_size = 1` (one isolate per message) and `max_retries = 3`.
 
 ## Worker Vars (non-secret)
 

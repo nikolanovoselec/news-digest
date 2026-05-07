@@ -30,6 +30,10 @@ queue = "scrape-chunks-test"
 binding = "SCRAPE_FINALIZE"
 queue = "scrape-finalize-test"
 
+[[queues.producers]]
+binding = "DEDUP_SWEEP"
+queue = "dedup-sweep-test"
+
 # REQ-PIPE-003 — Vectorize binding for the test pool. workerd does
 # not back this binding with a real index in tests; it produces a
 # typed stub that throws on any call. Tests that exercise dedup

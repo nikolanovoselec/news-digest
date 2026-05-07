@@ -48,6 +48,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD32 | Same-story dedup uses Workers AI embeddings + Vectorize (replaces LLM finalize dedup) | Architecture | 2026-05-06 |
 | AD33 | Embed source-text (not LLM rewrite) and apply a same-vendor cosine penalty for dedup | Architecture | 2026-05-06 |
 | AD34 | LLM same-event rerank for borderline cosine pairs (between auto-merge and distinct bands) | Architecture | 2026-05-07 |
+| AD35 | Operator historical-dedup sweep self-chains via Cloudflare Queue, not the operator's browser tab | Architecture | 2026-05-07 |
 
 ---
 
@@ -333,7 +334,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - Operator must remember to manually trigger. There's no automation enforcing "test on integration before merging to main"; that discipline is on the human.
 - Per-env GitHub Environment scoping is in place (`environment: integration`) so any secret can later be overridden without touching workflow code (e.g., a separate `OAUTH_JWT_SECRET` to isolate cross-env JWT identity confusion).
 - Integration's `APP_URL` is sourced from a GitHub Environment **variable** (`vars.APP_URL` on the `integration` environment), NOT a secret and NOT hardcoded in `wrangler.toml`. The codeflare pattern: variables for non-sensitive per-environment config, secrets for credentials. Any fork sets their own integration hostname under Settings → Environments → integration → Variables → APP_URL without touching code.
-- The bootstrap script (`scripts/bootstrap-resources.sh`) accepts an `ENV_NAME` env var to operate on env-scoped sections; placeholder IDs in wrangler.toml (`TBD-bootstrap-on-first-deploy`) trigger create-or-lookup-by-name on the first run.
+- All Cloudflare resources (D1, KV, queues, Vectorize) are provisioned by inline `wrangler` lookup-or-create blocks directly in both deploy workflows. D1 + KV resolved IDs are patched into a CI-only copy of `wrangler.toml` before `wrangler deploy` runs, so forks land with zero pre-deploy setup; the committed IDs in the repo are the owner's, kept in place for local `wrangler dev`.
 
 **Related requirements:** [REQ-OPS-006](../../sdd/observability.md#req-ops-006-integration-deployment-target)
 
@@ -913,6 +914,35 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - Validation will be cumulative: the dedup-diag diagnostic does not directly surface rerank verdicts, so confirmation comes from observing per-run `rerank_calls` and `rerank_accepts` counters in structured logs across multiple ticks.
 
 **Related requirements:** REQ-PIPE-009, REQ-PIPE-003.
+
+---
+
+### AD35: Operator historical-dedup sweep self-chains via Cloudflare Queue
+
+**Status:** Accepted (2026-05-07)
+
+**Decision:** The operator-triggered historical-dedup sweep is driven by a self-chaining Cloudflare Queue (`DEDUP_SWEEP`) plus a `dedup_runs` audit table. The admin route is a kicker: it inserts the audit row, enqueues one starter message, and returns immediately with a `run_id`. The consumer processes one batch via `runHistoricalDedupBatch`, updates the audit row, and re-enqueues a continuation message until the corpus tail is reached. The operator surface polls `/api/admin/dedup-status?run_id=…` for progress; closing the browser tab does not interrupt the sweep.
+
+**Context:** REQ-PIPE-003 AC 9 requires the operator to re-run same-story matching across the entire historical pool on demand. The previous shape ran a `while(true) fetch(/api/admin/historical-dedup, {cursor})` loop in the browser. On 2026-05-06 a production run produced 4 visible duplicates of one story (BTIG/Palo Alto, Anthropic financial-services AI agents) that subsequent dedup runs did not collapse. Even before root-causing the BTIG miss specifically, the architectural fragility was clear: the entire sweep depended on the operator's browser tab staying open for as long as the corpus took to scan. Tab close, network blip, or accidental navigation aborted the sweep mid-corpus and there was no audit trail of how far it got.
+
+**Alternatives considered:**
+
+- **Cloudflare Cron Trigger** — overkill for an operator-triggered, on-demand sweep; cron schedules are discouraged for one-shot work and can't take a `run_id` parameter.
+- **Durable Object with `setAlarm`** — viable but adds a new primitive (no DOs in this project today) and storage that isn't queryable from D1 for the operator surface.
+- **`ctx.waitUntil` with self-fetch chaining** — bounded by the Worker invocation lifetime (~30s); a multi-thousand-article sweep would not finish in one invocation, and there's no built-in retry or visibility.
+- **Queue-driven self-chain** *(chosen)* — reuses an existing primitive (the project already runs three queues for the scrape pipeline), inherits Cloudflare Queues' built-in retry and DLQ semantics, and the `dedup_runs` audit row gives the operator surface a queryable progress signal that survives a browser refresh or fresh visit.
+
+**Rationale:** The queue primitive is already part of the system's mental model and operational vocabulary; adding a fourth queue is cheaper than introducing a Durable Object. Self-chaining (consumer re-enqueues continuation) is a well-known pattern with predictable failure modes — terminal failure flips the audit row to `'failed'` with the error string. The `dedup_runs` table makes the sweep observable from any admin surface, not just the tab that started it, and the polling endpoint cleanly separates execution (queue) from observability (D1).
+
+**Consequences:**
+
+- New queues `dedup-sweep` (production) and `dedup-sweep-integration` are declared in `wrangler.toml` and provisioned by inline `wrangler queues info ... || wrangler queues create ...` steps in both deploy workflows. A fresh fork's first deploy provisions both without manual setup.
+- Migration `0013_dedup_runs.sql` adds the audit table and is picked up by the existing drift-tolerant migration step in both deploy workflows; the consumer's first UPDATE depends on the table existing, so the migration must run before the deploy lands the consumer code (the workflows enforce this ordering).
+- The synchronous body-driven path on `POST /api/admin/historical-dedup` is preserved (when `cursor`/`batch` is in the body) so dev-bypass curl scripts and the existing test suite continue to work without rewriting.
+- The browser-driven `while(true)` loop on `/settings` is replaced by a 5-second poll on `/api/admin/dedup-status`; the page can resume mid-sweep on tab reload by reading the persisted `runId` from pipeline state.
+- Future sweeps (e.g., re-embed + dedup) can be modelled the same way without re-litigating the shape.
+
+**Related requirements:** REQ-PIPE-003 AC 9, REQ-OPS-008.
 
 ---
 

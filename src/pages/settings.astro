@@ -1126,44 +1126,80 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       }
       setStatus(`Embedded ${embedTotal} new articles. Running dedup…`);
 
-      // Phase 4 — historical dedup, oldest-first. Each server call
-      // runs exactly one bounded batch and returns; this loop drives
-      // iteration via `next_cursor` so we don't rescan already-visited
-      // articles and we avoid putting the long-running loop inside the
-      // Worker (which would blow Cloudflare's ~100s edge cut and surface
-      // as a "Failed to fetch" with no partial progress).
+      // Phase 4 — historical dedup, oldest-first. The kicker enqueues
+      // one queue message and returns immediately with a run_id; the
+      // queue consumer drives the loop server-side and re-enqueues a
+      // continuation message after each batch. We poll
+      // /api/admin/dedup-status?run_id=... for live progress; if the
+      // operator closes the tab the sweep keeps running on its own.
+      const kRes = await fetch('/api/admin/historical-dedup', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      });
+      if (!kRes.ok) throw new Error(`dedup-kick HTTP ${kRes.status}`);
+      const kBody = (await kRes.json()) as {
+        ok: boolean;
+        run_id: string;
+        enqueued: boolean;
+      };
+      if (!kBody.ok || kBody.run_id === undefined) {
+        throw new Error('dedup-kick missing run_id');
+      }
+      const runId = kBody.run_id;
+      writePipelineState({ msg: `Dedup queued — run ${runId.slice(0, 6)}…`, runId });
+      setStatus(`Dedup queued — run ${runId.slice(0, 6)}…`);
+
+      // Server-side loop drives the sweep; we just poll for status.
+      // The sweep continues even if the operator navigates away — the
+      // saved run_id lets the page resume the progress display on
+      // reload (see wirePipelineButton). Bound the polling time so a
+      // stuck consumer doesn't hold the buttons disabled forever.
+      const POLL_INTERVAL_MS = 5000;
+      const POLL_MAX_TICKS = 720; // 1 hour safety cap
+      let ticks = 0;
       let scanned = 0;
       let merged = 0;
-      let cursor: { pa: number; id: string } | null = null;
-      while (true) {
-        const dRes = await fetch('/api/admin/historical-dedup', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
+      while (ticks < POLL_MAX_TICKS) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        ticks += 1;
+        const sRes = await fetch(
+          `/api/admin/dedup-status?run_id=${encodeURIComponent(runId)}`,
+          {
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json' },
           },
-          body: cursor === null ? '{}' : JSON.stringify({ cursor }),
-        });
-        if (!dRes.ok) throw new Error(`dedup HTTP ${dRes.status}`);
-        const dBody = (await dRes.json()) as {
+        );
+        if (!sRes.ok) {
+          // Transient — keep polling. A persistent failure surfaces
+          // through the eventual POLL_MAX_TICKS branch below.
+          continue;
+        }
+        const sBody = (await sRes.json()) as {
+          ok: boolean;
+          status: 'running' | 'done' | 'failed';
           scanned: number;
           merged: number;
           remaining: number;
-          next_cursor: { pa: number; id: string } | null;
           done: boolean;
+          failed: boolean;
+          error: string | null;
         };
-        scanned += dBody.scanned;
-        merged += dBody.merged;
-        if (dBody.done) break;
-        if (dBody.scanned === 0) {
+        if (!sBody.ok) continue;
+        scanned = sBody.scanned;
+        merged = sBody.merged;
+        if (sBody.failed) {
           throw new Error(
-            `dedup stalled at ${dBody.remaining} remaining (upstream outage?)`,
+            `dedup failed${sBody.error !== null ? `: ${sBody.error}` : ''}`,
           );
         }
-        cursor = dBody.next_cursor;
+        if (sBody.done) break;
         setStatus(
-          `Dedup: scanned ${scanned}, merged ${merged}, ${dBody.remaining} remaining…`,
+          `Dedup: scanned ${scanned}, merged ${merged}, ${sBody.remaining} remaining…`,
         );
       }
       setStatus(
