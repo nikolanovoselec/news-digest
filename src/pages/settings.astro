@@ -1,5 +1,5 @@
 ---
-// Implements REQ-SET-001, REQ-SET-002, REQ-SET-003, REQ-SET-004, REQ-SET-005, REQ-SET-006, REQ-SET-007, REQ-DISC-004, REQ-DISC-006
+// Implements REQ-SET-001, REQ-SET-002, REQ-SET-003, REQ-SET-004, REQ-SET-005, REQ-SET-006, REQ-SET-007, REQ-DISC-004, REQ-DISC-006, REQ-OPS-008
 //
 // Unified onboarding + edit form. The `first_run` query param swaps the
 // hero copy and the primary CTA label; the form fields are identical in
@@ -518,19 +518,20 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           </fieldset>
           {isAdmin && (
             <fieldset class="settings__section">
-              <legend class="settings__legend">Run pipeline now</legend>
+              <legend class="settings__legend">Administration</legend>
               <p class="settings__hint">
                 Trigger the full scrape → embed → dedup pipeline
                 immediately instead of waiting for the next 4-hour
-                cron tick. Useful after a deploy to verify the change
-                end-to-end. Admin-only; gated by Cloudflare Access.
+                cron tick, or refresh feeds only (the same work the
+                cron does on its tick). Admin-only; gated by Cloudflare
+                Access.
               </p>
               <label
                 class="settings__hint"
                 style="display:flex;align-items:center;gap:0.5rem;margin:0.5rem 0 0.75rem"
               >
                 <input type="checkbox" data-pipeline-wipe />
-                <span>Wipe & re-embed all existing articles</span>
+                <span>Wipe & re-embed all existing articles (full run only)</span>
               </label>
               <div class="settings__actions-row">
                 <button
@@ -538,7 +539,14 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
                   class="settings__secondary-button"
                   data-pipeline-run
                 >
-                  Run now
+                  Full pipeline run
+                </button>
+                <button
+                  type="button"
+                  class="settings__secondary-button"
+                  data-pipeline-refresh
+                >
+                  Refresh feeds
                 </button>
               </div>
               <p
@@ -900,12 +908,17 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     }
   }
 
-  /** Orchestrate a manual cron-equivalent pipeline run from the
-   *  Settings page. Replaces the three separate admin buttons (force
-   *  refresh, embed backfill, historical dedup) with one chained
-   *  client-side flow that consumes the existing JSON endpoints.
+  /** Orchestrate a manual pipeline run from the Settings page.
    *
-   *  Phases:
+   *  Two modes from one chained client-side flow:
+   *    'full'    — full scrape → embed → dedup (the multi-phase admin
+   *                run that supersedes the three separate admin
+   *                buttons).
+   *    'refresh' — scrape only, equivalent to a single 4-hourly cron
+   *                tick. Skips the wipe / embed-backfill / historical
+   *                dedup phases entirely.
+   *
+   *  Phases for full mode:
    *    0. (optional) Wipe + re-embed all articles via
    *       POST /api/admin/embed-backfill?reembed=1, looped on
    *       remaining > 0 in case the platform cuts the request.
@@ -920,8 +933,12 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
    *    4. Run the oldest-first dedup sweep via
    *       POST /api/admin/historical-dedup until done.
    *
+   *  Refresh mode runs phases 1 and 2 only — the queue-driven chunk +
+   *  finalize consumers handle the rest in the background, exactly
+   *  like a cron tick.
+   *
    *  Status text streams into [data-pipeline-status] one phase at a
-   *  time; the button is disabled until the chain finishes (or
+   *  time; both buttons are disabled until the chain finishes (or
    *  errors). All endpoints are gated by Cloudflare Access + the
    *  three-layer admin auth helper, so an unauthenticated tab here
    *  surfaces the auth failure as a "Failed: HTTP 401" line. */
@@ -969,23 +986,30 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     }
   }
 
-  async function runPipeline(wipe: boolean): Promise<void> {
+  async function runPipeline(
+    mode: 'full' | 'refresh',
+    wipe: boolean,
+  ): Promise<void> {
     const status = document.querySelector<HTMLElement>('[data-pipeline-status]');
-    const button = document.querySelector<HTMLButtonElement>('[data-pipeline-run]');
-    if (status === null || button === null) return;
+    const buttons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[data-pipeline-run], [data-pipeline-refresh]',
+      ),
+    );
+    if (status === null || buttons.length === 0) return;
     const setStatus = (msg: string): void => {
       status.hidden = false;
       status.textContent = msg;
       writePipelineState({ msg });
     };
-    button.disabled = true;
+    for (const b of buttons) b.disabled = true;
     try {
-      // Phase 0 — wipe + re-embed all (optional). The server marks
-      // every row 'failed' on the first request, then re-embeds in
-      // batches inside that same request until remaining=0 (or it
-      // hits the platform request-time ceiling). The while-loop
-      // resumes from where the cut left off.
-      if (wipe) {
+      // Phase 0 — wipe + re-embed all (optional, full run only). The
+      // server marks every row 'failed' on the first request, then
+      // re-embeds in batches inside that same request until
+      // remaining=0 (or it hits the platform request-time ceiling).
+      // The while-loop resumes from where the cut left off.
+      if (mode === 'full' && wipe) {
         setStatus('Wiping & re-embedding all articles…');
         let total = 0;
         let firstCall = true;
@@ -1060,6 +1084,18 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
         const sBody = (await sRes.json()) as { running: boolean };
         if (!sBody.running) break;
       }
+
+      if (mode === 'refresh') {
+        // Refresh-only mode mirrors the 4-hourly cron: dispatch the
+        // coordinator and let the queue-driven chunk + finalize
+        // consumers do the rest in the background. No client-driven
+        // embed-backfill or historical-dedup sweep — those are the
+        // distinguishing work of "Full pipeline run".
+        setStatus('Scrape finished.');
+        writePipelineState({ done: true });
+        return;
+      }
+
       setStatus('Scrape finished. Embedding new articles…');
 
       // Phase 3 — drain any embeddings the chunk-consumer didn't
@@ -1139,22 +1175,32 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       setStatus(`Failed: ${msg}`);
       writePipelineState({ done: true });
     } finally {
-      button.disabled = false;
+      for (const b of buttons) b.disabled = false;
     }
   }
 
-  /** Wire the [data-pipeline-run] button to runPipeline(). Idempotent —
+  /** Wire the Full / Refresh buttons to runPipeline(). Idempotent —
    *  the data-bound guard prevents double-binding on Astro SPA
    *  navigation back to /settings. */
   function wirePipelineButton(): void {
-    const button = document.querySelector<HTMLButtonElement>('[data-pipeline-run]');
-    if (button === null) return;
-    if (button.dataset['bound'] === '1') return;
-    button.dataset['bound'] = '1';
-    button.addEventListener('click', () => {
-      const wipe = document.querySelector<HTMLInputElement>('[data-pipeline-wipe]');
-      void runPipeline(wipe?.checked === true);
-    });
+    const fullBtn = document.querySelector<HTMLButtonElement>('[data-pipeline-run]');
+    const refreshBtn = document.querySelector<HTMLButtonElement>(
+      '[data-pipeline-refresh]',
+    );
+    if (fullBtn !== null && fullBtn.dataset['bound'] !== '1') {
+      fullBtn.dataset['bound'] = '1';
+      fullBtn.addEventListener('click', () => {
+        const wipe = document.querySelector<HTMLInputElement>('[data-pipeline-wipe]');
+        void runPipeline('full', wipe?.checked === true);
+      });
+    }
+    if (refreshBtn !== null && refreshBtn.dataset['bound'] !== '1') {
+      refreshBtn.dataset['bound'] = '1';
+      refreshBtn.addEventListener('click', () => {
+        void runPipeline('refresh', false);
+      });
+    }
+    if (fullBtn === null && refreshBtn === null) return;
 
     // Restore the most recent pipeline status on page load so an
     // operator who navigated away mid-run sees the last phase text

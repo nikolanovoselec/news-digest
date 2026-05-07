@@ -8,6 +8,7 @@ Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are a
 
 ## 2026-05-07
 
+- REQ-OPS-008 AC 1-3 reworded: the settings Administration surface now offers two adjacent admin actions instead of one. "Full pipeline run" keeps the chained scrape → embed → dedup behaviour; a sibling "Refresh feeds" runs only the scrape tick (the same work the 4-hourly cron does), so an operator wanting fresh articles without a corpus-wide dedup sweep can do it in one click.
 - REQ-PIPE-009 added: same-story candidates whose embedding similarity falls in a borderline band now go to a binary same-event judgment by the language model instead of being silently dropped as distinct, so the dedup pipeline catches headline-paraphrased duplicates the embedding pass alone misses without lowering the auto-merge bar that protects against false merges between distinct same-day stories from the same source.
 - REQ-READ-001 AC 2 extended: the dashboard countdown now flips to an "Update in progress…" indicator at first paint when a scrape run is already in flight, so readers landing mid-run see live state instead of a misleading countdown until the next tick.
 - REQ-OPS-005 AC 1 reworded: the parenthetical caller attribution ("from the Settings page button" / "for direct URL visits and operator scripts") was stale once the unified pipeline button switched to GET-with-Accept-JSON, so the AC now states the dual-method contract without naming specific callers.

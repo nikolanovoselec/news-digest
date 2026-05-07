@@ -240,7 +240,7 @@ Up to 29 articles from the article pool filtered by the user's active hashtags. 
 
 Both responses carry a `Set-Cookie` refresh when the session is within 5 minutes of expiry, so polling during a long scrape never expires the session.
 
-**Polled by:** `/digest` (swaps countdown for "Update in progress"), `/settings` Run pipeline now section (5 s poll for live scrape-run progress; also consumed by the pipeline orchestrator to gate phase transitions ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface))).
+**Polled by:** `/digest` (swaps countdown for "Update in progress"), `/settings` Administration section (5 s poll for live scrape-run progress; also consumed by the pipeline orchestrator to gate phase transitions for both **Full pipeline run** and **Refresh feeds** ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface))).
 
 **Implements:** [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress), [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation) AC 4, [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection)
 
@@ -381,9 +381,9 @@ POST enforces Origin; GET is exempt (so operators can bookmark or `curl`).
 
 | Method | Caller | Success response |
 |---|---|---|
-| `POST` | Form submit (legacy; the **Run pipeline now** button on `/settings` uses `GET` with `Accept: application/json`) | `303` → `/settings?force_refresh={ok\|reused}` |
+| `POST` | Form submit (legacy; the Administration buttons on `/settings` use `GET` with `Accept: application/json`) | `303` → `/settings?force_refresh={ok\|reused}` |
 | `GET` | Browser direct | `303` → `/settings?force_refresh={ok\|reused\|denied}` |
-| `GET` | Scripted or **Run pipeline now** orchestrator (`Accept: application/json`) | `200 { ok: true, scrape_run_id, reused }` |
+| `GET` | Scripted, **Full pipeline run**, or **Refresh feeds** orchestrator (`Accept: application/json`) | `200 { ok: true, scrape_run_id, reused }` |
 
 **Error responses:** `401 unauthorized` | `403 forbidden` | `500 "Failed to dispatch coordinator"`.
 
@@ -412,13 +412,13 @@ Resumable embedding backfill for articles whose `embedding_status` is `NULL` or 
 
 Cross-article same-story sweep. Walks the article pool oldest-first by `published_at`; for each article, queries Vectorize for top-K matches whose `published_at` is strictly newer. Auto-merge-band matches (>= `DEDUP_COSINE_THRESHOLD`) fold into the current (older) article via `mergeAsAltSource` without an LLM call. Borderline-band matches (>= `DEDUP_RERANK_FLOOR`, < `DEDUP_COSINE_THRESHOLD`) go to a binary same-event judgment by the language model and merge only on a positive verdict. Each invocation caps rerank calls to prevent budget exhaustion; the cap is logged when hit.
 
-The handler keeps batching inside a single isolate until `done: true` or the platform tears the request down (Cloudflare edge cuts at ~100s with 524). Browser callers get a 303 redirect back to `/settings?dedup=done|partial&scanned=N&merged=M&remaining=K`; scripted callers opting in with `Accept: application/json` get the cumulative JSON shape and may pass `{ cursor, batch }` to seed the starting cursor and per-iteration batch size.
+Each call runs exactly one bounded batch and returns. The browser-side loop in `/settings` drives iteration via the returned `next_cursor` so no single request risks exceeding Cloudflare's ~100s edge cut. Browser callers (the `/settings` Full pipeline run button) get a 303 redirect back to `/settings?dedup=done|partial&scanned=N&merged=M&remaining=K`; scripted callers opting in with `Accept: application/json` get the per-batch JSON shape and may pass `{ cursor, batch }` to seed the starting cursor and per-batch size.
 
 | Method | Auth | Request body |
 |---|---|---|
-| `POST` | Admin session | empty (browser button) or `{ "cursor"?: number, "batch"?: number }` for scripted single-batch calls (cursor = `published_at` lower bound; batch defaults to 100, cap 500) |
+| `POST` | Admin session | empty (browser button) or `{ "cursor"?: number, "batch"?: number }` for scripted single-batch calls (cursor = `published_at` lower bound; batch defaults to 25, cap 500) |
 
-**Success (200):** `{ ok: true, scanned: N, merged: M, remaining: K, done: boolean, iterations: I, elapsed_ms: T }`.
+**Success (200):** `{ ok: true, scanned: N, merged: M, remaining: K, done: boolean, next_cursor: number | null, elapsed_ms: T }`.
 
 **Error responses:** `401 unauthorized` | `403 forbidden` | `500 historical_dedup_failed`.
 
