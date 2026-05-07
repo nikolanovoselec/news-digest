@@ -21,10 +21,11 @@
 //                     and the daily-email dispatcher
 //                     (`dispatchDailyEmails`).
 //
-// Queue dispatch (wrangler.toml: three consumers):
+// Queue dispatch (wrangler.toml: four consumers):
 //   - `scrape-coordinator` → handleCoordinatorBatch (REQ-PIPE-001).
 //   - `scrape-chunks`      → handleChunkBatch (REQ-PIPE-002).
 //   - `scrape-finalize`    → handleFinalizeBatch (REQ-PIPE-008).
+//   - `dedup-sweep`        → handleDedupSweepBatch (REQ-PIPE-003 AC 9).
 //
 // The Astro Cloudflare adapter's generated `_worker.js` owns the HTTP
 // fetch handler in production (`main` in wrangler.toml). This file's
@@ -49,6 +50,10 @@ import {
   handleFinalizeBatch,
   type FinalizeJobMessage,
 } from '~/queue/scrape-finalize-consumer';
+import {
+  handleDedupSweepBatch,
+  type DedupSweepMessage,
+} from '~/queue/dedup-sweep-consumer';
 import { runCleanup } from '~/queue/cleanup';
 import { dispatchDailyEmails } from '~/lib/email-dispatch';
 
@@ -190,6 +195,12 @@ export async function queue(
     case 'scrape-finalize':
       await handleFinalizeBatch(
         batch as MessageBatch<FinalizeJobMessage>,
+        env,
+      );
+      return;
+    case 'dedup-sweep':
+      await handleDedupSweepBatch(
+        batch as MessageBatch<DedupSweepMessage>,
         env,
       );
       return;

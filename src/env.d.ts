@@ -16,6 +16,11 @@ interface Env {
   SCRAPE_COORDINATOR: Queue<import('./queue/scrape-coordinator').CoordinatorMessage>;
   SCRAPE_CHUNKS: Queue<import('./queue/scrape-chunk-consumer').ChunkJobMessage>;
   SCRAPE_FINALIZE: Queue<import('./queue/scrape-finalize-consumer').FinalizeJobMessage>;
+  // REQ-PIPE-003 AC 9 — queue-driven historical-dedup sweep. The kicker
+  // sends the first message; the consumer re-enqueues a continuation
+  // until the corpus tail is reached. Decouples the sweep from the
+  // operator's browser tab.
+  DEDUP_SWEEP: Queue<import('./queue/dedup-sweep-consumer').DedupSweepMessage>;
   AI: Ai;
   // Cloudflare Vectorize index used for semantic article dedup.
   // 768-dim cosine, populated by the chunk-consumer + admin

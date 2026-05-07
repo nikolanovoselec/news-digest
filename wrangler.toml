@@ -15,9 +15,12 @@ workers_dev = false
 # for news.graymatter.ch. Running `wrangler` against this file from an
 # unaudited fork or unfamiliar environment can corrupt prod state in
 # ways that are hard to reverse (e.g., `wrangler d1 migrations apply
-# DB --remote` will mutate the production schema). Forks MUST bootstrap
-# their own resources via `scripts/bootstrap-resources.sh` and replace
-# both IDs before any remote `wrangler` command.
+# DB --remote` will mutate the production schema). Forks do not need
+# to edit these IDs manually: the deploy workflow looks up the D1
+# database, KV namespace, queues, and Vectorize index by name (creating
+# any that don't exist) and patches the resolved IDs into a copy of
+# this file in the ephemeral CI workspace before `wrangler deploy`.
+# The committed IDs are owner-pinned so local `wrangler dev` works.
 
 # Custom domain is NOT declared here. Hardcoding the hostname here would
 # force every fork to edit this file before deploy. Instead, the Deploy
@@ -56,6 +59,14 @@ queue = "scrape-chunks"
 binding = "SCRAPE_FINALIZE"
 queue = "scrape-finalize"
 
+# REQ-PIPE-003 AC 9: queue-driven historical-dedup sweep. Decouples the
+# corpus-wide sweep from the operator's browser tab — the kicker
+# enqueues one message; the consumer runs one bounded batch per
+# message and re-enqueues a continuation until done.
+[[queues.producers]]
+binding = "DEDUP_SWEEP"
+queue = "dedup-sweep"
+
 [[queues.consumers]]
 queue = "scrape-coordinator"
 max_batch_size = 1
@@ -68,6 +79,11 @@ max_retries = 3
 
 [[queues.consumers]]
 queue = "scrape-finalize"
+max_batch_size = 1
+max_retries = 3
+
+[[queues.consumers]]
+queue = "dedup-sweep"
 max_batch_size = 1
 max_retries = 3
 
@@ -132,8 +148,12 @@ DEDUP_RERANK_FLOOR = "0.72"
 # without touching production. All resources carry the `-integration`
 # suffix; cron triggers are intentionally OFF (no autonomous LLM spend on
 # integration; force-refresh via /api/admin/force-refresh for manual runs).
-# Bootstrap on first deploy: scripts/bootstrap-resources.sh creates the
-# resources by name, captures their IDs, and patches this file in CI.
+# First-deploy setup: nothing to do. The deploy-integration workflow
+# looks up `ai-news-digest-integration` (D1), `ai-news-digest-integration-kv`,
+# the four `*-integration` queues, and the integration Vectorize index
+# by name, creating any that don't exist, and patches the resolved
+# IDs into the env.integration sections of wrangler.toml in the
+# ephemeral CI workspace before `wrangler deploy --env integration`.
 # ---------------------------------------------------------------------------
 
 [env.integration]
@@ -178,6 +198,10 @@ queue = "scrape-chunks-integration"
 binding = "SCRAPE_FINALIZE"
 queue = "scrape-finalize-integration"
 
+[[env.integration.queues.producers]]
+binding = "DEDUP_SWEEP"
+queue = "dedup-sweep-integration"
+
 [[env.integration.queues.consumers]]
 queue = "scrape-coordinator-integration"
 max_batch_size = 1
@@ -190,6 +214,11 @@ max_retries = 3
 
 [[env.integration.queues.consumers]]
 queue = "scrape-finalize-integration"
+max_batch_size = 1
+max_retries = 3
+
+[[env.integration.queues.consumers]]
+queue = "dedup-sweep-integration"
 max_batch_size = 1
 max_retries = 3
 

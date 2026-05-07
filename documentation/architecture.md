@@ -45,7 +45,7 @@ Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-su
 |---|---|
 | Astro Worker | Serves all HTML pages and JSON APIs in the Cloudflare Workers runtime |
 | Cron Triggers | 5-minute (discovery + email dispatch), 4-hour (scrape), daily 03:00 UTC (retention) |
-| Queue Consumers | `SCRAPE_COORDINATOR`, `SCRAPE_CHUNKS`, `SCRAPE_FINALIZE`, cleanup |
+| Queue Consumers | `SCRAPE_COORDINATOR`, `SCRAPE_CHUNKS`, `SCRAPE_FINALIZE`, `DEDUP_SWEEP`, cleanup |
 | D1 | Strongly-consistent storage: users, articles, scrape_runs, refresh_tokens, pending_discoveries |
 | KV | Edge-cached `sources:{tag}`, headline cache, per-URL fetch-health counters, rate-limit counters |
 | Workers AI | LLM inference for chunk summarisation and source discovery; bge-base-en-v1.5 embeddings for same-story dedup |
@@ -63,7 +63,7 @@ Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-su
 | `src/pages/api/` | JSON API routes (see [`api-reference.md`](api-reference.md) for contracts) |
 | `src/components/` | Astro UI components |
 | `src/layouts/` | Page layout shells |
-| `src/queue/` | Queue consumers (coordinator, chunk, finalize, cleanup) |
+| `src/queue/` | Queue consumers (coordinator, chunk, finalize, dedup-sweep, cleanup) |
 | `src/scripts/` | Client-side TypeScript modules (mirrored to `public/scripts/` at build time) |
 | `src/styles/` | Global CSS and design tokens |
 | `public/` | Static assets, manifest, runtime client-script bundles |
@@ -90,7 +90,7 @@ Every source file annotates the REQ-IDs it implements via `// Implements REQ-X-N
 | Path | Role | Implements |
 |---|---|---|
 | `canonical-url.ts` | URL canonicalization for cross-source dedup | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
-| `etld.ts` | Naive eTLD+1 helper (`etldPlusOne`, `sameVendor`): extracts the registrable domain from a host for same-publisher detection in dedup and the diagnostic. Known aggregator-wrapper hosts (`news.google.com`) return `false` from `sameVendor` regardless of eTLD+1 match — they carry no publisher identity. Covers the corpus's dominant TLDs; does not pull the full Public Suffix List. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 11 |
+| `etld.ts` | Naive eTLD+1 helper (`etldPlusOne`, `sameVendor`): extracts the registrable domain for same-publisher detection. Aggregator hosts (`news.google.com`) always return `false` from `sameVendor` — they carry no publisher identity. Covers dominant TLDs; does not use the full Public Suffix List. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 11 |
 | `crypto.ts` | base64url codec, constant-time HMAC compare, cookie reader | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation) |
 | `db.ts` | D1 wrapper with FK pragma | (shared) |
 | `email.ts` | Resend renderer and transport | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email), [REQ-MAIL-002](../sdd/email.md#req-mail-002-non-blocking-email-failure) |
@@ -184,10 +184,12 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 
 | Path | Role | Implements |
 |---|---|---|
-| `src/worker.ts` | Cron + queue dispatch entry — three cron branches, four queue message types. The queue dispatcher normalises `batch.queue` by stripping a recognised env suffix (`-integration` / `-staging`) before the switch, so the same handler routes both production and integration queue messages. | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email) |
+| `src/worker.ts` | Cron + queue dispatch entry — three cron branches, five queue message types. The queue dispatcher normalises `batch.queue` by stripping a recognised env suffix (`-integration` / `-staging`) before the switch, so the same handler routes both production and integration queue messages. | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email) |
 | `src/queue/scrape-coordinator.ts` | Fan-out, freshness filter, eviction pass, multi-source aggregation on re-discovery, per-tag Google News baseline synthesis (REQ-PIPE-001 AC 9), chunk dispatch | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking) |
 | `src/queue/scrape-chunk-consumer.ts` | Per-chunk LLM call (summarisation only), canonical-URL dedup within chunk, embedding generation via `embeddings.ts`, D1 batch insert (writes `embedding_status='embedded'`, `embedded_at`, and `source_snippet`), Vectorize upsert post-batch, atomic completion gate, finalize handoff | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
 | `src/queue/scrape-finalize-consumer.ts` | Same-story dedupe pass: per-article Vectorize top-K query, same-vendor cosine penalty, two-tier merge logic - auto-merge band (>= `DEDUP_COSINE_THRESHOLD`) and borderline band (>= `DEDUP_RERANK_FLOOR`) where `dedup-rerank.ts` decides via LLM judgment. Atomic `finalize_recorded` gate prevents double-counting on redelivery. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history), [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) |
+| `src/queue/dedup-sweep-consumer.ts` | Queue-driven historical-dedup sweep consumer. Each message processes one batch via `runHistoricalDedupBatch`, re-enqueues a continuation, and updates the `dedup_runs` audit row (scanned, merged, last_cursor, remaining) under a CAS guard on the incoming cursor so redelivered messages never double-increment counters; flips status to `'done'` or `'failed'` at the terminal step. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9 |
+| `src/lib/historical-dedup.ts` | Shared batch primitive (`runHistoricalDedupBatch`) used by both the queue consumer and the legacy synchronous code path; encapsulates composite-cursor keyset pagination over the article corpus, per-row Vectorize query, threshold + same-vendor penalty + aggregator-host exemption, and `mergeAsAltSource` accumulation. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9 |
 | `src/queue/cleanup.ts` | Daily 3-pass cleanup: retention, stuck-tag prune, orphan-tag KV sweep | [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-DISC-006](../sdd/discovery.md#req-disc-006-stuck-tag-retention), [REQ-PIPE-007](../sdd/generation.md#req-pipe-007-orphan-tag-source-cleanup) |
 | `migrations/0001_initial.sql` | Pre-launch initial schema. Creates `users`, which 0003's article_stars / article_reads tables reference via FK; replaying 0003 against an empty schema fails at FK declaration without it | (FK base) |
 | `migrations/0002_article_tags.sql` | Pre-launch `ALTER TABLE articles ADD COLUMN tags_json`; depends on 0001's `articles` table existing first | (FK base) |
@@ -201,6 +203,7 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 | `migrations/0010_scrape_runs_finalize_recorded.sql` | `finalize_recorded` gate column — atomic idempotency for finalize-pass run-once invariant; the column is now load-bearing for the semantic-dedup pass instead of LLM-cost recording (the LLM call is gone). | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
 | `migrations/0011_article_embeddings.sql` | `embedding_status` (NULL / `'embedded'` / `'failed'`) and `embedded_at` columns on `articles`. NULL = never attempted; chunk consumer stamps `'embedded'` after Vectorize upsert or `'failed'` on upsert error. The admin embed-backfill route retries NULL and `'failed'` rows. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
 | `migrations/0012_article_source_snippet.sql` | `source_snippet` TEXT column on `articles`. Stores the raw scraped body excerpt used as the embedding input so re-embeds run without re-scraping. NULL on historical rows (`buildEmbeddingInput` falls back to `details_json`). | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
+| `migrations/0013_dedup_runs.sql` | `dedup_runs` audit table for the queue-driven historical-dedup sweep: ULID primary key, status (`'running'` / `'done'` / `'failed'`), running counters (scanned, merged, batch_count, remaining), composite cursor (`last_cursor_pa`, `last_cursor_id`), error message, started_at + updated_at. Indexed on `started_at DESC` for the operator surface to surface the latest run. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9 |
 
 ## 5. Request Lifecycles
 
@@ -270,7 +273,38 @@ Cron daily 03:00 UTC
       DELETE sources:{tag} and discovery_failures:{tag} for tags no user owns
 ```
 
-### 5.4 Email dispatcher (every 5 minutes)
+### 5.4 Operator-triggered historical-dedup sweep
+
+Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9. The sweep is operator-triggered from `/settings`, runs server-side independent of the operator's browser tab, and is observable via a status endpoint.
+
+```
+Operator clicks "Run historical-dedup sweep" on /settings
+  └─► POST /api/admin/historical-dedup (empty body — kicker mode)
+       ├─ INSERT dedup_runs row (status='running', cursor=NULL)
+       ├─ env.DEDUP_SWEEP.send({ run_id, cursor: null, batch })
+       └─ 202 { ok, run_id, enqueued: true, started_at }
+            │
+            ▼
+Operator surface starts polling GET /api/admin/dedup-status?run_id=…
+       (browser tab can close — sweep continues server-side)
+
+DEDUP_SWEEP consumer (max_batch_size=1, max_retries=3)
+  ├─ runHistoricalDedupBatch(env, cursor, batch) — one keyset page
+  ├─ UPDATE dedup_runs SET scanned, merged, batch_count, last_cursor_*, remaining, updated_at
+  ├─ If next_cursor present:
+  │   └─ env.DEDUP_SWEEP.send({ run_id, cursor: next_cursor, batch }) — self-chain
+  └─ Else (terminal):
+      └─ UPDATE dedup_runs SET status='done', updated_at
+
+On terminal failure (after max_retries):
+  └─ UPDATE dedup_runs SET status='failed', error=…, updated_at
+
+Operator sees status='done' on next poll; banner clears on next visit.
+```
+
+Synchronous single-batch path (legacy, retained for dev-bypass curl flows and tests): `POST /api/admin/historical-dedup` with `{cursor, batch}` in the body bypasses the kicker and runs `runHistoricalDedupBatch` inline, returning the batch result directly. The route preserves backwards compatibility with existing test fixtures and the `news.novoselec.ch` integration runbook.
+
+### 5.5 Email dispatcher (every 5 minutes)
 
 ```
 Cron every 5 minutes
