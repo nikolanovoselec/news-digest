@@ -128,7 +128,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 
 **Triggering a scrape on integration** (since crons are off):
 
-Use the **Full pipeline run** button on `/settings` (Administration section) — it chains force-refresh, embed backfill, and historical dedup in one browser-side flow ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)). The sibling **Refresh feeds** button runs only the scrape tick (the same work the cron does). For scripted or headless runs:
+Use the **Full pipeline run** button on `/settings` (Administration section) — it POSTs once to `/api/admin/pipeline-run`, which enqueues a `pipeline-jobs` message; the queue consumer then walks the seven phases server-side without depending on the operator's tab ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface), [AD37](decisions/README.md#ad37-full-pipeline-run-is-backend-orchestrated-browser-tab-is-display-only)). The sibling **Refresh feeds** button runs only the scrape tick (the same work the cron does). For scripted or headless runs:
 
 ```bash
 # Sign in at your APP_URL (or use the dev-bypass runbook below), then:
@@ -149,6 +149,7 @@ curl -i ${APP_URL}/api/admin/force-refresh
 | `SCRAPE_CHUNKS` | Queue | `scrape-chunks` | LLM chunk jobs |
 | `SCRAPE_FINALIZE` | Queue | `scrape-finalize` | Same-story dedup pass; one message enqueued by the last chunk consumer per scrape run ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
 | `DEDUP_SWEEP` | Queue | `dedup-sweep` | Self-chaining historical-dedup sweep; the kicker enqueues the first message and the consumer re-enqueues a continuation per batch until the corpus tail is reached ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9) |
+| `PIPELINE_JOBS` | Queue | `pipeline-jobs` (`pipeline-jobs-integration` on integration) | Backend-driven full pipeline orchestrator; one consumer walks the seven phases by self-chaining messages ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface), [AD37](decisions/README.md#ad37-full-pipeline-run-is-backend-orchestrated-browser-tab-is-display-only)) |
 | `AI` | Workers AI | (account-level) | LLM inference and bge-base-en-v1.5 embedding generation |
 | `VECTORIZE` | Vectorize index | `ai-news-embeddings` | 768-dim cosine index for same-story dedup; provisioned by the deploy workflow via `wrangler vectorize create` ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
 
@@ -205,6 +206,8 @@ Every admin endpoint sits under `/api/admin/*` so a **single wildcard rule** cov
 | `/api/admin/historical-dedup` | Kicks an oldest-first cross-article same-story sweep on the `DEDUP_SWEEP` queue. Empty-body POST is the kicker (returns `{run_id, enqueued}`); body with `{cursor, batch}` runs one batch synchronously (legacy/dev-bypass). Backs phase 4 of **Full pipeline run** ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)). Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 3, AC 9, AC 11. See [API Reference](api-reference.md#post-apiadminhistorical-dedup). |
 | `/api/admin/dedup-status` | Polls the `dedup_runs` audit row for a queue-driven sweep. GET with `?run_id=<ULID>` returns running counters and terminal status. Backs the operator-surface progress banner. Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9. See [API Reference](api-reference.md#get-apiadmindedup-status). |
 | `/api/admin/dedup-diag` | Returns cosine similarity, adjusted score, same-vendor penalty, and merge decision for a given article pair. Diagnostic only; no writes. Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 10-11. See [API Reference](api-reference.md#get-apiadmindedup-diag-req-pipe-003-ac-10-ac-11). |
+| `/api/admin/pipeline-run` | Kicker for the backend-driven full pipeline run. Accepts optional `mode: "full"|"wipe"` body. Returns `{pipeline_run_id, mode, current_phase, started_at}` (202). Implements [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface). See [API Reference](api-reference.md#post-apiadminpipeline-run). |
+| `/api/admin/pipeline-status` | Polling endpoint for a backend pipeline run. `?id=<ULID>` returns the `pipeline_runs` row plus nested scrape + dedup snapshots; omit `id` to recover the most recent run. See [API Reference](api-reference.md#get-apiadminpipeline-status). |
 | `/api/admin/discovery/retry` | Re-queues a single tag for LLM-assisted source discovery. |
 | `/api/admin/discovery/retry-bulk` | Re-queues every "stuck" (empty-feeds) tag for the session user in one shot — backs the **Discover missing sources** button on `/settings`. |
 
@@ -287,6 +290,19 @@ curl -s "https://news.novoselec.ch/api/admin/dedup-status?run_id=$RUN_ID" \
   -H "Origin: https://news.novoselec.ch" \
   -H "Accept: application/json" \
   | jq '{status, scanned, merged, remaining, done, failed, error}'
+
+# Kick a full backend pipeline run (mode=full keeps embeddings; mode=wipe re-embeds first).
+PIPE_ID=$(curl -s -X POST "https://news.novoselec.ch/api/admin/pipeline-run" \
+  -b /tmp/cookies.txt \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"mode":"full"}' | jq -r '.pipeline_run_id')
+
+# Poll for live progress; omit ?id to recover the most recent run.
+curl -s "https://news.novoselec.ch/api/admin/pipeline-status?id=$PIPE_ID" \
+  -b /tmp/cookies.txt \
+  -H "Accept: application/json" \
+  | jq '{status, current_phase, done, failed, error}'
 ```
 
 **Failure-mode quick-reference:**
