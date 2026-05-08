@@ -12,13 +12,17 @@
 // computed before scraping resumes.
 //
 // Three-layer admin auth (CF-001) — same gate every other admin route
-// uses. No Origin check on POST so the dev-bypass curl flow works.
+// uses. checkDevEndpointOrigin is the CSRF gate: no Origin header
+// (curl / dev-bypass) passes; a browser-driven cross-origin POST is
+// rejected. errorResponse below telegraphs 403 instead of the dev-
+// endpoint's 404 silence — operators behind CF Access have already
+// authenticated, so leaking endpoint existence is not a concern here.
 
 import type { APIContext } from 'astro';
 import { log } from '~/lib/log';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { applyRefreshCookie } from '~/middleware/auth';
-import { originOf } from '~/middleware/origin-check';
+import { checkDevEndpointOrigin, originOf } from '~/middleware/origin-check';
 import { generateUlid } from '~/lib/ulid';
 import type { PipelinePhase } from '~/queue/pipeline-consumer';
 
@@ -39,6 +43,16 @@ export async function POST(context: APIContext): Promise<Response> {
   const wantsJson = (context.request.headers.get('Accept') ?? '').includes(
     'application/json',
   );
+
+  if (!checkDevEndpointOrigin(context.request, env.APP_URL)) {
+    if (wantsJson) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'forbidden_origin' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response('Forbidden', { status: 403 });
+  }
 
   const adminAuth = await requireAdminSession(context);
   if (!adminAuth.ok) {
@@ -137,7 +151,7 @@ export async function POST(context: APIContext): Promise<Response> {
     new Response(null, {
       status: 303,
       headers: {
-        Location: `${appOrigin}/settings?pipeline=enqueued&pipeline_run_id=${pipelineRunId}`,
+        Location: `${appOrigin}/settings?pipeline=enqueued&pipeline_run_id=${encodeURIComponent(pipelineRunId)}`,
       },
     }),
     adminAuth,
