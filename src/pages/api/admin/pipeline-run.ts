@@ -14,9 +14,9 @@
 // Three-layer admin auth (CF-001) — same gate every other admin route
 // uses. checkDevEndpointOrigin is the CSRF gate: no Origin header
 // (curl / dev-bypass) passes; a browser-driven cross-origin POST is
-// rejected. errorResponse below telegraphs 403 instead of the dev-
-// endpoint's 404 silence — operators behind CF Access have already
-// authenticated, so leaking endpoint existence is not a concern here.
+// rejected. This route returns 403 instead of the dev-endpoint's 404
+// silence — operators behind CF Access have already authenticated, so
+// leaking endpoint existence is not a concern here.
 
 import type { APIContext } from 'astro';
 import { log } from '~/lib/log';
