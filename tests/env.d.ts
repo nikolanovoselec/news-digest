@@ -13,6 +13,7 @@ declare namespace Cloudflare {
     SCRAPE_CHUNKS: Queue<import('../src/queue/scrape-chunk-consumer').ChunkJobMessage>;
     SCRAPE_FINALIZE: Queue<import('../src/queue/scrape-finalize-consumer').FinalizeJobMessage>;
     DEDUP_SWEEP: Queue<import('../src/queue/dedup-sweep-consumer').DedupSweepMessage>;
+    PIPELINE_JOBS: Queue<import('../src/queue/pipeline-consumer').PipelineJobMessage>;
     AI: Ai;
     VECTORIZE: Vectorize;
     ASSETS: Fetcher;

@@ -83,11 +83,11 @@ interface PipelineRunRow {
  *  without hammering D1. */
 const WAIT_DELAY_SECONDS = 10;
 
-/** Maximum number of embed-drain self-chain hops before bailing. Each
- *  hop processes ~50 articles via runOneBackfillBatch — a 1000-article
- *  re-embed therefore costs ~20 hops. Cap at 200 (10k articles) so a
- *  pathological loop can't spin forever. */
-const EMBED_DRAIN_MAX_HOPS = 200;
+/** Cumulative-articles ceiling for embed-drain self-chain. Guards
+ *  against a runaway loop spinning forever on a corrupt corpus.
+ *  10k matches the operational corpus ceiling; raise both this and
+ *  the article retention window if the corpus genuinely outgrows it. */
+const EMBED_DRAIN_MAX_ARTICLES = 10_000;
 
 export async function handlePipelineJobsBatch(
   batch: MessageBatch<PipelineJobMessage>,
@@ -216,7 +216,13 @@ async function runReembedDrain(env: Env, run: PipelineRunRow): Promise<void> {
 async function runScrapeKick(env: Env, run: PipelineRunRow): Promise<void> {
   const { run_id: scrapeRunId, reused } = await kickCoordinator(env);
   const now = Math.floor(Date.now() / 1000);
-  await env.DB
+  // CAS-gate the queue.send on the UPDATE actually changing a row, so
+  // a redelivered scrape_kick message that finds current_phase already
+  // moved to scrape_wait does not enqueue a duplicate scrape_wait
+  // message. kickCoordinator itself short-circuits via its 120s reuse
+  // window, so a redelivery does not double-kick the coordinator —
+  // but we still want symmetric idempotence on the queue side.
+  const updateMeta = await env.DB
     .prepare(
       `UPDATE pipeline_runs
           SET current_phase = 'scrape_wait',
@@ -228,6 +234,14 @@ async function runScrapeKick(env: Env, run: PipelineRunRow): Promise<void> {
     )
     .bind(run.id, scrapeRunId, now)
     .run();
+  if ((updateMeta.meta?.changes ?? 0) === 0) {
+    log('info', 'digest.generation', {
+      status: 'pipeline_phase_skip_redelivery',
+      pipeline_run_id: run.id,
+      phase: 'scrape_kick',
+    });
+    return;
+  }
   await env.PIPELINE_JOBS.send({
     pipeline_run_id: run.id,
     phase: 'scrape_wait',
@@ -339,17 +353,18 @@ async function runEmbedDrainShared(
   }
 
   // Forward-progress guard: a batch with processed===0 and !done means
-  // the AI / Vectorize side is failing. Mark the pipeline failed
-  // rather than self-chaining indefinitely.
+  // a transient Workers AI / Vectorize hiccup. Throw so the queue's
+  // built-in max_retries=3 (with exponential backoff) reruns this
+  // phase. After retries are exhausted, onTerminalFailure flips the
+  // pipeline to 'failed' once.
   if (result.processed === 0) {
-    await markFailed(env, run.id, `${phase}_no_progress`);
-    return;
+    throw new Error(`${phase}_no_progress`);
   }
 
-  // Hop ceiling — guards against runaway loops the same way
-  // EMBED_DRAIN_MAX_HOPS commented above. embed_processed is the
-  // accumulator we count from.
-  if (cumulative >= EMBED_DRAIN_MAX_HOPS * 50) {
+  // Cumulative-articles ceiling — guards against runaway self-chain
+  // loops on a corrupt corpus. Single batch caps at ~50 so 10k
+  // articles is comfortably above any real corpus size.
+  if (cumulative >= EMBED_DRAIN_MAX_ARTICLES) {
     await markFailed(env, run.id, `${phase}_hop_ceiling`);
     return;
   }
@@ -384,6 +399,35 @@ async function runEmbedDrainShared(
 async function runDedupKick(env: Env, run: PipelineRunRow): Promise<void> {
   const dedupRunId = generateUlid();
   const now = Math.floor(Date.now() / 1000);
+  // CAS-gate the dedup_runs INSERT + DEDUP_SWEEP.send on the
+  // pipeline_runs UPDATE actually advancing the phase. Without this
+  // gate, a redelivered dedup_kick message would mint a *fresh*
+  // dedupRunId, INSERT a second dedup_runs row, and enqueue a second
+  // DEDUP_SWEEP — the original dedup_run_id stamped on pipeline_runs
+  // is left orphan, and dedup_wait is observing the wrong sweep.
+  // kickCoordinator-style reuse-window guards do not exist for
+  // dedup_runs (every kick mints a new id by design), so the CAS on
+  // current_phase is the only safe ordering.
+  const updateMeta = await env.DB
+    .prepare(
+      `UPDATE pipeline_runs
+          SET current_phase = 'dedup_wait',
+              dedup_run_id = ?2,
+              updated_at = ?3
+        WHERE id = ?1
+          AND status = 'running'
+          AND current_phase = 'dedup_kick'`,
+    )
+    .bind(run.id, dedupRunId, now)
+    .run();
+  if ((updateMeta.meta?.changes ?? 0) === 0) {
+    log('info', 'digest.generation', {
+      status: 'pipeline_phase_skip_redelivery',
+      pipeline_run_id: run.id,
+      phase: 'dedup_kick',
+    });
+    return;
+  }
   await env.DB
     .prepare(
       `INSERT INTO dedup_runs (id, status, started_at, updated_at)
@@ -396,18 +440,6 @@ async function runDedupKick(env: Env, run: PipelineRunRow): Promise<void> {
     cursor: null,
     batch: DEDUP_DEFAULT_BATCH,
   });
-  await env.DB
-    .prepare(
-      `UPDATE pipeline_runs
-          SET current_phase = 'dedup_wait',
-              dedup_run_id = ?2,
-              updated_at = ?3
-        WHERE id = ?1
-          AND status = 'running'
-          AND current_phase = 'dedup_kick'`,
-    )
-    .bind(run.id, dedupRunId, now)
-    .run();
   await env.PIPELINE_JOBS.send({
     pipeline_run_id: run.id,
     phase: 'dedup_wait',
