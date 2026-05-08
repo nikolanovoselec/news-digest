@@ -63,7 +63,7 @@ Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-su
 | `src/pages/api/` | JSON API routes (see [`api-reference.md`](api-reference.md) for contracts) |
 | `src/components/` | Astro UI components |
 | `src/layouts/` | Page layout shells |
-| `src/queue/` | Queue consumers (coordinator, chunk, finalize, dedup-sweep, cleanup) |
+| `src/queue/` | Queue consumers (coordinator, chunk, finalize, dedup-sweep, pipeline-jobs, cleanup) |
 | `src/scripts/` | Client-side TypeScript modules (mirrored to `public/scripts/` at build time) |
 | `src/styles/` | Global CSS and design tokens |
 | `public/` | Static assets, manifest, runtime client-script bundles |
@@ -204,6 +204,9 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 | `migrations/0011_article_embeddings.sql` | `embedding_status` (NULL / `'embedded'` / `'failed'`) and `embedded_at` columns on `articles`. NULL = never attempted; chunk consumer stamps `'embedded'` after Vectorize upsert or `'failed'` on upsert error. The admin embed-backfill route retries NULL and `'failed'` rows. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
 | `migrations/0012_article_source_snippet.sql` | `source_snippet` TEXT column on `articles`. Stores the raw scraped body excerpt used as the embedding input so re-embeds run without re-scraping. NULL on historical rows (`buildEmbeddingInput` falls back to `details_json`). | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
 | `migrations/0013_dedup_runs.sql` | `dedup_runs` audit table for the queue-driven historical-dedup sweep: ULID primary key, status (`'running'` / `'done'` / `'failed'`), running counters (scanned, merged, batch_count, remaining), composite cursor (`last_cursor_pa`, `last_cursor_id`), error message, started_at + updated_at. Indexed on `started_at DESC` for the operator surface to surface the latest run. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9 |
+| `src/queue/pipeline-consumer.ts` | Backend-driven full pipeline orchestrator. One queue consumer that walks the seven phases (`reembed_flip → reembed_drain → scrape_kick → scrape_wait → embed_drain → dedup_kick → dedup_wait`) by self-chaining `pipeline-jobs` messages. Each phase short-circuits on terminal status and CAS-guards its UPDATE on `current_phase` so redelivered messages do not re-advance. | [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) |
+| `src/lib/kick-coordinator.ts` | Shared atomic-claim coordinator kicker used by both the operator-driven force-refresh route and the pipeline-consumer's `scrape_kick` phase. Inserts a `scrape_runs` row + sends one `SCRAPE_COORDINATOR` message under a `WHERE NOT EXISTS` guard to coalesce concurrent kicks. | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) |
+| `migrations/0014_pipeline_runs.sql` | `pipeline_runs` audit table for the backend-driven full pipeline orchestrator: ULID primary key, status (`'running'` / `'done'` / `'failed'`), mode (`'full'` / `'wipe'`), `current_phase`, references to scrape_run_id and dedup_run_id, embed counters, error, started_at + updated_at. Indexed on `started_at DESC` for the polling endpoint to recover the most recent run when the operator returns to /settings. | [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) |
 
 ## 5. Request Lifecycles
 

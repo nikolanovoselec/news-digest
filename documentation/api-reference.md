@@ -450,6 +450,46 @@ Polling endpoint for the queue-driven historical-dedup sweep. Returns a snapshot
 
 ---
 
+### POST /api/admin/pipeline-run
+
+Kicker for the backend-driven full pipeline run. Creates a `pipeline_runs` audit row and enqueues exactly one `pipeline-jobs` queue message; the consumer (`src/queue/pipeline-consumer.ts`) drives the seven phases server-side without depending on the operator's browser tab. Used by the **Full pipeline run** button on `/settings`.
+
+**Auth:** Admin session required. No Origin check on POST (the dev-bypass curl flow drives this same endpoint).
+
+**Request body (JSON, optional):**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `mode` | `"full" \| "wipe"` | `"full"` | `"wipe"` invalidates every article's embedding before scraping; `"full"` keeps existing embeddings and starts at the scrape phase. |
+
+**Success (202):** `{ ok: true, pipeline_run_id: string, mode: 'full'|'wipe', current_phase: string, started_at: number }`.
+
+**Error responses:** `401 unauthorized` | `403 forbidden` | `500 pipeline_kick_failed`.
+
+**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)
+
+---
+
+### GET /api/admin/pipeline-status
+
+Polling endpoint for the backend-driven full pipeline run. Returns the named `pipeline_runs` row plus nested snapshots of the `scrape_runs` and `dedup_runs` rows the pipeline kicked, so the settings surface can paint live progress without driving the orchestration. The settings JS hits this every 5 seconds while a run is in flight.
+
+**Auth:** Admin session required. No Origin check (read-only GET).
+
+**Query parameters:**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | No | ULID of the pipeline run. When omitted, the most recent row is returned (so reopening `/settings` after closing the tab restores progress). |
+
+**Success (200):** `{ ok: true, pipeline_run_id: string, status: 'running'|'done'|'failed', mode: 'full'|'wipe', current_phase: string, embed_processed: number, embed_remaining: number, error: string | null, started_at: number, updated_at: number, scrape: { id, status, articles_ingested, articles_deduped, finalize_recorded, started_at, finished_at } | null, dedup: { id, status, scanned, merged, remaining, started_at, updated_at } | null, done: boolean, failed: boolean }`.
+
+**Error responses:** `401 unauthorized` | `403 forbidden` | `404 run_not_found` | `500 pipeline_status_select_failed` | `500 invalid_stored_status` | `500 invalid_stored_mode`.
+
+**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)
+
+---
+
 ### GET /api/admin/dedup-diag (REQ-PIPE-003 AC 10, AC 11)
 
 Returns the cosine similarity between two articles' stored Vectorize embeddings, the currently-effective same-story threshold, the same-vendor cosine penalty, and a flag for whether the two articles share the same registrable domain (eTLD+1). Intended for evaluating threshold changes against known true-positive and false-positive pairs before committing them to configuration.
