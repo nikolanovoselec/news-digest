@@ -26,6 +26,7 @@
 //   - `scrape-chunks`      → handleChunkBatch (REQ-PIPE-002).
 //   - `scrape-finalize`    → handleFinalizeBatch (REQ-PIPE-008).
 //   - `dedup-sweep`        → handleDedupSweepBatch (REQ-PIPE-003 AC 9).
+//   - `pipeline-jobs`      → handlePipelineJobsBatch (REQ-OPS-008).
 //
 // The Astro Cloudflare adapter's generated `_worker.js` owns the HTTP
 // fetch handler in production (`main` in wrangler.toml). This file's
@@ -54,6 +55,10 @@ import {
   handleDedupSweepBatch,
   type DedupSweepMessage,
 } from '~/queue/dedup-sweep-consumer';
+import {
+  handlePipelineJobsBatch,
+  type PipelineJobMessage,
+} from '~/queue/pipeline-consumer';
 import { runCleanup } from '~/queue/cleanup';
 import { dispatchDailyEmails } from '~/lib/email-dispatch';
 
@@ -201,6 +206,12 @@ export async function queue(
     case 'dedup-sweep':
       await handleDedupSweepBatch(
         batch as MessageBatch<DedupSweepMessage>,
+        env,
+      );
+      return;
+    case 'pipeline-jobs':
+      await handlePipelineJobsBatch(
+        batch as MessageBatch<PipelineJobMessage>,
         env,
       );
       return;

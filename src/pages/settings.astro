@@ -918,24 +918,16 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
    *                tick. Skips the wipe / embed-backfill / historical
    *                dedup phases entirely.
    *
-   *  Phases for full mode:
-   *    0. (optional) Wipe + re-embed all articles via
-   *       POST /api/admin/embed-backfill?reembed=1, looped on
-   *       remaining > 0 in case the platform cuts the request.
-   *    1. Kick the scrape coordinator via
-   *       GET /api/admin/force-refresh (Accept: application/json).
-   *    2. Poll /api/scrape-status?run_id=… every 5s until the run
-   *       reports running:false. The existing pollScrapeProgress()
-   *       paints the live "X% — N articles ingested" line into
-   *       [data-scrape-progress] in parallel.
-   *    3. Drain any new NULL/failed embeddings via
-   *       POST /api/admin/embed-backfill (no reembed flag).
-   *    4. Run the oldest-first dedup sweep via
-   *       POST /api/admin/historical-dedup until done.
+   *  Full mode (REQ-OPS-008): a single POST /api/admin/pipeline-run
+   *  enqueues the orchestrator; the queue consumer (`pipeline-jobs`)
+   *  drives every phase server-side. The browser only polls
+   *  /api/admin/pipeline-status?id=… for live progress display. Closing
+   *  the tab does not interrupt the run — reopening /settings restores
+   *  progress from the audit row.
    *
-   *  Refresh mode runs phases 1 and 2 only — the queue-driven chunk +
-   *  finalize consumers handle the rest in the background, exactly
-   *  like a cron tick.
+   *  Refresh mode kicks the coordinator only (phases 1 + 2) — the
+   *  queue-driven chunk + finalize consumers handle the rest in the
+   *  background, exactly like a cron tick.
    *
    *  Status text streams into [data-pipeline-status] one phase at a
    *  time; both buttons are disabled until the chain finishes (or
@@ -986,6 +978,54 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     }
   }
 
+  /** Render the pipeline-status JSON into a single human-readable
+   *  line for the status banner. */
+  function formatPipelineStatus(body: {
+    status: 'running' | 'done' | 'failed';
+    current_phase: string;
+    embed_processed: number;
+    embed_remaining: number;
+    scrape: {
+      articles_ingested: number;
+      articles_deduped: number;
+    } | null;
+    dedup: {
+      scanned: number;
+      merged: number;
+      remaining: number;
+    } | null;
+  }): string {
+    if (body.status === 'done') {
+      const ingested = body.scrape?.articles_ingested ?? 0;
+      const merged = body.dedup?.merged ?? 0;
+      return `Done — ingested ${ingested}, merged ${merged} duplicates.`;
+    }
+    switch (body.current_phase) {
+      case 'reembed_flip':
+        return 'Wiping embeddings…';
+      case 'reembed_drain':
+        return `Re-embedding: ${body.embed_processed} done, ${body.embed_remaining} remaining…`;
+      case 'scrape_kick':
+        return 'Kicking scrape…';
+      case 'scrape_wait': {
+        const ing = body.scrape?.articles_ingested ?? 0;
+        return `Scraping: ${ing} articles ingested…`;
+      }
+      case 'embed_drain':
+        return `Embedding new: ${body.embed_processed} done, ${body.embed_remaining} remaining…`;
+      case 'dedup_kick':
+        return 'Starting dedup sweep…';
+      case 'dedup_wait': {
+        const sc = body.dedup?.scanned ?? 0;
+        const mg = body.dedup?.merged ?? 0;
+        const rm = body.dedup?.remaining ?? 0;
+        return `Dedup: scanned ${sc}, merged ${mg}, ${rm} remaining…`;
+      }
+      default:
+        return `Phase: ${body.current_phase}`;
+    }
+  }
+
   async function runPipeline(
     mode: 'full' | 'refresh',
     wipe: boolean,
@@ -1004,207 +1044,123 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     };
     for (const b of buttons) b.disabled = true;
     try {
-      // Phase 0 — wipe + re-embed all (optional, full run only). The
-      // server marks every row 'failed' on the first request, then
-      // re-embeds in batches inside that same request until
-      // remaining=0 (or it hits the platform request-time ceiling).
-      // The while-loop resumes from where the cut left off.
-      if (mode === 'full' && wipe) {
-        setStatus('Wiping & re-embedding all articles…');
-        let total = 0;
-        let firstCall = true;
-        while (true) {
-          const url = firstCall
-            ? '/api/admin/embed-backfill?reembed=1'
-            : '/api/admin/embed-backfill';
-          const res = await fetch(url, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { Accept: 'application/json' },
-          });
-          if (!res.ok) throw new Error(`re-embed HTTP ${res.status}`);
-          const body = (await res.json()) as {
-            processed: number;
-            remaining: number;
-            done: boolean;
-          };
-          total += body.processed;
-          if (body.done) break;
-          // Server's forward-progress guard returns done:false +
-          // processed:0 when an entire batch failed (Workers AI or
-          // Vectorize outage). Re-clicking won't help right now —
-          // bail with a useful message instead of looping.
-          if (body.processed === 0) {
-            throw new Error(
-              `re-embed stalled at ${body.remaining} remaining (upstream outage?)`,
-            );
-          }
-          firstCall = false;
-          setStatus(`Re-embedded ${total} articles, ${body.remaining} remaining…`);
-        }
-        setStatus(`Re-embedded ${total} articles. Kicking scrape…`);
-      } else {
-        setStatus('Kicking scrape…');
-      }
-
-      // Phase 1 — force refresh. GET path supports JSON; POST always
-      // 303-redirects, which fetch can't read across origin without
-      // following the redirect into HTML. GET is idempotent enough
-      // here (the underlying coordinator dispatch is the side effect
-      // either way; admin auth still gates).
-      const frRes = await fetch('/api/admin/force-refresh', {
-        credentials: 'same-origin',
-        headers: { Accept: 'application/json' },
-      });
-      if (!frRes.ok) throw new Error(`force-refresh HTTP ${frRes.status}`);
-      const frBody = (await frRes.json()) as {
-        scrape_run_id: string;
-        reused: boolean;
-      };
-      pinnedRunId = frBody.scrape_run_id;
-      writePipelineState({ runId: frBody.scrape_run_id });
-      setStatus(
-        frBody.reused
-          ? 'Scrape already running; waiting for it to finish…'
-          : 'Scrape kicked; waiting for it to finish…',
-      );
-
-      // Phase 2 — wait for the scrape run to complete. The existing
-      // pollScrapeProgress() already polls every 5s and paints the
-      // live progress into [data-scrape-progress]; here we just
-      // sample running state with the same cadence and exit when it
-      // flips false.
-      while (true) {
-        await new Promise((r) => setTimeout(r, 5_000));
-        const sRes = await fetch(
-          `/api/scrape-status?run_id=${encodeURIComponent(frBody.scrape_run_id)}`,
-          { credentials: 'same-origin', headers: { Accept: 'application/json' } },
-        );
-        if (!sRes.ok) break;
-        const sBody = (await sRes.json()) as { running: boolean };
-        if (!sBody.running) break;
-      }
-
       if (mode === 'refresh') {
-        // Refresh-only mode mirrors the 4-hourly cron: dispatch the
-        // coordinator and let the queue-driven chunk + finalize
-        // consumers do the rest in the background. No client-driven
-        // embed-backfill or historical-dedup sweep — those are the
-        // distinguishing work of "Full pipeline run".
+        // Refresh-only: kick the coordinator and poll scrape-status.
+        // Mirrors the 4-hourly cron — chunk + finalize consumers do
+        // the rest in the background.
+        setStatus('Kicking scrape…');
+        const frRes = await fetch('/api/admin/force-refresh', {
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+        });
+        if (!frRes.ok) throw new Error(`force-refresh HTTP ${frRes.status}`);
+        const frBody = (await frRes.json()) as {
+          scrape_run_id: string;
+          reused: boolean;
+        };
+        pinnedRunId = frBody.scrape_run_id;
+        writePipelineState({ runId: frBody.scrape_run_id });
+        setStatus(
+          frBody.reused
+            ? 'Scrape already running; waiting for it to finish…'
+            : 'Scrape kicked; waiting for it to finish…',
+        );
+        while (true) {
+          await new Promise((r) => setTimeout(r, 5_000));
+          const sRes = await fetch(
+            `/api/scrape-status?run_id=${encodeURIComponent(frBody.scrape_run_id)}`,
+            { credentials: 'same-origin', headers: { Accept: 'application/json' } },
+          );
+          if (!sRes.ok) break;
+          const sBody = (await sRes.json()) as { running: boolean };
+          if (!sBody.running) break;
+        }
         setStatus('Scrape finished.');
         writePipelineState({ done: true });
         return;
       }
 
-      setStatus('Scrape finished. Embedding new articles…');
-
-      // Phase 3 — drain any embeddings the chunk-consumer didn't
-      // land (rare; only if the embed call inside the consumer threw
-      // and left rows at 'failed'). Loop on remaining for the same
-      // platform-cut reason as Phase 0.
-      let embedTotal = 0;
-      while (true) {
-        const eRes = await fetch('/api/admin/embed-backfill', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { Accept: 'application/json' },
-        });
-        if (!eRes.ok) throw new Error(`embed HTTP ${eRes.status}`);
-        const eBody = (await eRes.json()) as {
-          processed: number;
-          remaining: number;
-          done: boolean;
-        };
-        embedTotal += eBody.processed;
-        if (eBody.done) break;
-        if (eBody.processed === 0) {
-          throw new Error(
-            `embed stalled at ${eBody.remaining} remaining (upstream outage?)`,
-          );
-        }
-        setStatus(`Embedded ${embedTotal}, ${eBody.remaining} remaining…`);
-      }
-      setStatus(`Embedded ${embedTotal} new articles. Running dedup…`);
-
-      // Phase 4 — historical dedup, oldest-first. The kicker enqueues
-      // one queue message and returns immediately with a run_id; the
-      // queue consumer drives the loop server-side and re-enqueues a
-      // continuation message after each batch. We poll
-      // /api/admin/dedup-status?run_id=... for live progress; if the
-      // operator closes the tab the sweep keeps running on its own.
-      const kRes = await fetch('/api/admin/historical-dedup', {
+      // Full pipeline (REQ-OPS-008). One POST kicks the orchestrator;
+      // every phase runs in the queue consumer. The browser is
+      // display-only — closing the tab does not interrupt the run.
+      const kickRes = await fetch('/api/admin/pipeline-run', {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
         },
-        body: '{}',
+        body: JSON.stringify({ mode: wipe ? 'wipe' : 'full' }),
       });
-      if (!kRes.ok) throw new Error(`dedup-kick HTTP ${kRes.status}`);
-      const kBody = (await kRes.json()) as {
+      if (!kickRes.ok) throw new Error(`pipeline-run HTTP ${kickRes.status}`);
+      const kickBody = (await kickRes.json()) as {
         ok: boolean;
-        run_id: string;
-        enqueued: boolean;
+        pipeline_run_id: string;
       };
-      if (!kBody.ok || kBody.run_id === undefined) {
-        throw new Error('dedup-kick missing run_id');
+      if (!kickBody.ok || kickBody.pipeline_run_id === undefined) {
+        throw new Error('pipeline-run missing pipeline_run_id');
       }
-      const runId = kBody.run_id;
-      writePipelineState({ msg: `Dedup queued — run ${runId.slice(0, 6)}…`, runId });
-      setStatus(`Dedup queued — run ${runId.slice(0, 6)}…`);
+      const pipelineRunId = kickBody.pipeline_run_id;
+      writePipelineState({
+        msg: `Pipeline queued — run ${pipelineRunId.slice(0, 6)}…`,
+        runId: pipelineRunId,
+      });
+      setStatus(`Pipeline queued — run ${pipelineRunId.slice(0, 6)}…`);
 
-      // Server-side loop drives the sweep; we just poll for status.
-      // The sweep continues even if the operator navigates away — the
-      // saved run_id lets the page resume the progress display on
-      // reload (see wirePipelineButton). Bound the polling time so a
-      // stuck consumer doesn't hold the buttons disabled forever.
       const POLL_INTERVAL_MS = 5000;
       const POLL_MAX_TICKS = 720; // 1 hour safety cap
       let ticks = 0;
-      let scanned = 0;
-      let merged = 0;
       while (ticks < POLL_MAX_TICKS) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
         ticks += 1;
         const sRes = await fetch(
-          `/api/admin/dedup-status?run_id=${encodeURIComponent(runId)}`,
+          `/api/admin/pipeline-status?id=${encodeURIComponent(pipelineRunId)}`,
           {
             credentials: 'same-origin',
             headers: { Accept: 'application/json' },
           },
         );
-        if (!sRes.ok) {
-          // Transient — keep polling. A persistent failure surfaces
-          // through the eventual POLL_MAX_TICKS branch below.
-          continue;
-        }
+        if (!sRes.ok) continue;
         const sBody = (await sRes.json()) as {
           ok: boolean;
           status: 'running' | 'done' | 'failed';
-          scanned: number;
-          merged: number;
-          remaining: number;
+          current_phase: string;
+          embed_processed: number;
+          embed_remaining: number;
+          error: string | null;
+          scrape: {
+            articles_ingested: number;
+            articles_deduped: number;
+          } | null;
+          dedup: {
+            scanned: number;
+            merged: number;
+            remaining: number;
+          } | null;
           done: boolean;
           failed: boolean;
-          error: string | null;
         };
         if (!sBody.ok) continue;
-        scanned = sBody.scanned;
-        merged = sBody.merged;
         if (sBody.failed) {
           throw new Error(
-            `dedup failed${sBody.error !== null ? `: ${sBody.error}` : ''}`,
+            `pipeline failed${sBody.error !== null ? `: ${sBody.error}` : ''}`,
           );
         }
+        // Pin the scrape run id so wireScrapeProgress() paints the
+        // ingest progress bar against the same run we're driving.
+        if (
+          pinnedRunId === undefined &&
+          sBody.scrape !== null &&
+          sBody.current_phase !== 'reembed_flip' &&
+          sBody.current_phase !== 'reembed_drain'
+        ) {
+          // pipeline-status doesn't expose scrape_run_id at the top
+          // level; the existing scrape progress widget falls back to
+          // the most recent running row, which is fine here.
+        }
+        setStatus(formatPipelineStatus(sBody));
         if (sBody.done) break;
-        setStatus(
-          `Dedup: scanned ${scanned}, merged ${merged}, ${sBody.remaining} remaining…`,
-        );
       }
-      setStatus(
-        `Done — embedded ${embedTotal} new, scanned ${scanned}, merged ${merged} duplicates.`,
-      );
       writePipelineState({ done: true });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1258,6 +1214,38 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     if (savedRunId === undefined) return;
     void (async () => {
       try {
+        // Try pipeline-status first — if the saved id is a pipeline
+        // run, the orchestrator may still be running on the backend.
+        const pRes = await fetch(
+          `/api/admin/pipeline-status?id=${encodeURIComponent(savedRunId)}`,
+          { credentials: 'same-origin', headers: { Accept: 'application/json' } },
+        );
+        if (pRes.ok) {
+          const pBody = (await pRes.json()) as {
+            ok: boolean;
+            status?: 'running' | 'done' | 'failed';
+            current_phase?: string;
+            embed_processed?: number;
+            embed_remaining?: number;
+            scrape?: {
+              articles_ingested: number;
+              articles_deduped: number;
+            } | null;
+            dedup?: { scanned: number; merged: number; remaining: number } | null;
+          };
+          if (pBody.ok && pBody.status !== undefined) {
+            if (pBody.status === 'done' || pBody.status === 'failed') {
+              status.textContent = `${saved.msg} - ${pBody.status} while you were away.`;
+              clearPipelineState();
+            } else {
+              status.textContent = formatPipelineStatus(
+                pBody as Parameters<typeof formatPipelineStatus>[0],
+              );
+            }
+            return;
+          }
+        }
+        // Fall back to scrape-status for refresh-mode runs.
         const res = await fetch(
           `/api/scrape-status?run_id=${encodeURIComponent(savedRunId)}`,
           { credentials: 'same-origin', headers: { Accept: 'application/json' } },
@@ -1268,10 +1256,6 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           status.textContent = `${saved.msg} - completed while you were away.`;
           clearPipelineState();
         } else {
-          // Re-pin scrape progress polling for the in-flight run so the
-          // existing 5s pollScrapeProgress() interval (started by
-          // wireScrapeProgress earlier in init()) starts using the
-          // saved run_id on its next tick.
           pinnedRunId = savedRunId;
         }
       } catch {

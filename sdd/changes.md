@@ -6,6 +6,11 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are archived in [`changes-archive-2026-04.md`](changes-archive-2026-04.md).
 
+## 2026-05-08
+
+- REQ-OPS-008 AC 4 reworded: a "Full pipeline run" no longer depends on the operator's browser tab staying open. Once the run is activated, every phase advances server-side; closing the tab, navigating away, or losing network mid-run no longer interrupts the pipeline, and reopening the surface restores live progress from the run's audit state. Status moves from Partial to Implemented.
+- REQ-PIPE-003 same-tick dedup hardened: same-story pairs surviving a single scrape tick now reliably collapse via the cross-chunk finalize pass even when many merges land at once. The earlier shape silently dropped every merge in a busy tick (cosines well above the same-story bar but no merge applied) when the per-tick batch grew large, leaving same-event clusters visibly duplicated until the next historical sweep.
+
 ## 2026-05-07
 
 - REQ-PIPE-009 AC 5 reworded: the rerank invocation bound is wall-clock based rather than a fixed count of borderline judgments, so a sweep over a large corpus picks remaining borderline pairs up on the next batch instead of dropping them silently when a per-batch count cap fires.

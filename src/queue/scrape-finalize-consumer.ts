@@ -156,7 +156,19 @@ export async function processOneFinalize(
   // Auto-merge band wins outright; if no auto-merge match exists but a
   // borderline match (>= floor, < threshold) does, the LLM rerank
   // decides whether to merge. REQ-PIPE-009.
-  const statements: D1PreparedStatement[] = [];
+  //
+  // Per-merge batching: each merge runs as its own `env.DB.batch(...)`
+  // inside the loop rather than accumulating every merge's statements
+  // into one trailing super-batch. Mirrors the historical-dedup pattern
+  // in `runHistoricalDedupBatch` (`src/lib/historical-dedup.ts`). The
+  // earlier shape — one batch holding 6 × N merges — silently failed
+  // at runtime on busy ticks: a tick with ~50 merges produced a 300-
+  // statement batch that exceeded D1's per-batch ceiling, throwing a
+  // single error that aborted ALL merges for the run. The screenshot
+  // duplicate clusters on news.graymatter.ch from runs prior to
+  // 2026-05-08 trace to exactly this failure mode (cosines well above
+  // threshold, finalize_recorded=1 set by the upfront flip, zero
+  // article_sources rows added).
   const mergedNewIds = new Set<string>();
   let losersDeleted = 0;
   let queriesAttempted = 0;
@@ -310,14 +322,22 @@ export async function processOneFinalize(
     }
 
     const merge = mergeAsAltSource(env.DB, bestMatchId, self.id);
-    for (const stmt of merge) statements.push(stmt);
+    try {
+      await env.DB.batch(merge);
+    } catch (err) {
+      // One bad merge must not abort the rest of the run. Skip it; the
+      // historical-dedup sweep will catch any pair we miss here.
+      log('warn', 'digest.generation', {
+        status: 'finalize_merge_failed',
+        scrape_run_id: body.scrape_run_id,
+        new_article_id: self.id,
+        existing_article_id: bestMatchId,
+        detail: String(err).slice(0, 500),
+      });
+      continue;
+    }
     mergedNewIds.add(self.id);
     losersDeleted += 1;
-  }
-
-  // Step 3 — execute the merge batch atomically.
-  if (statements.length > 0) {
-    await env.DB.batch(statements);
   }
 
   // Step 4 — delete merged-away vectors from Vectorize. Best-effort:

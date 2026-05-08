@@ -213,7 +213,7 @@ async function handle(context: APIContext): Promise<Response> {
   );
 }
 
-async function runOneBackfillBatch(env: Env): Promise<BatchResult> {
+export async function runOneBackfillBatch(env: Env): Promise<BatchResult> {
   const result = await env.DB
     .prepare(
       `SELECT id, title, details_json, source_snippet, published_at,

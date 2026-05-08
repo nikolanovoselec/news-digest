@@ -976,6 +976,34 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 ---
 
+### AD37: Full pipeline run is backend-orchestrated; browser tab is display-only
+
+**Status:** Accepted (2026-05-08)
+
+**Decision:** The "Full pipeline run" admin action no longer drives phase advancement from the browser. A single POST `/api/admin/pipeline-run` creates a `pipeline_runs` audit row and enqueues one `pipeline-jobs` queue message; a dedicated queue consumer (`src/queue/pipeline-consumer.ts`) walks the seven phases (`reembed_flip → reembed_drain → scrape_kick → scrape_wait → embed_drain → dedup_kick → dedup_wait → done`) by self-chaining queue messages. The settings surface only POSTs once and polls `/api/admin/pipeline-status?id=…` for live progress.
+
+**Context:** A 2026-05-08 production audit on `news.graymatter.ch` found same-event clusters that survived an operator-driven full pipeline run with all of AD32-AD36 already in place. Investigation showed the orchestrator was a JavaScript `while(!done)` loop in `src/pages/settings.astro` that POSTed `/api/admin/embed-backfill` and `/api/admin/historical-dedup` from the browser. On a mobile tab, background-tab throttling and tab sleep silently halted the loop mid-run; the dedup phase, gated behind the embed phase, never ran. The dedup-sweep already proved a queue self-chain pattern at one level down (`dedup_runs` + `dedup-sweep-consumer`); extending the same shape one level up over the seven pipeline phases removes the operator-tab dependency end-to-end.
+
+**Alternatives considered:**
+
+- **`ctx.waitUntil(self.fetch(…))` chains.** Rejected. `waitUntil` extends the current isolate's CPU budget; long chains still pay per-request edge cuts and cannot survive a worker restart. Queue messages cross isolate boundaries cleanly with platform-native retry envelopes.
+- **A single Durable Object per pipeline run.** Rejected as overkill. The per-phase work is already idempotent against queue redelivery via CAS guards; introducing a DO would add a new infrastructure dependency for state that fits in one D1 row.
+- **Keep the browser orchestrator and surface a "tab kept open" warning.** Rejected. The failure mode is silent — operators on mobile do not see the warning at the moment the tab sleeps, and "remember to keep this tab open for five minutes" is not an acceptable UX contract.
+
+**Rationale:** Cloudflare Queues self-chain is the same pattern the chunk-finalize handoff and the historical-dedup sweep already use; operators get one mental model ("background pipeline work continues without a tab"). Each phase consumer message gets a fresh CPU budget; transient failures retry via `max_retries=3`. The audit row is the single source of truth — closing the tab and reopening `/settings` later restores progress display from `pipeline_runs` exactly the way reopening recovers `dedup_runs` progress today.
+
+**Consequences:**
+
+- A new D1 table `pipeline_runs` records every "Full pipeline run" with phase, scrape_run_id, dedup_run_id, embed counters, error, started_at, updated_at.
+- A new queue `pipeline-jobs` (and `pipeline-jobs-integration` mirror) is provisioned in both deploy workflows and bound in `wrangler.toml`.
+- Two new admin routes: POST `/api/admin/pipeline-run` (kicker) and GET `/api/admin/pipeline-status` (poller).
+- The `settings.astro` "Full pipeline run" button collapses from ~200 lines of phase-loop JavaScript to a single POST + a poll loop.
+- "Refresh feeds" (the scrape-only sibling) is unchanged — it still uses `/api/admin/force-refresh` directly because it explicitly wants only the scrape phase.
+
+**Related requirements:** REQ-OPS-008 (AC 4 reworded to "the run continues irrespective of the operator's tab state"), REQ-PIPE-003 AC 9 (the dedup phase consumer is unchanged; pipeline-consumer just kicks it).
+
+---
+
 ## Related Documentation
 
 - [Architecture](../architecture.md) — System overview and component map

@@ -67,6 +67,14 @@ queue = "scrape-finalize"
 binding = "DEDUP_SWEEP"
 queue = "dedup-sweep"
 
+# REQ-OPS-008: backend-driven full pipeline orchestrator. Same self-
+# chain pattern as DEDUP_SWEEP, one level up — orchestrates the four
+# pipeline phases (scrape, embed-drain, dedup-kick, dedup-wait) so the
+# operator's tab is purely display, never load-bearing.
+[[queues.producers]]
+binding = "PIPELINE_JOBS"
+queue = "pipeline-jobs"
+
 [[queues.consumers]]
 queue = "scrape-coordinator"
 max_batch_size = 1
@@ -84,6 +92,11 @@ max_retries = 3
 
 [[queues.consumers]]
 queue = "dedup-sweep"
+max_batch_size = 1
+max_retries = 3
+
+[[queues.consumers]]
+queue = "pipeline-jobs"
 max_batch_size = 1
 max_retries = 3
 
@@ -203,6 +216,10 @@ queue = "scrape-finalize-integration"
 binding = "DEDUP_SWEEP"
 queue = "dedup-sweep-integration"
 
+[[env.integration.queues.producers]]
+binding = "PIPELINE_JOBS"
+queue = "pipeline-jobs-integration"
+
 [[env.integration.queues.consumers]]
 queue = "scrape-coordinator-integration"
 max_batch_size = 1
@@ -220,6 +237,11 @@ max_retries = 3
 
 [[env.integration.queues.consumers]]
 queue = "dedup-sweep-integration"
+max_batch_size = 1
+max_retries = 3
+
+[[env.integration.queues.consumers]]
+queue = "pipeline-jobs-integration"
 max_batch_size = 1
 max_retries = 3
 
