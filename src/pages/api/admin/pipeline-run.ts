@@ -8,26 +8,28 @@
 //
 // Mode (`full` or `wipe`):
 //   - `full` (default): keep existing embeddings, scrape + dedup.
-//   - `wipe`: start at reembed_flip — every article's embedding is
+//   - `wipe`: start at reembed_flip - every article's embedding is
 //             invalidated and re-computed before scraping resumes.
 //
 // HTTP methods:
-//   - POST  — accepts `{"mode": "full"|"wipe"}` JSON or form body.
+//   - POST  - accepts `{"mode": "full"|"wipe"}` JSON or form body.
 //             Origin check (checkDevEndpointOrigin) gates browser-
 //             driven cross-origin POSTs; curl/dev-bypass passes.
-//   - GET   — accepts `?mode=full|wipe` query string. Required because
-//             Cloudflare Access intercepts state-changing POSTs on
-//             /api/admin/* even with a valid CF_AppSession and bounces
-//             them through SSO; browsers fetching POST in CORS mode
-//             cannot follow the cross-origin redirect ("Failed to
-//             fetch"). Mirrors the force-refresh.ts pattern.
-//             For `mode=wipe` GET specifically applies a defense-in-
-//             depth `Sec-Fetch-Site` check so a malicious cross-origin
-//             `<img src=…>` cannot escalate to a destructive
-//             re-embed; same-origin and direct-navigation traffic
-//             passes, cross-site triggers are rejected.
+//   - GET   - accepts `?mode=full|wipe` query string. Required because
+//             Cloudflare Access intercepts requests to /api/admin/*
+//             with an SSO redirect; the browser settings.astro JS
+//             does a top-level navigation (not fetch) so the SSO
+//             chain completes natively.
 //
-// Three-layer admin auth (CF-001) gates both methods.
+// Three-layer admin auth (CF-001) gates both methods. A
+// `Sec-Fetch-Site` check was considered for `mode=wipe` GET as
+// defense-in-depth against a cross-origin `<img src=...>` trigger,
+// but the post-SSO redirect chain (news.graymatter.ch -> cloudflare
+// access.com -> news.graymatter.ch) poisons the header value to
+// `cross-site` per the Fetch Metadata spec, which would 403 the
+// legitimate post-SSO request. CF Access plus the admin-email gate
+// are the actual security boundary; wipe is destructive but
+// recoverable (re-embedding rebuilds the index).
 
 import type { APIContext } from 'astro';
 import { log } from '~/lib/log';
@@ -105,31 +107,6 @@ export async function GET(context: APIContext): Promise<Response> {
   const url = new URL(context.request.url);
   const requestedMode: 'full' | 'wipe' =
     url.searchParams.get('mode') === 'wipe' ? 'wipe' : 'full';
-
-  // Defense-in-depth on the destructive `wipe` path. Browsers send
-  // `Sec-Fetch-Site: same-origin` for fetches/links from this origin,
-  // `none` for typed-URL navigations, and `cross-site` for malicious
-  // <img>/<link> triggers from another origin. CF Access already
-  // gates the request, but a cross-origin `wipe` trigger from an
-  // operator's other authenticated tab would otherwise re-embed the
-  // entire corpus. `full` mode does not have this risk (it just
-  // mirrors the cron) so it accepts any fetch-site value.
-  if (requestedMode === 'wipe') {
-    const fetchSite = context.request.headers.get('sec-fetch-site');
-    if (
-      fetchSite !== null &&
-      fetchSite !== 'same-origin' &&
-      fetchSite !== 'none'
-    ) {
-      if (wantsJson) {
-        return new Response(
-          JSON.stringify({ ok: false, error: 'forbidden_origin' }),
-          { status: 403, headers: { 'Content-Type': 'application/json' } },
-        );
-      }
-      return new Response('Forbidden', { status: 403 });
-    }
-  }
 
   return runKick(env, adminAuth, appOrigin, wantsJson, requestedMode);
 }

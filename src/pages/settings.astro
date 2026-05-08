@@ -1043,57 +1043,64 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       writePipelineState({ msg });
     };
     for (const b of buttons) b.disabled = true;
-    try {
-      if (mode === 'refresh') {
-        // Refresh-only: kick the coordinator and poll scrape-status.
-        // Mirrors the 4-hourly cron — chunk + finalize consumers do
-        // the rest in the background.
-        setStatus('Kicking scrape…');
-        const frRes = await fetch('/api/admin/force-refresh', {
-          credentials: 'same-origin',
-          headers: { Accept: 'application/json' },
-        });
-        if (!frRes.ok) throw new Error(`force-refresh HTTP ${frRes.status}`);
-        const frBody = (await frRes.json()) as {
-          scrape_run_id: string;
-          reused: boolean;
-        };
-        pinnedRunId = frBody.scrape_run_id;
-        writePipelineState({ runId: frBody.scrape_run_id });
-        setStatus(
-          frBody.reused
-            ? 'Scrape already running; waiting for it to finish…'
-            : 'Scrape kicked; waiting for it to finish…',
-        );
-        while (true) {
-          await new Promise((r) => setTimeout(r, 5_000));
-          const sRes = await fetch(
-            `/api/scrape-status?run_id=${encodeURIComponent(frBody.scrape_run_id)}`,
-            { credentials: 'same-origin', headers: { Accept: 'application/json' } },
-          );
-          if (!sRes.ok) break;
-          const sBody = (await sRes.json()) as { running: boolean };
-          if (!sBody.running) break;
-        }
-        setStatus('Scrape finished.');
-        writePipelineState({ done: true });
-        return;
-      }
 
-      // Full pipeline (REQ-OPS-008). The browser does a top-level
-      // navigation to the kicker; CF Access protects /api/admin/* and
-      // a fetch() in CORS mode cannot follow the cross-origin SSO
-      // redirect. A real navigation lets the browser walk the full
-      // CF_AppSession → SSO → endpoint → 303 chain natively. The
-      // endpoint inserts the audit row, enqueues the orchestrator
-      // message, then 303s back to /settings?pipeline=enqueued&
-      // pipeline_run_id=…; init() picks that up on the return load
-      // and resumes polling from the saved state.
-      setStatus('Kicking pipeline…');
+    if (mode === 'full') {
+      // Full pipeline (REQ-OPS-008). Top-level navigation to the kicker.
+      // CF Access protects /api/admin/* and a fetch() in CORS mode cannot
+      // follow the cross-origin SSO redirect with credentials, so both
+      // POST and GET via fetch fail with "Failed to fetch". A real
+      // navigation walks the CF_AppSession -> SSO -> endpoint -> 303
+      // chain natively. The endpoint inserts the audit row, enqueues
+      // the orchestrator message, then 303s back to
+      // /settings?pipeline=enqueued&pipeline_run_id=...; the
+      // return-handler in wirePipelineButton picks up the URL signal
+      // and resumes polling.
+      //
+      // No try/catch: the page tears down before any error path could
+      // run. Status text is painted directly (not via setStatus, which
+      // would persist "Kicking pipeline..." to localStorage and leave a
+      // misleading message if the navigation never completes).
+      status.hidden = false;
+      status.textContent = 'Kicking pipeline...';
       const kickUrl =
         '/api/admin/pipeline-run?mode=' + (wipe ? 'wipe' : 'full');
       window.location.assign(kickUrl);
       return;
+    }
+
+    try {
+      // Refresh-only: kick the coordinator and poll scrape-status.
+      // Mirrors the 4-hourly cron - chunk + finalize consumers do the
+      // rest in the background.
+      setStatus('Kicking scrape...');
+      const frRes = await fetch('/api/admin/force-refresh', {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+      });
+      if (!frRes.ok) throw new Error(`force-refresh HTTP ${frRes.status}`);
+      const frBody = (await frRes.json()) as {
+        scrape_run_id: string;
+        reused: boolean;
+      };
+      pinnedRunId = frBody.scrape_run_id;
+      writePipelineState({ runId: frBody.scrape_run_id });
+      setStatus(
+        frBody.reused
+          ? 'Scrape already running; waiting for it to finish...'
+          : 'Scrape kicked; waiting for it to finish...',
+      );
+      while (true) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        const sRes = await fetch(
+          `/api/scrape-status?run_id=${encodeURIComponent(frBody.scrape_run_id)}`,
+          { credentials: 'same-origin', headers: { Accept: 'application/json' } },
+        );
+        if (!sRes.ok) break;
+        const sBody = (await sRes.json()) as { running: boolean };
+        if (!sBody.running) break;
+      }
+      setStatus('Scrape finished.');
+      writePipelineState({ done: true });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setStatus(`Failed: ${msg}`);
@@ -1127,32 +1134,44 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     if (fullBtn === null && refreshBtn === null) return;
 
     // Return-from-kicker handler. The Full pipeline run button does a
-    // top-level navigation to /api/admin/pipeline-run?mode=… (CF
+    // top-level navigation to /api/admin/pipeline-run?mode=... (CF
     // Access protects /api/admin/* and a fetch() in CORS mode cannot
     // follow the cross-origin SSO redirect). The kicker 303s back to
-    // /settings?pipeline=enqueued&pipeline_run_id=…  on success, or
+    // /settings?pipeline=enqueued&pipeline_run_id=...  on success, or
     // pipeline=denied|error on failure. Convert that URL signal into
-    // localStorage state so the existing resume-polling block below
-    // picks it up, then strip the params so a manual reload doesn't
-    // reprocess the same callback.
+    // localStorage state so the resume-polling block below picks it
+    // up. Use clearPipelineState before writePipelineState so a stale
+    // entry from a prior run does not merge into the new state. The
+    // URL params are stripped after handling; the message persists in
+    // localStorage (and survives manual reload via the resume block,
+    // which paints saved.msg unconditionally).
+    //
+    // Ordering note: this block runs BEFORE readPipelineState() below,
+    // so any URL-driven write is visible to the resume block on the
+    // same tick. denied/error states write done:true; the resume block
+    // paints them once and leaves the entry in place, so a refresh
+    // re-paints (the entry ages out at 30 min).
     try {
       const pipelineParams = new URLSearchParams(window.location.search);
       const pipelineState = pipelineParams.get('pipeline');
       if (pipelineState !== null && pipelineState !== '') {
         const runId = pipelineParams.get('pipeline_run_id') ?? '';
         if (pipelineState === 'enqueued' && runId !== '') {
+          clearPipelineState();
           writePipelineState({
-            msg: `Pipeline queued — run ${runId.slice(0, 6)}…`,
+            msg: `Pipeline queued - run ${runId.slice(0, 6)}...`,
             runId,
           });
         } else if (pipelineState === 'denied') {
+          clearPipelineState();
           writePipelineState({
-            msg: 'Pipeline kick denied — admin auth failed.',
+            msg: 'Pipeline kick denied - admin auth failed.',
             done: true,
           });
         } else if (pipelineState === 'error') {
+          clearPipelineState();
           writePipelineState({
-            msg: 'Pipeline kick failed — check logs.',
+            msg: 'Pipeline kick failed - check logs.',
             done: true,
           });
         }
@@ -1170,7 +1189,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     // Restore the most recent pipeline status on page load so an
     // operator who navigated away mid-run sees the last phase text
     // (and a follow-up "completed while you were away" if the scrape
-    // has since finished). Clears stale state automatically.
+    // has since finished). State ages out at 30 min via readPipelineState.
     const saved = readPipelineState();
     if (saved === null) return;
     const status = document.querySelector<HTMLElement>('[data-pipeline-status]');
@@ -1178,9 +1197,10 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     status.hidden = false;
     status.textContent = saved.msg;
     if (saved.done === true) {
-      // Run finished in this tab before navigation - leave the message
-      // as-is and forget the state on next reload.
-      clearPipelineState();
+      // Terminal state (denied/error/completed). Leave the message
+      // visible and the entry in place; the 30-min staleout drops it
+      // automatically and the next click overwrites it. Auto-clearing
+      // here loses operator-visible failure feedback on refresh.
       return;
     }
     const savedRunId = saved.runId;
@@ -1217,8 +1237,11 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
             ): string =>
               formatPipelineStatus(b as Parameters<typeof formatPipelineStatus>[0]);
             if (pBody.status === 'done' || pBody.status === 'failed') {
-              status.textContent = `${pBody.status} while you were away.`;
-              clearPipelineState();
+              const terminalMsg = `${pBody.status} while you were away.`;
+              status.textContent = terminalMsg;
+              // Mark done but leave the message in place for the
+              // operator to see on refresh; 30-min staleout drops it.
+              writePipelineState({ msg: terminalMsg, done: true });
               return;
             }
             status.textContent = formatPiped(pBody);
@@ -1250,11 +1273,15 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               status.textContent = text;
               writePipelineState({ msg: text, runId: savedRunId });
               if (sBody.status === 'done' || sBody.status === 'failed') {
-                status.textContent =
+                const terminalMsg =
                   sBody.status === 'failed' && sBody.error != null
                     ? `Failed: ${sBody.error}`
                     : `${sBody.status}.`;
-                clearPipelineState();
+                status.textContent = terminalMsg;
+                // Mark done but persist the terminal message; 30-min
+                // staleout drops it. Auto-clear here loses operator-
+                // visible failure feedback on refresh.
+                writePipelineState({ msg: terminalMsg, done: true });
                 return;
               }
             }
@@ -1269,8 +1296,9 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
         if (!res.ok) return;
         const body = (await res.json()) as { running: boolean };
         if (!body.running) {
-          status.textContent = `${saved.msg} - completed while you were away.`;
-          clearPipelineState();
+          const terminalMsg = `${saved.msg} - completed while you were away.`;
+          status.textContent = terminalMsg;
+          writePipelineState({ msg: terminalMsg, done: true });
         } else {
           pinnedRunId = savedRunId;
         }
