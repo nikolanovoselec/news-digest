@@ -21,6 +21,12 @@ interface Env {
   // until the corpus tail is reached. Decouples the sweep from the
   // operator's browser tab.
   DEDUP_SWEEP: Queue<import('./queue/dedup-sweep-consumer').DedupSweepMessage>;
+  // REQ-OPS-008 — backend-driven full pipeline orchestrator. The
+  // /api/admin/pipeline-run kicker sends the first message; the
+  // consumer self-chains across the seven phases until the run
+  // reaches a terminal state. Decouples the pipeline from the
+  // operator's browser tab.
+  PIPELINE_JOBS: Queue<import('./queue/pipeline-consumer').PipelineJobMessage>;
   AI: Ai;
   // Cloudflare Vectorize index used for semantic article dedup.
   // 768-dim cosine, populated by the chunk-consumer + admin
