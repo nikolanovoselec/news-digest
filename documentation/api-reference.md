@@ -470,6 +470,26 @@ Kicker for the backend-driven full pipeline run. Creates a `pipeline_runs` audit
 
 ---
 
+### GET /api/admin/pipeline-run
+
+Browser-navigation variant of the pipeline kicker. Used by `settings.astro` via `window.location.assign()` because Cloudflare Access cannot be traversed by `fetch()` in CORS mode. On success the endpoint enqueues the pipeline job and responds with `303 See Other` to `/settings?pipeline=enqueued&pipeline_run_id=...`; the settings page reads those URL parameters on load to resume progress polling. On auth failure it redirects to `/settings?pipeline=denied`.
+
+**Auth:** Admin session required. No Origin check (top-level navigation carries no `Origin` header; the CSRF surface is equivalent to a browser form POST, scoped to authenticated operators only via CF Access + admin-email gate). See [AD38](decisions/README.md#ad38-cf-access-protected-admin-endpoints-must-be-invoked-via-top-level-navigation-not-fetch) for the security boundary rationale.
+
+**Query parameters:**
+
+| Parameter | Values | Default | Description |
+|---|---|---|---|
+| `mode` | `full` \| `wipe` | `full` | `wipe` invalidates all embeddings before scraping; `full` keeps them. |
+
+**Success (303):** redirects to `/settings?pipeline=enqueued&pipeline_run_id=<ULID>&mode=<mode>`.
+
+**Error responses:** `303 -> /settings?pipeline=denied` (auth failure) | `500` (configuration error).
+
+**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)
+
+---
+
 ### GET /api/admin/pipeline-status
 
 Polling endpoint for the backend-driven full pipeline run. Returns the named `pipeline_runs` row plus nested snapshots of the `scrape_runs` and `dedup_runs` rows the pipeline kicked, so the settings surface can paint live progress without driving the orchestration. The settings JS hits this every 5 seconds while a run is in flight.

@@ -1026,7 +1026,7 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Consequences:**
 
-- Every future state-changing admin endpoint under `/api/admin/*` that is invoked from the browser must either (a) use `window.location.assign()` and respond with a `303` redirect, or (b) be invoked from a server-side route that is not itself Access-gated. `fetch()` in CORS mode is not a valid invocation path when CF Access is active.
+- Every state-changing admin endpoint invoked from the browser must use `window.location.assign()` and respond with `303`, or be invoked from a server-side route not protected by CF Access. `fetch()` in CORS mode is not a valid path when Access is active.
 - `Sec-Fetch-Site` headers are unreliable as a defense-in-depth signal for any endpoint reachable via a CF Access redirect chain. Use the Worker admin-auth gate (`CF_ACCESS_AUD` + `ADMIN_EMAIL`) as the authoritative security boundary instead.
 - The settings page must handle the `?pipeline=` URL parameter on load and convert it to localStorage state before any polling logic runs.
 
