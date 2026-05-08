@@ -13,8 +13,11 @@
 //
 // HTTP methods:
 //   - POST  - accepts `{"mode": "full"|"wipe"}` JSON or form body.
-//             Origin check (checkDevEndpointOrigin) gates browser-
-//             driven cross-origin POSTs; curl/dev-bypass passes.
+//             Retained for curl, dev-bypass scripts, and JSON API
+//             callers; the settings.astro browser path does not use
+//             POST. Origin check (checkDevEndpointOrigin) gates
+//             browser-driven cross-origin POSTs; curl/dev-bypass
+//             passes.
 //   - GET   - accepts `?mode=full|wipe` query string. Required because
 //             Cloudflare Access intercepts requests to /api/admin/*
 //             with an SSO redirect; the browser settings.astro JS

@@ -1042,6 +1042,13 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       status.textContent = msg;
       writePipelineState({ msg });
     };
+    // Clear any prior terminal state before this kick so the merge-on-prev
+    // behavior of writePipelineState does not leak `done: true` from a
+    // previous failed run into the new one. Without this, a fresh refresh
+    // kick after a failed full-pipeline kick would inherit `done: true`,
+    // which short-circuits the resume block on reload and prevents the
+    // live scrape from resuming polling.
+    clearPipelineState();
     for (const b of buttons) b.disabled = true;
 
     if (mode === 'full') {

@@ -50,6 +50,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD34 | LLM same-event rerank for borderline cosine pairs (between auto-merge and distinct bands) | Architecture | 2026-05-07 |
 | AD35 | Operator historical-dedup sweep self-chains via Cloudflare Queue, not the operator's browser tab | Architecture | 2026-05-07 |
 | AD36 | Lower dedup auto-merge threshold to 0.78 and remove the per-batch rerank cap | Architecture | 2026-05-07 |
+| AD37 | Full pipeline run is backend-orchestrated; browser tab is display-only | Architecture | 2026-05-08 |
+| AD38 | CF Access-protected admin endpoints must be invoked via top-level navigation, not fetch() | Security | 2026-05-08 |
 
 ---
 
@@ -1001,6 +1003,34 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - "Refresh feeds" (the scrape-only sibling) is unchanged — it still uses `/api/admin/force-refresh` directly because it explicitly wants only the scrape phase.
 
 **Related requirements:** REQ-OPS-008 (AC 4 reworded to "the run continues irrespective of the operator's tab state"), REQ-PIPE-003 AC 9 (the dedup phase consumer is unchanged; pipeline-consumer just kicks it).
+
+---
+
+### AD38: CF Access-protected admin endpoints must be invoked via top-level navigation, not fetch()
+
+**Status:** Accepted (2026-05-08)
+
+**Decision:** Browser-initiated calls to `/api/admin/*` endpoints that are protected by Cloudflare Access must use `window.location.assign(url)` (top-level navigation), not `fetch()`. The `/api/admin/pipeline-run` kicker in `src/pages/settings.astro` was changed from a `fetch(kickUrl)` call to `window.location.assign(kickUrl)`. The endpoint responds with a `303 See Other` redirect back to `/settings?pipeline=enqueued&pipeline_run_id=...`; the settings page reads that URL signal on load and resumes progress polling.
+
+**Context:** Cloudflare Access protects `/api/admin/*` by intercepting unauthenticated requests and redirecting the browser through an SSO flow (`news.graymatter.ch` -> `cloudflareaccess.com` -> `news.graymatter.ch`). When `fetch()` is used in CORS mode, the browser cannot follow a cross-origin redirect that sets credentials (the `CF_Authorization` cookie belongs to the Access domain, not the app domain). The result is a network-level "Failed to fetch" error regardless of the user's auth state. A top-level navigation walks the redirect chain natively: the browser follows each hop, the Access cookie is set, and the final request arrives at the Worker with a valid `CF_Authorization` header.
+
+**The `Sec-Fetch-Site` check that was considered for `mode=wipe` was dropped** because the post-SSO redirect chain itself poisons the `Sec-Fetch-Site` header to `cross-site` (the last redirect originates from `cloudflareaccess.com`). A `Sec-Fetch-Site` guard that rejects `cross-site` would therefore block the operator's own legitimate post-SSO request. The actual security boundary is CF Access plus the `ADMIN_EMAIL` gate in `src/middleware/admin-auth.ts`; a cross-origin `<img src=...>` trigger against `mode=wipe` still requires a valid `CF_Authorization` cookie, which only the authenticated operator's browser holds.
+
+**Alternatives considered:**
+
+- **`fetch()` with `credentials: 'include'`** against the Access-gated endpoint. Rejected. CORS mode still cannot follow the cross-origin SSO redirect to set a cookie on the Access domain; the browser blocks the redirect with a CORS error before the cookie exchange.
+- **A separate un-gated proxy endpoint** that the fetch calls, which then makes a server-side call to the Access-gated route. Rejected. Adding an un-gated proxy that performs privileged work defeats the purpose of the Access perimeter; any future mistake could expose the proxy without also exposing the gated endpoint.
+- **Keep fetch() and rely solely on the Worker gate (no CF Access).** Acceptable as a long-term state, but Access provides a meaningful UX improvement (SSO redirect vs. bare 401) that operators expect.
+
+**Rationale:** Top-level navigation is the browser's native mechanism for following cross-origin redirects with credential exchange. The `303 -> /settings?pipeline=enqueued` round-trip lets the kicker remain stateless (no WebSocket, no long-poll) while giving the settings UI a clean URL-based handoff signal. The pattern is already used by `force-refresh.ts` for the same reason.
+
+**Consequences:**
+
+- Every future state-changing admin endpoint under `/api/admin/*` that is invoked from the browser must either (a) use `window.location.assign()` and respond with a `303` redirect, or (b) be invoked from a server-side route that is not itself Access-gated. `fetch()` in CORS mode is not a valid invocation path when CF Access is active.
+- `Sec-Fetch-Site` headers are unreliable as a defense-in-depth signal for any endpoint reachable via a CF Access redirect chain. Use the Worker admin-auth gate (`CF_ACCESS_AUD` + `ADMIN_EMAIL`) as the authoritative security boundary instead.
+- The settings page must handle the `?pipeline=` URL parameter on load and convert it to localStorage state before any polling logic runs.
+
+**Related requirements:** [REQ-OPS-008](../../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (AC 6 - terminal state persistence survives reload), [REQ-OPS-005](../../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint)
 
 ---
 
