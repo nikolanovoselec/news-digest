@@ -735,7 +735,7 @@ async function enqueueAutoSweep(
         )
         .bind(
           sweepRunId,
-          err instanceof Error ? err.message : String(err),
+          (err instanceof Error ? err.message : String(err)).slice(0, 500),
           Math.floor(Date.now() / 1000),
         )
         .run();

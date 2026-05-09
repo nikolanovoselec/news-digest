@@ -1187,9 +1187,13 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     const insertCall = mockDb.calls.find(
       (c) =>
         c.sql.includes('INSERT INTO dedup_runs') &&
-        (c.params[1] === undefined || c.sql.includes("'running'")),
+        c.sql.includes("'running'"),
     );
     expect(insertCall).toBeDefined();
+    // Recover the sweep run id from the INSERT and assert the
+    // subsequent UPDATE targets the SAME row.
+    const sweepRunId = insertCall?.params[0];
+    expect(sweepRunId).toEqual(expect.any(String));
     // The error path then UPDATEs the same row to status='failed' with
     // the captured error message bound at ?2.
     const failUpdate = mockDb.calls.find(
@@ -1198,6 +1202,98 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
         c.sql.includes('UPDATE dedup_runs'),
     );
     expect(failUpdate).toBeDefined();
+    expect(failUpdate?.params[0]).toBe(sweepRunId);
     expect(failUpdate?.params[1]).toBe(sendErr.message);
+    // Pin the new `AND status='running'` guard so a regression that
+    // drops it (allowing double-flips of an already-failed row) lands
+    // on a failing assertion.
+    expect(failUpdate?.sql).toMatch(/WHERE\s+id\s*=\s*\?1\s+AND\s+status\s*=\s*'running'/);
+  });
+
+  // AD41 — when both DEDUP_SWEEP.send AND the secondary fail-flip
+  // UPDATE fail (queue down + D1 transient error), the original send
+  // error must reach the caller and be the one logged. The inner
+  // try/catch around the UPDATE swallows the secondary error so it
+  // cannot mask the primary. Without this, operators would see a
+  // misleading D1 error in `finalize_auto_sweep_enqueue_failed`
+  // instead of the real queue-down cause.
+  it('REQ-PIPE-003 AC 16 (AD41): secondary D1 error during fail-flip is swallowed; processOneFinalize still resolves', async () => {
+    // Custom mockDb where prepare().run() rejects ONLY on the
+    // status='failed' UPDATE. Other DML (INSERT, gate-flip UPDATE)
+    // succeeds normally so processOneFinalize reaches the auto-sweep
+    // enqueue branch.
+    const calls: DbCall[] = [];
+    const customPrepare = vi.fn().mockImplementation((sql: string) => {
+      return {
+        bind: (...params: unknown[]) => {
+          return {
+            sql,
+            params,
+            first: vi.fn().mockImplementation(() => {
+              calls.push({ sql, params });
+              if (sql.includes('finalize_recorded FROM scrape_runs')) {
+                return Promise.resolve({ finalize_recorded: 0 });
+              }
+              return Promise.resolve(null);
+            }),
+            all: vi.fn().mockImplementation(() => {
+              calls.push({ sql, params });
+              if (sql.includes('FROM articles\n        WHERE scrape_run_id')) {
+                return Promise.resolve({
+                  results: [
+                    {
+                      id: 'a-1',
+                      title: 't',
+                      source_snippet: 's',
+                      published_at: 2000,
+                      ingested_at: 2000,
+                      primary_source_url: 'https://a.example/x',
+                    },
+                  ],
+                });
+              }
+              return Promise.resolve({ results: [] });
+            }),
+            run: vi.fn().mockImplementation(() => {
+              calls.push({ sql, params });
+              if (sql.includes('UPDATE scrape_runs')) {
+                return Promise.resolve({ meta: { changes: 1 } });
+              }
+              if (sql.includes("status='failed'")) {
+                return Promise.reject(new Error('d1 transient'));
+              }
+              return Promise.resolve({ meta: { changes: 0 } });
+            }),
+          } as unknown as D1PreparedStatement;
+        },
+      } as unknown as D1PreparedStatement;
+    });
+    const customDb = {
+      prepare: customPrepare,
+      batch: vi.fn().mockResolvedValue([]),
+      exec: vi.fn().mockResolvedValue(undefined),
+    } as unknown as D1Database;
+    const mockVec = makeMockVectorize(new Map([['a-1', []]]));
+    const sendErr = new Error('queue down');
+    const failingQueue: Queue = {
+      send: vi.fn().mockRejectedValue(sendErr),
+      sendBatch: vi.fn(),
+    } as unknown as Queue;
+    const env = makeEnv(customDb, mockVec.binding, {
+      sweepQueue: failingQueue,
+    });
+
+    // Outer try/catch in processOneFinalize swallows the rethrown
+    // primary error. Test contract: this resolves cleanly.
+    await expect(
+      processOneFinalize(env, { scrape_run_id: 'r1' }),
+    ).resolves.toBeUndefined();
+
+    // The fail-flip UPDATE was attempted (it then rejected, but the
+    // inner catch swallowed it).
+    const failUpdate = calls.find((c) =>
+      c.sql.includes("status='failed'"),
+    );
+    expect(failUpdate).toBeDefined();
   });
 });
