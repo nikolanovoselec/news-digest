@@ -43,7 +43,7 @@ The bar for "doesn't spy on you or sell you anything" is, in fairness, embarrass
 
 This project was built end-to-end as a real-world test of [Codeflare](https://codeflare.ch) ([repo](https://github.com/nikolanovoselec/codeflare))'s **spec-driven development** (SDD) framework. Every feature follows the same loop: write the contract first in `sdd/{domain}.md`, write a failing test that names the requirement (`REQ-X-NNN`), write the minimal code to make it pass with an `// Implements REQ-X-NNN` annotation, then push. Three review agents (code, spec, docs) run automatically and the deploy fires on green. The agents disagree with me on a regular basis. They have been right on a regular basis.
 
-The result: 55+ written requirements across 10 product domains (authentication, generation, reading, history, email, settings, discovery, design, observability, PWA), each with a test that proves it works and a source file that points back to it. [Spec](sdd/README.md) · [Architecture](documentation/architecture.md) · [Changelog](sdd/changes.md)
+The result: 60+ written requirements across 10 product domains (authentication, generation, reading, history, email, settings, discovery, design, observability, PWA), each with a test that proves it works and a source file that points back to it. [Spec](sdd/README.md) · [Architecture](documentation/architecture.md) · [Changelog](sdd/changes.md)
 
 ## Stack
 
@@ -98,7 +98,7 @@ Custom token via [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflar
 | Account | Workers Scripts | Edit | Deploys the Worker |
 | Account | Workers KV Storage | Edit | Auto-creates the KV namespace |
 | Account | D1 | Edit | Auto-creates the D1 database and applies migrations |
-| Account | Queues | Edit | Auto-creates `scrape-coordinator`, `scrape-chunks`, `scrape-finalize`, and `dedup-sweep` |
+| Account | Queues | Edit | Auto-creates `scrape-coordinator`, `scrape-chunks`, `scrape-finalize`, `dedup-sweep`, and `pipeline-jobs` |
 | Account | Workers AI | Read | LLM inference for summaries + source discovery; bge-base-en-v1.5 for article embeddings |
 | Account | Vectorize | Edit | Auto-creates the `ai-news-embeddings` index; stores + queries 768-dim cosine embeddings for semantic dedup |
 | Zone | Zone | Read | Only when binding a custom domain; discovers the zone |
@@ -111,7 +111,7 @@ The Zone scopes are skipped automatically when `APP_URL` is a `*.workers.dev` UR
 <details>
 <summary><strong>What the workflow does</strong></summary>
 
-1. Idempotently looks up (or creates) the D1 database, KV namespace, queues (`scrape-coordinator`, `scrape-chunks`, `scrape-finalize`, `dedup-sweep`), and the `ai-news-embeddings` Vectorize index. All resolved IDs are patched into a CI-only copy of `wrangler.toml` so the deploy binds the right resources without committing back to the repo.
+1. Idempotently looks up (or creates) the D1 database, KV namespace, queues (`scrape-coordinator`, `scrape-chunks`, `scrape-finalize`, `dedup-sweep`, `pipeline-jobs`), and the `ai-news-embeddings` Vectorize index. All resolved IDs are patched into a CI-only copy of `wrangler.toml` so the deploy binds the right resources without committing back to the repo.
 2. (D1 + KV are looked up by name; the workflow creates them on first deploy if they don't exist yet.)
 3. Applies D1 migrations
 4. Pushes Worker secrets (Resend pair skipped when unset)
@@ -124,7 +124,7 @@ The Zone scopes are skipped automatically when `APP_URL` is a `*.workers.dev` UR
 <details>
 <summary><strong>Custom domain only: gate the admin endpoints</strong></summary>
 
-Three operator endpoints under `/api/admin/*` (force-refresh + re-discover) need an extra gate so other signed-in users can't trigger them. Cloudflare Access at the zone level: [setup walkthrough](documentation/deployment.md#admin-only-routes-cloudflare-access-gating). On `*.workers.dev` you are the only user anyway — skip this unless you plan on having users.
+Operator endpoints under `/api/admin/*` (force-refresh, pipeline-run, embed-backfill, historical-dedup, discovery retry) need an extra gate so other signed-in users can't trigger them. Cloudflare Access at the zone level: [setup walkthrough](documentation/deployment.md#admin-only-routes-cloudflare-access-gating). On `*.workers.dev` you are the only user anyway — skip this unless you plan on having users.
 
 </details>
 
