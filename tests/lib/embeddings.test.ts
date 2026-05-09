@@ -6,10 +6,12 @@ import {
   embedTexts,
   deleteVectorsBatched,
   readCosineThreshold,
+  readHighConfidenceCosine,
   readSameVendorPenalty,
   readTimeWindowSeconds,
   EMBEDDING_MODEL_ID,
   DEFAULT_COSINE_THRESHOLD,
+  DEFAULT_HIGH_CONFIDENCE_COSINE,
   DEFAULT_SAME_VENDOR_PENALTY,
   DEFAULT_TIME_WINDOW_SECONDS,
 } from '~/lib/embeddings';
@@ -202,6 +204,40 @@ describe('readTimeWindowSeconds', () => {
     expect(
       readTimeWindowSeconds({ DEDUP_TIME_WINDOW_SECONDS: '999999999' }),
     ).toBe(999_999_999);
+  });
+});
+
+describe('readHighConfidenceCosine', () => {
+  it('REQ-PIPE-003 AD40: returns the default (0.92) when env var is unset', () => {
+    expect(readHighConfidenceCosine({})).toBe(DEFAULT_HIGH_CONFIDENCE_COSINE);
+    expect(DEFAULT_HIGH_CONFIDENCE_COSINE).toBe(0.92);
+  });
+
+  it('parses a valid float in (0, 1] from the env', () => {
+    expect(
+      readHighConfidenceCosine({ DEDUP_HIGH_CONFIDENCE_COSINE: '0.95' }),
+    ).toBe(0.95);
+    expect(readHighConfidenceCosine({ DEDUP_HIGH_CONFIDENCE_COSINE: '1' })).toBe(
+      1,
+    );
+  });
+
+  it('falls back to the default on zero, negative, or out-of-range values', () => {
+    expect(
+      readHighConfidenceCosine({ DEDUP_HIGH_CONFIDENCE_COSINE: '0' }),
+    ).toBe(DEFAULT_HIGH_CONFIDENCE_COSINE);
+    expect(
+      readHighConfidenceCosine({ DEDUP_HIGH_CONFIDENCE_COSINE: '-0.5' }),
+    ).toBe(DEFAULT_HIGH_CONFIDENCE_COSINE);
+    expect(
+      readHighConfidenceCosine({ DEDUP_HIGH_CONFIDENCE_COSINE: '1.5' }),
+    ).toBe(DEFAULT_HIGH_CONFIDENCE_COSINE);
+  });
+
+  it('falls back to the default on non-numeric values', () => {
+    expect(
+      readHighConfidenceCosine({ DEDUP_HIGH_CONFIDENCE_COSINE: 'banana' }),
+    ).toBe(DEFAULT_HIGH_CONFIDENCE_COSINE);
   });
 });
 

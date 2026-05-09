@@ -44,6 +44,7 @@ import { mergeAsAltSource } from '~/lib/finalize-merge';
 import { handleBatch } from '~/lib/queue-handler';
 import {
   readCosineThreshold,
+  readHighConfidenceCosine,
   readSameVendorPenalty,
   readTimeWindowSeconds,
   deleteVectorsBatched,
@@ -58,11 +59,14 @@ import { sameVendor } from '~/lib/etld';
  *  the queue isolate budget. */
 const FINALIZE_CANDIDATE_CAP = 250;
 
-/** TopK for each Vectorize query. Five gives the dedup loop enough
- *  signal to pick the best older match while keeping per-call latency
- *  bounded. Scores below threshold are filtered client-side; topK is
- *  not the gate. */
-const VECTORIZE_TOPK = 5;
+/** TopK for each Vectorize query. Bumped from 5 to 20 on 2026-05-09
+ *  (AD40) after the AD39 threshold raise widened the rerank band from
+ *  8 cosine points to 18: in dense-theme periods the 5 nearest
+ *  neighbours can be consumed by topical noise scoring above 0.80,
+ *  starving the loop of the actual same-event candidate at rank 6+.
+ *  20 is cheap (Vectorize cost is per-query, not per-result) and
+ *  comfortably covers any realistic per-article cluster size. */
+const VECTORIZE_TOPK = 20;
 
 /** Message shape for the SCRAPE_FINALIZE queue. */
 export interface FinalizeJobMessage {
@@ -153,6 +157,7 @@ export async function processOneFinalize(
   const sameVendorPenalty = readSameVendorPenalty(env);
   const rerankFloor = readRerankFloor(env);
   const timeWindowSeconds = readTimeWindowSeconds(env);
+  const highConfidenceCosine = readHighConfidenceCosine(env);
 
   // Step 2 — for each article, query Vectorize for top-K matches and
   // pick the oldest sufficiently-similar older article (if any).
@@ -209,8 +214,23 @@ export async function processOneFinalize(
     let borderMatchPublishedAt = Number.POSITIVE_INFINITY;
     let borderMatchScore = 0;
 
+    // Per-article diagnostic counters (AD40). Emitted as one info log
+    // line after the inner match loop so operators can diagnose under-
+    // merge from `wrangler tail` without re-running the pipeline. The
+    // line answers: how many candidates did we see, how many cleared
+    // each band, what was the best score, why didn't we merge.
+    let candidatesSeen = 0;
+    let candidatesSkippedTimeWindow = 0;
+    let candidatesSkippedNewerOrEqual = 0;
+    let candidatesAboveFloor = 0;
+    let candidatesAboveThreshold = 0;
+    let candidatesHighConfidence = 0;
+    let bestCosineRaw = 0;
+    let bestCosineAdjusted = 0;
+
     for (const match of matches) {
       if (match.id === self.id) continue;
+      candidatesSeen += 1;
       const meta = match.metadata as
         | { published_at?: unknown; primary_source_url?: unknown }
         | undefined;
@@ -224,6 +244,7 @@ export async function processOneFinalize(
       // overlap alone. Applied BEFORE same-vendor penalty + threshold.
       const deltaSeconds = Math.abs(self.published_at - matchPublishedAt);
       if (deltaSeconds > timeWindowSeconds) {
+        candidatesSkippedTimeWindow += 1;
         log('info', 'digest.generation', {
           status: 'finalize_match_skipped_time_window',
           scrape_run_id: body.scrape_run_id,
@@ -233,33 +254,60 @@ export async function processOneFinalize(
         });
         continue;
       }
-      // Apply the same-vendor cosine penalty BEFORE the threshold gate.
-      // Same-publisher pairs (cloud.google.com vs blog.google,
-      // workos.com vs blog.workos.com) consistently produced inflated
-      // cosines on LLM-summary embeddings because the model carried
-      // publisher-style boilerplate; the offset neutralises that
-      // without forbidding genuine same-publisher merges (a very
-      // strong source-text match still clears 0.78 + 0.05 = 0.83).
+      // High-confidence band (AD40, 2026-05-09): pairs whose RAW
+      // cosine clears `highConfidenceCosine` auto-merge unconditionally,
+      // bypassing the same-vendor penalty. At raw >= 0.92 the articles
+      // are essentially restating each other (wire-syndicated stories,
+      // near-identical headlines) and the penalty would otherwise drop
+      // genuine duplicates into the rerank band where an LLM
+      // hallucination can reject them.
+      const isHighConfidence = match.score >= highConfidenceCosine;
+      // Apply the same-vendor cosine penalty BEFORE the threshold gate
+      // (skipped for high-confidence pairs). Same-publisher pairs
+      // (cloud.google.com vs blog.google, workos.com vs blog.workos.com)
+      // consistently produced inflated cosines on LLM-summary
+      // embeddings because the model carried publisher-style
+      // boilerplate; the offset neutralises that without forbidding
+      // genuine same-publisher merges.
       const matchUrl =
         typeof meta?.primary_source_url === 'string'
           ? meta.primary_source_url
           : '';
       const sameEtld1 =
         matchUrl !== '' && sameVendor(self.primary_source_url, matchUrl);
-      const adjustedScore = sameEtld1
+      const adjustedScore = sameEtld1 && !isHighConfidence
         ? match.score - sameVendorPenalty
         : match.score;
-      // Only merge into STRICTLY older articles. Equal-published_at
-      // matches (rare, possible for press-release feeds publishing the
-      // same minute) keep both rows so the standalone tiebreak rule
-      // from REQ-PIPE-008 AC 2 still applies elsewhere.
-      if (matchPublishedAt >= self.published_at) continue;
-      if (adjustedScore >= threshold) {
+      // Walk newest-first (self is newer); we want STRICTLY older
+      // matches as merge targets. Equal `published_at` (wire-
+      // syndicated stories often share epoch-second resolution after
+      // RSS pubDate parsing — see `parseFeedDate` in `src/lib/sources.ts`)
+      // is tie-broken by ULID — lower id = older = wins as merge
+      // target. The earlier `>=` filter silently dropped every same-
+      // second pair, parallel to the bug `historical-dedup.ts:201-202`
+      // already fixed for its oldest-first walk.
+      if (matchPublishedAt > self.published_at) {
+        candidatesSkippedNewerOrEqual += 1;
+        continue;
+      }
+      if (matchPublishedAt === self.published_at && self.id <= match.id) {
+        candidatesSkippedNewerOrEqual += 1;
+        continue;
+      }
+      if (adjustedScore > bestCosineAdjusted) {
+        bestCosineRaw = match.score;
+        bestCosineAdjusted = adjustedScore;
+      }
+      if (isHighConfidence) candidatesHighConfidence += 1;
+      if (isHighConfidence || adjustedScore >= threshold) {
+        candidatesAboveThreshold += 1;
+        candidatesAboveFloor += 1;
         if (matchPublishedAt < autoMatchPublishedAt) {
           autoMatchId = match.id;
           autoMatchPublishedAt = matchPublishedAt;
         }
       } else if (adjustedScore >= rerankFloor) {
+        candidatesAboveFloor += 1;
         // Track the highest-scoring borderline match (oldest tiebreak).
         // We rerank at most one pair per article so the strongest
         // candidate gets the LLM call.
@@ -274,6 +322,42 @@ export async function processOneFinalize(
         }
       }
     }
+
+    // Per-article diagnostic log (AD40). One line per ingested
+    // article summarising what the dedup pass observed: candidate
+    // count after self/null filter, breakdown by filter rejection
+    // class, and best cosine seen post-time-window. The decision
+    // field captures the outcome class so operators can grep
+    // `wrangler tail` for `decision="no_match_below_floor"` etc.
+    // `candidates_high_confidence` is reported separately so an
+    // operator can correlate hc-band hits with auto-merges without
+    // overloading the decision string.
+    let decision: string;
+    if (autoMatchId !== null) {
+      decision = 'auto_merge';
+    } else if (borderMatchId !== null) {
+      decision = 'rerank_pending';
+    } else if (candidatesAboveFloor > 0) {
+      decision = 'no_eligible_older_match';
+    } else if (candidatesSeen > 0) {
+      decision = 'no_match_below_floor';
+    } else {
+      decision = 'no_candidates';
+    }
+    log('info', 'digest.generation', {
+      status: 'finalize_dedup_diag',
+      scrape_run_id: body.scrape_run_id,
+      self_id: self.id,
+      candidates_seen: candidatesSeen,
+      candidates_skipped_time_window: candidatesSkippedTimeWindow,
+      candidates_skipped_newer_or_equal: candidatesSkippedNewerOrEqual,
+      candidates_above_floor: candidatesAboveFloor,
+      candidates_above_threshold: candidatesAboveThreshold,
+      candidates_high_confidence: candidatesHighConfidence,
+      best_cosine_raw: bestCosineRaw,
+      best_cosine_adjusted: bestCosineAdjusted,
+      decision,
+    });
 
     let bestMatchId = autoMatchId;
     let bestMatchAlreadyConfirmedExists = false;

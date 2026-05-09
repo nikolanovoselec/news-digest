@@ -159,6 +159,15 @@ DEDUP_SAME_VENDOR_PENALTY = "0.05"
 # 0.72 to 0.70 to capture the lower tail of same-cycle financial
 # coverage (PANW valuation week pairs at 0.7286-0.7293).
 DEDUP_RERANK_FLOOR = "0.70"
+# REQ-PIPE-003 — high-confidence cosine bar. Pairs whose RAW cosine
+# clears this auto-merge unconditionally, bypassing the same-vendor
+# penalty and the LLM rerank band. Set above the AD39 empirical
+# false-positive floor (0.86) with margin so dense-theme calibration
+# still holds. Catches near-duplicate-headline pairs (wire-syndicated
+# stories on the same press release) where the same-vendor penalty
+# would otherwise drop a 0.93 cosine into the rerank band. AD40,
+# 2026-05-09.
+DEDUP_HIGH_CONFIDENCE_COSINE = "0.92"
 
 # ---------------------------------------------------------------------------
 # Integration environment — `wrangler deploy --env integration` targets a
@@ -194,6 +203,8 @@ DEDUP_TIME_WINDOW_SECONDS = "259200"
 DEDUP_SAME_VENDOR_PENALTY = "0.05"
 # REQ-PIPE-009 - see top-level vars block for rationale.
 DEDUP_RERANK_FLOOR = "0.70"
+# REQ-PIPE-003 — see top-level vars block for rationale.
+DEDUP_HIGH_CONFIDENCE_COSINE = "0.92"
 
 [env.integration.observability]
 enabled = true

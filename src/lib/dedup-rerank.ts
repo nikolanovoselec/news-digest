@@ -86,6 +86,11 @@ const RERANK_SYSTEM = [
   'Decide whether two article snippets are part of the SAME news cycle for the SAME subject.',
   'Answer ONLY with strict JSON: {"same_event": true} or {"same_event": false}.',
   'Same news cycle = either (a) reporting on the same underlying real-world occurrence (e.g. the same vote, the same product launch, the same CVE advisory, the same acquisition), OR (b) closely-coupled follow-on coverage of one subject within the same news cycle (e.g. multiple analyst takes on the same company\'s outlook published the same week, multiple security outlets covering the same vulnerability, multiple write-ups of the same earnings call).',
+  'Concrete same-event examples — answer true on these shapes:',
+  '- "Acme Q1 Earnings Beat Forecast" + "Acme Cuts 1,000 Jobs After Q1 Results" — same earnings call, different angles.',
+  '- "Critical CVE-2026-1234 Disclosed in OpenSSL" + "OpenSSL Patches Authentication Bypass" — same vulnerability advisory.',
+  '- "Union Demands Accountability After Boeing Worker Death" + "IAM Calls for Investigation Following Plant Fatality" — same workplace incident, different sources.',
+  '- "Cloudflare Announces 20% Layoffs" + "Cloudflare Shares Slide on Workforce Cut" — same announcement triggering market reaction.',
   'Different = different occurrences with no shared underlying news driver (e.g. an acquisition versus a product launch by the same company, a CVE advisory versus a marketing announcement, a Q1 earnings call versus a Q2 earnings call).',
   'When unsure, prefer false. False is the conservative answer.',
 ].join(' ');

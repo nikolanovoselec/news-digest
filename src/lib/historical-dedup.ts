@@ -22,6 +22,7 @@ import { log } from '~/lib/log';
 import { mergeAsAltSource } from '~/lib/finalize-merge';
 import {
   readCosineThreshold,
+  readHighConfidenceCosine,
   readSameVendorPenalty,
   readTimeWindowSeconds,
   deleteVectorsBatched,
@@ -41,10 +42,13 @@ export const DEFAULT_BATCH = 25;
 export const MAX_BATCH = 500;
 
 
-/** TopK for each Vectorize query. Five gives the dedup loop enough
- *  signal to pick the best newer match while keeping per-call latency
- *  bounded. */
-const VECTORIZE_TOPK = 5;
+/** TopK for each Vectorize query. Bumped from 5 to 20 on 2026-05-09
+ *  (AD40) — same reasoning as `scrape-finalize-consumer.ts`: the AD39
+ *  threshold raise widened the rerank band to 18 cosine points, and 5
+ *  nearest neighbours can be consumed by topical noise above 0.80 in
+ *  dense theme periods. 20 is cheap and covers realistic cluster
+ *  sizes. */
+const VECTORIZE_TOPK = 20;
 
 interface ArticleRow {
   id: string;
@@ -87,6 +91,7 @@ export async function runHistoricalDedupBatch(
   const sameVendorPenalty = readSameVendorPenalty(env);
   const rerankFloor = readRerankFloor(env);
   const timeWindowSeconds = readTimeWindowSeconds(env);
+  const highConfidenceCosine = readHighConfidenceCosine(env);
 
   // Walk articles by ascending (published_at, id), starting strictly
   // after the supplied composite cursor (or from the beginning when
@@ -172,18 +177,25 @@ export async function runHistoricalDedupBatch(
         });
         continue;
       }
+      // High-confidence band (AD40, 2026-05-09): pairs whose RAW
+      // cosine clears `highConfidenceCosine` auto-merge unconditionally,
+      // bypassing the same-vendor penalty. Mirrors the finalize-
+      // consumer behaviour so the per-tick and operator-sweep paths
+      // make consistent decisions on near-duplicate-headline pairs.
+      const isHighConfidence = match.score >= highConfidenceCosine;
       // Same-vendor cosine penalty (REQ-PIPE-003 AC 11). Subtracts
       // the configured offset before comparing to the threshold so
       // same-publisher pairs need a stronger signal than cross-
       // publisher pairs to merge — neutralises publisher-style
       // boilerplate inflating cosines on LLM-summary embeddings.
+      // Skipped when the pair is already in the high-confidence band.
       const matchUrl =
         typeof meta?.primary_source_url === 'string'
           ? meta.primary_source_url
           : '';
       const sameEtld1 =
         matchUrl !== '' && sameVendor(self.primary_source_url, matchUrl);
-      const adjustedScore = sameEtld1
+      const adjustedScore = sameEtld1 && !isHighConfidence
         ? match.score - sameVendorPenalty
         : match.score;
       // We're walking oldest-first: any match with strictly NEWER
@@ -200,7 +212,7 @@ export async function runHistoricalDedupBatch(
       if (matchPublishedAt < self.published_at) continue;
       if (matchPublishedAt === self.published_at && self.id >= match.id)
         continue;
-      const isAutoMerge = adjustedScore >= threshold;
+      const isAutoMerge = isHighConfidence || adjustedScore >= threshold;
       const isBorderline =
         !isAutoMerge && adjustedScore >= rerankFloor;
       if (!isAutoMerge && !isBorderline) continue;

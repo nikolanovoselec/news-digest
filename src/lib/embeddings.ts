@@ -54,6 +54,18 @@ export const DEFAULT_COSINE_THRESHOLD = 0.88;
  *  of cosine. 259200 = 72h. */
 export const DEFAULT_TIME_WINDOW_SECONDS = 259_200;
 
+/** Default high-confidence cosine when DEDUP_HIGH_CONFIDENCE_COSINE is
+ *  unset. Pairs whose RAW cosine (before same-vendor penalty) clears
+ *  this bar auto-merge unconditionally — they bypass both the same-
+ *  vendor penalty and the LLM rerank band. Set deliberately above the
+ *  AD39 empirical false-positive floor of 0.86 with margin so we still
+ *  honour the "dense theme topics false-merge at 0.78-0.86" calibration.
+ *  Catches near-duplicate-headline pairs (e.g. wire-syndicated stories
+ *  on the same press release) where the same-vendor penalty would
+ *  otherwise drop a 0.93 cosine into the rerank band and risk an LLM
+ *  rejection on a clearly identical event. AD40, 2026-05-09. */
+export const DEFAULT_HIGH_CONFIDENCE_COSINE = 0.92;
+
 /** Default same-vendor cosine penalty when DEDUP_SAME_VENDOR_PENALTY is
  *  unset. Subtracted from the raw cosine when both articles resolve to
  *  the same eTLD+1, lifting the effective threshold for same-publisher
@@ -106,6 +118,24 @@ export function readSameVendorPenalty(
   const parsed = Number.parseFloat(raw);
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
     return DEFAULT_SAME_VENDOR_PENALTY;
+  }
+  return parsed;
+}
+
+/** Read the runtime high-confidence cosine bar from env, with a safe
+ *  fallback. Parses the env var (string-typed in wrangler.toml) and
+ *  clamps to (threshold, 1]; an invalid value falls back to the default
+ *  rather than silently dropping the band. The bar must sit above the
+ *  regular threshold for the band to make sense — values below are
+ *  treated as if unset. */
+export function readHighConfidenceCosine(
+  env: Pick<Env, 'DEDUP_HIGH_CONFIDENCE_COSINE'>,
+): number {
+  const raw = env.DEDUP_HIGH_CONFIDENCE_COSINE;
+  if (typeof raw !== 'string' || raw === '') return DEFAULT_HIGH_CONFIDENCE_COSINE;
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 1) {
+    return DEFAULT_HIGH_CONFIDENCE_COSINE;
   }
   return parsed;
 }

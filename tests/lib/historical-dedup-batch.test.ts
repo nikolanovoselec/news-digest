@@ -161,6 +161,8 @@ interface CallOpts {
   batch?: number;
   aiRun?: (model: string, params: Record<string, unknown>) => Promise<unknown>;
   rerankFloor?: string;
+  cosineThreshold?: string;
+  highConfidenceCosine?: string;
   paginatedRemaining?: boolean;
 }
 
@@ -188,6 +190,8 @@ async function callBatch(opts: CallOpts) {
     VECTORIZE: vectorize,
     AI: { run: aiRun },
     DEDUP_RERANK_FLOOR: opts.rerankFloor,
+    DEDUP_COSINE_THRESHOLD: opts.cosineThreshold,
+    DEDUP_HIGH_CONFIDENCE_COSINE: opts.highConfidenceCosine,
   } as unknown as Env;
 
   const result = await runHistoricalDedupBatch(
@@ -519,6 +523,68 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
     });
     expect(result.merged).toBe(1);
     expect(fixture.batchCalls.length).toBeGreaterThan(0);
+  });
+
+  it('REQ-PIPE-003 AD40: high-confidence raw cosine auto-merges same-vendor pair (penalty bypassed)', async () => {
+    // Wire-syndicated story: same eTLD+1, raw 0.93. With high-
+    // confidence band at 0.92 the penalty is skipped and the pair
+    // auto-merges deterministically — even when the regular threshold
+    // is set above (0.95) what the post-penalty adjusted score would
+    // produce.
+    const SELF_ID = 'older';
+    const MATCH_ID = 'newer';
+    const { result, fixture } = await callBatch({
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: 1_700_000_500,
+          primary_source_url: 'https://blog.example.com/older',
+        },
+      ],
+      existenceGuardResults: { [MATCH_ID]: { present: 1 } },
+      queryByIdResults: {
+        [SELF_ID]: singleMatch({
+          id: MATCH_ID,
+          score: 0.93,
+          published_at: 1_700_001_000,
+          primary_source_url: 'https://news.example.com/newer',
+        }),
+      },
+      cosineThreshold: '0.95',
+      highConfidenceCosine: '0.92',
+    });
+    expect(result.merged).toBe(1);
+    expect(fixture.batchCalls.length).toBeGreaterThan(0);
+  });
+
+  it('REQ-PIPE-003 AD40: cosine just below high-confidence band still subject to penalty', async () => {
+    const SELF_ID = 'older';
+    const MATCH_ID = 'newer';
+    const { result, fixture } = await callBatch({
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: 1_700_000_500,
+          primary_source_url: 'https://blog.example.com/older',
+        },
+      ],
+      existenceGuardResults: { [MATCH_ID]: { present: 1 } },
+      queryByIdResults: {
+        [SELF_ID]: singleMatch({
+          id: MATCH_ID,
+          score: 0.91,
+          published_at: 1_700_001_000,
+          primary_source_url: 'https://news.example.com/newer',
+        }),
+      },
+      cosineThreshold: '0.95',
+      highConfidenceCosine: '0.92',
+    });
+    // 0.91 < 0.92 high-confidence, penalty applied → 0.86, < 0.95
+    // threshold; lands in rerank band, default `same_event:false` mock
+    // rejects, no merge.
+    expect(result.merged).toBe(0);
+    expect(fixture.batchCalls.length).toBe(0);
   });
 
   it('REQ-PIPE-003 AC 11: cross-vendor pair just above threshold merges (no penalty)', async () => {

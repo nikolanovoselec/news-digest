@@ -6,6 +6,10 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are archived in [`changes-archive-2026-04.md`](changes-archive-2026-04.md).
 
+## 2026-05-09
+
+- REQ-PIPE-003 AC 14 added: wire-syndicated stories that share publication times to the second across sources, and near-duplicate articles whose textual similarity is overwhelming, now collapse to a single primary card instead of appearing as separate duplicates. The previous behavior kept same-second pairs silently apart in the per-tick finalize pass, surfacing visible duplicates in the digest on the same day a press release was syndicated.
+
 ## 2026-05-08
 
 - REQ-PIPE-003 AC 13 added and the same-story auto-merge bar raised: independent articles on a dense theme (e.g. "AI agent governance") published days apart no longer collapse onto a single card. The matcher now requires both a stricter similarity score AND that the two articles fall within roughly the same news cycle, so the recent 13-source false-merge cluster on a single hacker-news story can no longer recur.

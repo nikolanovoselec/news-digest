@@ -53,6 +53,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD37 | Full pipeline run is backend-orchestrated; browser tab is display-only | Architecture | 2026-05-08 |
 | AD38 | CF Access-protected admin endpoints must be invoked via top-level navigation, not fetch() | Security | 2026-05-08 |
 | AD39 | Raise dedup auto-merge threshold to 0.88 and gate merges to a 72h news-cycle window | Architecture | 2026-05-08 |
+| AD40 | Add equal-time ULID tie-break, high-confidence cosine band, topK bump, and per-article diagnostic logs to dedup | Architecture | 2026-05-09 |
 
 ---
 
@@ -1063,6 +1064,49 @@ The 0.78 threshold from AD36 was tuned against tightly-bounded news-cycle cluste
 - The `dedup-diag` admin endpoint already surfaces cosine + threshold + same-publisher flag (REQ-PIPE-003 AC 10); time-delta is observable from the diag's published_at fields without an explicit additional surface.
 
 **Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 13 added), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs)
+
+---
+
+### AD40: Equal-time ULID tie-break, high-confidence cosine band, topK bump, and per-article diagnostic logs
+
+**Status:** Accepted (2026-05-09)
+
+**Decision:** Four targeted changes to the dedup match-filter pipeline that close a silent-drop bug and add deterministic handling for near-duplicate-headline pairs without re-litigating the AD39 threshold calibration:
+
+1. **Equal-time ULID tie-break** in `scrape-finalize-consumer.ts:256`. Replace `if (matchPublishedAt >= self.published_at) continue;` with the strict-greater check plus a ULID tie-break — `if (matchPublishedAt === self.published_at && self.id <= match.id) continue;` — parallel to `historical-dedup.ts:201-202`. Wire-syndicated stories often share epoch-second `published_at` after RSS pubDate parsing; the prior `>=` filter silently dropped every such pair.
+2. **High-confidence cosine band** (`DEDUP_HIGH_CONFIDENCE_COSINE`, default `"0.92"`). Pairs whose RAW cosine clears this bar auto-merge unconditionally, bypassing both the same-vendor penalty and the LLM rerank band. Set above the AD39 empirical false-positive floor (0.86) with margin so the dense-theme calibration still holds. Catches near-duplicate-headline pairs where the same-vendor penalty would otherwise drop a 0.93 cosine into the rerank band and risk an LLM rejection on a clearly identical event.
+3. **TopK bump 5 → 20** in both `scrape-finalize-consumer.ts` and `historical-dedup.ts`. The AD39 threshold raise widened the rerank band from 8 cosine points (0.70-0.78) to 18 (0.70-0.88); in dense-theme periods the 5 nearest neighbours can be consumed by topical noise above 0.80, starving the loop of the actual same-event candidate at rank 6+. Vectorize cost is per-query, not per-result.
+4. **Per-article diagnostic log** (`finalize_dedup_diag`). One info log line per ingested article summarising candidate count, breakdown by filter rejection class, best raw and adjusted cosine, and decision class (`auto_merge_high_confidence`, `auto_merge_threshold`, `rerank_pending`, `no_eligible_older_match`, `no_match_below_floor`, `no_candidates`). Operators can now diagnose under-merge from `wrangler tail` without re-running the pipeline.
+
+**Context:** The 2026-05-09 production digest on `news.graymatter.ch` showed two clear under-merge cases the post-AD39 calibration could not explain by threshold alone:
+- 6 articles about the same Cloudflare Q1 2026 earnings call + 20% workforce reduction, from 6 different vendors (qz.com, latimes.com, finance.yahoo.com, sdxcentral.com, barrons.com, news.ycombinator.com), all on the same day, NOT merged.
+- 2 near-identical-headline articles (`IAM Union Demands Full Accountability After Boeing Employee Death` + `IAM Calls for Accountability Following Boeing Employee Fatality`) from wire-syndicated sources, NOT merged.
+
+External-LLM and Opus-ultrathink critique of the initial fix proposal (multi-rerank in finalize + rewriting the `When unsure, prefer false` bias) flagged that:
+- Multi-rerank addresses an asymmetry that doesn't fire in the canonical cross-tick sequence — each new article in finalize has at most one older candidate per tick, so the 2nd-N borderlines never exist to walk.
+- Rewriting the conservative bias in the rerank prompt risks reintroducing the AD39 dense-theme failure mode.
+- The Boeing pair is most plausibly explained by `scrape-finalize-consumer.ts:256` silently dropping equal-`published_at` pairs — a bug `historical-dedup.ts:201-202` already fixed for its oldest-first walk.
+- A high-confidence cosine band ABOVE the regular threshold deterministically catches near-duplicate-headline pairs without re-litigating threshold calibration.
+
+**Alternatives considered:**
+
+- **Lower the threshold back to 0.85.** Rejected. AD39 explicitly rejected 0.85 against the dense-theme empirical false-positive floor of 0.86; the 72h gate alone does not buy enough headroom to revisit it.
+- **Multi-rerank in finalize-consumer (rerank all borderlines, not just top-1).** Deferred. Helps only in same-tick clusters where multiple older candidates share the rerank band; the canonical cross-tick sequence has at most one. Multiplies hallucination probability in dense-theme clusters from 1× to N×. Revisit if production logs show the same-tick case is common.
+- **Lower the same-vendor penalty.** Rejected. The high-confidence band already neutralises the penalty's punishing effect at near-duplicate cosines without weakening it for the genuine same-publisher boilerplate inflation it was tuned against.
+- **Rewrite the `When unsure, prefer false` bias.** Rejected as risky. The conservative bias is load-bearing for the AD39 dense-theme calibration; rewriting it introduces new ambiguity terms (`primary subject`, `same incident`) that bge-base topical clusters can also satisfy. We added concrete positive examples to the prompt (multiple write-ups of the same earnings call, same vulnerability advisory, same workplace incident) without softening the conservative default.
+
+**Rationale:** Diagnose first, retune second. The ULID tie-break is a 1-line correctness fix with no calibration risk. The high-confidence band has a deterministic semantic story (`raw cosine >= 0.92 means the headlines and bodies are restating each other`) and sits above AD39's empirical false-positive floor. The topK bump is cheap insurance against starvation. The diagnostic log gives operators the cosine numbers needed to tune the rerank prompt or threshold from real production data instead of speculation. Together these recover the under-merge cases the AD39 fix did not anticipate while preserving the 13-source false-merge protection.
+
+**Consequences:**
+
+- Wire-syndicated near-duplicate pairs (Boeing IAM, Reuters/AP-style stories) merge deterministically via the high-confidence band, regardless of same-vendor penalty arithmetic.
+- Same-second `published_at` pairs across sources now merge through the finalize-consumer (one direction; the lower-ULID is the merge target). Previously dropped silently.
+- Per-tick log volume rises by one info line per new article (~20-30 lines per typical scrape tick). Acceptable; the log lines are structured and aggregate cheaply.
+- Vectorize.queryById issues 4× more candidate slots per call (topK=20 vs 5). Bandwidth and per-call latency are negligible at this scale.
+- The rerank prompt now lists four concrete positive-example shapes (earnings calls, CVE advisories, workplace incidents, market-reaction follow-ons) without changing its conservative default. LLM behaviour on the rerank band is expected to shift slightly toward `true` on textbook same-event pairs while leaving the dense-theme calibration intact.
+- This fix is forward-only; it does NOT un-merge the existing 13-source false-merge cluster from before AD39 (separate operation per AD39 consequences).
+
+**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 14 added), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs)
 
 ---
 

@@ -156,6 +156,8 @@ function makeEnv(
   opts: {
     sameVendorPenalty?: string;
     rerankFloor?: string;
+    cosineThreshold?: string;
+    highConfidenceCosine?: string;
     aiBinding?: { run: (model: string, params: Record<string, unknown>) => Promise<unknown> };
   } = {},
 ): Env {
@@ -165,9 +167,10 @@ function makeEnv(
     AI: opts.aiBinding ?? {
       run: vi.fn().mockResolvedValue({ response: '{"same_event":false}' }),
     },
-    DEDUP_COSINE_THRESHOLD: '0.85',
+    DEDUP_COSINE_THRESHOLD: opts.cosineThreshold ?? '0.85',
     DEDUP_SAME_VENDOR_PENALTY: opts.sameVendorPenalty ?? '0.05',
     DEDUP_RERANK_FLOOR: opts.rerankFloor ?? '0.72',
+    DEDUP_HIGH_CONFIDENCE_COSINE: opts.highConfidenceCosine ?? '0.92',
   } as unknown as Env;
 }
 
@@ -270,10 +273,9 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     expect(mockVec.deleteMock).not.toHaveBeenCalled();
   });
 
-  it('REQ-PIPE-003: never merges into a match with newer or equal published_at', async () => {
+  it('REQ-PIPE-003: never merges into a match with strictly newer published_at', async () => {
     const newId = 'new-1';
     const newerId = 'newer-1';
-    const equalId = 'equal-1';
     const mockDb = makeMockDb({
       articleRows: [
         {
@@ -283,7 +285,7 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
           primary_source_url: 'https://newsite.example/post/2',
         },
       ],
-      existsIds: new Set([newerId, equalId]),
+      existsIds: new Set([newerId]),
     });
     const matches = new Map<string, VectorizeMatch[]>();
     matches.set(newId, [
@@ -295,6 +297,35 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
           primary_source_url: 'https://other.example/a',
         },
       } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const env = makeEnv(mockDb.db, mockVec.binding);
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    expect(mockVec.deleteMock).not.toHaveBeenCalled();
+  });
+
+  it('REQ-PIPE-003 AD40: equal-published_at pair merges when self has newer ULID (tie-break)', async () => {
+    // self.id='new-1' > match.id='equal-1' lexicographically (n > e),
+    // so self is the newer ULID and should fold into match — parallels
+    // the historical-dedup tie-break the finalize loop was missing.
+    // Equal published_at is common with wire-syndicated stories that
+    // share epoch-second resolution after RSS pubDate parsing.
+    const newId = 'new-1';
+    const equalId = 'equal-1';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: newId,
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://newsite.example/post/2',
+        },
+      ],
+      existsIds: new Set([equalId]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    matches.set(newId, [
       {
         id: equalId,
         score: 0.95,
@@ -306,6 +337,127 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     ]);
     const mockVec = makeMockVectorize(matches);
     const env = makeEnv(mockDb.db, mockVec.binding);
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    expect(mockVec.deleteMock).toHaveBeenCalledWith([newId]);
+  });
+
+  it('REQ-PIPE-003 AD40: equal-published_at pair skipped when self has older ULID (other side merges)', async () => {
+    // self.id='aaa-1' < match.id='zzz-1' lexicographically, so self is
+    // the older ULID. The opposite-direction iteration will merge zzz-1
+    // into aaa-1; this side must skip to avoid double-merge.
+    const selfId = 'aaa-1';
+    const matchId = 'zzz-1';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: selfId,
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://newsite.example/a',
+        },
+      ],
+      existsIds: new Set([matchId]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    matches.set(selfId, [
+      {
+        id: matchId,
+        score: 0.95,
+        metadata: {
+          published_at: 2000,
+          primary_source_url: 'https://other.example/z',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const env = makeEnv(mockDb.db, mockVec.binding);
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    expect(mockVec.deleteMock).not.toHaveBeenCalled();
+  });
+
+  it('REQ-PIPE-003 AD40: high-confidence raw cosine auto-merges same-vendor pair (penalty bypassed)', async () => {
+    // Wire-syndicated story scenario: same eTLD+1 publisher network,
+    // raw cosine 0.93 (near-identical headlines). Without the high-
+    // confidence band, the 0.05 vendor penalty would drop adjusted to
+    // 0.88, which at AD39's 0.88 threshold is borderline (subject to
+    // LLM rejection). The high-confidence band must bypass the penalty
+    // and auto-merge so wire-syndicated near-duplicates land
+    // deterministically.
+    const newId = 'new-1';
+    const oldId = 'old-1';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: newId,
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://blog.example.com/new-post',
+        },
+      ],
+      existsIds: new Set([oldId]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    matches.set(newId, [
+      {
+        id: oldId,
+        score: 0.93,
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://news.example.com/old-post',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const env = makeEnv(mockDb.db, mockVec.binding, {
+      // Threshold 0.85 (test default) + penalty 0.05 = adjusted 0.88;
+      // without the high-confidence bypass we'd hit auto-merge anyway.
+      // Force the bypass to be load-bearing by lifting the threshold
+      // above adjusted: 0.93 - 0.05 = 0.88 < 0.90.
+      cosineThreshold: '0.90',
+      highConfidenceCosine: '0.92',
+    });
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    expect(mockVec.deleteMock).toHaveBeenCalledWith([newId]);
+  });
+
+  it('REQ-PIPE-003 AD40: same-vendor pair just below high-confidence band still subject to penalty', async () => {
+    // Confirms the high-confidence band is a hard cutoff at the
+    // configured cosine — pairs at 0.91 (just below 0.92) still get
+    // the same-vendor penalty applied, falling into rerank or below.
+    const newId = 'new-1';
+    const oldId = 'old-1';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: newId,
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://blog.example.com/new-post',
+        },
+      ],
+      existsIds: new Set([oldId]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    matches.set(newId, [
+      {
+        id: oldId,
+        score: 0.91,
+        metadata: {
+          published_at: 1000,
+          primary_source_url: 'https://news.example.com/old-post',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    // Default test AI binding returns same_event:false, so a pair that
+    // lands in the rerank band ends up not merging.
+    const env = makeEnv(mockDb.db, mockVec.binding, {
+      cosineThreshold: '0.90',
+      highConfidenceCosine: '0.92',
+    });
 
     await processOneFinalize(env, { scrape_run_id: 'r1' });
     expect(mockVec.deleteMock).not.toHaveBeenCalled();

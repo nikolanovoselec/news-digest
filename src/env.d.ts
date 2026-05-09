@@ -102,4 +102,12 @@ interface Env {
   // 2026-05-07 alongside the threshold drop; see AD36); clamped to
   // [0, 1] at runtime.
   DEDUP_RERANK_FLOOR?: string;
+  // High-confidence cosine bar (REQ-PIPE-003). Pairs whose RAW
+  // cosine clears this bar auto-merge unconditionally — they bypass
+  // both the same-vendor penalty and the LLM rerank band. Default
+  // 0.92, set above the AD39 empirical false-positive floor of 0.86
+  // with margin so the dense-theme calibration still holds. Clamped
+  // to (0, 1] at runtime; values below the regular threshold reduce
+  // to the threshold's own behaviour. AD40, 2026-05-09.
+  DEDUP_HIGH_CONFIDENCE_COSINE?: string;
 }
