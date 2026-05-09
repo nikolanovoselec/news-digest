@@ -150,6 +150,22 @@ function makeMockVectorize(matchesById: Map<string, VectorizeMatch[]>): MockVect
   };
 }
 
+interface MockSweepQueue {
+  binding: Queue;
+  sends: unknown[];
+}
+
+function makeMockSweepQueue(): MockSweepQueue {
+  const sends: unknown[] = [];
+  const send = vi.fn().mockImplementation(async (msg: unknown) => {
+    sends.push(msg);
+  });
+  return {
+    binding: { send, sendBatch: vi.fn() } as unknown as Queue,
+    sends,
+  };
+}
+
 function makeEnv(
   db: D1Database,
   vectorize: Vectorize,
@@ -159,11 +175,13 @@ function makeEnv(
     cosineThreshold?: string;
     highConfidenceCosine?: string;
     aiBinding?: { run: (model: string, params: Record<string, unknown>) => Promise<unknown> };
+    sweepQueue?: Queue;
   } = {},
 ): Env {
   return {
     DB: db,
     VECTORIZE: vectorize,
+    DEDUP_SWEEP: opts.sweepQueue ?? makeMockSweepQueue().binding,
     AI: opts.aiBinding ?? {
       run: vi.fn().mockResolvedValue({ response: '{"same_event":false}' }),
     },
@@ -273,38 +291,6 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     expect(mockVec.deleteMock).not.toHaveBeenCalled();
   });
 
-  it('REQ-PIPE-003: never merges into a match with strictly newer published_at', async () => {
-    const newId = 'new-1';
-    const newerId = 'newer-1';
-    const mockDb = makeMockDb({
-      articleRows: [
-        {
-          id: newId,
-          published_at: 2000,
-          ingested_at: 2000,
-          primary_source_url: 'https://newsite.example/post/2',
-        },
-      ],
-      existsIds: new Set([newerId]),
-    });
-    const matches = new Map<string, VectorizeMatch[]>();
-    matches.set(newId, [
-      {
-        id: newerId,
-        score: 0.95,
-        metadata: {
-          published_at: 3000,
-          primary_source_url: 'https://other.example/a',
-        },
-      } as unknown as VectorizeMatch,
-    ]);
-    const mockVec = makeMockVectorize(matches);
-    const env = makeEnv(mockDb.db, mockVec.binding);
-
-    await processOneFinalize(env, { scrape_run_id: 'r1' });
-    expect(mockVec.deleteMock).not.toHaveBeenCalled();
-  });
-
   it('REQ-PIPE-003 AD40: equal-published_at pair merges when self has newer ULID (tie-break)', async () => {
     // self.id='new-1' > match.id='equal-1' lexicographically (n > e),
     // so self is the newer ULID and should fold into match — parallels
@@ -342,10 +328,14 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     expect(mockVec.deleteMock).toHaveBeenCalledWith([newId]);
   });
 
-  it('REQ-PIPE-003 AD40: equal-published_at pair skipped when self has older ULID (other side merges)', async () => {
+  it('REQ-PIPE-003 AC 15 (AD41): equal-published_at pair merges when self has older ULID (match folds into self)', async () => {
     // self.id='aaa-1' < match.id='zzz-1' lexicographically, so self is
-    // the older ULID. The opposite-direction iteration will merge zzz-1
-    // into aaa-1; this side must skip to avoid double-merge.
+    // the older ULID and wins the tie-break. With bidirectional finalize
+    // (AD41), the merge fires in this iteration with self as winner —
+    // the match (zzz-1) is deleted from Vectorize. Pre-AD41 this side
+    // skipped on the assumption the other iteration would handle it,
+    // which left clusters un-merged when the match was already stored
+    // and never re-finalized.
     const selfId = 'aaa-1';
     const matchId = 'zzz-1';
     const mockDb = makeMockDb({
@@ -374,7 +364,9 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     const env = makeEnv(mockDb.db, mockVec.binding);
 
     await processOneFinalize(env, { scrape_run_id: 'r1' });
-    expect(mockVec.deleteMock).not.toHaveBeenCalled();
+    // Match folds INTO self → loser is matchId, winner is selfId.
+    expect(mockVec.deleteMock).toHaveBeenCalledTimes(1);
+    expect(mockVec.deleteMock).toHaveBeenCalledWith([matchId]);
   });
 
   it('REQ-PIPE-003 AD40: high-confidence raw cosine auto-merges same-vendor pair (penalty bypassed)', async () => {
@@ -941,5 +933,390 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     );
     expect(mergeStmts).toHaveLength(0);
     expect(mockVec.deleteMock).not.toHaveBeenCalled();
+  });
+
+  // AD41 — bidirectional finalize merge. The newly-ingested article
+  // can be the OLDER side of the pair (slow-aggregator copy that
+  // arrives in a later tick with an earlier published_at than its
+  // already-stored match). The merge must still fire, with the late-
+  // arriving older article as winner.
+  it('REQ-PIPE-003 AC 15 (AD41): late-arriving older article absorbs already-stored newer match', async () => {
+    const lateOlderId = 'late-older-1'; // just-ingested, OLDER published_at
+    const storedNewerId = 'stored-newer-1'; // already in D1, NEWER published_at
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: lateOlderId,
+          title: 'Late older title',
+          source_snippet: 'snippet',
+          published_at: 1_000_000, // OLDER
+          ingested_at: 2_000_500, // ingested later
+          primary_source_url: 'https://kron4.example/post/1',
+        },
+      ],
+      existsIds: new Set([storedNewerId]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    matches.set(lateOlderId, [
+      {
+        id: storedNewerId,
+        score: 0.93, // raw above high-confidence band (cross-eTLD anyway)
+        metadata: {
+          published_at: 1_050_000, // NEWER than self by 50k seconds (~14h, < 72h window)
+          primary_source_url: 'https://latimes.example/post/2',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const env = makeEnv(mockDb.db, mockVec.binding);
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+
+    // Merge must have fired with the LATE-ARRIVING-OLDER article
+    // (lateOlderId) as winner — its id binds to ?1 in the alt-source
+    // INSERT, the already-stored newer one (storedNewerId) is the
+    // loser at ?2.
+    const insertSourceStmt = mockDb.calls.find((c) =>
+      c.sql.includes('FROM articles WHERE id = ?2'),
+    );
+    expect(insertSourceStmt?.params[0]).toBe(lateOlderId);
+    expect(insertSourceStmt?.params[1]).toBe(storedNewerId);
+    // The Vectorize delete targets the LOSER (storedNewerId), not self.
+    expect(mockVec.deleteMock).toHaveBeenCalledTimes(1);
+    expect(mockVec.deleteMock).toHaveBeenCalledWith([storedNewerId]);
+  });
+
+  // AD41 — bidirectional finalize must skip a candidate that was
+  // already absorbed by an earlier iteration in the same pass. Without
+  // the `losersDeleted.has(match.id)` guard, the second iteration
+  // would attempt to merge against an article whose D1 row had just
+  // been folded into the previous winner, producing either a
+  // duplicate alt-source insert or a 404 on the loser-side fetch.
+  it('REQ-PIPE-003 AC 15 (AD41): skips a Vectorize match that an earlier iteration in the same pass already absorbed', async () => {
+    // Two newly-ingested rows A and B share the same Vectorize match
+    // X (already stored). A iterates first and absorbs X (A is older,
+    // selfIsOlder=true → X is loser). When B's iteration runs, X
+    // re-appears in B's Vectorize results (the vector hasn't been
+    // physically deleted yet — that happens in the trailing
+    // deleteByIds batch). The skip must fire so B does NOT attempt a
+    // second merge against X.
+    const aId = 'a-older';
+    const bId = 'b-newer';
+    const xId = 'x-already-stored';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: aId,
+          title: 'a',
+          source_snippet: 's',
+          published_at: 1_000_000,
+          ingested_at: 2_000_000,
+          primary_source_url: 'https://aaa.example/post',
+        },
+        {
+          id: bId,
+          title: 'b',
+          source_snippet: 's',
+          // ~14h newer than X (50_000s delta) — strictly inside the
+          // default 72h window so the time-window gate cannot mask
+          // the skip-branch discriminator. Without `losersDeleted
+          // .has(match.id)` at consumer.ts:302, B would proceed to
+          // merge X (selfIsOlder=false → match older → self folds
+          // into match) and produce a SECOND alt-source insert.
+          published_at: 1_100_000,
+          ingested_at: 2_000_001,
+          primary_source_url: 'https://bbb.example/post',
+        },
+      ],
+      existsIds: new Set([xId]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    // A's match list returns X (high-confidence cosine, ~14h delta).
+    matches.set(aId, [
+      {
+        id: xId,
+        score: 0.95,
+        metadata: {
+          published_at: 1_050_000,
+          primary_source_url: 'https://ccc.example/post',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    // B's match list ALSO returns X — but X has just been absorbed
+    // into A and lives in losersDeleted. The skip must fire.
+    matches.set(bId, [
+      {
+        id: xId,
+        score: 0.95,
+        metadata: {
+          published_at: 1_050_000,
+          primary_source_url: 'https://ccc.example/post',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const env = makeEnv(mockDb.db, mockVec.binding);
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+
+    // Exactly ONE Vectorize delete (X), enqueued by A's iteration.
+    // B's iteration must NOT have produced a second delete call.
+    expect(mockVec.deleteMock).toHaveBeenCalledTimes(1);
+    expect(mockVec.deleteMock).toHaveBeenCalledWith([xId]);
+    // Exactly ONE alt-source insert — A absorbed X. B must not have
+    // produced a second insert against X.
+    const insertSourceCalls = mockDb.calls.filter((c) =>
+      c.sql.includes('FROM articles WHERE id = ?2'),
+    );
+    expect(insertSourceCalls).toHaveLength(1);
+    expect(insertSourceCalls[0]?.params[0]).toBe(aId);
+    expect(insertSourceCalls[0]?.params[1]).toBe(xId);
+  });
+
+  // AD41 — automatic post-tick dedup sweep. After a successful finalize
+  // (gate flipped, wonRecording=true), exactly one DEDUP_SWEEP message
+  // is enqueued with a non-null cursor scoped to the recent past, so
+  // pairs the per-tick pass cannot see (Vectorize indexing latency,
+  // late-arriving-older articles, etc.) get a second chance via the
+  // queue-driven historical sweep.
+  it('REQ-PIPE-003 AC 16 (AD41): enqueues a DEDUP_SWEEP message after successful finalize', async () => {
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: 'a-1',
+          title: 't',
+          source_snippet: 's',
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://a.example/x',
+        },
+      ],
+      flipChanges: 1,
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    matches.set('a-1', []); // no candidates → no per-tick merge
+    const mockVec = makeMockVectorize(matches);
+    const sweepQueue = makeMockSweepQueue();
+    const env = makeEnv(mockDb.db, mockVec.binding, {
+      sweepQueue: sweepQueue.binding,
+    });
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+
+    expect(sweepQueue.sends).toHaveLength(1);
+    const msg = sweepQueue.sends[0] as {
+      run_id: string;
+      cursor: { pa: number; id: string } | null;
+    };
+    expect(typeof msg.run_id).toBe('string');
+    expect(msg.run_id.length).toBeGreaterThan(0);
+    expect(msg.cursor).not.toBeNull();
+    expect(msg.cursor?.id).toBe('');
+    expect(msg.cursor?.pa).toBeGreaterThan(0); // some recent epoch second
+    // The cursor must seed the sweep at "now - 48h" — i.e., NOT 0
+    // (which would scan the full corpus). 24h is a generous lower
+    // bound; AUTO_SWEEP_LOOKBACK_SECONDS is 48h.
+    const now = Math.floor(Date.now() / 1000);
+    expect(msg.cursor?.pa).toBeGreaterThan(now - 49 * 3600);
+    expect(msg.cursor?.pa).toBeLessThan(now - 24 * 3600);
+  });
+
+  // AD41 — auto-sweep is best-effort. When the gate flip races and
+  // loses (concurrent finalize redelivery), the auto-sweep MUST NOT
+  // fire — only the winner enqueues the sweep, otherwise duplicate
+  // sweeps would race on the same recent corpus tail.
+  it('REQ-PIPE-003 AC 16 (AD41): does NOT enqueue DEDUP_SWEEP when gate flip loses race', async () => {
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: 'a-1',
+          title: 't',
+          source_snippet: 's',
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://a.example/x',
+        },
+      ],
+      flipChanges: 0, // race lost — UPDATE found no rows where finalize_recorded=0
+    });
+    const mockVec = makeMockVectorize(new Map([['a-1', []]]));
+    const sweepQueue = makeMockSweepQueue();
+    const env = makeEnv(mockDb.db, mockVec.binding, {
+      sweepQueue: sweepQueue.binding,
+    });
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+
+    expect(sweepQueue.sends).toHaveLength(0);
+  });
+
+  // AD41 — when DEDUP_SWEEP.send rejects mid-flight (transient queue
+  // outage, throttling), the dedup_runs row inserted by enqueueAutoSweep
+  // must be flipped to status='failed' with the captured error message
+  // so operators polling dedup_runs can distinguish a stuck-running row
+  // from a sweep that's genuinely still walking. Mirrors the operator
+  // path's behavior in /api/admin/historical-dedup.
+  it('REQ-PIPE-003 AC 16 (AD41): flips dedup_runs to status=failed when queue.send rejects', async () => {
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: 'a-1',
+          title: 't',
+          source_snippet: 's',
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://a.example/x',
+        },
+      ],
+    });
+    const mockVec = makeMockVectorize(new Map([['a-1', []]]));
+    const sendErr = new Error('queue down');
+    const failingQueue: Queue = {
+      send: vi.fn().mockRejectedValue(sendErr),
+      sendBatch: vi.fn(),
+    } as unknown as Queue;
+    const env = makeEnv(mockDb.db, mockVec.binding, {
+      sweepQueue: failingQueue,
+    });
+
+    // The outer caller in processOneFinalize swallows the error and
+    // logs `finalize_auto_sweep_enqueue_failed`, so this resolves.
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+
+    // The dedup_runs row was first inserted with status='running'.
+    const insertCall = mockDb.calls.find(
+      (c) =>
+        c.sql.includes('INSERT INTO dedup_runs') &&
+        c.sql.includes("'running'"),
+    );
+    expect(insertCall).toBeDefined();
+    // Recover the sweep run id from the INSERT and assert the
+    // subsequent UPDATE targets the SAME row.
+    const sweepRunId = insertCall?.params[0];
+    expect(sweepRunId).toEqual(expect.any(String));
+    // The error path then UPDATEs the same row to status='failed' with
+    // the captured error message bound at ?2.
+    const failUpdate = mockDb.calls.find(
+      (c) =>
+        c.sql.includes("status='failed'") &&
+        c.sql.includes('UPDATE dedup_runs'),
+    );
+    expect(failUpdate).toBeDefined();
+    expect(failUpdate?.params[0]).toBe(sweepRunId);
+    // String(err) for an Error instance yields "Error: queue down"
+    // (matches the operator path's coercion in /api/admin/historical-dedup).
+    expect(failUpdate?.params[1]).toBe(String(sendErr));
+    // Pin the new `AND status='running'` guard so a regression that
+    // drops it (allowing double-flips of an already-failed row) lands
+    // on a failing assertion.
+    expect(failUpdate?.sql).toMatch(/WHERE\s+id\s*=\s*\?1\s+AND\s+status\s*=\s*'running'/);
+  });
+
+  // AD41 — when both DEDUP_SWEEP.send AND the secondary fail-flip
+  // UPDATE fail (queue down + D1 transient error), the original send
+  // error must reach the caller and be the one logged. The inner
+  // try/catch around the UPDATE swallows the secondary error so it
+  // cannot mask the primary. Without this, operators would see a
+  // misleading D1 error in `finalize_auto_sweep_enqueue_failed`
+  // instead of the real queue-down cause.
+  it('REQ-PIPE-003 AC 16 (AD41): secondary D1 error during fail-flip is swallowed; processOneFinalize still resolves', async () => {
+    // Custom mockDb where prepare().run() rejects ONLY on the
+    // status='failed' UPDATE. Other DML (INSERT, gate-flip UPDATE)
+    // succeeds normally so processOneFinalize reaches the auto-sweep
+    // enqueue branch.
+    const calls: DbCall[] = [];
+    const customPrepare = vi.fn().mockImplementation((sql: string) => {
+      return {
+        bind: (...params: unknown[]) => {
+          return {
+            sql,
+            params,
+            first: vi.fn().mockImplementation(() => {
+              calls.push({ sql, params });
+              if (sql.includes('finalize_recorded FROM scrape_runs')) {
+                return Promise.resolve({ finalize_recorded: 0 });
+              }
+              return Promise.resolve(null);
+            }),
+            all: vi.fn().mockImplementation(() => {
+              calls.push({ sql, params });
+              if (sql.includes('FROM articles\n        WHERE scrape_run_id')) {
+                return Promise.resolve({
+                  results: [
+                    {
+                      id: 'a-1',
+                      title: 't',
+                      source_snippet: 's',
+                      published_at: 2000,
+                      ingested_at: 2000,
+                      primary_source_url: 'https://a.example/x',
+                    },
+                  ],
+                });
+              }
+              return Promise.resolve({ results: [] });
+            }),
+            run: vi.fn().mockImplementation(() => {
+              calls.push({ sql, params });
+              if (sql.includes('UPDATE scrape_runs')) {
+                return Promise.resolve({ meta: { changes: 1 } });
+              }
+              if (sql.includes("status='failed'")) {
+                return Promise.reject(new Error('d1 transient'));
+              }
+              return Promise.resolve({ meta: { changes: 0 } });
+            }),
+          } as unknown as D1PreparedStatement;
+        },
+      } as unknown as D1PreparedStatement;
+    });
+    const customDb = {
+      prepare: customPrepare,
+      batch: vi.fn().mockResolvedValue([]),
+      exec: vi.fn().mockResolvedValue(undefined),
+    } as unknown as D1Database;
+    const mockVec = makeMockVectorize(new Map([['a-1', []]]));
+    const sendErr = new Error('queue down');
+    const failingQueue: Queue = {
+      send: vi.fn().mockRejectedValue(sendErr),
+      sendBatch: vi.fn(),
+    } as unknown as Queue;
+    const env = makeEnv(customDb, mockVec.binding, {
+      sweepQueue: failingQueue,
+    });
+
+    // Spy on the structured log channel so we can assert that the
+    // ORIGINAL queue-send error is what reaches the caller, not the
+    // secondary D1 transient error. Without the inner try/catch in
+    // enqueueAutoSweep, the secondary error would propagate and the
+    // outer log line would carry 'd1 transient' instead — defeating
+    // the purpose of the catch and misleading operators about the
+    // real failure cause.
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Outer try/catch in processOneFinalize swallows the rethrown
+    // primary error. Test contract: this resolves cleanly.
+    await expect(
+      processOneFinalize(env, { scrape_run_id: 'r1' }),
+    ).resolves.toBeUndefined();
+
+    // The fail-flip UPDATE was attempted (it then rejected, but the
+    // inner catch swallowed it).
+    const failUpdate = calls.find((c) =>
+      c.sql.includes("status='failed'"),
+    );
+    expect(failUpdate).toBeDefined();
+
+    // Load-bearing assertion: the outer log line must reference the
+    // queue-send error, not the secondary D1 error. console.log is
+    // called with a JSON string per src/lib/log.ts.
+    const enqueueFailedLog = logSpy.mock.calls
+      .map((args) => String(args[0]))
+      .find((line) => line.includes('finalize_auto_sweep_enqueue_failed'));
+    expect(enqueueFailedLog).toBeDefined();
+    expect(enqueueFailedLog).toContain('queue down');
+    expect(enqueueFailedLog).not.toContain('d1 transient');
+
+    logSpy.mockRestore();
   });
 });

@@ -51,6 +51,7 @@ import {
 } from '~/lib/embeddings';
 import { readRerankFloor, rerankBorderlinePair } from '~/lib/dedup-rerank';
 import { sameVendor } from '~/lib/etld';
+import { generateUlid } from '~/lib/ulid';
 
 /** Hard cap on candidates per finalize call. Comfortable headroom over
  *  current production loads (~150-200 articles per tick). Vectorize
@@ -80,6 +81,58 @@ interface ArticleRow {
   published_at: number;
   ingested_at: number;
   primary_source_url: string;
+}
+
+/** Auto-merge candidate. `selfIsOlder` encodes the merge direction:
+ *  true means self IS the older article and match folds INTO self;
+ *  false means match is the older article and self folds INTO match
+ *  (the pre-2026-05-09 direction). */
+interface AutoCandidate {
+  matchId: string;
+  matchPublishedAt: number;
+  adjustedScore: number;
+  selfIsOlder: boolean;
+}
+
+/** Borderline candidate (cosine in `[rerankFloor, threshold)`) — the
+ *  LLM rerank decides whether the pair merges. Same direction
+ *  encoding as {@link AutoCandidate}. */
+type BorderCandidate = AutoCandidate;
+
+/** Auto-merge ranking. The cluster anchors at the OLDEST overall
+ *  article, so prefer candidates whose merge keeps the older direction
+ *  (`!selfIsOlder` — match is older). Within the same direction, prefer
+ *  the older `match.published_at` (existing semantics). When the only
+ *  candidates are newer-than-self (cluster anchors at self), pick the
+ *  highest-scoring match — the older the cosine peak, the more likely
+ *  the LLM-summary embedding identified the same news event. */
+function isBetterAutoCandidate(
+  cand: AutoCandidate,
+  best: AutoCandidate | null,
+): boolean {
+  if (best === null) return true;
+  if (!cand.selfIsOlder && best.selfIsOlder) return true;
+  if (cand.selfIsOlder && !best.selfIsOlder) return false;
+  if (!cand.selfIsOlder) {
+    return cand.matchPublishedAt < best.matchPublishedAt;
+  }
+  return cand.adjustedScore > best.adjustedScore;
+}
+
+/** Borderline ranking. Pure highest-cosine-wins because we can only
+ *  afford one LLM rerank call per article and want the strongest
+ *  signal. Tie-break on direction (prefer match-older) then on
+ *  match.published_at. */
+function isBetterBorderCandidate(
+  cand: BorderCandidate,
+  best: BorderCandidate | null,
+): boolean {
+  if (best === null) return true;
+  if (cand.adjustedScore > best.adjustedScore) return true;
+  if (cand.adjustedScore < best.adjustedScore) return false;
+  if (!cand.selfIsOlder && best.selfIsOlder) return true;
+  if (cand.selfIsOlder && !best.selfIsOlder) return false;
+  return cand.matchPublishedAt < best.matchPublishedAt;
 }
 
 /** Handle one batch of `scrape-finalize` messages. Per REQ-PIPE-008
@@ -177,15 +230,19 @@ export async function processOneFinalize(
   // 2026-05-08 trace to exactly this failure mode (cosines well above
   // threshold, finalize_recorded=1 set by the upfront flip, zero
   // article_sources rows added).
-  const mergedNewIds = new Set<string>();
-  let losersDeleted = 0;
+  // Tracks every article ID deleted as a merge loser this pass. Used to
+  // (a) skip self in subsequent iterations if a prior iteration absorbed
+  // it, (b) skip a match candidate that was already absorbed, (c) drive
+  // the trailing Vectorize delete batch. Bidirectional: a loser can be
+  // self.id (self-folds-into-match) or match.id (match-folds-into-self).
+  const losersDeleted = new Set<string>();
   let queriesAttempted = 0;
   let queriesFailed = 0;
   let rerankCalls = 0;
   let rerankAccepts = 0;
 
   for (const self of rows) {
-    if (mergedNewIds.has(self.id)) continue; // already merged this pass
+    if (losersDeleted.has(self.id)) continue; // already absorbed this pass
 
     queriesAttempted += 1;
     let queryResult: VectorizeMatches;
@@ -208,20 +265,29 @@ export async function processOneFinalize(
     }
 
     const matches = queryResult.matches ?? [];
-    let autoMatchId: string | null = null;
-    let autoMatchPublishedAt = Number.POSITIVE_INFINITY;
-    let borderMatchId: string | null = null;
-    let borderMatchPublishedAt = Number.POSITIVE_INFINITY;
-    let borderMatchScore = 0;
+    // Bidirectional candidate tracking. A pair (self, match) merges
+    // with the OLDER article as winner regardless of which one was
+    // just ingested — the cluster anchors at the deepest-rooted
+    // article. The pre-2026-05-09 logic only handled "self folds into
+    // older match" and silently dropped the late-arriving-older case
+    // (newly-ingested article whose published_at is older than an
+    // already-stored match), leaving genuine duplicates unmerged. See
+    // AD41 for the prod evidence (Cloudflare-layoffs LA Times / KRON4
+    // pair, cosine 0.896, 24h apart, never merged).
+    let bestAuto: AutoCandidate | null = null;
+    let bestBorder: BorderCandidate | null = null;
 
-    // Per-article diagnostic counters (AD40). Emitted as one info log
-    // line after the inner match loop so operators can diagnose under-
-    // merge from `wrangler tail` without re-running the pipeline. The
-    // line answers: how many candidates did we see, how many cleared
-    // each band, what was the best score, why didn't we merge.
+    // Per-article diagnostic counters (AD40 + AD41). Emitted as one
+    // info log line after the inner match loop so operators can
+    // diagnose under-merge from `wrangler tail` without re-running the
+    // pipeline. The line answers: how many candidates did we see, how
+    // many cleared each band, what was the best score, why didn't we
+    // merge.
     let candidatesSeen = 0;
     let candidatesSkippedTimeWindow = 0;
-    let candidatesSkippedNewerOrEqual = 0;
+    let candidatesSkippedAlreadyAbsorbed = 0;
+    let candidatesSelfOlder = 0;
+    let candidatesSelfNewer = 0;
     let candidatesAboveFloor = 0;
     let candidatesAboveThreshold = 0;
     let candidatesHighConfidence = 0;
@@ -230,6 +296,13 @@ export async function processOneFinalize(
 
     for (const match of matches) {
       if (match.id === self.id) continue;
+      // A candidate already absorbed by a prior iteration of this same
+      // finalize pass cannot merge again. Skip without counting it as
+      // a normal-eligibility candidate.
+      if (losersDeleted.has(match.id)) {
+        candidatesSkippedAlreadyAbsorbed += 1;
+        continue;
+      }
       candidatesSeen += 1;
       const meta = match.metadata as
         | { published_at?: unknown; primary_source_url?: unknown }
@@ -278,21 +351,20 @@ export async function processOneFinalize(
       const adjustedScore = sameEtld1 && !isHighConfidence
         ? match.score - sameVendorPenalty
         : match.score;
-      // Walk newest-first (self is newer); we want STRICTLY older
-      // matches as merge targets. Equal `published_at` (wire-
-      // syndicated stories often share epoch-second resolution after
-      // RSS pubDate parsing — see `parseFeedDate` in `src/lib/sources.ts`)
-      // is tie-broken by ULID — lower id = older = wins as merge
-      // target. The earlier `>=` filter silently dropped every same-
-      // second pair, parallel to the bug `historical-dedup.ts:201-202`
-      // already fixed for its oldest-first walk.
-      if (matchPublishedAt > self.published_at) {
-        candidatesSkippedNewerOrEqual += 1;
-        continue;
-      }
-      if (matchPublishedAt === self.published_at && self.id <= match.id) {
-        candidatesSkippedNewerOrEqual += 1;
-        continue;
+      // Direction. self_is_older means self IS the older article in
+      // the pair — the cluster anchors at self and we'd absorb match
+      // INTO self. self_is_older=false means match is older — self
+      // folds into match (the pre-2026-05-09 direction). Equal
+      // `published_at` is tie-broken by ULID; lower id = older. The
+      // strict-older branches below reject the impossible self.id ===
+      // match.id case (already filtered above).
+      const selfIsOlder =
+        self.published_at < matchPublishedAt ||
+        (self.published_at === matchPublishedAt && self.id < match.id);
+      if (selfIsOlder) {
+        candidatesSelfOlder += 1;
+      } else {
+        candidatesSelfNewer += 1;
       }
       if (adjustedScore > bestCosineAdjusted) {
         bestCosineRaw = match.score;
@@ -302,43 +374,50 @@ export async function processOneFinalize(
       if (isHighConfidence || adjustedScore >= threshold) {
         candidatesAboveThreshold += 1;
         candidatesAboveFloor += 1;
-        if (matchPublishedAt < autoMatchPublishedAt) {
-          autoMatchId = match.id;
-          autoMatchPublishedAt = matchPublishedAt;
+        const cand: AutoCandidate = {
+          matchId: match.id,
+          matchPublishedAt,
+          adjustedScore,
+          selfIsOlder,
+        };
+        if (isBetterAutoCandidate(cand, bestAuto)) {
+          bestAuto = cand;
         }
       } else if (adjustedScore >= rerankFloor) {
         candidatesAboveFloor += 1;
-        // Track the highest-scoring borderline match (oldest tiebreak).
-        // We rerank at most one pair per article so the strongest
-        // candidate gets the LLM call.
-        if (
-          adjustedScore > borderMatchScore ||
-          (adjustedScore === borderMatchScore &&
-            matchPublishedAt < borderMatchPublishedAt)
-        ) {
-          borderMatchId = match.id;
-          borderMatchPublishedAt = matchPublishedAt;
-          borderMatchScore = adjustedScore;
+        // Track the highest-scoring borderline match across BOTH
+        // directions — the LLM rerank then judges same-event yes/no
+        // and the merge runs in whichever direction puts the older
+        // article as winner.
+        const cand: BorderCandidate = {
+          matchId: match.id,
+          matchPublishedAt,
+          adjustedScore,
+          selfIsOlder,
+        };
+        if (isBetterBorderCandidate(cand, bestBorder)) {
+          bestBorder = cand;
         }
       }
     }
 
-    // Per-article diagnostic log (AD40). One line per ingested
+    // Per-article diagnostic log (AD40 + AD41). One line per ingested
     // article summarising what the dedup pass observed: candidate
-    // count after self/null filter, breakdown by filter rejection
-    // class, and best cosine seen post-time-window. The decision
-    // field captures the outcome class so operators can grep
-    // `wrangler tail` for `decision="no_match_below_floor"` etc.
-    // `candidates_high_confidence` is reported separately so an
-    // operator can correlate hc-band hits with auto-merges without
-    // overloading the decision string.
+    // count after self/null filter, direction breakdown
+    // (`candidates_self_older` = self is the older article in the
+    // pair; `candidates_self_newer` = match is older), best cosine
+    // seen post-time-window, and the outcome class. Operators grep
+    // `wrangler tail` for `decision="no_above_threshold"` etc. to
+    // localise under-merge.
     let decision: string;
-    if (autoMatchId !== null) {
-      decision = 'auto_merge';
-    } else if (borderMatchId !== null) {
+    let chosenDirection: 'self_loses' | 'self_wins' | null = null;
+    if (bestAuto !== null) {
+      decision = bestAuto.selfIsOlder ? 'auto_merge_self_wins' : 'auto_merge';
+      chosenDirection = bestAuto.selfIsOlder ? 'self_wins' : 'self_loses';
+    } else if (bestBorder !== null) {
       decision = 'rerank_pending';
     } else if (candidatesAboveFloor > 0) {
-      decision = 'no_eligible_older_match';
+      decision = 'no_above_threshold';
     } else if (candidatesSeen > 0) {
       decision = 'no_match_below_floor';
     } else {
@@ -350,23 +429,29 @@ export async function processOneFinalize(
       self_id: self.id,
       candidates_seen: candidatesSeen,
       candidates_skipped_time_window: candidatesSkippedTimeWindow,
-      candidates_skipped_newer_or_equal: candidatesSkippedNewerOrEqual,
+      candidates_skipped_already_absorbed: candidatesSkippedAlreadyAbsorbed,
+      candidates_self_older: candidatesSelfOlder,
+      candidates_self_newer: candidatesSelfNewer,
       candidates_above_floor: candidatesAboveFloor,
       candidates_above_threshold: candidatesAboveThreshold,
       candidates_high_confidence: candidatesHighConfidence,
       best_cosine_raw: bestCosineRaw,
       best_cosine_adjusted: bestCosineAdjusted,
       decision,
+      chosen_direction: chosenDirection,
     });
 
-    let bestMatchId = autoMatchId;
-    let bestMatchAlreadyConfirmedExists = false;
-    if (bestMatchId === null && borderMatchId !== null) {
+    // Pick the chosen candidate. Auto wins outright; borderline goes
+    // through the LLM rerank gate. The chosen candidate carries
+    // `selfIsOlder` so the merge knows which side is winner / loser.
+    let chosen: AutoCandidate | null = bestAuto;
+    let chosenAlreadyConfirmedExists = false;
+    if (chosen === null && bestBorder !== null) {
       const existingArticle = await env.DB
         .prepare(
           `SELECT id, title, source_snippet FROM articles WHERE id = ?1`,
         )
-        .bind(borderMatchId)
+        .bind(bestBorder.matchId)
         .first<{ id: string; title: string; source_snippet: string | null }>();
       if (existingArticle === null) continue;
       rerankCalls += 1;
@@ -387,60 +472,71 @@ export async function processOneFinalize(
         status: 'finalize_rerank_decision',
         scrape_run_id: body.scrape_run_id,
         new_article_id: self.id,
-        existing_article_id: borderMatchId,
-        cosine: borderMatchScore,
+        existing_article_id: bestBorder.matchId,
+        cosine: bestBorder.adjustedScore,
         same_event: sameEvent,
+        direction: bestBorder.selfIsOlder ? 'self_wins' : 'self_loses',
       });
       if (!sameEvent) continue;
       rerankAccepts += 1;
-      bestMatchId = borderMatchId;
+      chosen = bestBorder;
       // The borderline path already issued SELECT id, title,
-      // source_snippet against bestMatchId and confirmed it exists; no
+      // source_snippet against the match and confirmed it exists; no
       // need to re-issue the existence guard below.
-      bestMatchAlreadyConfirmedExists = true;
+      chosenAlreadyConfirmedExists = true;
     }
 
-    if (bestMatchId === null) continue;
+    if (chosen === null) continue;
 
-    // Confirm the existing article still exists in D1 — Vectorize may
+    // Resolve winner / loser by direction. selfIsOlder=true means self
+    // is the older article (cluster anchors at self) and the newer
+    // match folds INTO self. selfIsOlder=false is the pre-2026-05-09
+    // direction (self folds into older match). mergeAsAltSource(...,
+    // winnerId, loserId) preserves winner's title + body; loser's URL
+    // becomes an alt-source row on winner; loser's existing alt-
+    // sources / stars / read-marks repoint; loser is DELETE-d.
+    const winnerId = chosen.selfIsOlder ? self.id : chosen.matchId;
+    const loserId = chosen.selfIsOlder ? chosen.matchId : self.id;
+
+    // Confirm the OTHER article still exists in D1 — Vectorize may
     // hold a vector whose D1 row was already retention-deleted in the
     // narrow window between the cleanup pass and the next finalize.
     // Without this guard, the merge SQL would write FK violations.
-    // Skipped on the borderline path because the rerank-data fetch
-    // above already confirmed existence.
-    if (!bestMatchAlreadyConfirmedExists) {
+    // For chosen.selfIsOlder=true the "other" is the match (which the
+    // borderline path may have already confirmed); for the existing
+    // direction the "other" is also the match.
+    if (!chosenAlreadyConfirmedExists) {
       const existsRow = await env.DB
         .prepare(`SELECT 1 AS present FROM articles WHERE id = ?1`)
-        .bind(bestMatchId)
+        .bind(chosen.matchId)
         .first<{ present: number }>();
       if (existsRow === null) {
         log('warn', 'digest.generation', {
           status: 'finalize_vectorize_stale_match',
           scrape_run_id: body.scrape_run_id,
           new_article_id: self.id,
-          existing_article_id: bestMatchId,
+          existing_article_id: chosen.matchId,
         });
         continue;
       }
     }
 
-    const merge = mergeAsAltSource(env.DB, bestMatchId, self.id);
+    const merge = mergeAsAltSource(env.DB, winnerId, loserId);
     try {
       await env.DB.batch(merge);
     } catch (err) {
       // One bad merge must not abort the rest of the run. Skip it; the
-      // historical-dedup sweep will catch any pair we miss here.
+      // post-tick auto-sweep will catch any pair we miss here.
       log('warn', 'digest.generation', {
         status: 'finalize_merge_failed',
         scrape_run_id: body.scrape_run_id,
-        new_article_id: self.id,
-        existing_article_id: bestMatchId,
+        winner_id: winnerId,
+        loser_id: loserId,
         detail: String(err).slice(0, 500),
       });
       continue;
     }
-    mergedNewIds.add(self.id);
-    losersDeleted += 1;
+    losersDeleted.add(loserId);
   }
 
   // Step 4 — delete merged-away vectors from Vectorize. Best-effort:
@@ -450,11 +546,14 @@ export async function processOneFinalize(
   // already-deleted id is a no-op). Pages at 100 ids per call to stay
   // under the platform delete-batch ceiling — with FINALIZE_CANDIDATE_CAP
   // = 250 a worst-case "every article merged" tick would otherwise blow
-  // the limit on a single deleteByIds payload.
-  if (mergedNewIds.size > 0) {
+  // the limit on a single deleteByIds payload. Bidirectional (AD41):
+  // a loser can be self.id (self-folds-into-match) or match.id
+  // (match-folds-into-self), so we delete every absorbed id regardless
+  // of which side of the pair it was on.
+  if (losersDeleted.size > 0) {
     await deleteVectorsBatched(
       env.VECTORIZE,
-      Array.from(mergedNewIds),
+      Array.from(losersDeleted),
       (err, slice) => {
         log('warn', 'digest.generation', {
           status: 'finalize_vectorize_delete_failed',
@@ -492,15 +591,20 @@ export async function processOneFinalize(
   // Tokens / cost are zero (bge-base is free on Workers AI as of
   // 2026-05-06) so the cost-recording branch from the previous LLM
   // path is gone — the gate just needs to flip.
-  const wonRecording = await flipGate(env, body.scrape_run_id, losersDeleted);
+  const losersDeletedCount = losersDeleted.size;
+  const wonRecording = await flipGate(
+    env,
+    body.scrape_run_id,
+    losersDeletedCount,
+  );
 
   if (wonRecording) {
     log('info', 'digest.generation', {
       status: 'finalize_ready',
       scrape_run_id: body.scrape_run_id,
       article_count: rows.length,
-      groups_merged: losersDeleted,
-      losers_deleted: losersDeleted,
+      groups_merged: losersDeletedCount,
+      losers_deleted: losersDeletedCount,
       cost_recorded: true,
       capped_at_250: rows.length === FINALIZE_CANDIDATE_CAP,
       cosine_threshold: threshold,
@@ -508,6 +612,27 @@ export async function processOneFinalize(
       rerank_calls: rerankCalls,
       rerank_accepts: rerankAccepts,
     });
+
+    // Step 7 — kick a bounded post-tick dedup sweep (AD41). Catches
+    // pairs that finalize couldn't merge due to Vectorize eventual
+    // consistency (same-batch articles upserted moments earlier may
+    // not yet be queryable), plus any cross-tick or late-arriving-
+    // older pairs that escape the per-tick window. Scoped to the last
+    // `AUTO_SWEEP_LOOKBACK_SECONDS` so each tick's auto-sweep stays
+    // cheap (sub-corpus walk, ~50-100 articles in a busy 48h window
+    // vs. the full 1.3k-article corpus on the operator-triggered
+    // /api/admin/historical-dedup path). Best-effort: a failure here
+    // is logged but does NOT roll back finalize_recorded — the
+    // operator can still kick a manual sweep.
+    try {
+      await enqueueAutoSweep(env, body.scrape_run_id);
+    } catch (err) {
+      log('warn', 'digest.generation', {
+        status: 'finalize_auto_sweep_enqueue_failed',
+        scrape_run_id: body.scrape_run_id,
+        detail: String(err).slice(0, 500),
+      });
+    }
   } else {
     log('info', 'digest.generation', {
       status: 'finalize_redelivery_skipped',
@@ -543,4 +668,87 @@ async function flipGate(
     .bind(scrape_run_id, losersDeleted)
     .run();
   return (result.meta?.changes ?? 0) === 1;
+}
+
+/** Lookback window for the post-tick auto-sweep (AD41). 48h covers
+ *  the cases finalize misses: same-second siblings (Vectorize
+ *  eventual consistency lag), cross-tick pairs that arrived in a
+ *  prior tick whose finalize finished before this tick's chunks
+ *  embedded, and late-arriving-older articles whose published_at
+ *  predates the already-stored match. Tighter than the 72h dedup
+ *  time window because the auto-sweep runs every 4h and overlapping
+ *  windows are deliberate (each pair gets multiple chances). The
+ *  full corpus stays accessible via the operator-triggered
+ *  /api/admin/historical-dedup endpoint when needed. */
+const AUTO_SWEEP_LOOKBACK_SECONDS = 48 * 3600;
+
+/** Enqueue a single dedup-sweep continuation message scoped to the
+ *  last {@link AUTO_SWEEP_LOOKBACK_SECONDS}. Mirrors the body shape
+ *  of `/api/admin/historical-dedup`'s queue path: insert a
+ *  `dedup_runs` audit row with status='running', then send one
+ *  `DedupSweepMessage` carrying the seeded composite cursor.
+ *  Subsequent batches re-enqueue continuation messages until the
+ *  sweep reaches the corpus tail (`done: true`). */
+async function enqueueAutoSweep(
+  env: Env,
+  scrape_run_id: string,
+): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  const sweepRunId = generateUlid();
+  const cursorPa = now - AUTO_SWEEP_LOOKBACK_SECONDS;
+  await env.DB
+    .prepare(
+      `INSERT INTO dedup_runs (id, status, scanned, merged, batch_count,
+                               last_cursor_pa, last_cursor_id, remaining,
+                               started_at, updated_at)
+       VALUES (?1, 'running', 0, 0, 0, ?2, '', 0, ?3, ?3)`,
+    )
+    .bind(sweepRunId, cursorPa, now)
+    .run();
+  try {
+    // `id: ''` is the lowest sortable string; the consumer's resume
+    // predicate (pa = cursorPa AND id > '') is functionally
+    // "everything at exactly cursorPa or newer." The operator path
+    // sends `cursor: null` to start at the corpus head; the auto-path
+    // is scoped to a recent window so we seed an explicit floor.
+    await env.DEDUP_SWEEP.send({
+      run_id: sweepRunId,
+      cursor: { pa: cursorPa, id: '' },
+    });
+  } catch (err) {
+    // Mirror the operator path: flip the run to status='failed' so
+    // operators polling dedup_runs can distinguish a transient queue
+    // send failure from a sweep that's genuinely still running. Swallow
+    // any secondary D1 error from the UPDATE itself — the primary
+    // error is the queue send failure and must reach the caller; a
+    // failed status-flip would only mask it. The `status='running'`
+    // guard prevents double-flipping a row that some other path
+    // already moved out of running.
+    try {
+      await env.DB
+        .prepare(
+          `UPDATE dedup_runs
+              SET status='failed',
+                  error=?2,
+                  updated_at=?3
+            WHERE id=?1 AND status='running'`,
+        )
+        .bind(
+          sweepRunId,
+          String(err).slice(0, 500),
+          Math.floor(Date.now() / 1000),
+        )
+        .run();
+    } catch {
+      // Intentionally swallowed; original `err` below is the real
+      // failure operators need to see.
+    }
+    throw err;
+  }
+  log('info', 'digest.generation', {
+    status: 'finalize_auto_sweep_enqueued',
+    scrape_run_id,
+    sweep_run_id: sweepRunId,
+    cursor_pa: cursorPa,
+  });
 }

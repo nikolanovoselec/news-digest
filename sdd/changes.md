@@ -8,6 +8,7 @@ Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are a
 
 ## 2026-05-09
 
+- REQ-PIPE-003 AC 15 + AC 16 added: same-story matching now runs automatically after every scrape tick and merges duplicates regardless of arrival order. Until now a duplicate that landed in a later tick with an earlier publication time than its match (e.g. a slow-aggregator copy of a story already in the pool) stayed visibly separate until an operator clicked the historical-dedup button; the dashboard now collapses these pairs without operator action and within one tick.
 - REQ-PIPE-003 AC 14 added: wire-syndicated stories that share publication times to the second across sources, and near-duplicate articles whose textual similarity is overwhelming, now collapse to a single primary card instead of appearing as separate duplicates. The previous behavior kept same-second pairs silently apart in the per-tick finalize pass, surfacing visible duplicates in the digest on the same day a press release was syndicated.
 
 ## 2026-05-08

@@ -54,6 +54,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD38 | CF Access-protected admin endpoints must be invoked via top-level navigation, not fetch() | Security | 2026-05-08 |
 | AD39 | Raise dedup auto-merge threshold to 0.88 and gate merges to a 72h news-cycle window | Architecture | 2026-05-08 |
 | AD40 | Add equal-time ULID tie-break, high-confidence cosine band, topK bump, and per-article diagnostic logs to dedup | Architecture | 2026-05-09 |
+| AD41 | Bidirectional finalize merge + automatic post-tick dedup sweep | Architecture | 2026-05-09 |
 
 ---
 
@@ -1107,6 +1108,45 @@ External-LLM and Opus-ultrathink critique of the initial fix proposal (multi-rer
 - This fix is forward-only; it does NOT un-merge the existing 13-source false-merge cluster from before AD39 (separate operation per AD39 consequences).
 
 **Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 14 added), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs)
+
+---
+
+### AD41: Bidirectional finalize merge + automatic post-tick dedup sweep
+
+**Status:** Accepted (2026-05-09)
+
+**Decision:** Two structural fixes to the same-story matcher that recover the under-merge cases AD39 + AD40 did not address:
+
+1. **Bidirectional finalize merge** in `src/queue/scrape-finalize-consumer.ts`. The pre-2026-05-09 match-filter loop rejected every candidate whose `published_at` was greater than `self.published_at` (`if (matchPublishedAt > self.published_at) continue;`). The intent was "self folds INTO an older match"; the unintended consequence was that a newly-arrived article whose `published_at` predates an already-stored match could never merge through finalize, only through the operator-triggered historical sweep. The match loop now allows both directions: the pair's older article is the winner regardless of which side was just ingested. `mergeAsAltSource(winner, loser)` keeps the older article's title and body, the newer becomes the alt-source row.
+2. **Automatic post-tick dedup sweep** in `processOneFinalize`'s gate-flip block. After `finalize_recorded` flips, the consumer enqueues exactly one `dedup-sweep` continuation message scoped to the last 48h (`AUTO_SWEEP_LOOKBACK_SECONDS`). The sweep then self-chains to completion via the same queue path the operator-triggered `/api/admin/historical-dedup` button uses. The operator path stays available for full-corpus sweeps; the automatic path covers the routine cross-tick collapse.
+
+**Context:** The 2026-05-09 production digest on `news.graymatter.ch` showed three distinct unmerged near-duplicate pairs that cosine + threshold tuning alone could not explain:
+
+- **InfoQ ↔ infoq.com** (Cloudflare Dynamic Workflows, cosine **0.924**). Cross-tick (4h apart, Vectorize fully consistent), cross-eTLD+1 (GN proxy URL vs direct), well above the high-confidence band introduced in AD40. Should auto-merge in finalize. Did not.
+- **LA Times ↔ KRON4** (Cloudflare layoffs, cosine **0.896**). Late-arriving older case: KRON4 ingested 24h after LA Times with an EARLIER `published_at`. When KRON4 was the `self` in finalize, the strictly-older filter rejected LA Times because LA Times's `published_at` was greater than KRON4's. The merge-direction logic only handled "fold self into older match," never "fold newer match into self."
+- **Geeky Gadgets ↔ Let's Data Science** (Claude Cowork comparison, cosine **0.881**). Same scrape run, both ingested in the same epoch second. Vectorize eventual consistency: at finalize time, `queryById` did not see the sibling vector that was upserted moments earlier in the same chunk consumer.
+
+Across 153 articles ingested in the 24h window before the diagnosis, only 3 cluster merges had landed. The historical sweep had last run ~26h earlier (operator-triggered, not scheduled) so anything finalize missed accumulated as visible duplicates until the next operator click.
+
+**Alternatives considered:**
+
+- **Intra-batch pairwise cosine in finalize-consumer.** Compute per-batch cosines in-memory using stored vector arrays so same-second siblings see each other regardless of Vectorize indexing latency. Deferred — the auto-sweep approach catches the same case via the existing well-tested sweep code path (40 minutes after Vectorize is consistent), and adding pairwise math in finalize doubles the surface area of the matcher.
+- **Schedule the sweep via cron (`*/30 * * * *`) instead of enqueueing post-finalize.** Rejected. The post-finalize trigger ties the sweep to the data flow (vectors are upserted before the sweep starts); a separate cron risks running the sweep before chunks finish embedding on slow ticks.
+- **Sweep the full corpus on every tick.** Rejected on cost. Full-corpus sweeps take ~30 minutes wall-clock at 1.3k articles. A 48h-scoped sweep typically runs sub-minute and exercises the same merge code path.
+- **Make `historical-dedup` a real cron rather than a queue chain.** Rejected. The queue-driven self-chain is the existing pattern (AD35) and lets a long sweep cross isolate boundaries cleanly. Reusing it as the automatic path keeps one mental model.
+
+**Rationale:** Diagnose-first, then close the structural gaps the diagnosis exposed. The bidirectional merge is a 1-direction-to-2-direction generalisation of code already in the consumer; the existing semantics (older wins) is preserved unchanged for the canonical case. The auto-sweep reuses the queue-driven sweep added in AD35 and the `runHistoricalDedupBatch` body extracted there. The 48h lookback is tight enough that each sweep is cheap and overlapping with prior sweeps is harmless (`mergeAsAltSource` is idempotent — the loser is gone after the first merge, subsequent walks skip it).
+
+**Consequences:**
+
+- Late-arriving-older articles merge in the same tick they land. The KRON4 / LA Times-style pair is now a single card on first visibility.
+- Same-second-sibling pairs that finalize cannot see (Vectorize consistency lag) merge within ~30s of finalize completion via the auto-sweep, instead of waiting 4-26h for an operator click.
+- The auto-sweep adds ~50-100 articles per tick to its scan (typical 48h corpus tail size). At sub-minute wall-clock per sweep, the cron-tick budget impact is negligible.
+- `dedup_runs` rows accumulate at one per tick (every 4h) plus operator clicks. Retention sweeping `dedup_runs` is out of scope; rows are small, mostly numeric.
+- Per-article diagnostic log volume in `wrangler tail` doubles for ticks where the sweep also matches a window-overlapping article — the same finalize_dedup_diag shape now appears for the sweep walk too.
+- This fix is forward-only; it does not retroactively un-merge or merge clusters that were stuck before deploy. The next auto-sweep after deploy catches the existing visible duplicates from the 2026-05-09 corpus naturally because they're inside the 48h lookback at deploy time.
+
+**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 15 + AC 16 added), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs)
 
 ---
 
