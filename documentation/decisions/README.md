@@ -1150,6 +1150,53 @@ Across 153 articles ingested in the 24h window before the diagnosis, only 3 clus
 
 ---
 
+### AD42: Bidirectional historical-dedup + sweep cursor aligned with time window + multi-rerank
+
+**Status:** Accepted (2026-05-10)
+
+**Decision:** Three further structural fixes to the same-story matcher that recover the under-merge cases AD41 did not anticipate. All three apply to the dedup pipeline downstream of cosine + threshold; none change calibration:
+
+1. **Bidirectional historical-dedup sweep** in `src/lib/historical-dedup.ts`. The pre-2026-05-10 batch loop walked oldest-first and only folded NEWER matches INTO each older `self`. Late-arriving newer articles whose older anchor had already aged out of the auto-sweep cursor window could never merge through the sweep — only through the per-tick finalize. The loop now runs in two passes per `self`: PASS 1 looks for an OLDER auto-merge candidate and folds `self` INTO it (mirrors AD41's bidirectional finalize); PASS 2 is the existing newer-into-self absorption (unchanged).
+2. **Auto-sweep cursor widened from 48h to 72h** in `src/queue/scrape-finalize-consumer.ts` (`AUTO_SWEEP_LOOKBACK_SECONDS`). The pre-2026-05-10 48h cursor and 72h `DEDUP_TIME_WINDOW_SECONDS` (AD39) created a 24h dead zone where pairs the time-window check accepted as same-event could no longer be reached because the older anchor was below the cursor. The two windows now match.
+3. **Multi-rerank in finalize-consumer** in `src/queue/scrape-finalize-consumer.ts`. The pre-2026-05-10 borderline path computed a single `bestBorder` candidate, reranked once, and silently dropped the cluster when the top candidate was unrelated topical noise. The path now sorts ALL borderline candidates by the same ranking (auto direction-prefer + cosine) and walks the top `RERANK_CANDIDATE_CAP=5` in order, taking the first LLM same-event=true verdict.
+
+**Context:** The 2026-05-10 production digest on `news.graymatter.ch` showed a 13-article fragmented cluster about the same Cloudflare Q1 2026 earnings + 1100-job AI restructuring story (Reuters, WSJ, KRON4, IBD, Yahoo Finance, CNBC, Hacker News, Barron's, San Francisco Chronicle, Yahoo Finance Singapore — all describing the same news event over 4 days, May 7-10). Direct Vectorize cosine inspection across the cluster (token-by-token via `query_by_id` on production):
+
+- Yahoo Plunge ↔ CNBC = **0.9309** (auto-merge band)
+- Yahoo Plunge ↔ IBD = **0.9063** (auto-merge band)
+- Yahoo Plunge ↔ Yahoo Singapore = **0.9036** (auto-merge band)
+- Yahoo Plunge ↔ Reuters = **0.8898** (just below threshold, rerank band)
+- WSJ ↔ Reuters = **0.8666** (mid-rerank band)
+- Reuters ↔ all-other-cluster = 0.83-0.89 (rerank band)
+- Hacker News (oldest anchor) ↔ all-other-cluster = 0.74-0.86 (rerank band)
+
+Three reasons the AD41 fix did not collapse this cluster:
+
+- Cluster's pub-time spread of 70h (May 7 20:23 → May 10 18:47) exceeds the 48h auto-sweep cursor. After 05-09 20:23, every subsequent sweep saw the older anchors below its cursor and could not absorb the newer cluster siblings. The time-window gate (72h) said "same event"; the cursor (48h) said "out of reach."
+- Even when a sweep `self` was in scope, historical-dedup's one-direction logic could only absorb NEWER matches. Self could not fold INTO a still-eligible older anchor. So when newer cluster members were processed, their older siblings (5-10h apart, well within 72h time-window, cosine in auto-merge band) were silently skipped at line 212.
+- Many cluster pairs (anchor-vs-sibling, e.g., Reuters-vs-WSJ at 0.8666) sit in the rerank band. The single-rerank-per-self path picks the top candidate by cosine; if that top is an unrelated near-neighbour, the cluster never reaches the LLM. With multi-rerank capped at top-5, the same-event sibling typically lands within the first 2-3 rerank attempts.
+
+**Alternatives considered:**
+
+- **Lower the auto-merge threshold below 0.88.** Rejected. AD39 raised it specifically to fix the 13-source AI-agent governance false-merge; the empirical false-positive floor in dense theme periods is around 0.86. Lowering the bar revives that failure mode.
+- **Run a full-corpus historical-dedup sweep on every tick.** Rejected on cost. Full-corpus is ~30min wall-clock; each tick adding that load is wasteful. The 72h cursor catches the realistic worst-case cluster span without the cost.
+- **Switch to event-clustering instead of pairwise merges.** Considered as v2. Out of scope for this commit; the pairwise model has not been falsified, just incomplete.
+- **Always rerank ALL borderline candidates uncapped.** Rejected. Capped at 5 to bound queue wall-clock. In practice the same-event sibling lands within the first 2-3 attempts; uncapped runs amplify hallucination risk in dense-theme clusters by N×.
+
+**Rationale:** Each fix closes a specific failure mode the diagnosis exposed. Bidirectional historical-dedup mirrors AD41's pattern (consistency between the per-tick path and the operator/auto-sweep path). The 72h cursor removes a window/cursor mismatch that no other knob compensates for. Multi-rerank reuses the same `rerankBorderlinePair` that the existing path already invokes — the only change is iterating instead of stopping after one. Together they recover the cross-day clusters that AD41 left fragmented without re-litigating threshold calibration.
+
+**Consequences:**
+
+- Cross-day clusters spanning up to 72h now collapse via the auto-sweep within one cron tick of the latest member's ingestion.
+- Cluster anchors below the cursor were unreachable pre-AD42; now newer-arriving cluster members fold INTO older anchors via PASS 1 of the bidirectional sweep.
+- Per-tick rerank call volume rises modestly (from `rerankCalls` ≤ N articles to ≤ 5×N at worst-case). Empirical observation expected: ~1.3-1.8× pre-AD42 volume because most articles either auto-merge or have ≤ 2 borderline candidates worth walking.
+- The auto-sweep's per-tick scan size grows from ~50-100 articles to ~80-150 articles (50% increase, matching cursor-width increase). Sub-minute wall-clock budget unchanged.
+- This fix is forward-only. The 2026-05-10 fragmented Cloudflare-layoffs cluster is collapsed by the operator-triggered full-corpus historical-dedup sweep that runs alongside this commit; future clusters of similar shape collapse on first finalize tick after the latest sibling lands.
+
+**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 15 reworded; AC 17 added), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs) (AC 5 reworded for multi-rerank cap)
+
+---
+
 ## Related Documentation
 
 - [Architecture](../architecture.md) — System overview and component map

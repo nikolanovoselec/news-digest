@@ -1,4 +1,5 @@
 // Implements REQ-PIPE-003 AC 9
+// Implements REQ-PIPE-003 AC 17
 // Implements REQ-PIPE-009
 //
 // Pure helper for one batch of the historical same-story sweep,
@@ -154,6 +155,104 @@ export async function runHistoricalDedupBatch(
     }
 
     const matches = queryResult.matches ?? [];
+
+    // Bidirectional sweep (AD42, 2026-05-10). Pre-AD42 historical-dedup
+    // walked oldest-first and only folded NEWER matches into the older
+    // self — leaving cross-tick pairs unmerged whenever the older
+    // anchor article had already left the auto-sweep cursor window.
+    // The Cloudflare-layoffs cluster on 2026-05-10 was the prod
+    // evidence: 13 articles, anchor at pa=05-07 20:23, newest at
+    // pa=05-10 18:47 (70h spread). After the 48h cursor advanced past
+    // the anchor, every subsequent sweep saw the cluster's older
+    // members below the cursor and could not absorb the newer ones.
+    // Bidirectional flip: when self has an OLDER auto-merge candidate,
+    // self folds INTO that older anchor and the cluster reroots there.
+    // Mirrors AD41's bidirectional finalize-consumer logic.
+    //
+    // PASS 1 (preferred direction): scan all matches for the OLDEST
+    // auto-merge candidate STRICTLY OLDER than self. If found, self
+    // folds into that anchor and we move to the next outer row — self
+    // is now a loser, no further matches matter.
+    let foldIntoOlder: { id: string; pa: number } | null = null;
+    for (const match of matches) {
+      if (match.id === self.id) continue;
+      if (removedIds.has(match.id)) continue;
+      const meta = match.metadata as
+        | { published_at?: unknown; primary_source_url?: unknown }
+        | undefined;
+      const matchPublishedAt =
+        typeof meta?.published_at === 'number' ? meta.published_at : null;
+      if (matchPublishedAt === null) continue;
+      const deltaSeconds = Math.abs(self.published_at - matchPublishedAt);
+      if (deltaSeconds > timeWindowSeconds) continue;
+      // Only the strict-older direction. Equal-time + lower ULID also
+      // counts as "older" — same tie-break as AD39's equal-time path.
+      const matchIsOlder =
+        matchPublishedAt < self.published_at ||
+        (matchPublishedAt === self.published_at && match.id < self.id);
+      if (!matchIsOlder) continue;
+      const isHighConfidence = match.score >= highConfidenceCosine;
+      const matchUrl =
+        typeof meta?.primary_source_url === 'string'
+          ? meta.primary_source_url
+          : '';
+      const sameEtld1 =
+        matchUrl !== '' && sameVendor(self.primary_source_url, matchUrl);
+      const adjustedScore = sameEtld1 && !isHighConfidence
+        ? match.score - sameVendorPenalty
+        : match.score;
+      const isAutoMerge = isHighConfidence || adjustedScore >= threshold;
+      if (!isAutoMerge) continue;
+      // Prefer the OLDEST auto-merge match — the deepest-rooted anchor
+      // for the cluster.
+      if (foldIntoOlder === null || matchPublishedAt < foldIntoOlder.pa) {
+        foldIntoOlder = { id: match.id, pa: matchPublishedAt };
+      }
+    }
+
+    if (foldIntoOlder !== null) {
+      // Use the same SELECT shape as PASS 2 below — the existence
+      // information is all PASS 1 needs, and the title/snippet
+      // columns are harmless. Mirroring the query keeps the test
+      // fixture's mock single-shaped.
+      const stillThere = await env.DB
+        .prepare(
+          `SELECT id, title, source_snippet FROM articles WHERE id = ?1`,
+        )
+        .bind(foldIntoOlder.id)
+        .first<{ id: string; title: string; source_snippet: string | null }>();
+      if (stillThere !== null) {
+        const mergeStatements = mergeAsAltSource(
+          env.DB,
+          foldIntoOlder.id,
+          self.id,
+        );
+        try {
+          await env.DB.batch(mergeStatements);
+          removedIds.add(self.id);
+          merged += 1;
+          log('info', 'digest.generation', {
+            status: 'historical_dedup_self_folded_into_older',
+            self_id: self.id,
+            match_id: foldIntoOlder.id,
+          });
+          continue;
+        } catch (err) {
+          log('warn', 'digest.generation', {
+            status: 'historical_dedup_merge_failed',
+            winner_id: foldIntoOlder.id,
+            loser_id: self.id,
+            detail: String(err).slice(0, 500),
+          });
+          // fall through to PASS 2 — best-effort, do not stop the sweep
+        }
+      }
+    }
+
+    // PASS 2: existing behaviour — self absorbs each NEWER match
+    // sequentially. Self is a confirmed cluster anchor (no older
+    // auto-merge match exists), so accumulating absorptions is correct
+    // and efficient: one Vectorize query per anchor, many merges.
     for (const match of matches) {
       if (match.id === self.id) continue;
       if (removedIds.has(match.id)) continue;
@@ -198,17 +297,9 @@ export async function runHistoricalDedupBatch(
       const adjustedScore = sameEtld1 && !isHighConfidence
         ? match.score - sameVendorPenalty
         : match.score;
-      // We're walking oldest-first: any match with strictly NEWER
-      // published_at is a candidate to fold into self. Older matches
-      // were already processed (so `match.id` would have absorbed
-      // self in a prior step). Equal-time pairs are tie-broken by
-      // ULID — lower ULID = older creation = wins. Without the tie-
-      // break, two articles ingested in the same scrape tick that
-      // share a `published_at` timestamp could never fold into each
-      // other (the strict `>` filter rejected both directions). The
-      // 2026-05-07 prod audit found Palo Alto / BTIG-$216 pair stuck
-      // at the same `published_at = 1778082516` for exactly this
-      // reason; the tie-break unblocks it.
+      // PASS 2 only handles the strictly-newer direction. Older
+      // matches were the responsibility of PASS 1 above. Equal-time
+      // pairs are tie-broken by ULID (lower ULID = older = wins).
       if (matchPublishedAt < self.published_at) continue;
       if (matchPublishedAt === self.published_at && self.id >= match.id)
         continue;

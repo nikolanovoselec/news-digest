@@ -1,4 +1,5 @@
 // Implements REQ-PIPE-003
+// Implements REQ-PIPE-003 AC 17
 // Implements REQ-PIPE-008
 // Implements REQ-PIPE-009
 //
@@ -68,6 +69,16 @@ const FINALIZE_CANDIDATE_CAP = 250;
  *  20 is cheap (Vectorize cost is per-query, not per-result) and
  *  comfortably covers any realistic per-article cluster size. */
 const VECTORIZE_TOPK = 20;
+
+/** Maximum LLM rerank calls per `self` in the borderline pass. The
+ *  pre-AD42 code reranked exactly one (the highest-scoring) borderline
+ *  candidate and silently dropped genuine same-event pairs whenever
+ *  the top candidate was unrelated topical noise (Cloudflare-layoffs
+ *  cluster, 2026-05-10). This cap walks the top-N candidates in
+ *  cosine order and takes the first same-event=true verdict.
+ *  At p95 ≈ 1.5s per rerank, 5 candidates × ≤17 articles/tick stays
+ *  well under the queue's 15-min wall-clock budget. */
+const RERANK_CANDIDATE_CAP = 5;
 
 /** Message shape for the SCRAPE_FINALIZE queue. */
 export interface FinalizeJobMessage {
@@ -275,7 +286,17 @@ export async function processOneFinalize(
     // AD41 for the prod evidence (Cloudflare-layoffs LA Times / KRON4
     // pair, cosine 0.896, 24h apart, never merged).
     let bestAuto: AutoCandidate | null = null;
-    let bestBorder: BorderCandidate | null = null;
+    // Collect ALL borderline candidates rather than just the best one,
+    // so the rerank pass can fall back to the next-best LLM judgement
+    // when the top candidate is rejected. Pre-AD42 finalize-consumer
+    // reranked only `bestBorder` and silently dropped same-event
+    // siblings whose top-scoring borderline neighbour happened to be
+    // an unrelated topic. The Cloudflare-layoffs cluster on
+    // 2026-05-10 was the prod evidence: many cluster pairs scored
+    // 0.83-0.88 (rerank band) but only one rerank per self meant
+    // most pairs never got an LLM decision. The cap below keeps
+    // worst-case wall-clock under the queue's 15-min budget.
+    const borderCandidates: BorderCandidate[] = [];
 
     // Per-article diagnostic counters (AD40 + AD41). Emitted as one
     // info log line after the inner match loop so operators can
@@ -385,19 +406,15 @@ export async function processOneFinalize(
         }
       } else if (adjustedScore >= rerankFloor) {
         candidatesAboveFloor += 1;
-        // Track the highest-scoring borderline match across BOTH
-        // directions — the LLM rerank then judges same-event yes/no
-        // and the merge runs in whichever direction puts the older
-        // article as winner.
-        const cand: BorderCandidate = {
+        // Push EVERY borderline candidate into the list. The rerank
+        // pass below sorts by `isBetterBorderCandidate` and walks
+        // top-down, taking the first LLM=yes verdict.
+        borderCandidates.push({
           matchId: match.id,
           matchPublishedAt,
           adjustedScore,
           selfIsOlder,
-        };
-        if (isBetterBorderCandidate(cand, bestBorder)) {
-          bestBorder = cand;
-        }
+        });
       }
     }
 
@@ -409,12 +426,22 @@ export async function processOneFinalize(
     // seen post-time-window, and the outcome class. Operators grep
     // `wrangler tail` for `decision="no_above_threshold"` etc. to
     // localise under-merge.
+    // Sort borderline candidates best-first per the same ranking the
+    // pre-AD42 code used to pick its single bestBorder. Walking
+    // top-down so the first LLM=yes answer wins; this matches the
+    // intent of "prefer the highest-cosine same-event pair" while no
+    // longer silently dropping the cluster when the very top
+    // candidate is unrelated topical noise.
+    borderCandidates.sort((a, b) =>
+      isBetterBorderCandidate(a, b) ? -1 : isBetterBorderCandidate(b, a) ? 1 : 0,
+    );
+
     let decision: string;
     let chosenDirection: 'self_loses' | 'self_wins' | null = null;
     if (bestAuto !== null) {
       decision = bestAuto.selfIsOlder ? 'auto_merge_self_wins' : 'auto_merge';
       chosenDirection = bestAuto.selfIsOlder ? 'self_wins' : 'self_loses';
-    } else if (bestBorder !== null) {
+    } else if (borderCandidates.length > 0) {
       decision = 'rerank_pending';
     } else if (candidatesAboveFloor > 0) {
       decision = 'no_above_threshold';
@@ -435,55 +462,61 @@ export async function processOneFinalize(
       candidates_above_floor: candidatesAboveFloor,
       candidates_above_threshold: candidatesAboveThreshold,
       candidates_high_confidence: candidatesHighConfidence,
+      borderline_candidates: borderCandidates.length,
       best_cosine_raw: bestCosineRaw,
       best_cosine_adjusted: bestCosineAdjusted,
       decision,
       chosen_direction: chosenDirection,
     });
 
-    // Pick the chosen candidate. Auto wins outright; borderline goes
-    // through the LLM rerank gate. The chosen candidate carries
-    // `selfIsOlder` so the merge knows which side is winner / loser.
+    // Pick the chosen candidate. Auto wins outright; borderline walks
+    // the sorted list of candidates, calling the LLM rerank in order
+    // and taking the first same-event=true verdict. Cap protects the
+    // queue's wall-clock budget; in practice clusters with multiple
+    // borderline siblings tend to accept on candidate #1 or #2.
     let chosen: AutoCandidate | null = bestAuto;
     let chosenAlreadyConfirmedExists = false;
-    if (chosen === null && bestBorder !== null) {
-      const existingArticle = await env.DB
-        .prepare(
-          `SELECT id, title, source_snippet FROM articles WHERE id = ?1`,
-        )
-        .bind(bestBorder.matchId)
-        .first<{ id: string; title: string; source_snippet: string | null }>();
-      if (existingArticle === null) continue;
-      rerankCalls += 1;
-      const sameEvent = await rerankBorderlinePair(
-        env,
-        {
-          id: self.id,
-          title: self.title,
-          snippet: self.source_snippet,
-        },
-        {
-          id: existingArticle.id,
-          title: existingArticle.title,
-          snippet: existingArticle.source_snippet,
-        },
-      );
-      log('info', 'digest.generation', {
-        status: 'finalize_rerank_decision',
-        scrape_run_id: body.scrape_run_id,
-        new_article_id: self.id,
-        existing_article_id: bestBorder.matchId,
-        cosine: bestBorder.adjustedScore,
-        same_event: sameEvent,
-        direction: bestBorder.selfIsOlder ? 'self_wins' : 'self_loses',
-      });
-      if (!sameEvent) continue;
-      rerankAccepts += 1;
-      chosen = bestBorder;
-      // The borderline path already issued SELECT id, title,
-      // source_snippet against the match and confirmed it exists; no
-      // need to re-issue the existence guard below.
-      chosenAlreadyConfirmedExists = true;
+    if (chosen === null) {
+      const cap = Math.min(borderCandidates.length, RERANK_CANDIDATE_CAP);
+      for (let i = 0; i < cap; i++) {
+        const cand = borderCandidates[i];
+        const existingArticle = await env.DB
+          .prepare(
+            `SELECT id, title, source_snippet FROM articles WHERE id = ?1`,
+          )
+          .bind(cand.matchId)
+          .first<{ id: string; title: string; source_snippet: string | null }>();
+        if (existingArticle === null) continue;
+        rerankCalls += 1;
+        const sameEvent = await rerankBorderlinePair(
+          env,
+          {
+            id: self.id,
+            title: self.title,
+            snippet: self.source_snippet,
+          },
+          {
+            id: existingArticle.id,
+            title: existingArticle.title,
+            snippet: existingArticle.source_snippet,
+          },
+        );
+        log('info', 'digest.generation', {
+          status: 'finalize_rerank_decision',
+          scrape_run_id: body.scrape_run_id,
+          new_article_id: self.id,
+          existing_article_id: cand.matchId,
+          cosine: cand.adjustedScore,
+          same_event: sameEvent,
+          direction: cand.selfIsOlder ? 'self_wins' : 'self_loses',
+          rank: i,
+        });
+        if (!sameEvent) continue;
+        rerankAccepts += 1;
+        chosen = cand;
+        chosenAlreadyConfirmedExists = true;
+        break;
+      }
     }
 
     if (chosen === null) continue;
@@ -670,17 +703,23 @@ async function flipGate(
   return (result.meta?.changes ?? 0) === 1;
 }
 
-/** Lookback window for the post-tick auto-sweep (AD41). 48h covers
- *  the cases finalize misses: same-second siblings (Vectorize
- *  eventual consistency lag), cross-tick pairs that arrived in a
- *  prior tick whose finalize finished before this tick's chunks
- *  embedded, and late-arriving-older articles whose published_at
- *  predates the already-stored match. Tighter than the 72h dedup
- *  time window because the auto-sweep runs every 4h and overlapping
- *  windows are deliberate (each pair gets multiple chances). The
- *  full corpus stays accessible via the operator-triggered
+/** Lookback window for the post-tick auto-sweep. Aligned with
+ *  `DEDUP_TIME_WINDOW_SECONDS` (72h, AD39) so the cursor scope and
+ *  the per-pair time-window gate cover the same span — the previous
+ *  48h-cursor / 72h-window mismatch (AD41) created a ~24h dead zone
+ *  where pairs that the time-window check accepted as same-event
+ *  could no longer be reached because the older anchor had aged out
+ *  of the cursor. Prod evidence: Cloudflare-layoffs cluster
+ *  2026-05-10, 13 articles spanning 70h, anchor at pa=05-07 20:23
+ *  fell out of the 48h cursor on 05-09 20:23 and the cluster
+ *  fragmented into 6 winners. AD42 widens this to 72h and pairs the
+ *  change with a bidirectional historical-dedup so a later-arriving
+ *  newer article can fold into an older anchor that's now in scope.
+ *  Overlapping 4h ticks remain deliberate (each pair gets multiple
+ *  chances at the eventual-consistency window). The full corpus
+ *  stays accessible via the operator-triggered
  *  /api/admin/historical-dedup endpoint when needed. */
-const AUTO_SWEEP_LOOKBACK_SECONDS = 48 * 3600;
+const AUTO_SWEEP_LOOKBACK_SECONDS = 72 * 3600;
 
 /** Enqueue a single dedup-sweep continuation message scoped to the
  *  last {@link AUTO_SWEEP_LOOKBACK_SECONDS}. Mirrors the body shape

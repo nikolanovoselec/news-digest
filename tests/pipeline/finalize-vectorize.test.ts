@@ -692,6 +692,76 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     expect(mockVec.deleteMock).toHaveBeenCalledWith([newId]);
   });
 
+  it('REQ-PIPE-009 / AD42: top borderline rejected by LLM falls through to next candidate', async () => {
+    // AD42 multi-rerank: the finalize consumer walks borderline
+    // candidates in best-first order. If the top candidate is rejected
+    // by the LLM rerank, the next candidate is reranked. If the second
+    // is accepted, the article merges into THAT one.
+    const newId = 'new-1';
+    const topId = 'old-top';
+    const nextId = 'old-next';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: newId,
+          title: 'Cloudflare Layoffs Spook Markets',
+          source_snippet: 'Stock dives 23% on layoff news.',
+          published_at: 3000,
+          ingested_at: 3000,
+          primary_source_url: 'https://newsite.example/cf-1',
+        },
+      ],
+      existsIds: new Set([topId, nextId]),
+      existingArticleData: new Map([
+        [
+          topId,
+          {
+            title: 'Different Topic Entirely',
+            source_snippet: 'Unrelated story that happens to score similarly.',
+          },
+        ],
+        [
+          nextId,
+          {
+            title: 'Cloudflare Stock Falls After Layoff Announcement',
+            source_snippet: 'Markets react to AI-driven workforce cut.',
+          },
+        ],
+      ]),
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    matches.set(newId, [
+      {
+        id: topId,
+        score: 0.84,
+        metadata: {
+          published_at: 2000,
+          primary_source_url: 'https://oldsite.example/top',
+        },
+      } as unknown as VectorizeMatch,
+      {
+        id: nextId,
+        score: 0.81,
+        metadata: {
+          published_at: 1500,
+          primary_source_url: 'https://oldsite.example/next',
+        },
+      } as unknown as VectorizeMatch,
+    ]);
+    const mockVec = makeMockVectorize(matches);
+    const aiRun = vi
+      .fn()
+      .mockResolvedValueOnce({ response: '{"same_event":false}' })
+      .mockResolvedValueOnce({ response: '{"same_event":true}' });
+    const env = makeEnv(mockDb.db, mockVec.binding, {
+      aiBinding: { run: aiRun },
+    });
+
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    expect(aiRun).toHaveBeenCalledTimes(2);
+    expect(mockVec.deleteMock).toHaveBeenCalledWith([newId]);
+  });
+
   it('REQ-PIPE-009: borderline cosine with LLM no -> stays standalone', async () => {
     const newId = 'new-1';
     const oldId = 'old-1';
@@ -1113,11 +1183,12 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     expect(msg.cursor).not.toBeNull();
     expect(msg.cursor?.id).toBe('');
     expect(msg.cursor?.pa).toBeGreaterThan(0); // some recent epoch second
-    // The cursor must seed the sweep at "now - 48h" — i.e., NOT 0
+    // The cursor must seed the sweep at "now - 72h" - i.e., NOT 0
     // (which would scan the full corpus). 24h is a generous lower
-    // bound; AUTO_SWEEP_LOOKBACK_SECONDS is 48h.
+    // bound; AUTO_SWEEP_LOOKBACK_SECONDS is 72h (AD42 widened from 48h
+    // to match DEDUP_TIME_WINDOW_SECONDS).
     const now = Math.floor(Date.now() / 1000);
-    expect(msg.cursor?.pa).toBeGreaterThan(now - 49 * 3600);
+    expect(msg.cursor?.pa).toBeGreaterThan(now - 73 * 3600);
     expect(msg.cursor?.pa).toBeLessThan(now - 24 * 3600);
   });
 

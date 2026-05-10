@@ -12,7 +12,9 @@
 //   1. empty corpus → done:true, scanned:0, merged:0
 //   2. happy path → merge SQL + Vectorize.deleteByIds for matched duplicate
 //   3. threshold filter — score < 0.78 is NOT merged; merged:0
-//   4. newer match required — strictly older skipped; equal-time tie-broken by ULID
+//   4. bidirectional (AD42) — strictly-older match in auto-band folds self
+//      into match; equal-time tie-broken by ULID; older below auto-band stays
+//      skipped (only the rerank-band/auto split changed shape)
 //   5. stale D1 row guard — match id in Vectorize but not in D1; merged:0, no delete
 //   6. cursor pagination — composite cursor recovers equal-time pair across batches
 //   7. Vectorize.deleteByIds failure — best-effort; merged count still reported
@@ -296,9 +298,13 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
     expect(vectorize.deleteByIds).not.toHaveBeenCalled();
   });
 
-  it('REQ-PIPE-003: strictly-older match is skipped', async () => {
-    const SELF_ID = 'self';
-    const OLDER_ID = 'older';
+  it('REQ-PIPE-003 / AD42: strictly-older auto-band match folds self INTO match', async () => {
+    // AD42 PASS 1: a `self` whose top match is OLDER and clears the
+    // auto-merge threshold means the older article is the cluster
+    // anchor — self folds into it. Pre-AD42 this was silently
+    // skipped (one-direction sweep).
+    const SELF_ID = 'self-newer';
+    const OLDER_ID = 'older-anchor';
     const { result, fixture, vectorize } = await callBatch({
       articles: [
         {
@@ -312,6 +318,47 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
         [SELF_ID]: singleMatch({
           id: OLDER_ID,
           score: 0.95,
+          published_at: 1_699_999_900,
+        }),
+      },
+    });
+    expect(result.merged).toBe(1);
+    // Merge runs with older as winner, self as loser.
+    expect(fixture.batchCalls.length).toBe(1);
+    const merged = fixture.batchCalls.flat();
+    const altInsert = merged.find(
+      (s) =>
+        s.sql.includes('INSERT') &&
+        s.sql.includes('article_sources') &&
+        s.sql.includes('FROM articles'),
+    );
+    expect(altInsert).toBeDefined();
+    expect(vectorize.deleteByIds).toHaveBeenCalled();
+    const deletedIds = (vectorize.deleteByIds as ReturnType<typeof vi.fn>).mock
+      .calls.flat()
+      .flat() as string[];
+    expect(deletedIds).toContain(SELF_ID);
+  });
+
+  it('REQ-PIPE-003 / AD42: strictly-older match BELOW auto threshold does not fold self', async () => {
+    // PASS 1 only fires for auto-band matches (>= threshold). A
+    // border-band older match is the responsibility of the rerank
+    // path, not the auto-fold-into-older fast-path.
+    const SELF_ID = 'self';
+    const OLDER_ID = 'older-border';
+    const { result, fixture, vectorize } = await callBatch({
+      articles: [
+        {
+          id: SELF_ID,
+          published_at: 1_700_000_000,
+          primary_source_url: 'https://acme.example/self',
+        },
+      ],
+      existenceGuardResults: { [OLDER_ID]: { present: 1 } },
+      queryByIdResults: {
+        [SELF_ID]: singleMatch({
+          id: OLDER_ID,
+          score: 0.85,
           published_at: 1_699_999_900,
         }),
       },

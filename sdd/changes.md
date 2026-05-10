@@ -6,6 +6,11 @@ Each entry is dated, ≤2 sentences, user-facing only. No commit SHAs. No "verif
 
 Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are archived in [`changes-archive-2026-04.md`](changes-archive-2026-04.md).
 
+## 2026-05-10
+
+- REQ-PIPE-003 AC 17 added and AC 15 reworded: same-story clusters that span more than two days now collapse without operator intervention. Until now a duplicate that landed three days after its first sibling stayed visibly separate (the post-tick auto-sweep only reached 48 hours back while the same-event window already covered 72 hours), so a press-release reverberating across publishers over a long weekend produced multiple cards instead of one. The auto-sweep now reaches the full 72-hour window and treats either article in the pair as a possible cluster anchor, so newer arrivals fold into older ones and vice versa.
+- REQ-PIPE-009 AC 5 reworded: a borderline pair whose top-scoring nearest neighbour is unrelated topical noise no longer gets dropped; the rerank pass now walks the next-best candidates in cosine order until it finds a same-event verdict or exhausts a small per-article budget. The previous behaviour silently dropped genuine same-event siblings whenever an unrelated story sat first in the cosine ranking.
+
 ## 2026-05-09
 
 - REQ-PIPE-003 AC 15 + AC 16 added: same-story matching now runs automatically after every scrape tick and merges duplicates regardless of arrival order. Until now a duplicate that landed in a later tick with an earlier publication time than its match (e.g. a slow-aggregator copy of a story already in the pool) stayed visibly separate until an operator clicked the historical-dedup button; the dashboard now collapses these pairs without operator action and within one tick.
