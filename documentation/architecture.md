@@ -189,7 +189,7 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 | `src/queue/scrape-chunk-consumer.ts` | Per-chunk LLM call (summarisation only), canonical-URL dedup within chunk, embedding generation via `embeddings.ts`, D1 batch insert (writes `embedding_status='embedded'`, `embedded_at`, and `source_snippet`), Vectorize upsert post-batch, atomic completion gate, finalize handoff | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
 | `src/queue/scrape-finalize-consumer.ts` | Same-story dedupe pass: bidirectional merge (AD41), two-tier cosine band, LLM rerank, auto-sweep enqueue on gate flip. See note below. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history), [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) |
 | `src/queue/dedup-sweep-consumer.ts` | Queue-driven historical-dedup sweep consumer. Each message processes one batch via `runHistoricalDedupBatch`, re-enqueues a continuation, and updates the `dedup_runs` audit row (scanned, merged, last_cursor, remaining) under a CAS guard on the incoming cursor so redelivered messages never double-increment counters; flips status to `'done'` or `'failed'` at the terminal step. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9 |
-| `src/lib/historical-dedup.ts` | Shared batch primitive (`runHistoricalDedupBatch`) used by both the queue consumer and the legacy synchronous code path; encapsulates composite-cursor keyset pagination over the article corpus, per-row Vectorize query, time-window pre-filter, threshold + same-vendor penalty + aggregator-host exemption, and `mergeAsAltSource` accumulation. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9 |
+| `src/lib/historical-dedup.ts` | Shared batch primitive (`runHistoricalDedupBatch`) used by both the queue consumer and the legacy synchronous code path; encapsulates composite-cursor keyset pagination over the article corpus, bidirectional merge (AD42 - PASS 1 folds `self` INTO older anchor, PASS 2 absorbs newer matches INTO `self`), per-row Vectorize query, time-window pre-filter, threshold + same-vendor penalty + aggregator-host exemption, and `mergeAsAltSource` accumulation. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9 |
 | `src/queue/cleanup.ts` | Daily 3-pass cleanup: retention, stuck-tag prune, orphan-tag KV sweep | [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-DISC-006](../sdd/discovery.md#req-disc-006-stuck-tag-retention), [REQ-PIPE-007](../sdd/generation.md#req-pipe-007-orphan-tag-source-cleanup) |
 | `migrations/0001_initial.sql` | Pre-launch initial schema. Creates `users`, which 0003's article_stars / article_reads tables reference via FK; replaying 0003 against an empty schema fails at FK declaration without it | (FK base) |
 | `migrations/0002_article_tags.sql` | Pre-launch `ALTER TABLE articles ADD COLUMN tags_json`; depends on 0001's `articles` table existing first | (FK base) |
@@ -208,7 +208,7 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) �
 | `src/lib/kick-coordinator.ts` | Shared atomic-claim coordinator kicker used by both the operator-driven force-refresh route and the pipeline-consumer's `scrape_kick` phase. Inserts a `scrape_runs` row + sends one `SCRAPE_COORDINATOR` message under a `WHERE NOT EXISTS` guard to coalesce concurrent kicks. | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) |
 | `migrations/0014_pipeline_runs.sql` | `pipeline_runs` audit table for the backend-driven full pipeline orchestrator: ULID primary key, status (`'running'` / `'done'` / `'failed'`), mode (`'full'` / `'wipe'`), `current_phase`, scrape_run_id + dedup_run_id references, embed counters, error, started_at + updated_at. Indexed on `started_at DESC` for the polling endpoint. | [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) |
 
-**`scrape-finalize-consumer.ts` detail ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 2, 3, 14, 15, 16):** Per-article Vectorize top-K query, time-window pre-filter (`DEDUP_TIME_WINDOW_SECONDS`), same-vendor cosine penalty, two-tier merge logic with auto-merge band (>= `DEDUP_COSINE_THRESHOLD`) and borderline band (>= `DEDUP_RERANK_FLOOR`) where `dedup-rerank.ts` decides via LLM judgment. Bidirectional merge (AD41) - winner is always the older article in the pair regardless of which side was just ingested, so a late-arriving article with an earlier publication time still absorbs its already-stored newer match. After the `finalize_recorded` gate flips, enqueues exactly one `dedup-sweep` continuation scoped to the last 48h so cross-tick pairs the per-tick pass cannot see (Vectorize consistency lag on same-second siblings, etc.) merge automatically without operator action. Atomic `finalize_recorded` gate prevents double-counting on redelivery.
+**`scrape-finalize-consumer.ts` detail ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 2, 3, 14, 15, 16, [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) AC 5):** Per-article Vectorize top-K query (topK=20, AD40), time-window pre-filter (`DEDUP_TIME_WINDOW_SECONDS`), same-vendor cosine penalty, two-tier merge logic with auto-merge band (>= `DEDUP_COSINE_THRESHOLD`) and borderline band (>= `DEDUP_RERANK_FLOOR`) where `dedup-rerank.ts` decides via LLM judgment. Bidirectional merge (AD41) - winner is always the older article in the pair regardless of which side was just ingested. Multi-rerank (AD42) - all borderline candidates sorted by direction-preference + cosine; walks up to `RERANK_CANDIDATE_CAP=5` in order, taking the first same-event=true verdict instead of stopping at the top candidate. After the `finalize_recorded` gate flips, enqueues exactly one `dedup-sweep` continuation scoped to the last 72h (AD42 - widened from 48h to match `DEDUP_TIME_WINDOW_SECONDS`) so cross-tick pairs the per-tick pass cannot see merge automatically without operator action. Atomic `finalize_recorded` gate prevents double-counting on redelivery.
 
 ## 5. Request Lifecycles
 
@@ -247,17 +247,22 @@ Chunk consumer (per chunk)
      enqueues SCRAPE_FINALIZE
        │
        ▼
-Finalize consumer (semantic same-story dedupe)
+Finalize consumer (semantic same-story dedupe — REQ-PIPE-003, REQ-PIPE-009)
   ├─ Skip when ≤ 1 article in the run (finalize_noop)
   ├─ SELECT finalize_recorded upfront — if already 1, skip before any Vectorize call
   ├─ For each article in the run:
-  │   ├─ VECTORIZE.queryById(self.id, topK=5, returnMetadata='all')
-  │   ├─ Filter matches: id != self.id, |self.published_at - metadata.published_at| <= DEDUP_TIME_WINDOW_SECONDS, adjusted_score >= DEDUP_COSINE_THRESHOLD (adjusted = score - DEDUP_SAME_VENDOR_PENALTY when same eTLD+1), metadata.published_at < self.published_at
+  │   ├─ VECTORIZE.queryById(self.id, topK=20, returnMetadata='all') [topK=20 per AD40]
+  │   ├─ Filter matches: id != self.id, |self.published_at - metadata.published_at| <= DEDUP_TIME_WINDOW_SECONDS (default 72h)
+  │   ├─ Adjusted score = raw cosine - DEDUP_SAME_VENDOR_PENALTY (if same eTLD+1); raw cosine alone used for high-confidence band
   │   ├─ Existence guard: SELECT 1 FROM articles WHERE id = ? — drop matches whose D1 row is gone (stale-vector race)
-  │   └─ If any qualify: pick the OLDEST by metadata.published_at; mergeAsAltSource(db, oldestId, self.id)
+  │   ├─ Bidirectional merge (AD41): look for OLDER eligible matches (merge self INTO older) AND NEWER matches (merge newer INTO self)
+  │   ├─ Auto-merge band (>= DEDUP_COSINE_THRESHOLD or >= DEDUP_HIGH_CONFIDENCE_COSINE): mergeAsAltSource directly
+  │   └─ Borderline band [DEDUP_RERANK_FLOOR, DEDUP_COSINE_THRESHOLD): sort candidates; walk up to RERANK_CANDIDATE_CAP=5;
+  │       first same-event=true LLM verdict triggers mergeAsAltSource (multi-rerank per AD42)
   ├─ D1.batch the accumulated merge statements
   ├─ VECTORIZE.deleteByIds(merged-away ids)
-  └─ Atomic gate: UPDATE scrape_runs SET finalize_recorded=1 … WHERE finalize_recorded=0
+  ├─ Atomic gate: UPDATE scrape_runs SET finalize_recorded=1 … WHERE finalize_recorded=0
+  └─ Enqueue one DEDUP_SWEEP message scoped to last 72h (AD42 — widened from 48h to match DEDUP_TIME_WINDOW_SECONDS)
 ```
 
 ### 5.2 Operator force-refresh

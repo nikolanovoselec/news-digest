@@ -55,6 +55,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD39 | Raise dedup auto-merge threshold to 0.88 and gate merges to a 72h news-cycle window | Architecture | 2026-05-08 |
 | AD40 | Add equal-time ULID tie-break, high-confidence cosine band, topK bump, and per-article diagnostic logs to dedup | Architecture | 2026-05-09 |
 | AD41 | Bidirectional finalize merge + automatic post-tick dedup sweep | Architecture | 2026-05-09 |
+| AD42 | Bidirectional historical-dedup + sweep cursor aligned with time window + multi-rerank | Architecture | 2026-05-10 |
 
 ---
 
