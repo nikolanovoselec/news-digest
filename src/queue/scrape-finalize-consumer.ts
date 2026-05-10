@@ -480,6 +480,7 @@ export async function processOneFinalize(
       const cap = Math.min(borderCandidates.length, RERANK_CANDIDATE_CAP);
       for (let i = 0; i < cap; i++) {
         const cand = borderCandidates[i];
+        if (cand === undefined) continue;
         const existingArticle = await env.DB
           .prepare(
             `SELECT id, title, source_snippet FROM articles WHERE id = ?1`,
