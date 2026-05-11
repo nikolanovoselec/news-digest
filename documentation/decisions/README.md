@@ -58,6 +58,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD42 | Bidirectional historical-dedup + sweep cursor aligned with time window + multi-rerank | Architecture | 2026-05-10 |
 | AD43 | Shared per-match dedup classifier; outer control flow stays per-consumer | Architecture | 2026-05-12 |
 | AD44 | Cloudflare Access JWT `exp` validation; signature still trusted from the perimeter | Security | 2026-05-12 |
+| AD45 | Accepted orchestration-file sizes (coordinator, chunk-consumer, settings.astro) exceed 800-line cap | Architecture | 2026-05-11 |
 
 ---
 
@@ -1247,6 +1248,32 @@ Three reasons the AD41 fix did not collapse this cluster:
 - Signature trust still terminates at the Access perimeter. Worker code does not verify the RS256 signature, and AD29 + AD30 remain the governing decisions for the perimeter contract.
 
 **Related requirements:** [REQ-AUTH-001](../../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)
+
+---
+
+### AD45: Accepted orchestration-file sizes (coordinator, chunk-consumer, settings.astro)
+
+**Status:** Accepted (2026-05-11)
+
+**Decision:** The current file sizes of `src/queue/scrape-coordinator.ts` (1230 lines), `src/queue/scrape-chunk-consumer.ts` (1117 lines), `src/queue/scrape-finalize-consumer.ts` (767 lines), and `src/pages/settings.astro` (1944 lines) are accepted as-is. The project's 800-line file cap does not apply to these orchestration hot paths until a concrete extraction has a measurable win (test isolation, bundle size, review effort).
+
+**Context:** Cycle-1 review flagged CF-001: four orchestration files exceed the project's 800-line cap from `coding-style.md`. AD17, AD18, and AD19 already rejected three specific narrow extractions (`dedupe-groups.ts`, `deferred-candidates.ts`, `tag-railing-flip-core.ts`) on the same files. This AD generalizes that pattern: the orchestration hot paths are dense, sequentially-coupled state machines whose readability lives in keeping the full pipeline visible in one file. Splitting them speculatively into per-step modules costs more in import-site churn and reviewer context-switching than it saves.
+
+**Alternatives considered:**
+- **Extract coordinator's Step 1-8 into `src/queue/coordinator/step-N-*.ts`.** Rejected: the steps share `scrape_run_id`, `env`, and partial result state through closure. Refactoring into eight modules requires either a shared context object (which becomes the new god-type) or per-step argument lists that re-derive state. Either way the cognitive load moves rather than shrinks.
+- **Extract `processOneFinalize` (483 lines) and `runHistoricalDedupBatch` (351 lines) per-self loop bodies.** Rejected at this scope: these are individual functions inside the accepted files. The per-function size rule still applies to them and they may be extracted individually if a future change makes the extraction natural.
+- **Extract `settings.astro`'s inline `<script>` to `src/scripts/settings-page.ts` and inline `<style>` to `src/styles/settings.css`.** Rejected: the script is tightly coupled to the page's DOM IDs and the Pattern B IIFE constraint (AD20). The style is scoped via Astro's component-scoped CSS and would lose that isolation when extracted.
+
+**Rationale:** The files are large because the orchestration is genuinely complex, not because the code is poorly factored. AD17/18/19 demonstrated that targeted extractions on these same files yielded worse code (extra modules, broken downstream gating, lost DOM coupling). Pre-emptively splitting without a forcing function repeats that anti-pattern at scale. The 800-line cap remains the default for new code and for files outside this list.
+
+**Consequences:**
+
+- Future contributors editing these four files must take care: the size threshold no longer signals "this file is too big." Use diff scope and function size as the navigation aid instead.
+- Reviewer agents (code-reviewer, spec-reviewer) MUST NOT flag these four files on size alone. A finding citing total line count without a concrete extraction proposal that includes the cost analysis above should be dismissed by referencing this AD.
+- The per-function size rule (`Functions are small (<50 lines)`) is unchanged. Functions inside these files remain subject to it and may be extracted individually when a concrete bug, test gap, or review-velocity win motivates the change.
+- If a future feature naturally splits one of these files (e.g., the coordinator's source-enumeration phase becomes queue-driven per CF-006's eventual fix), the extraction is welcomed. This AD does not block extractions — it blocks size-only refactors.
+
+**Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-coordinated-multi-tag-scrape-pipeline), [REQ-SET-001](../../sdd/settings.md#req-set-001-tag-management-ui)
 
 ---
 
