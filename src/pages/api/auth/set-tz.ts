@@ -23,10 +23,7 @@ import {
 import { isValidTz } from '~/lib/tz';
 import { requireSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
-
-interface SetTzBody {
-  tz?: unknown;
-}
+import { SetTzBodySchema } from '~/lib/schemas/set-tz';
 
 export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env;
@@ -50,14 +47,23 @@ export async function POST(context: APIContext): Promise<Response> {
   );
   if (!rl.ok) return rateLimitResponse(rl.retryAfter);
 
-  let body: SetTzBody;
+  // CF-013: parse + shape-validate via Zod. The `invalid_tz` error
+  // code (covering "not a string", "empty string", and "not a valid
+  // IANA zone") is preserved by keeping `tz` as `unknown` in the
+  // schema; Zod's job here is to reject non-object bodies and
+  // unknown extra fields.
+  let rawBody: unknown;
   try {
-    body = (await context.request.json()) as SetTzBody;
+    rawBody = await context.request.json();
   } catch {
     return errorResponse('bad_request');
   }
+  const parsed = SetTzBodySchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return errorResponse('bad_request');
+  }
 
-  const tz = body.tz;
+  const tz = parsed.data.tz;
   if (typeof tz !== 'string' || tz === '' || !isValidTz(tz)) {
     return errorResponse('invalid_tz');
   }

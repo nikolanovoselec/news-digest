@@ -29,10 +29,8 @@ import {
   validateHashtags,
   findTagsNeedingDiscovery,
 } from '~/pages/api/settings';
-
-interface TagsBody {
-  tags?: unknown;
-}
+import { parseHashtags as parseHashtagsJson } from '~/lib/hashtags';
+import { TagsPostBodySchema } from '~/lib/schemas/tags';
 
 export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env;
@@ -59,18 +57,51 @@ export async function POST(context: APIContext): Promise<Response> {
     return rateLimitResponse(rl.retryAfter);
   }
 
-  let body: TagsBody;
+  // CF-013: parse + shape-validate via Zod. The `invalid_hashtags`
+  // error code emitted by `validateHashtags` below is preserved by
+  // keeping `tags` as `unknown` in the schema; Zod's job here is to
+  // reject non-object bodies and unknown extra fields.
+  let rawBody: unknown;
   try {
-    body = (await context.request.json()) as TagsBody;
+    rawBody = await context.request.json();
   } catch {
     return errorResponse('bad_request');
   }
+  const parsed = TagsPostBodySchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return errorResponse('bad_request');
+  }
 
-  const check = validateHashtags(body.tags);
+  const check = validateHashtags(parsed.data.tags);
   if (!check.ok) {
     return errorResponse('invalid_hashtags');
   }
   const tags = check.tags;
+
+  // CF-028: detect first-tag sync before the UPDATE rewrites
+  // hashtags_json so brand-new users' enqueues can jump the discovery
+  // queue with priority=10. A read failure falls back to priority=0.
+  let priorHashtagsJson: string | null = null;
+  let priorReadFailed = false;
+  try {
+    const priorRow = await env.DB
+      .prepare('SELECT hashtags_json FROM users WHERE id = ?1')
+      .bind(auth.user.id)
+      .first<{ hashtags_json: string | null }>();
+    priorHashtagsJson = priorRow !== null ? priorRow.hashtags_json : null;
+  } catch (err) {
+    priorReadFailed = true;
+    log('warn', 'settings.update.failed', {
+      user_id: auth.user.id,
+      op: 'prior_hashtags_read',
+      error_code: 'internal_error',
+      detail: String(err).slice(0, 500),
+    });
+  }
+  const priorTags = priorReadFailed ? [] : parseHashtagsJson(priorHashtagsJson);
+  const isFirstTagSync =
+    !priorReadFailed &&
+    (priorHashtagsJson === null || priorHashtagsJson === '' || priorTags.length === 0);
 
   try {
     await env.DB
@@ -94,15 +125,20 @@ export async function POST(context: APIContext): Promise<Response> {
   try {
     discovering = await findTagsNeedingDiscovery(env.KV, tags);
     if (discovering.length > 0) {
+      // CF-028: first-tag-sync rows get priority=10 so the dedicated
+      // discovery cron drains them on the next tick.
+      const priority = isFirstTagSync ? 10 : 0;
       const stmts = discovering.map((tag) =>
         env.DB.prepare(
-          'INSERT OR IGNORE INTO pending_discoveries (user_id, tag, added_at) VALUES (?1, ?2, ?3)',
-        ).bind(auth.user.id, tag, nowSec),
+          'INSERT OR IGNORE INTO pending_discoveries (user_id, tag, added_at, priority) VALUES (?1, ?2, ?3, ?4)',
+        ).bind(auth.user.id, tag, nowSec, priority),
       );
       await env.DB.batch(stmts);
       log('info', 'discovery.queued', {
         user_id: auth.user.id,
         tags: discovering,
+        first_tag_sync: isFirstTagSync,
+        priority,
       });
     }
   } catch (err) {

@@ -46,10 +46,7 @@ import { requireAdminSession } from '~/middleware/admin-auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { parseJsonStringArray } from '~/lib/json-string-array';
 import { clearDiscoveryFailure } from '~/lib/kv/discovery-failures';
-
-interface RetryBody {
-  tag?: unknown;
-}
+import { DiscoveryRetryBodySchema } from '~/lib/schemas/discovery-retry';
 
 /** True when the request looks like a native <form> POST rather than a
  *  JSON API call. Matches `application/x-www-form-urlencoded` and
@@ -132,13 +129,23 @@ export async function POST(context: APIContext): Promise<Response> {
       return errorResponse('bad_request');
     }
   } else {
-    let body: RetryBody;
+    // CF-013: parse + shape-validate via Zod. The downstream coercion
+    // (`typeof rawTag === 'string' ? rawTag.trim() : ''` followed by
+    // a non-empty check) is preserved by keeping `tag` as `unknown`
+    // in the schema; Zod's job here is to reject non-object bodies
+    // and unknown extra fields.
+    let rawBody: unknown;
     try {
-      body = (await context.request.json()) as RetryBody;
+      rawBody = await context.request.json();
     } catch {
       return errorResponse('bad_request');
     }
-    rawTag = typeof body.tag === 'string' ? body.tag.trim() : '';
+    const parsed = DiscoveryRetryBodySchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return errorResponse('bad_request');
+    }
+    const tagField = parsed.data.tag;
+    rawTag = typeof tagField === 'string' ? tagField.trim() : '';
   }
 
   if (rawTag === '') {

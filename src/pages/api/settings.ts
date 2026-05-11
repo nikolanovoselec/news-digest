@@ -41,22 +41,12 @@ import { requireSession } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
 
 import { HASHTAG_REGEX, normalizeHashtag } from '~/lib/hashtags';
+import { SettingsPutBodySchema } from '~/lib/schemas/settings';
 
 /** Maximum hashtags per user (REQ-SET-002 AC 6).
  *  Sized to give new accounts headroom above the default seed; the
  *  spec AC tracks the actual gap. */
 export const MAX_HASHTAGS = 25;
-
-/** Shape accepted from the PUT body. All fields are `unknown` because the
- *  body arrives untyped — validation narrows types field-by-field. */
-interface PutSettingsBody {
-  hashtags?: unknown;
-  digest_hour?: unknown;
-  digest_minute?: unknown;
-  tz?: unknown;
-  model_id?: unknown;
-  email_enabled?: unknown;
-}
 
 /** Shape of the users row subset we read on GET. */
 interface UserSettingsRow {
@@ -215,12 +205,23 @@ export async function PUT(context: APIContext): Promise<Response> {
     return rateLimitResponse(rl.retryAfter);
   }
 
-  let body: PutSettingsBody;
+  // CF-013: parse + shape-validate the body with Zod instead of an
+  // unchecked `as` cast. The per-field error codes below
+  // (`invalid_hashtags`, `invalid_time`, etc.) are preserved by
+  // keeping every field `unknown` in the schema; Zod's job here is
+  // (a) reject non-object bodies, (b) reject unknown extra fields via
+  // `.strict()`.
+  let rawBody: unknown;
   try {
-    body = (await context.request.json()) as PutSettingsBody;
+    rawBody = await context.request.json();
   } catch {
     return errorResponse('bad_request');
   }
+  const parsed = SettingsPutBodySchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return errorResponse('bad_request');
+  }
+  const body = parsed.data;
 
   // REQ-SET-002 — hashtags. Hashtags are now managed on the /digest page
   // (tag strip at top) via POST /api/tags. PUT /api/settings only handles
@@ -272,6 +273,34 @@ export async function PUT(context: APIContext): Promise<Response> {
 
   const nowSec = Math.floor(Date.now() / 1000);
 
+  // CF-028: detect first-tag sync before the UPDATE rewrites
+  // hashtags_json. When the user had no tags before this PUT, every
+  // discovery row enqueued below gets priority=10 so the dedicated
+  // discovery cron jumps them ahead of the steady-state queue. A read
+  // failure falls back to priority=0 — the save still succeeds.
+  let priorHashtagsJson: string | null = null;
+  let priorReadFailed = false;
+  try {
+    const priorRow = await env.DB.prepare(
+      'SELECT hashtags_json FROM users WHERE id = ?1',
+    )
+      .bind(auth.user.id)
+      .first<{ hashtags_json: string | null }>();
+    priorHashtagsJson = priorRow !== null ? priorRow.hashtags_json : null;
+  } catch (err) {
+    priorReadFailed = true;
+    log('warn', 'settings.update.failed', {
+      user_id: auth.user.id,
+      op: 'prior_hashtags_read',
+      error_code: 'internal_error',
+      detail: String(err).slice(0, 500),
+    });
+  }
+  const priorTags = priorReadFailed ? [] : parseHashtagsJson(priorHashtagsJson);
+  const isFirstTagSync =
+    !priorReadFailed &&
+    (priorHashtagsJson === null || priorHashtagsJson === '' || priorTags.length === 0);
+
   try {
     if (hashtags !== null) {
       const hashtagsJson = JSON.stringify(hashtags);
@@ -305,15 +334,21 @@ export async function PUT(context: APIContext): Promise<Response> {
   try {
     discovering = hashtags !== null ? await findTagsNeedingDiscovery(env.KV, hashtags) : [];
     if (discovering.length > 0) {
+      // CF-028: first-tag-sync rows get priority=10 so the dedicated
+      // discovery cron drains them on the next tick. Steady-state
+      // additions stay at priority=0.
+      const priority = isFirstTagSync ? 10 : 0;
       const stmts = discovering.map((tag) =>
         env.DB.prepare(
-          'INSERT OR IGNORE INTO pending_discoveries (user_id, tag, added_at) VALUES (?1, ?2, ?3)',
-        ).bind(auth.user.id, tag, nowSec),
+          'INSERT OR IGNORE INTO pending_discoveries (user_id, tag, added_at, priority) VALUES (?1, ?2, ?3, ?4)',
+        ).bind(auth.user.id, tag, nowSec, priority),
       );
       await env.DB.batch(stmts);
       log('info', 'discovery.queued', {
         user_id: auth.user.id,
         tags: discovering,
+        first_tag_sync: isFirstTagSync,
+        priority,
       });
     }
   } catch (err) {

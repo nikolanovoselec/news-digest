@@ -25,10 +25,7 @@ import {
   buildClearRefreshCookie,
 } from '~/middleware/auth';
 import { checkOrigin, originOf } from '~/middleware/origin-check';
-
-interface DeleteAccountBody {
-  confirm?: unknown;
-}
+import { AccountDeleteBodySchema } from '~/lib/schemas/account';
 
 /**
  * Delete every KV key that belongs to {@link userId}. We namespace
@@ -140,14 +137,22 @@ async function deleteAccountCore(
 export async function DELETE(context: APIContext): Promise<Response> {
   // JSON API path — fetch('/api/auth/account', { method: 'DELETE',
   // body: JSON.stringify({ confirm: 'DELETE' }) }).
-  let body: DeleteAccountBody;
+  // CF-013: parse + shape-validate via Zod. The `confirmation_required`
+  // error code (emitted when `confirm !== 'DELETE'`) is preserved by
+  // keeping `confirm` as `unknown` in the schema; Zod's job here is
+  // (a) reject non-object bodies, (b) reject unknown extra fields.
+  let rawBody: unknown;
   try {
-    body = (await context.request.json()) as DeleteAccountBody;
+    rawBody = await context.request.json();
   } catch {
     return errorResponse('bad_request');
   }
+  const parsed = AccountDeleteBodySchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return errorResponse('bad_request');
+  }
 
-  const result = await deleteAccountCore(context, body.confirm);
+  const result = await deleteAccountCore(context, parsed.data.confirm);
   if (!result.ok) return result.response;
 
   const headers = new Headers({ 'Content-Type': 'application/json' });
