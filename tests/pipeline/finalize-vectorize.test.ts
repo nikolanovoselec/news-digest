@@ -174,11 +174,12 @@ function makeEnv(
     rerankFloor?: string;
     cosineThreshold?: string;
     highConfidenceCosine?: string;
+    timeWindowSeconds?: string;
     aiBinding?: { run: (model: string, params: Record<string, unknown>) => Promise<unknown> };
     sweepQueue?: Queue;
   } = {},
 ): Env {
-  return {
+  const base: Record<string, unknown> = {
     DB: db,
     VECTORIZE: vectorize,
     DEDUP_SWEEP: opts.sweepQueue ?? makeMockSweepQueue().binding,
@@ -189,7 +190,11 @@ function makeEnv(
     DEDUP_SAME_VENDOR_PENALTY: opts.sameVendorPenalty ?? '0.05',
     DEDUP_RERANK_FLOOR: opts.rerankFloor ?? '0.72',
     DEDUP_HIGH_CONFIDENCE_COSINE: opts.highConfidenceCosine ?? '0.92',
-  } as unknown as Env;
+  };
+  if (opts.timeWindowSeconds !== undefined) {
+    base.DEDUP_TIME_WINDOW_SECONDS = opts.timeWindowSeconds;
+  }
+  return base as unknown as Env;
 }
 
 describe('processOneFinalize — REQ-PIPE-003', () => {
@@ -1193,6 +1198,52 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     const now = Math.floor(Date.now() / 1000);
     expect(msg.cursor?.pa).toBeGreaterThan(now - 8 * 24 * 3600);
     expect(msg.cursor?.pa).toBeLessThan(now - 6 * 24 * 3600);
+  });
+
+  // REQ-PIPE-003 AC 17 — locks the symmetry invariant: the auto-sweep
+  // cursor span MUST equal the per-pair time-window gate, derived from
+  // the same `DEDUP_TIME_WINDOW_SECONDS` env var. Drives finalize with
+  // a non-default value and asserts the cursor follows; guards against
+  // a future refactor that re-introduces the hardcoded constant.
+  it('REQ-PIPE-003 AC 17: auto-sweep cursor span follows DEDUP_TIME_WINDOW_SECONDS env override', async () => {
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: 'a-1',
+          title: 't',
+          source_snippet: 's',
+          published_at: 2000,
+          ingested_at: 2000,
+          primary_source_url: 'https://a.example/x',
+        },
+      ],
+      flipChanges: 1,
+    });
+    const matches = new Map<string, VectorizeMatch[]>();
+    matches.set('a-1', []);
+    const mockVec = makeMockVectorize(matches);
+    const sweepQueue = makeMockSweepQueue();
+    // Override the env to a 3-hour window. Auto-sweep cursor MUST land
+    // at `now - 10800` regardless of the 7d default.
+    const env = makeEnv(mockDb.db, mockVec.binding, {
+      sweepQueue: sweepQueue.binding,
+      timeWindowSeconds: '10800',
+    });
+    const beforeSec = Math.floor(Date.now() / 1000);
+    await processOneFinalize(env, { scrape_run_id: 'r1' });
+    const afterSec = Math.floor(Date.now() / 1000);
+
+    expect(sweepQueue.sends).toHaveLength(1);
+    const msg = sweepQueue.sends[0] as {
+      run_id: string;
+      cursor: { pa: number; id: string } | null;
+    };
+    expect(msg.cursor).not.toBeNull();
+    // Cursor pa must be in [beforeSec - 10800, afterSec - 10800]. The
+    // tight band proves the auto-sweep used the env value, not the
+    // 7d default (which would land ~14d worth of seconds away).
+    expect(msg.cursor?.pa).toBeGreaterThanOrEqual(beforeSec - 10800);
+    expect(msg.cursor?.pa).toBeLessThanOrEqual(afterSec - 10800);
   });
 
   // AD41 — auto-sweep is best-effort. When the gate flip races and
