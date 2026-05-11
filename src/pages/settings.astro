@@ -9,7 +9,6 @@
 // All validation is repeated server-side in /api/settings — client-side
 // form state is convenience only.
 
-import type { APIContext } from 'astro';
 import Base from '~/layouts/Base.astro';
 // CF-057: ModelSelect import removed — showModelSelect is permanently false
 // (REQ-SET-004: model selection UI hidden while the global pipeline runs on
@@ -61,12 +60,12 @@ const isAdmin =
   session.user.email.toLowerCase() === adminEmail.toLowerCase();
 
 // Enforce the settings-incomplete / already-complete redirect rules.
-// The helper only reads `request` and `locals`; cast to `APIContext`
-// for the remainder of the surface it does not touch.
+// CF-031: requireSettingsComplete accepts Pick<APIContext, 'request' | 'locals'>
+// so the SSR caller hands in only what it actually has — no cast needed.
 const gated = requireSettingsComplete({
   request: Astro.request,
   locals: Astro.locals,
-} as unknown as APIContext);
+});
 if (gated !== null) {
   for (const c of session.cookiesToSet) gated.headers.append('Set-Cookie', c);
   return gated;

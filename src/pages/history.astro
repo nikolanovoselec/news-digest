@@ -12,7 +12,6 @@
 // for this phase — a future phase may rename it to "Search & History"
 // and add a live search box.
 
-import type { APIContext } from 'astro';
 import Base from '~/layouts/Base.astro';
 import DigestCard from '~/components/DigestCard.astro';
 import TagStrip from '~/components/TagStrip.astro';
@@ -59,11 +58,12 @@ Astro.locals.user = session.user;
 // returns zero rows on the deployed Worker.
 let data: HistoryResponse = { days: [] };
 try {
+  // CF-031: getHistory accepts Pick<APIContext, 'request' | 'locals'> so
+  // the SSR caller hands in only what it actually has — no cast needed.
   const res = await getHistory({
     request: Astro.request,
     locals: Astro.locals,
-    url: new URL('/api/history', Astro.request.url),
-  } as unknown as APIContext);
+  });
   if (res.ok) {
     data = (await res.json()) as HistoryResponse;
   }

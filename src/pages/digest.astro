@@ -14,7 +14,6 @@
 // subrequest roundtrip. The tag-strip filter is preserved unchanged.
 // Empty state: "No news for you today, try adding additional tags."
 
-import type { APIContext } from 'astro';
 import Base from '~/layouts/Base.astro';
 import DigestCard from '~/components/DigestCard.astro';
 import TagStrip from '~/components/TagStrip.astro';
@@ -37,10 +36,12 @@ const session = await loadSessionForPage(Astro.request, env, Astro.response.head
 if (session.user === null) return Astro.redirect('/', 303);
 Astro.locals.user = session.user;
 
+// CF-031: requireSettingsComplete accepts Pick<APIContext, 'request' | 'locals'>
+// so the SSR caller hands in only what it actually has — no cast.
 const gated = requireSettingsComplete({
   request: Astro.request,
   locals: Astro.locals,
-} as unknown as APIContext);
+});
 if (gated !== null) {
   // The gate may emit a redirect; preserve the silent-refresh cookie.
   for (const c of session.cookiesToSet) gated.headers.append('Set-Cookie', c);

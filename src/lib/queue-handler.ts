@@ -1,10 +1,11 @@
-// Infrastructure / shared utility — no REQ.
+// Implements REQ-PIPE-008
 //
-// Generic queue-batch handler that consolidates the per-message
-// try/ack/retry/log pattern duplicated across all three queue
-// consumers (coordinator, chunk, finalize). Each consumer previously
-// hand-rolled the same retry loop with the magic number 3 (which must
-// match wrangler.toml's `max_retries`).
+// Shared queue-batch handler. The retry envelope here is the load-bearing
+// piece of REQ-PIPE-008 AC 8 (finalize-consumer intentional asymmetry on
+// terminal failure) — owning it in one module is what keeps that AC honest
+// across all three consumers (coordinator, chunk, finalize), each of which
+// previously hand-rolled the same retry loop with the magic number 3
+// (which must match wrangler.toml's `max_retries`).
 //
 // CF-007 — sourcing the retry cap from a single shared constant
 // removes the silent drift risk: a future bump from 3 to 5 in

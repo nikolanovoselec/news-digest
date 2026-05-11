@@ -16,7 +16,6 @@
 // the auth scoping identical to a browser navigation because the helper
 // runs against the same D1 and session.
 
-import type { APIContext } from 'astro';
 import Base from '~/layouts/Base.astro';
 import DigestCard from '~/components/DigestCard.astro';
 import { loadSessionForPage } from '~/middleware/auth';
@@ -36,10 +35,12 @@ const session = await loadSessionForPage(Astro.request, env, Astro.response.head
 if (session.user === null) return Astro.redirect('/', 303);
 Astro.locals.user = session.user;
 
+// CF-031: requireSettingsComplete accepts Pick<APIContext, 'request' | 'locals'>
+// so the SSR caller hands in only what it actually has — no cast.
 const gated = requireSettingsComplete({
   request: Astro.request,
   locals: Astro.locals,
-} as unknown as APIContext);
+});
 if (gated !== null) {
   for (const c of session.cookiesToSet) gated.headers.append('Set-Cookie', c);
   return gated;
