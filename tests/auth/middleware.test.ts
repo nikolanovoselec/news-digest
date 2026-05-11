@@ -290,6 +290,150 @@ describe('requireSession — REQ-AUTH-001 / REQ-AUTH-002', () => {
   });
 });
 
+// CF-026 — rate-limit fail-closed and session-version mismatch tests.
+// The middleware sits between every authenticated request and its handler;
+// these tests exercise the observable failure modes that aren't covered
+// elsewhere.
+
+/**
+ * Build a KV mock whose `get` rejects, simulating a KV outage. The
+ * refresh-token rate limits (`AUTH_REFRESH_IP`, `AUTH_REFRESH_USER`)
+ * are configured `failClosed: true`, so an outage must surface as a
+ * limiter denial — NOT as a silent pass-through.
+ */
+function makeFailingKv(): KVNamespace {
+  return {
+    get: vi.fn().mockRejectedValue(new Error('KV outage')),
+    put: vi.fn().mockResolvedValue(undefined),
+  } as unknown as KVNamespace;
+}
+
+describe('loadSession — rate-limit fail-closed (REQ-AUTH-001 / REQ-AUTH-008)', () => {
+  it(
+    'REQ-AUTH-001: refresh-flow returns user=null with EMPTY cookiesToSet when the AUTH_REFRESH_IP limiter fails closed',
+    async () => {
+      // The middleware's inline refresh path runs AUTH_REFRESH_IP
+      // (failClosed: true) BEFORE any DB lookup. With a KV that throws,
+      // the limiter denies the request. The contract is:
+      //   - user === null (caller treats as unauthenticated)
+      //   - cookiesToSet is EMPTY (do not clear — the user may be
+      //     legitimate and just bursty; let the next request through).
+      // If the implementation regresses to fail-open (treating KV errors
+      // as { ok: true }), the access cookie would be cleared because we
+      // would proceed to findRefreshToken with a value the test DB has
+      // no row for, hitting the `unauthenticated(true)` branch.
+      const { db } = makeDb(null);
+      const kv = makeFailingKv();
+      const req = new Request('https://example.com/', {
+        headers: {
+          Cookie: `${SESSION_COOKIE_NAME}=not.a.jwt; __Host-news_digest_refresh=abcdef0123456789`,
+        },
+      });
+      const result = await loadSession(req, db, SECRET, kv);
+      expect(result.user).toBeNull();
+      // Observable contract: fail-closed limiter does NOT clear cookies.
+      // (The fail-open regression would clear them via the no-row branch.)
+      expect(result.cookiesToSet).toEqual([]);
+    },
+  );
+
+  it(
+    'REQ-AUTH-001: requireSession with rate-limit fail-closed returns 401 unauthorized without clearing cookies',
+    async () => {
+      // End-to-end check: requireSession maps user=null to
+      // errorResponse('unauthorized') (status 401). The response must
+      // not carry clear-cookie directives so the legitimate user's
+      // cookies survive a transient KV outage.
+      const { db } = makeDb(null);
+      const kv = makeFailingKv();
+      const env = { DB: db, OAUTH_JWT_SECRET: SECRET, KV: kv };
+      const req = new Request('https://example.com/', {
+        headers: {
+          Cookie: `${SESSION_COOKIE_NAME}=not.a.jwt; __Host-news_digest_refresh=abcdef0123456789`,
+        },
+      });
+      const result = await requireSession(req, env);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.response.status).toBe(401);
+      // Crucial: cookies must NOT be cleared on transient rate-limit
+      // denial. The user's browser keeps both, and the next attempt
+      // (after the window) authenticates normally.
+      const cookies = setCookiesOf(result.response);
+      expect(cookies.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(false);
+      expect(cookies.some((c) => c.startsWith('__Host-news_digest_refresh=;'))).toBe(false);
+    },
+  );
+});
+
+describe('loadSession — session_version mismatch (REQ-AUTH-002)', () => {
+  it(
+    'REQ-AUTH-002: rejects when JWT sv is LOWER than DB session_version (logout-bump path)',
+    async () => {
+      // Logout bumps users.session_version. Stale JWTs minted before
+      // the bump must be rejected.
+      const token = await signSession(
+        { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
+        SECRET,
+        300,
+      );
+      const { db } = makeDb(baseRow(2));
+      const req = new Request('https://example.com/', {
+        headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
+      });
+      const result = await loadSession(req, db, SECRET);
+      expect(result.user).toBeNull();
+    },
+  );
+
+  it(
+    'REQ-AUTH-002: rejects when JWT sv is HIGHER than DB session_version (token-from-future / DB-rebuild path)',
+    async () => {
+      // The opposite asymmetry: a JWT claims sv=2 but the DB row is
+      // back at sv=1 (DB restore, replica lag, malicious mint). The
+      // contract is exact equality — any drift is rejection.
+      const token = await signSession(
+        { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 2 },
+        SECRET,
+        300,
+      );
+      const { db } = makeDb(baseRow(1));
+      const req = new Request('https://example.com/', {
+        headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
+      });
+      const result = await loadSession(req, db, SECRET);
+      expect(result.user).toBeNull();
+    },
+  );
+
+  it(
+    'REQ-AUTH-002: requireSession clears auth cookies when users row is missing for a valid JWT',
+    async () => {
+      // Valid signature, valid sv (claims.sv=1), but the users SELECT
+      // returns null — row was deleted (account-deletion flow) between
+      // mint and request. The middleware must clear cookies AND return
+      // 401 so the dead JWT stops being replayed.
+      const token = await signSession(
+        { sub: 'deleted-user', email: 'gone@example.com', ghl: 'gone', sv: 1 },
+        SECRET,
+        300,
+      );
+      const { env } = makeEnv(null); // DB.first() returns null → user gone
+      const req = new Request('https://example.com/', {
+        headers: { Cookie: `${SESSION_COOKIE_NAME}=${token}` },
+      });
+      const result = await requireSession(req, env);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.response.status).toBe(401);
+      const cookies = setCookiesOf(result.response);
+      // Access cookie is cleared because the JWT was present-but-bad
+      // (row gone). The contract is unauthenticated(true) → both cookies.
+      expect(cookies.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true);
+    },
+  );
+});
+
 describe('loadSessionForPage — REQ-AUTH-002 / REQ-AUTH-008', () => {
   it('REQ-AUTH-002: appends rotation cookies to the responseHeaders argument', async () => {
     const token = await signSession(

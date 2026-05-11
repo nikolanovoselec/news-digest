@@ -184,194 +184,158 @@ function toAuthenticatedUser(row: UserRow): AuthenticatedUser {
 }
 
 /**
- * Load the session user for {@link request} against {@link db} and
- * {@link jwtSecret}. Always returns a {@link LoadSessionResult} —
- * `user === null` signals "not authenticated" and `cookiesToSet` may
- * carry clear-cookie directives that the caller must attach via
- * {@link applyRefreshCookie}. Never throws.
- *
- * Pass {@link kv} to rate-limit the inline refresh-token rotation path.
- * Two tiers: AUTH_REFRESH_IP runs before the DB lookup (anti-spam),
- * AUTH_REFRESH_USER runs after a valid refresh row is found (caps a
- * stolen-cookie attacker holding a real user's refresh value). When
- * {@link kv} is omitted both tiers are skipped — only acceptable for
- * unit tests; production callers must always pass the namespace.
- *
- * Two paths:
- *   1. Access JWT valid → return the user, no cookie churn.
- *   2. Access JWT missing/expired but refresh cookie valid →
- *      a. mint new access JWT + rotate refresh token, logging any
- *         fingerprint drift as forensic metadata (REQ-AUTH-008 AC 1+2)
- *      b. revoked refresh token presented inside the 30 s grace window
- *         WITH fingerprint mismatch → revoke ALL of the user's refresh
- *         tokens + bump session_version (REQ-AUTH-008 AC 4)
- *      c. revoked refresh token presented OUTSIDE grace → same revoke-
- *         all theft path
- *      d. expired refresh token → clear refresh cookie
+ * Refresh-flow row shape produced by {@link findRefreshToken}. Captured
+ * as a structural type so the helper functions below can declare a
+ * precise parameter type without re-importing the internal alias.
  */
-export async function loadSession(
+type RefreshRow = NonNullable<Awaited<ReturnType<typeof findRefreshToken>>>;
+
+/**
+ * Try the steady-state access-JWT path. Returns a {@link LoadSessionResult}
+ * when the JWT is present, valid, and matches the DB row's session_version;
+ * otherwise returns null so the caller falls through to the refresh-token
+ * flow.
+ */
+async function tryAccessTokenPath(
+  accessToken: string | null,
+  db: D1Database,
+  jwtSecret: string,
+): Promise<LoadSessionResult | null> {
+  if (accessToken === null) return null;
+  const claims = await verifySession(accessToken, jwtSecret);
+  if (claims === null) return null;
+  const row = await loadUserById(db, claims.sub);
+  if (row === null || row.session_version !== claims.sv) return null;
+  return {
+    user: toAuthenticatedUser(row),
+    cookiesToSet: [],
+  };
+}
+
+/**
+ * Handle a revoked-token replay inside the 30 s rotation grace window
+ * (REQ-AUTH-008 AC 4). Three observable outcomes:
+ *  - Fingerprint mismatch inside the window → theft path: revoke every
+ *    refresh row for the user and clear cookies.
+ *  - Fingerprint matches AND an unrevoked child exists AND user-tier
+ *    rate-limit budget remains AND the user row still exists → mint a
+ *    fresh access JWT only (no refresh-cookie rotation; the winner of
+ *    the concurrent rotation already minted the surviving child).
+ *  - User-tier rate-limit hit → no cookie churn so the legitimate user
+ *    can retry after the window.
+ *
+ * Returns null when this branch does not apply (the row's revoked_at is
+ * outside the grace window, or it has no surviving child) so the caller
+ * can fall through to the theft path.
+ */
+async function tryGraceWindowPath(
   request: Request,
   db: D1Database,
   jwtSecret: string,
-  kv?: KVNamespace,
-): Promise<LoadSessionResult> {
-  const cookieHeader = request.headers.get('Cookie');
-  const accessToken = readCookie(cookieHeader, SESSION_COOKIE_NAME);
-  const refreshValue = readCookie(cookieHeader, REFRESH_TOKEN_COOKIE_NAME);
-
-  // Path 1 — access JWT present & valid.
-  if (accessToken !== null) {
-    const claims = await verifySession(accessToken, jwtSecret);
-    if (claims !== null) {
-      const row = await loadUserById(db, claims.sub);
-      if (row !== null && row.session_version === claims.sv) {
-        return {
-          user: toAuthenticatedUser(row),
-          cookiesToSet: [],
-        };
-      }
-    }
+  kv: KVNamespace | undefined,
+  refreshRow: RefreshRow,
+  nowSec: number,
+  sinceRevoked: number,
+): Promise<LoadSessionResult | null> {
+  // The grace branch keeps a hard fingerprint gate even though the
+  // steady-state path drops it. The two threat models differ:
+  //   - Steady-state: legit user's UA drifts across browser auto-
+  //     updates between refreshes (minutes / hours / days apart).
+  //     A hard gate would lock them out — anti-pattern.
+  //   - Grace branch: a token's `revoked_at` is set, and the
+  //     replay arrives within 30 seconds of the legit rotation.
+  //     For this to be a benign concurrent collision, the same
+  //     browser must have fired two parallel requests literally
+  //     30 seconds apart. The UA does not drift over 30 seconds
+  //     in real browsers, so a fingerprint mismatch in this
+  //     window is much more strongly correlated with theft. The
+  //     gate cheaply bounds the "freshly-stolen-just-rotated
+  //     cookie within 30 s" attacker without any legitimate-user
+  //     cost.
+  const presentFingerprint = await deviceFingerprint(request);
+  if (presentFingerprint !== refreshRow.device_fingerprint_hash) {
+    await revokeAllForUser(db, refreshRow.user_id, nowSec);
+    log('warn', 'auth.refresh.grace_fingerprint_mismatch', {
+      user_id: refreshRow.user_id,
+      refresh_token_id: refreshRow.id,
+    });
+    return unauthenticated(true);
   }
-
-  // Path 2 — fall through to refresh-token flow.
-  if (refreshValue === null) {
-    // No refresh cookie either. If the access JWT was present-but-bad
-    // we still want to clear it so the browser stops sending it.
-    return unauthenticated(accessToken !== null);
-  }
-
-  // REQ-AUTH-001 AC 9 — Tier 1 (pre-validation): IP-keyed limit caps
-  // random-cookie spam without paying a DB lookup per request. The
-  // bucket is shared with `POST /api/auth/refresh` (same routeClass)
-  // so an attacker can't pivot between the inline and explicit paths.
+  const child = await findUnrevokedChild(db, refreshRow.id);
+  if (child === null) return null;
+  // Tier-2 user limit gates the JWT mint. Without it, an
+  // attacker with a freshly-stolen-and-just-rotated cookie that
+  // passes the fingerprint check could mint up to 60 access
+  // JWTs in the 30 s grace window (bounded only by the per-IP
+  // tier). The 30/min/user cap collapses that to 30 mints
+  // before reuse-detection inevitably fires the next request.
   if (kv !== undefined) {
     const rate = await enforceRateLimit(
       { KV: kv },
-      RATE_LIMIT_RULES.AUTH_REFRESH_IP,
-      `ip:${clientIp(request)}`,
+      RATE_LIMIT_RULES.AUTH_REFRESH_USER,
+      `user:${refreshRow.user_id}`,
     );
     if (!rate.ok) {
       log('warn', 'auth.refresh.rate_limited', {
-        ip: clientIp(request),
-        bucket: 'ip',
+        user_id: refreshRow.user_id,
+        bucket: 'user',
+        path: 'grace_collision',
         retry_after_seconds: rate.retryAfter,
       });
-      // Don't clear cookies — the user may be legitimate and just
-      // bursty; let the next request after the window succeed.
       return unauthenticated(false);
     }
   }
+  const userRow = await loadUserById(db, refreshRow.user_id);
+  if (userRow === null) return unauthenticated(true);
+  log('info', 'auth.refresh.concurrent_collision', {
+    user_id: userRow.id,
+    revoked_token_id: refreshRow.id,
+    surviving_child_id: child.id,
+    since_revoked_seconds: sinceRevoked,
+  });
+  // Serve the fresh access JWT only — no refresh cookie. The
+  // client's stale revoked cookie keeps working for the rest
+  // of the grace window; their next refresh after the winner's
+  // Set-Cookie lands will pick up the winner's value.
+  return mintSessionResult(userRow, jwtSecret);
+}
 
-  const refreshRow = await findRefreshToken(db, refreshValue);
-  if (refreshRow === null) {
-    // Cookie value not in DB. Stale cookie from a deleted session, or
-    // a cookie issued before a DB rebuild — clear it.
-    return unauthenticated(true);
-  }
+/**
+ * Theft path — revoke every refresh row for the user and clear cookies.
+ * Reached when a revoked refresh token is replayed outside the grace
+ * window, or inside the grace window but with no surviving child.
+ */
+async function handleRevokedReplayPath(
+  db: D1Database,
+  refreshRow: RefreshRow,
+  nowSec: number,
+  sinceRevoked: number,
+): Promise<LoadSessionResult> {
+  await revokeAllForUser(db, refreshRow.user_id, nowSec);
+  log('warn', 'auth.refresh.reuse_detected', {
+    user_id: refreshRow.user_id,
+    refresh_token_id: refreshRow.id,
+    since_revoked_seconds: sinceRevoked,
+  });
+  return unauthenticated(true);
+}
 
-  const nowSec = Math.floor(Date.now() / 1000);
-
-  // REQ-AUTH-008 AC 4 — reuse detection vs. concurrent-rotation
-  // tolerance. A revoked token reappearing has two possible causes:
-  //   (a) post-rotation theft — attacker stole the cookie and is
-  //       replaying it. This is the case AC 4 protects against.
-  //   (b) benign concurrent rotation — same client made two parallel
-  //       requests against the same expired access JWT, both invoked
-  //       refresh, one won the rotation, the other lost. The loser
-  //       presents a now-revoked cookie inside the grace window.
-  // We distinguish via the grace window: if `revoked_at` is within
-  // ROTATION_GRACE_SECONDS, treat as benign and serve a fresh access
-  // JWT WITHOUT rotating again (the winner already minted the new
-  // refresh row). If outside the window, treat as theft and nuke
-  // every refresh row for the user.
-  if (refreshRow.revoked_at !== null) {
-    const sinceRevoked = nowSec - refreshRow.revoked_at;
-    // Negative `sinceRevoked` (revoked_at is in the future — clock
-    // skew, replication lag, malicious DB write) MUST NOT pass the
-    // grace check; otherwise an attacker who can advance the row's
-    // revoked_at into the future gets unbounded grace.
-    if (sinceRevoked >= 0 && sinceRevoked <= ROTATION_GRACE_SECONDS) {
-      // The grace branch keeps a hard fingerprint gate even though the
-      // steady-state path drops it. The two threat models differ:
-      //   - Steady-state: legit user's UA drifts across browser auto-
-      //     updates between refreshes (minutes / hours / days apart).
-      //     A hard gate would lock them out — anti-pattern.
-      //   - Grace branch: a token's `revoked_at` is set, and the
-      //     replay arrives within 30 seconds of the legit rotation.
-      //     For this to be a benign concurrent collision, the same
-      //     browser must have fired two parallel requests literally
-      //     30 seconds apart. The UA does not drift over 30 seconds
-      //     in real browsers, so a fingerprint mismatch in this
-      //     window is much more strongly correlated with theft. The
-      //     gate cheaply bounds the "freshly-stolen-just-rotated
-      //     cookie within 30 s" attacker without any legitimate-user
-      //     cost.
-      const presentFingerprint = await deviceFingerprint(request);
-      if (presentFingerprint !== refreshRow.device_fingerprint_hash) {
-        await revokeAllForUser(db, refreshRow.user_id, nowSec);
-        log('warn', 'auth.refresh.grace_fingerprint_mismatch', {
-          user_id: refreshRow.user_id,
-          refresh_token_id: refreshRow.id,
-        });
-        return unauthenticated(true);
-      }
-      const child = await findUnrevokedChild(db, refreshRow.id);
-      if (child !== null) {
-        // Tier-2 user limit gates the JWT mint. Without it, an
-        // attacker with a freshly-stolen-and-just-rotated cookie that
-        // passes the fingerprint check could mint up to 60 access
-        // JWTs in the 30 s grace window (bounded only by the per-IP
-        // tier). The 30/min/user cap collapses that to 30 mints
-        // before reuse-detection inevitably fires the next request.
-        if (kv !== undefined) {
-          const rate = await enforceRateLimit(
-            { KV: kv },
-            RATE_LIMIT_RULES.AUTH_REFRESH_USER,
-            `user:${refreshRow.user_id}`,
-          );
-          if (!rate.ok) {
-            log('warn', 'auth.refresh.rate_limited', {
-              user_id: refreshRow.user_id,
-              bucket: 'user',
-              path: 'grace_collision',
-              retry_after_seconds: rate.retryAfter,
-            });
-            return unauthenticated(false);
-          }
-        }
-        const userRow = await loadUserById(db, refreshRow.user_id);
-        if (userRow === null) return unauthenticated(true);
-        log('info', 'auth.refresh.concurrent_collision', {
-          user_id: userRow.id,
-          revoked_token_id: refreshRow.id,
-          surviving_child_id: child.id,
-          since_revoked_seconds: sinceRevoked,
-        });
-        // Serve the fresh access JWT only — no refresh cookie. The
-        // client's stale revoked cookie keeps working for the rest
-        // of the grace window; their next refresh after the winner's
-        // Set-Cookie lands will pick up the winner's value.
-        return mintSessionResult(userRow, jwtSecret);
-      }
-    }
-    // Outside grace window OR no surviving child — treat as theft.
-    await revokeAllForUser(db, refreshRow.user_id, nowSec);
-    log('warn', 'auth.refresh.reuse_detected', {
-      user_id: refreshRow.user_id,
-      refresh_token_id: refreshRow.id,
-      since_revoked_seconds: sinceRevoked,
-    });
-    return unauthenticated(true);
-  }
-
-  if (refreshRow.expires_at <= nowSec) {
-    log('info', 'auth.refresh.expired', {
-      user_id: refreshRow.user_id,
-      refresh_token_id: refreshRow.id,
-    });
-    return unauthenticated(true);
-  }
-
+/**
+ * Happy-path rotation: refresh row is unrevoked and unexpired. Runs the
+ * Tier-2 user-keyed rate limit, logs any fingerprint drift, rotates the
+ * row, and returns the new session + refresh cookies. Returns null when
+ * any pre-rotation check rules the path out so the caller can
+ * short-circuit; that case never occurs in practice in the current
+ * implementation (kept as a defensive null-guard).
+ */
+async function tryRotationPath(
+  request: Request,
+  db: D1Database,
+  jwtSecret: string,
+  kv: KVNamespace | undefined,
+  refreshRow: RefreshRow,
+  nowSec: number,
+): Promise<LoadSessionResult> {
   // Tier 2 (post-validation): user-keyed limit. Catches a stolen
   // cookie distributed across many IPs that the per-IP tier alone
   // would miss. MUST run AFTER the revoked-row branch so an attacker
@@ -448,6 +412,122 @@ export async function loadSession(
   });
 
   return mintSessionResult(userRow, jwtSecret, [buildRefreshCookie(rotated.value)]);
+}
+
+/**
+ * Load the session user for {@link request} against {@link db} and
+ * {@link jwtSecret}. Always returns a {@link LoadSessionResult} —
+ * `user === null` signals "not authenticated" and `cookiesToSet` may
+ * carry clear-cookie directives that the caller must attach via
+ * {@link applyRefreshCookie}. Never throws.
+ *
+ * Pass {@link kv} to rate-limit the inline refresh-token rotation path.
+ * Two tiers: AUTH_REFRESH_IP runs before the DB lookup (anti-spam),
+ * AUTH_REFRESH_USER runs after a valid refresh row is found (caps a
+ * stolen-cookie attacker holding a real user's refresh value). When
+ * {@link kv} is omitted both tiers are skipped — only acceptable for
+ * unit tests; production callers must always pass the namespace.
+ *
+ * Driver only — the actual branches live in
+ * {@link tryAccessTokenPath}, {@link tryGraceWindowPath},
+ * {@link tryRotationPath}, and {@link handleRevokedReplayPath}.
+ */
+export async function loadSession(
+  request: Request,
+  db: D1Database,
+  jwtSecret: string,
+  kv?: KVNamespace,
+): Promise<LoadSessionResult> {
+  const cookieHeader = request.headers.get('Cookie');
+  const accessToken = readCookie(cookieHeader, SESSION_COOKIE_NAME);
+  const refreshValue = readCookie(cookieHeader, REFRESH_TOKEN_COOKIE_NAME);
+
+  // Path 1 — access JWT present & valid.
+  const accessResult = await tryAccessTokenPath(accessToken, db, jwtSecret);
+  if (accessResult !== null) return accessResult;
+
+  // Path 2 — fall through to refresh-token flow.
+  if (refreshValue === null) {
+    // No refresh cookie either. If the access JWT was present-but-bad
+    // we still want to clear it so the browser stops sending it.
+    return unauthenticated(accessToken !== null);
+  }
+
+  // REQ-AUTH-001 AC 9 — Tier 1 (pre-validation): IP-keyed limit caps
+  // random-cookie spam without paying a DB lookup per request. The
+  // bucket is shared with `POST /api/auth/refresh` (same routeClass)
+  // so an attacker can't pivot between the inline and explicit paths.
+  if (kv !== undefined) {
+    const rate = await enforceRateLimit(
+      { KV: kv },
+      RATE_LIMIT_RULES.AUTH_REFRESH_IP,
+      `ip:${clientIp(request)}`,
+    );
+    if (!rate.ok) {
+      log('warn', 'auth.refresh.rate_limited', {
+        ip: clientIp(request),
+        bucket: 'ip',
+        retry_after_seconds: rate.retryAfter,
+      });
+      // Don't clear cookies — the user may be legitimate and just
+      // bursty; let the next request after the window succeed.
+      return unauthenticated(false);
+    }
+  }
+
+  const refreshRow = await findRefreshToken(db, refreshValue);
+  if (refreshRow === null) {
+    // Cookie value not in DB. Stale cookie from a deleted session, or
+    // a cookie issued before a DB rebuild — clear it.
+    return unauthenticated(true);
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  // REQ-AUTH-008 AC 4 — reuse detection vs. concurrent-rotation
+  // tolerance. A revoked token reappearing has two possible causes:
+  //   (a) post-rotation theft — attacker stole the cookie and is
+  //       replaying it. This is the case AC 4 protects against.
+  //   (b) benign concurrent rotation — same client made two parallel
+  //       requests against the same expired access JWT, both invoked
+  //       refresh, one won the rotation, the other lost. The loser
+  //       presents a now-revoked cookie inside the grace window.
+  // We distinguish via the grace window: if `revoked_at` is within
+  // ROTATION_GRACE_SECONDS, treat as benign and serve a fresh access
+  // JWT WITHOUT rotating again (the winner already minted the new
+  // refresh row). If outside the window, treat as theft and nuke
+  // every refresh row for the user.
+  if (refreshRow.revoked_at !== null) {
+    const sinceRevoked = nowSec - refreshRow.revoked_at;
+    // Negative `sinceRevoked` (revoked_at is in the future — clock
+    // skew, replication lag, malicious DB write) MUST NOT pass the
+    // grace check; otherwise an attacker who can advance the row's
+    // revoked_at into the future gets unbounded grace.
+    if (sinceRevoked >= 0 && sinceRevoked <= ROTATION_GRACE_SECONDS) {
+      const graceResult = await tryGraceWindowPath(
+        request,
+        db,
+        jwtSecret,
+        kv,
+        refreshRow,
+        nowSec,
+        sinceRevoked,
+      );
+      if (graceResult !== null) return graceResult;
+    }
+    // Outside grace window OR no surviving child — treat as theft.
+    return handleRevokedReplayPath(db, refreshRow, nowSec, sinceRevoked);
+  }
+
+  if (refreshRow.expires_at <= nowSec) {
+    log('info', 'auth.refresh.expired', {
+      user_id: refreshRow.user_id,
+      refresh_token_id: refreshRow.id,
+    });
+    return unauthenticated(true);
+  }
+
+  return tryRotationPath(request, db, jwtSecret, kv, refreshRow, nowSec);
 }
 
 /**
