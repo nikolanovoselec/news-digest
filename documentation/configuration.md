@@ -77,11 +77,12 @@ Declared in `wrangler.toml`:
 | `SCRAPE_CHUNKS` | Queue producer | Producer binding — one message per ~100-candidate LLM chunk |
 | `SCRAPE_FINALIZE` | Queue producer | Producer binding — one message per scrape run, enqueued by the last chunk consumer after the run is stamped `ready`; triggers the same-story dedup pass ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
 | `DEDUP_SWEEP` | Queue producer + consumer | Self-chaining queue carrying operator-triggered historical-dedup sweep messages. The kicker (admin route) sends the first message; the consumer processes one batch then re-enqueues a continuation until the corpus tail is reached, decoupling the sweep from the operator's browser tab ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9) |
+| `PIPELINE_JOBS` | Queue producer + consumer | Self-chaining queue for the backend-driven full pipeline orchestrator. One consumer walks seven phases by chaining messages; the producer binding is used by the kicker routes. No browser tab dependency ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface), [AD37](decisions/README.md#ad37-full-pipeline-run-is-backend-orchestrated-browser-tab-is-display-only)) |
 | `AI` | Workers AI | LLM inference for chunk summarization and source discovery, plus bge-base-en-v1.5 embedding generation for same-story dedup |
 | `VECTORIZE` | Vectorize index | 768-dim cosine index over every surviving article's embedding; queried in the finalize pass and by the historical re-run sweep ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
 | `ASSETS` | Fetcher (static assets) | Cloudflare static-asset binding for serving the Astro-built output; falls back to `new Response('news-digest')` in tests |
 
-All four queue consumers (`SCRAPE_COORDINATOR`, `SCRAPE_CHUNKS`, `SCRAPE_FINALIZE`, `DEDUP_SWEEP`) run with `max_batch_size = 1` (one isolate per message) and `max_retries = 3`.
+All five queue consumers (`SCRAPE_COORDINATOR`, `SCRAPE_CHUNKS`, `SCRAPE_FINALIZE`, `DEDUP_SWEEP`, `PIPELINE_JOBS`) run with `max_batch_size = 1` (one isolate per message) and `max_retries = 3`. The `SCRAPE_FINALIZE` and `PIPELINE_JOBS` consumers have a DLQ (`ai-news-dlq`) configured so terminal retry exhaustion is inspectable rather than silently dropped (CF-001); the DLQ queue is provisioned by the deploy workflow, not bound in the Worker code.
 
 ## Worker Vars (non-secret)
 
@@ -140,6 +141,8 @@ The `KV` namespace uses a structured key scheme. All keys are shared across all 
 | `tags_mutation` | 30 / 60s | User | Fail open |
 | `set_tz` | 30 / 60s | User | Fail open |
 | `discovery_status` | 120 / 60s | User | Fail open |
+| `admin_force_refresh` | Per-operator hourly bucket | User | Fail open (surfaced as 429 with Retry-After) |
+| `admin_pipeline_run` | Per-operator hourly bucket | User | Fail open (surfaced as 429 with Retry-After) |
 
 The `auth_refresh_*` buckets are shared between `POST /api/auth/refresh` and the inline middleware refresh path so an attacker cannot pivot to authenticated GET routes to bypass the explicit endpoint's limit.
 

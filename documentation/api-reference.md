@@ -248,7 +248,7 @@ Both responses carry a `Set-Cookie` refresh when the session is within 5 minutes
 
 ## Discovery
 
-> **Admin auth.** Every `/api/admin/*` route is gated by the Worker-side middleware. Baseline (always enforced): valid Worker session cookie + session email matches `ADMIN_EMAIL` (case-insensitive). Optional perimeter (Layer 0, AD29): when `CF_ACCESS_AUD` is set, the request must additionally carry a Cloudflare Access assertion whose `aud` claim matches the configured audience tag — without the assertion or with a mismatched audience the request is rejected before the baseline runs. When `CF_ACCESS_AUD` is unset, Layer 0 is skipped entirely. Operators who bind Access MUST also bind it on the `*.workers.dev` URL or disable that subdomain (AD30). See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8.
+> **Admin auth.** Every `/api/admin/*` route is gated by the Worker-side middleware. Baseline (always enforced): valid Worker session cookie + session email matches `ADMIN_EMAIL` (case-insensitive). Optional perimeter (Layer 0, AD29): when `CF_ACCESS_AUD` is set, the request must additionally carry a Cloudflare Access assertion whose `aud` claim matches the configured audience tag — without the assertion or with a mismatched audience the request is rejected before the baseline runs. The `exp` claim on the Access JWT is validated server-side; an expired assertion is rejected even if the Access perimeter would ordinarily have caught it first ([AD44](decisions/README.md#ad44-cloudflare-access-jwt-exp-validation-signature-still-trusted-from-the-perimeter)). When `CF_ACCESS_AUD` is unset, Layer 0 is skipped entirely. Operators who bind Access MUST also bind it on the `*.workers.dev` URL or disable that subdomain (AD30). See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8, AC 8a.
 
 ### POST /api/admin/discovery/retry
 
@@ -385,9 +385,11 @@ POST enforces Origin; GET is exempt (so operators can bookmark or `curl`).
 | `GET` | Browser direct | `303` → `/settings?force_refresh={ok\|reused\|denied}` |
 | `GET` | Scripted, **Full pipeline run**, or **Refresh feeds** orchestrator (`Accept: application/json`) | `200 { ok: true, scrape_run_id, reused }` |
 
-**Error responses:** `401 unauthorized` | `403 forbidden` | `500 "Failed to dispatch coordinator"`.
+**Rate limit:** Per-operator hourly bucket (`admin_force_refresh`). Exhausted → `429` surfaced to the settings surface with `Retry-After` (REQ-AUTH-001 AC 9g).
 
-**Implements:** [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phase 1), [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+**Error responses:** `401 unauthorized` | `403 forbidden` | `429 rate_limit_exceeded` | `500 "Failed to dispatch coordinator"`.
+
+**Implements:** [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phase 1), [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9g
 
 ---
 
@@ -462,11 +464,13 @@ Kicker for the backend-driven full pipeline run. Creates a `pipeline_runs` audit
 |---|---|---|---|
 | `mode` | `"full" \| "wipe"` | `"full"` | `"wipe"` invalidates every article's embedding before scraping; `"full"` keeps existing embeddings and starts at the scrape phase. |
 
+**Rate limit:** Per-operator hourly bucket (`admin_pipeline_run`). Exhausted → `429` with `Retry-After` surfaced to the operator's settings surface (REQ-AUTH-001 AC 9g).
+
 **Success (202):** `{ ok: true, pipeline_run_id: string, mode: 'full'|'wipe', current_phase: string, started_at: number }`.
 
-**Error responses:** `401 unauthorized` | `403 forbidden_origin` (cross-origin browser POST) | `500 pipeline_kick_failed`.
+**Error responses:** `401 unauthorized` | `403 forbidden_origin` (cross-origin browser POST) | `405 Method Not Allowed` (`mode=wipe` via GET on the browser variant) | `429 rate_limit_exceeded` | `500 pipeline_kick_failed`.
 
-**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)
+**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9g
 
 ---
 
@@ -480,13 +484,13 @@ Browser-navigation variant of the pipeline kicker. Used by `settings.astro` via 
 
 | Parameter | Values | Default | Description |
 |---|---|---|---|
-| `mode` | `full` \| `wipe` | `full` | `wipe` invalidates all embeddings before scraping; `full` keeps them. |
+| `mode` | `full` \| `wipe` | `full` | `wipe` invalidates all embeddings before scraping; `full` keeps them. `wipe` is rejected with `405 Method Not Allowed` (body: `Use POST for mode=wipe`, `Allow: POST`) on GET to block cross-origin GET vectors from triggering a corpus-wide re-embed ([REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8d). |
 
 **Success (303):** redirects to `/settings?pipeline=enqueued&pipeline_run_id=<ULID>&mode=<mode>`.
 
-**Error responses:** `303 -> /settings?pipeline=denied` (auth failure) | `500` (configuration error).
+**Error responses:** `303 -> /settings?pipeline=denied` (auth failure) | `405 Method Not Allowed` (`mode=wipe` via GET) | `500` (configuration error).
 
-**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)
+**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8d
 
 ---
 

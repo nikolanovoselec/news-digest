@@ -57,11 +57,34 @@ The `__Host-` prefix (RFC 6265bis) enforces Secure, Path=/, and no Domain attrib
 
 Auth endpoints (login, callback, refresh) use a fail-closed KV-backed sliding-window rate limiter. See `src/lib/rate-limit.ts` for bucket definitions and [`configuration.md`](configuration.md) for the `KV` namespace binding and key conventions.
 
+Admin side-effecting endpoints (force-refresh, pipeline-run) carry their own per-operator hourly buckets (REQ-AUTH-001 AC 9g). A rate-limited admin click surfaces a `429` with `Retry-After` back to the operator's settings surface rather than silently dropping the request.
+
+---
+
+## Admin gate and JWT exp validation (REQ-AUTH-001 AC 8, AC 8a — AD44)
+
+The admin gate in `src/middleware/admin-auth.ts` enforces two layers in order:
+
+1. **Optional Layer 0** (when `CF_ACCESS_AUD` is set): the request must carry a Cloudflare Access assertion whose `aud` claim matches the configured audience tag. The `exp` claim on the Access JWT is validated server-side — an expired assertion is rejected even if the perimeter would ordinarily have caught it first (defence-in-depth against long-lived stolen tokens and synthetic non-Access payloads). Signature verification stays at the Access perimeter per [AD29](decisions/README.md#ad29-cloudflare-access-as-opt-in-additive-perimeter-not-security-boundary) and [AD44](decisions/README.md#ad44-cloudflare-access-jwt-exp-validation-signature-still-trusted-from-the-perimeter).
+2. **Baseline** (always): valid session cookie + `ADMIN_EMAIL` match (case-insensitive).
+
+---
+
+## Wipe-mode POST guard (REQ-AUTH-001 AC 8d)
+
+The destructive wipe-and-re-embed pipeline mode (`mode=wipe`) is only reachable via an explicit `POST` to `/api/admin/pipeline-run`. A `GET` request with `?mode=wipe` returns `405 Method Not Allowed` with `Allow: POST`, preventing cross-origin GET vectors (image tags, bookmarks, link previews) from triggering a corpus-wide re-embed. The idempotent `full` mode remains reachable via either method.
+
+---
+
+## Dev-bypass prod guard (REQ-AUTH-001 AC 10)
+
+Routes under `/api/dev/*` return `404` on any deployment whose `APP_URL` identifies it as a production hostname (currently: any hostname containing `graymatter.ch`). This guard fires regardless of whether `DEV_BYPASS_TOKEN` is set, so an accidentally-promoted dev secret cannot open the bypass surface on production. Integration deployments (`news.novoselec.ch`) are not subject to this guard; see the [Dev-bypass runbook](deployment.md#dev-bypass-runbook-integration-only) for integration usage.
+
 ---
 
 ## Related Documentation
 
 - [`architecture.md`](architecture.md) — Component map and security-headers middleware
 - [`configuration.md`](configuration.md) — KV namespace binding and rate-limit key conventions
-- [`decisions/README.md`](decisions/README.md) — AD8 (cookie policy), AD11 (CSP unsafe-inline), AD13 (no non-essential cookies), AD23 (rate-limit fail-closed)
+- [`decisions/README.md`](decisions/README.md) — AD8 (cookie policy), AD11 (CSP unsafe-inline), AD13 (no non-essential cookies), AD23 (rate-limit fail-closed), AD29 (Access as additive perimeter), AD44 (JWT exp validation)
 - [`../sdd/`](../sdd/) — REQ-OPS-003, REQ-AUTH-001, REQ-AUTH-002, REQ-AUTH-003

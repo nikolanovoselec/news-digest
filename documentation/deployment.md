@@ -108,6 +108,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 | D1 | `ai-news-digest-integration` |
 | KV | `ai-news-digest-integration-kv` (auto-derived) |
 | Queues | `scrape-coordinator-integration`, `scrape-chunks-integration`, `scrape-finalize-integration`, `dedup-sweep-integration`, `pipeline-jobs-integration` |
+| DLQ | `ai-news-dlq-integration` (unbound; receives terminal retry exhaustion from finalize + pipeline-jobs consumers) |
 | Workers AI | shared `AI` binding (no per-env isolation needed) |
 | Vectorize | `ai-news-embeddings-integration` |
 
@@ -150,6 +151,7 @@ curl -i ${APP_URL}/api/admin/force-refresh
 | `SCRAPE_FINALIZE` | Queue | `scrape-finalize` | Same-story dedup pass; one message enqueued by the last chunk consumer per scrape run ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
 | `DEDUP_SWEEP` | Queue | `dedup-sweep` | Self-chaining historical-dedup sweep; the kicker enqueues the first message and the consumer re-enqueues a continuation per batch until the corpus tail is reached ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9) |
 | `PIPELINE_JOBS` | Queue | `pipeline-jobs` (`pipeline-jobs-integration` on integration) | Backend-driven full pipeline orchestrator; one consumer walks the seven phases by self-chaining messages ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface), [AD37](decisions/README.md#ad37-full-pipeline-run-is-backend-orchestrated-browser-tab-is-display-only)) |
+| — | Queue (DLQ) | `ai-news-dlq` (`ai-news-dlq-integration` on integration) | Dead-letter queue for the finalize and pipeline-jobs consumers. Terminal queue retry exhaustion lands messages here so they are inspectable rather than silently dropped (CF-001). Provisioned by the deploy workflow inline `wrangler queues create` block; no binding needed in `wrangler.toml`. |
 | `AI` | Workers AI | (account-level) | LLM inference and bge-base-en-v1.5 embedding generation |
 | `VECTORIZE` | Vectorize index | `ai-news-embeddings` | 768-dim cosine index for same-story dedup; provisioned by the deploy workflow via `wrangler vectorize create` ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
 
@@ -171,6 +173,7 @@ Every push to `develop` (and every PR targeting `main`) runs the following gates
 | Security audit (blocking) | `npm audit --omit=dev --audit-level=critical` | Blocks on CRITICAL CVEs in the production-dep tree. |
 | Lint | `npm run lint` | Oxlint rules |
 | REQ backlink coverage | `node scripts/check-req-backlinks.mjs` | Every `REQ-X-NNN` reference in `src/`, `tests/`, `documentation/`, and `migrations/` resolves to a header in `sdd/`. Fails the build if any reference points at a REQ ID that does not exist in the spec (CF-069). |
+| Wrangler vars parity | `node scripts/check-wrangler-vars-parity.mjs` | Every `[vars]` key declared in the top-level `wrangler.toml` also exists in `[env.integration.vars]` and vice versa, so production and integration never drift apart silently (CF-016). Operator-facing: a missing var on either side surfaces here before the deploy workflow runs. |
 | Dead code | `npm run knip` | No unused exports or files |
 | Unit + integration tests | `npx vitest run` | Vitest suite |
 
