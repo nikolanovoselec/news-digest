@@ -20,4 +20,3 @@ export const TagsPostBodySchema = z
   })
   .strict();
 
-type TagsPostBody = z.infer<typeof TagsPostBodySchema>;

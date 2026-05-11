@@ -19,4 +19,3 @@ export const AccountDeleteBodySchema = z
   })
   .strict();
 
-type AccountDeleteBody = z.infer<typeof AccountDeleteBodySchema>;

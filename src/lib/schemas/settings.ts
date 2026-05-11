@@ -38,4 +38,3 @@ export const SettingsPutBodySchema = z
   })
   .strict();
 
-type SettingsPutBody = z.infer<typeof SettingsPutBodySchema>;
