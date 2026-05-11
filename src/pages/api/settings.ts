@@ -129,7 +129,7 @@ export async function GET(context: APIContext): Promise<Response> {
     RATE_LIMIT_RULES.SETTINGS_READ,
     auth.user.id,
   );
-  if (!rl.allowed) return rateLimitResponse(rl);
+  if (!rl.ok) return rateLimitResponse(rl.retryAfter);
 
   let row: UserSettingsRow | null;
   try {

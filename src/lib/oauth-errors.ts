@@ -13,10 +13,7 @@
  * of these - every code path that surfaces an error goes through
  * {@link mapOAuthError} to enforce the allowlist.
  */
-// CF-020: not exported - only consumed inside this file by
-// mapOAuthError and the OAuthErrorCode union derivation. Callers
-// import `OAuthErrorCode` (the union type) instead.
-const OAUTH_ERROR_CODES = [
+export const OAUTH_ERROR_CODES = [
   'access_denied',
   'no_verified_email',
   'invalid_state',

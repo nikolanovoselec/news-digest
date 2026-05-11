@@ -303,7 +303,7 @@ describe('GET /api/scrape-status - REQ-PIPE-006 AC 5', () => {
     const res = await GET(
       makeContext(
         await authedRequestWithRunId('pin-1'),
-        envFrom(db, makeKv('3')),
+        envFrom(db, makeKv()),
       ) as never,
     );
     expect(res.status).toBe(200);
@@ -330,7 +330,7 @@ describe('GET /api/scrape-status - REQ-PIPE-006 AC 5', () => {
     const res = await GET(
       makeContext(
         await authedRequestWithRunId('does-not-exist'),
-        envFrom(db, makeKv('2')),
+        envFrom(db, makeKv()),
       ) as never,
     );
     expect(res.status).toBe(200);
@@ -356,7 +356,7 @@ describe('GET /api/scrape-status - REQ-PIPE-006 AC 5', () => {
     const res = await GET(
       makeContext(
         await authedRequestWithRunId(''),
-        envFrom(db, makeKv('4')),
+        envFrom(db, makeKv()),
       ) as never,
     );
     expect(res.status).toBe(200);

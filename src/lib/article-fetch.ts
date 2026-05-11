@@ -47,9 +47,7 @@ const SNIPPET_CAP = 15000;
  * header/footer/aside blocks are removed first so their contents
  * don't leak into the text.
  */
-// CF-020: not exported - only consumed inside this file by
-// fetchAndExtract below. Keep as a file-local helper.
-function extractArticleText(html: string): string {
+export function extractArticleText(html: string): string {
   // Drop non-content blocks BEFORE tag-stripping so their contents
   // don't leak in.
   //
