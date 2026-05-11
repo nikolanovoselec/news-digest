@@ -467,19 +467,41 @@ function itemToHeadline(item: unknown, sourceName: string): Headline | null {
   const snippet = rssItemSnippet(item);
   // Per-item `<source>` override: Google News RSS includes
   // `<source url="...">Publisher Name</source>` identifying the
-  // underlying publisher of each item. When present, it's much more
-  // useful than the feed-level "Google News: mcp" label — the user
-  // sees "Help Net Security" / "HackerNoon" instead of two rows that
-  // collide on the same generic label. Falls back to the feed-level
-  // sourceName when absent or empty.
+  // underlying publisher of each item. The TEXT (publisher name) was
+  // already promoted to source_name. The URL ATTRIBUTE is the real
+  // publisher article URL — without it, every Google-News-routed item
+  // lands with `primary_source_url = news.google.com/rss/articles/CBMi…`,
+  // which (a) breaks canonical-URL dedup (each Google News redirect
+  // token is unique even when the underlying article isn't), (b)
+  // collapses the same-vendor cosine penalty (every Google News item
+  // has host `news.google.com` regardless of actual publisher), and
+  // (c) defeats publisher blocklists. Promote the `<source url>` to
+  // headline.url when the item's link is a Google News redirect.
+  // For non-Google-News feeds with a `<source>` element (some podcast
+  // feeds do this for re-syndication), we keep the original link to
+  // avoid changing behavior on those feeds.
   const itemSourceName = extractItemSourceName(item['source']);
+  const itemSourceUrl = extractItemSourceUrl(item['source']);
+  const resolvedLink =
+    itemSourceUrl !== null && isGoogleNewsLink(link) ? itemSourceUrl : link;
   return {
     title,
-    url: link,
+    url: resolvedLink,
     source_name: itemSourceName ?? sourceName,
     ...definedProp('published_at', published_at),
     ...definedProp('snippet', snippet),
   };
+}
+
+/** Match Google News aggregator redirect URLs. Same predicate as
+ *  `src/lib/prefer-direct-source.ts` `isGoogleNewsUrl` — duplicated
+ *  here to keep this module free of cycles with prefer-direct-source. */
+function isGoogleNewsLink(url: string): boolean {
+  try {
+    return new URL(url).hostname === 'news.google.com';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -496,6 +518,28 @@ function extractItemSourceName(node: unknown): string | null {
     if (text !== null) return text;
   }
   return null;
+}
+
+/**
+ * Pull the `url` attribute from an RSS `<source url="...">` node.
+ * Returns null when the node is a bare string (no attributes), when
+ * the attribute is absent or empty, or when the attribute value is
+ * not a valid http(s) URL. Used by {@link itemToHeadline} to swap
+ * Google News redirect links for the real publisher article URL.
+ */
+function extractItemSourceUrl(node: unknown): string | null {
+  if (!isRecord(node)) return null;
+  const raw = asString(node['url']);
+  if (raw === null) return null;
+  // Defensive: only accept http(s) URLs. A malformed `<source url>`
+  // shouldn't be able to redirect the article to file:// or javascript:.
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  } catch {
+    return null;
+  }
+  return raw;
 }
 
 function entryToHeadline(entry: unknown, sourceName: string): Headline | null {
