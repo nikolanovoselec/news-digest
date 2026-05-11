@@ -174,12 +174,12 @@ describe('readCosineThreshold', () => {
 });
 
 describe('readTimeWindowSeconds', () => {
-  it('REQ-PIPE-003 AC 13: returns the default (14d) when env var is unset', () => {
+  it('REQ-PIPE-003 AC 13: returns the default (7d) when env var is unset', () => {
     expect(readTimeWindowSeconds({})).toBe(DEFAULT_TIME_WINDOW_SECONDS);
-    // 14d = 1_209_600s, matched to RETENTION_SECONDS in
-    // src/queue/cleanup.ts so the dedup gate considers every article
-    // still alive in the corpus. Bumped 2026-05-11 from 72h.
-    expect(DEFAULT_TIME_WINDOW_SECONDS).toBe(1_209_600);
+    // 7d = 604_800s, the smallest window covering every observed
+    // long-running cluster (valuation week, long-weekend press
+    // releases). Bumped 2026-05-11 from 72h.
+    expect(DEFAULT_TIME_WINDOW_SECONDS).toBe(604_800);
   });
 
   it('parses a valid positive number from the env', () => {

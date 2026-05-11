@@ -9,7 +9,7 @@ Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are a
 ## 2026-05-11
 
 - REQ-DISC-001 AC 2 reworded: a brand-new account's first hashtag now jumps the discovery queue so its first digest reflects discovered feeds on the next cron tick instead of waiting behind older pending tags. The previous behaviour ordered the queue strictly by enqueue time, which could leave a new user up to 10 minutes behind the steady-state backlog before any feeds were resolved.
-- REQ-PIPE-003 AC 13 + AC 17 recalibrated: the same-news-cycle window now matches the article retention window, so any pair the dedup gate would otherwise accept still collapses for as long as both siblings remain in the corpus. The previous shorter window left mid-cycle pairs visibly split when the second sibling landed several days after the first (observed on a four-article Palo Alto Networks valuation cluster spanning 100 hours where the 0.89-cosine pair sat at 75 hours and was silently kept apart).
+- REQ-PIPE-003 AC 13 + AC 17 recalibrated: the same-news-cycle window now spans a full week, so long-running clusters that reverberate over a weekend or a valuation-week cycle collapse without operator intervention. The previous shorter window left mid-cycle pairs visibly split when the second sibling landed several days after the first (observed on a four-article Palo Alto Networks valuation cluster spanning 100 hours where the 0.89-cosine pair sat at 75 hours and was silently kept apart).
 
 ## 2026-05-12
 

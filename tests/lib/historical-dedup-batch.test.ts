@@ -743,13 +743,13 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
     expect(fixture.batchCalls.length).toBe(0);
   });
 
-  it('REQ-PIPE-003 AC 13: match outside the 14d time window is skipped despite high cosine', async () => {
+  it('REQ-PIPE-003 AC 13: match outside the 7d time window is skipped despite high cosine', async () => {
     const SELF_ID = 'self';
-    const MATCH_ID = 'older-by-15-days';
+    const MATCH_ID = 'older-by-8-days';
     const SELF_PA = 1_700_000_000;
-    const FIFTEEN_DAYS_LATER = SELF_PA + 15 * 24 * 60 * 60;
-    // Score is well above the auto-merge threshold but the match is 15
-    // days newer — outside the default 14d news-cycle window. Hard
+    const EIGHT_DAYS_LATER = SELF_PA + 8 * 24 * 60 * 60;
+    // Score is well above the auto-merge threshold but the match is 8
+    // days newer — outside the default 7d news-cycle window. Hard
     // gate skips it before the cosine check; merged stays 0 and no
     // Vectorize delete is issued.
     const { result, fixture, vectorize } = await callBatch({
@@ -765,7 +765,7 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
         [SELF_ID]: singleMatch({
           id: MATCH_ID,
           score: 0.95,
-          published_at: FIFTEEN_DAYS_LATER,
+          published_at: EIGHT_DAYS_LATER,
           primary_source_url: 'https://other.example/post',
         }),
       },
@@ -775,11 +775,11 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
     expect(vectorize.deleteByIds).not.toHaveBeenCalled();
   });
 
-  it('REQ-PIPE-003 AC 13: match exactly at the 14d boundary is included (boundary inclusive)', async () => {
+  it('REQ-PIPE-003 AC 13: match exactly at the 7d boundary is included (boundary inclusive)', async () => {
     const SELF_ID = 'self';
-    const MATCH_ID = 'older-by-14d-exact';
+    const MATCH_ID = 'older-by-7d-exact';
     const SELF_PA = 1_700_000_000;
-    const FOURTEEN_DAYS = 14 * 24 * 60 * 60;
+    const SEVEN_DAYS = 7 * 24 * 60 * 60;
     const { result, fixture } = await callBatch({
       articles: [
         {
@@ -793,7 +793,7 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
         [SELF_ID]: singleMatch({
           id: MATCH_ID,
           score: 0.95,
-          published_at: SELF_PA + FOURTEEN_DAYS,
+          published_at: SELF_PA + SEVEN_DAYS,
           primary_source_url: 'https://other.example/post',
         }),
       },

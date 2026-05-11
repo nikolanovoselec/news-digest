@@ -887,11 +887,11 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     expect(mockVec.deleteMock).not.toHaveBeenCalled();
   });
 
-  it('REQ-PIPE-003 AC 13: match outside the 14d time window is skipped despite high cosine', async () => {
+  it('REQ-PIPE-003 AC 13: match outside the 7d time window is skipped despite high cosine', async () => {
     const newId = 'new-1';
-    const oldId = 'old-15-days-ago';
+    const oldId = 'old-8-days-ago';
     const NEW_PA = 1_700_000_000;
-    const FIFTEEN_DAYS = 15 * 24 * 60 * 60;
+    const EIGHT_DAYS = 8 * 24 * 60 * 60;
     const mockDb = makeMockDb({
       articleRows: [
         {
@@ -903,7 +903,7 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
       ],
       existsIds: new Set([oldId]),
     });
-    // High cosine but match is 15 days older — outside the 14d window
+    // High cosine but match is 8 days older — outside the 7d window
     // so the time-window guard skips before any threshold check.
     const matches = new Map<string, VectorizeMatch[]>();
     matches.set(newId, [
@@ -911,7 +911,7 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
         id: oldId,
         score: 0.95,
         metadata: {
-          published_at: NEW_PA - FIFTEEN_DAYS,
+          published_at: NEW_PA - EIGHT_DAYS,
           primary_source_url: 'https://oldsite.example/post/1',
         },
       } as unknown as VectorizeMatch,
@@ -1032,7 +1032,7 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
         id: storedNewerId,
         score: 0.93, // raw above high-confidence band (cross-eTLD anyway)
         metadata: {
-          published_at: 1_050_000, // NEWER than self by 50k seconds (~14h, < 14d window)
+          published_at: 1_050_000, // NEWER than self by 50k seconds (~14h, < 7d window)
           primary_source_url: 'https://latimes.example/post/2',
         },
       } as unknown as VectorizeMatch,
@@ -1088,7 +1088,7 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
           title: 'b',
           source_snippet: 's',
           // ~14h newer than X (50_000s delta) — strictly inside the
-          // default 14d window so the time-window gate cannot mask
+          // default 7d window so the time-window gate cannot mask
           // the skip-branch discriminator. Without `losersDeleted
           // .has(match.id)` at consumer.ts:302, B would proceed to
           // merge X (selfIsOlder=false → match older → self folds
@@ -1183,15 +1183,15 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     expect(msg.cursor).not.toBeNull();
     expect(msg.cursor?.id).toBe('');
     expect(msg.cursor?.pa).toBeGreaterThan(0); // some recent epoch second
-    // The cursor must seed the sweep at "now - 14d" - i.e., NOT 0
+    // The cursor must seed the sweep at "now - 7d" - i.e., NOT 0
     // (which would scan the full corpus) and NOT some shorter span
-    // that would miss articles still alive in the corpus.
-    // AUTO_SWEEP_LOOKBACK_SECONDS = 14 * 24 * 3600, matching
+    // that would miss eligible cluster anchors.
+    // AUTO_SWEEP_LOOKBACK_SECONDS = 7 * 24 * 3600, matching
     // DEDUP_TIME_WINDOW_SECONDS per REQ-PIPE-003 AC 17 (bumped from
-    // 72h on 2026-05-11 to align with RETENTION_SECONDS).
+    // 72h on 2026-05-11 to cover observed long-running clusters).
     const now = Math.floor(Date.now() / 1000);
-    expect(msg.cursor?.pa).toBeGreaterThan(now - 15 * 24 * 3600);
-    expect(msg.cursor?.pa).toBeLessThan(now - 13 * 24 * 3600);
+    expect(msg.cursor?.pa).toBeGreaterThan(now - 8 * 24 * 3600);
+    expect(msg.cursor?.pa).toBeLessThan(now - 6 * 24 * 3600);
   });
 
   // AD41 — auto-sweep is best-effort. When the gate flip races and
