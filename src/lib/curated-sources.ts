@@ -498,6 +498,84 @@ export const CURATED_SOURCES: readonly CuratedSource[] = [
     tags: ['kubernetes', 'devsecops'],
   },
 
+  // ---- Mainstream + longform tech ---------------------------------------
+  // Added 2026-05-11 to broaden the curated base so user-configured
+  // discovery tags don't fall back to Google News as often. Google
+  // News routinely drags in financial / stock-pump publishers when a
+  // tech vendor's ticker matches the tag (blocked at ingest by
+  // src/lib/blocked-publishers.ts, but a better-curated base means
+  // fewer holes for the blocklist to catch).
+  {
+    slug: 'theverge-tech',
+    name: 'The Verge',
+    feed_url: 'https://www.theverge.com/rss/index.xml',
+    kind: 'rss',
+    tags: ['ai-agents', 'generative-ai'],
+  },
+  {
+    slug: '404media',
+    name: '404 Media',
+    feed_url: 'https://www.404media.co/rss/',
+    kind: 'rss',
+    tags: ['generative-ai', 'appsec'],
+  },
+  {
+    slug: 'bleeping-computer',
+    name: 'Bleeping Computer',
+    feed_url: 'https://www.bleepingcomputer.com/feed/',
+    kind: 'rss',
+    tags: ['appsec', 'threat-intel', 'siem'],
+  },
+  {
+    slug: 'krebs-on-security',
+    name: 'Krebs on Security',
+    feed_url: 'https://krebsonsecurity.com/feed/',
+    kind: 'rss',
+    tags: ['threat-intel', 'appsec'],
+  },
+  {
+    slug: 'darkreading',
+    name: 'Dark Reading',
+    feed_url: 'https://www.darkreading.com/rss.xml',
+    kind: 'rss',
+    tags: ['appsec', 'threat-intel', 'siem'],
+  },
+  {
+    slug: 'simon-willison',
+    name: 'Simon Willison',
+    feed_url: 'https://simonwillison.net/atom/everything/',
+    kind: 'atom',
+    tags: ['generative-ai', 'ai-agents'],
+  },
+  {
+    slug: 'latent-space',
+    name: 'Latent Space',
+    feed_url: 'https://www.latent.space/feed',
+    kind: 'rss',
+    tags: ['ai-agents', 'generative-ai', 'coding-agents'],
+  },
+  {
+    slug: 'thenewstack',
+    name: 'The New Stack',
+    feed_url: 'https://thenewstack.io/feed/',
+    kind: 'rss',
+    tags: ['kubernetes', 'devsecops', 'ai-agents'],
+  },
+  {
+    slug: 'ieee-spectrum-ai',
+    name: 'IEEE Spectrum',
+    feed_url: 'https://spectrum.ieee.org/feeds/feed.rss',
+    kind: 'rss',
+    tags: ['generative-ai', 'ai-agents'],
+  },
+  {
+    slug: 'hn-show',
+    name: 'Hacker News - Show HN',
+    feed_url: 'https://hnrss.org/show',
+    kind: 'rss',
+    tags: ['ai-agents', 'coding-agents', 'devsecops'],
+  },
+
   // ---- Brand sources -----------------------------------------------------
   {
     slug: 'graymatter-blog',
