@@ -1,3 +1,8 @@
+// Implements REQ-SET-001
+// Implements REQ-SET-002
+// Implements REQ-SET-003
+// Implements REQ-SET-004
+// Implements REQ-SET-005
 // Implements CF-013
 //
 // Zod schema for the PUT /api/settings JSON body. Replaces the

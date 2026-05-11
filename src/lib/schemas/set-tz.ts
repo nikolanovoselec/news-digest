@@ -1,3 +1,5 @@
+// Implements REQ-SET-007
+// Implements REQ-AUTH-003
 // Implements CF-013
 //
 // Zod schema for the POST /api/auth/set-tz JSON body. Replaces

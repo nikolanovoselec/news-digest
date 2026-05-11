@@ -1,3 +1,4 @@
+// Implements REQ-AUTH-005
 // Implements CF-013
 //
 // Zod schema for the DELETE /api/auth/account JSON body. Replaces

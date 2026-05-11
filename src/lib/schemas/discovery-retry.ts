@@ -1,3 +1,4 @@
+// Implements REQ-DISC-004
 // Implements CF-013
 //
 // Zod schema for the POST /api/admin/discovery/retry JSON body

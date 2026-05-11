@@ -1,3 +1,4 @@
+// Implements REQ-SET-002
 // Implements CF-013
 //
 // Zod schema for the POST /api/tags JSON body. Replaces `as TagsBody`.
