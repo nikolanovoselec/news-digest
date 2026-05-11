@@ -19,6 +19,19 @@
 
 import { log } from '~/lib/log';
 
+/** Thrown by a per-message processor when the failure is permanent
+ *  (malformed payload, schema mismatch, deleted-parent state) and
+ *  retrying will only repeat the same error. The handler logs the
+ *  failure, fires `onTerminalFailure` once (if configured), and
+ *  acks the message — bypassing the attempt counter that governs
+ *  transient errors. */
+export class NonRetryableError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'NonRetryableError';
+  }
+}
+
 /** CF-004 — cross-consumer queue retry cap, sourced from
  *  `env.QUEUE_MAX_RETRIES` (wrangler.toml `[vars]`). The earlier
  *  shape kept the literal `3` mirrored in this file AND in three
@@ -83,13 +96,16 @@ export async function handleBatch<TBody>(
       message.ack();
     } catch (err) {
       const fields = opts.extraLogFields?.(message.body) ?? {};
+      const isPermanent = err instanceof NonRetryableError;
       log('error', 'digest.generation', {
         ...fields,
         status: opts.throwLogStatus,
         attempts: message.attempts,
+        permanent: isPermanent,
         detail: String(err).slice(0, 500),
       });
-      if (opts.onTerminalFailure !== undefined && message.attempts >= max) {
+      const terminal = isPermanent || message.attempts >= max;
+      if (opts.onTerminalFailure !== undefined && terminal) {
         try {
           await opts.onTerminalFailure(env, message.body);
         } catch (terminalErr) {
@@ -102,7 +118,11 @@ export async function handleBatch<TBody>(
           }
         }
       }
-      message.retry();
+      if (isPermanent) {
+        message.ack();
+      } else {
+        message.retry();
+      }
     }
   }
 }
