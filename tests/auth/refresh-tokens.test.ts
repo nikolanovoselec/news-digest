@@ -443,6 +443,23 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
     const result = await loadSession(replayReq, env.DB, SECRET);
     expect(result.user).toBeNull();
 
+    // handleRevokedReplayPath contract: cookiesToSet must clear BOTH
+    // cookies (Max-Age=0) so the browser stops replaying the stolen
+    // refresh value. A regression that swaps unauthenticated(true) for
+    // unauthenticated(false) here would silently leak the stolen cookie
+    // back to the attacker on every subsequent request.
+    expect(result.cookiesToSet.length).toBe(2);
+    expect(
+      result.cookiesToSet.some(
+        (c) => c.startsWith(`${SESSION_COOKIE_NAME}=`) && c.includes('Max-Age=0'),
+      ),
+    ).toBe(true);
+    expect(
+      result.cookiesToSet.some(
+        (c) => c.startsWith(`${REFRESH_TOKEN_COOKIE_NAME}=`) && c.includes('Max-Age=0'),
+      ),
+    ).toBe(true);
+
     // Every refresh row for the user is now revoked, including the
     // second device's row.
     const otherRow = await findRefreshToken(env.DB, otherValue);
@@ -453,6 +470,72 @@ describe('loadSession — refresh-token flow — REQ-AUTH-002, REQ-AUTH-008', ()
       .bind(USER_ID)
       .first<{ session_version: number }>();
     expect(sv!.session_version).toBeGreaterThan(1);
+  });
+
+  it('REQ-AUTH-008: tryRotationPath rate-limit fail-closed returns user=null with EMPTY cookiesToSet (Tier-2 user cap)', async () => {
+    // The user-keyed AUTH_REFRESH_USER limit gates JWT minting inside
+    // the rotation path. When the limit fails closed (KV outage), the
+    // contract is: user=null AND cookiesToSet=[] - the legitimate
+    // user's cookies must survive a transient KV outage. A regression
+    // swapping unauthenticated(false) for unauthenticated(true) here
+    // would clear both cookies on every transient KV blip and force
+    // the user to re-login mid-session.
+    const issueReq = fakeRequest({ ua: 'Mozilla/5.0', country: 'CH' });
+    const { value } = await issueRefreshToken(env.DB, USER_ID, issueReq);
+
+    // Build a KV that throws on every operation so AUTH_REFRESH_USER's
+    // failClosed: true denies the request.
+    const failingKv = {
+      get: () => { throw new Error('kv_outage_simulated'); },
+      put: () => { throw new Error('kv_outage_simulated'); },
+      delete: () => { throw new Error('kv_outage_simulated'); },
+      list: () => { throw new Error('kv_outage_simulated'); },
+    } as unknown as KVNamespace;
+
+    const replayReq = fakeRequest({
+      ua: 'Mozilla/5.0',
+      country: 'CH',
+      cookie: `${REFRESH_TOKEN_COOKIE_NAME}=${value}`,
+    });
+    const result = await loadSession(replayReq, env.DB, SECRET, failingKv);
+    expect(result.user).toBeNull();
+    expect(result.cookiesToSet).toEqual([]);
+
+    // Refresh row must NOT be revoked - this was a transient denial,
+    // not a security event.
+    const stillRow = await findRefreshToken(env.DB, value);
+    expect(stillRow!.revoked_at).toBeNull();
+  });
+
+  it('REQ-AUTH-008: tryGraceWindowPath rate-limit fail-closed returns user=null with EMPTY cookiesToSet (Tier-2 user cap on grace collision)', async () => {
+    // Same fail-closed contract on the grace-collision Tier-2 limit:
+    // a benign concurrent collision that happens to hit a KV outage
+    // must NOT clear cookies (the legitimate user retries; the
+    // collision resolves naturally on the next request).
+    const issueReq = fakeRequest({ ua: 'Mozilla/5.0', country: 'CH' });
+    const { value: oldValue } = await issueRefreshToken(env.DB, USER_ID, issueReq);
+
+    // Set up the grace-collision precondition: revoke the old row by
+    // rotating it (winner just landed), so the loser presenting the
+    // old value falls into the grace branch.
+    const oldRow = await findRefreshToken(env.DB, oldValue);
+    await rotateRefreshToken(env.DB, oldRow!, issueReq);
+
+    const failingKv = {
+      get: () => { throw new Error('kv_outage_simulated'); },
+      put: () => { throw new Error('kv_outage_simulated'); },
+      delete: () => { throw new Error('kv_outage_simulated'); },
+      list: () => { throw new Error('kv_outage_simulated'); },
+    } as unknown as KVNamespace;
+
+    const replayReq = fakeRequest({
+      ua: 'Mozilla/5.0',
+      country: 'CH',
+      cookie: `${REFRESH_TOKEN_COOKIE_NAME}=${oldValue}`,
+    });
+    const result = await loadSession(replayReq, env.DB, SECRET, failingKv);
+    expect(result.user).toBeNull();
+    expect(result.cookiesToSet).toEqual([]);
   });
 
   it('REQ-AUTH-002: empty cookiesToSet on a valid access JWT (no refresh-token DB hit)', async () => {

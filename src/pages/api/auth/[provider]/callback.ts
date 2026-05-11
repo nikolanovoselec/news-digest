@@ -47,7 +47,7 @@ import {
   oauthStateCookieName,
   buildClearOAuthStateCookie,
 } from './login';
-import { readCookie, constantTimeEq } from '~/lib/crypto';
+import { readCookie, verifyHmacSignature } from '~/lib/crypto';
 import { enforceRateLimit, rateLimitResponse, clientIp, RATE_LIMIT_RULES } from '~/lib/rate-limit';
 
 interface TokenResponse {
@@ -131,12 +131,12 @@ function invalidStateResponse(origin: string, extraHeaders: Headers): Response {
 // `escapeHtml` from `~/lib/email-html`, which covers the same five
 // special characters and is already used by the email renderer.
 
-// CSRF state byte-equality uses `constantTimeEq` from `~/lib/crypto`
-// (CF-011 - previously used `verifyHmacSignature` against the cookie
-// value, but the cookie is set by the worker itself, so plain constant-
-// time byte equality is the right primitive). `verifyHmacSignature` is
-// still the correct helper when comparing against an HMAC-signed input
-// (dev-bypass tokens in dev/login.ts and dev/trigger-scrape.ts).
+// CSRF state byte-equality uses `verifyHmacSignature` from `~/lib/crypto`,
+// which routes through `crypto.subtle.verify` (constant-time by Web
+// Crypto spec). A JS XOR-accumulate loop is not a guaranteed constant-
+// time primitive under V8 JIT optimisation, so the Web Crypto path is
+// the only correct primitive for security-sensitive byte equality even
+// when the candidate is server-issued (cookie value).
 
 /**
  * Exchange an authorization code for the provider's token response.
@@ -322,10 +322,10 @@ function step2HandleProviderError(
  * AC 3). Uses constant-time byte equality. On mismatch returns a 403
  * with the state cookie cleared.
  */
-function step3VerifyCsrfState(
+async function step3VerifyCsrfState(
   context: APIContext,
   state: ResolvedState,
-): StepResult<ResolvedState> {
+): Promise<StepResult<ResolvedState>> {
   const stateCookieName = oauthStateCookieName(state.provider.name);
   const queryState = state.url.searchParams.get('state');
   const cookieHeader = context.request.headers.get('Cookie');
@@ -335,7 +335,7 @@ function step3VerifyCsrfState(
     queryState !== '' &&
     cookieState !== null &&
     cookieState !== '' &&
-    constantTimeEq(cookieState, queryState);
+    (await verifyHmacSignature(cookieState, queryState, state.env.OAUTH_JWT_SECRET));
   if (!statesMatch) {
     log('warn', 'auth.callback.invalid_state', {
       provider: state.provider.name,
@@ -667,7 +667,7 @@ export async function GET(context: APIContext): Promise<Response> {
   const r2 = step2HandleProviderError(context, r1.value);
   if (r2.kind === 'respond') return r2.response;
 
-  const r3 = step3VerifyCsrfState(context, r2.value);
+  const r3 = await step3VerifyCsrfState(context, r2.value);
   if (r3.kind === 'respond') return r3.response;
 
   const r4 = await step4ExchangeCodeAndFetchProfile(r3.value);

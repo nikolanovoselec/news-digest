@@ -109,35 +109,6 @@ export async function verifyHmacSignature(
 }
 
 /**
- * Constant-time byte-equality on two strings of equal length.
- *
- * Returns false when the lengths differ (the length check is itself
- * unsafe to expose timing on, but length is not a secret - the
- * CSRF-state cookie values this helper compares are public-shape
- * tokens whose byte length is fixed by `oauthStateCookieName`).
- *
- * Implementation: XOR-accumulate over the full length of both strings
- * so the loop time depends only on the input length, not on the
- * position of the first differing byte. The accumulator is then
- * checked against zero in a single equality test.
- *
- * Used in `src/pages/api/auth/[provider]/callback.ts` for the OAuth
- * CSRF state cookie vs. query-param byte equality check (CF-011) -
- * the cookie value is set by the worker itself, so HMAC verification
- * adds no security over plain byte equality there. The
- * {@link verifyHmacSignature} helper remains the correct primitive
- * when the candidate is HMAC-signed input (e.g. dev-bypass tokens).
- */
-export function constantTimeEq(expected: string, candidate: string): boolean {
-  if (expected.length !== candidate.length) return false;
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++) {
-    diff |= expected.charCodeAt(i) ^ candidate.charCodeAt(i);
-  }
-  return diff === 0;
-}
-
-/**
  * Hex-encode a Uint8Array. Lowercase, no separator. Used by the
  * refresh-token module for cookie values + SHA-256 digests.
  */

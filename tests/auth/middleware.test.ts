@@ -464,8 +464,11 @@ describe('loadSessionForPage - REQ-AUTH-002 / REQ-AUTH-008', () => {
     // Both Set-Cookie strings are now on the page response headers.
     const h = responseHeaders as Headers & { getSetCookie?: () => string[] };
     const cookies = typeof h.getSetCookie === 'function' ? h.getSetCookie() : [];
-    expect(cookies.length).toBeGreaterThan(0);
+    // Both cookies must clear — pinned to exact count so a regression
+    // dropping the refresh-clear is caught.
+    expect(cookies.length).toBe(2);
     expect(cookies.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=;`))).toBe(true);
+    expect(cookies.some((c) => c.startsWith('__Host-news_digest_refresh=;'))).toBe(true);
     // Returned array mirrors the headers so callers can paint a separate
     // gated-redirect Response if they need to.
     expect(result.cookiesToSet.length).toBe(cookies.length);
