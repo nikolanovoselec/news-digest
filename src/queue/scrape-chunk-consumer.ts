@@ -328,9 +328,11 @@ export async function processOneChunk(
   await upsertVectors(env, prepared, body);
 
   // Record completion + conditionally enqueue finalize.
+  // `completedCount` is returned for the chunk-status API (status route reads
+  // it from D1 directly) but not consumed here, hence the leading underscore.
   const {
     isFirstCompletion,
-    completedCount,
+    completedCount: _completedCount,
   } = await recordChunkCompletionAndCheckFinalize(env, body);
 
   const tokensIn = llmRun.tokensIn;
