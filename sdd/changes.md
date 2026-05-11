@@ -8,11 +8,13 @@ Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are a
 
 ## 2026-05-12
 
-- REQ-PIPE-003 AC reworded: a corpus-wide same-story search during a Vectorize outage no longer silently advances past the affected articles. The sweep now pauses and resumes once the index is reachable, so cross-tick duplicates that landed during the outage still collapse on the next attempt instead of staying split forever.
-- REQ-PIPE-001 AC reworded: a stuck pipeline run that has been waiting on its scrape phase for longer than the configured budget now exits with a failed status visible in the dashboard, instead of looping silently until queue retries exhaust. Operators see the stall promptly and can re-kick the pipeline.
-- REQ-AUTH-001 AC reworded: admin-only actions (force-refresh, full pipeline run) now also reject after too many attempts in a short window, regardless of authentication. The previous behaviour bounded only unauthenticated traffic; the new bound prevents a compromised or accidentally-looping admin session from driving runaway pipeline kicks.
-- REQ-AUTH-001 AC reworded: the destructive wipe-and-re-embed pipeline mode now requires an explicit POST. Visiting the URL via GET returns a method-not-allowed response, so cross-origin GET vectors (image tags, bookmarks, link previews) can no longer trigger a full corpus re-embed.
-- REQ-AUTH-001 AC extended: an access token forwarded by the perimeter is now rejected when its expiry claim is in the past or missing, in addition to the existing audience check.
+- REQ-PIPE-003 AC 18 added: a corpus-wide same-story search during a same-story-index outage no longer silently advances past the affected articles. The sweep now pauses and resumes once the index is reachable, so cross-tick duplicates that landed during the outage still collapse on the next attempt instead of staying split forever.
+- REQ-PIPE-001 AC 10 added: a stuck pipeline run that has been waiting on its scrape phase for longer than the configured budget now exits with a failed status visible in the dashboard, instead of looping silently until queue retries exhaust. Operators see the stall promptly and can re-kick the pipeline.
+- REQ-AUTH-001 AC 9 extended: admin-only actions (force-refresh, full pipeline run) now also reject after too many attempts in a short window, keyed per operator. The previous behaviour bounded only unauthenticated traffic; the new bound prevents a compromised or accidentally-looping admin session from driving runaway pipeline kicks.
+- REQ-AUTH-001 AC 8 extended: the destructive wipe-and-re-embed pipeline mode now requires an explicit POST. Visiting the URL via GET returns a method-not-allowed response, so cross-origin GET vectors (image tags, bookmarks, link previews) can no longer trigger a full corpus re-embed.
+- REQ-AUTH-001 AC 8a extended: an access token forwarded by the perimeter is now rejected when its expiry claim is in the past or missing, in addition to the existing audience check.
+- REQ-AUTH-001 AC 10 added: production-hostname deployments now serve the test-only dev-bypass routes as 404 regardless of token or session state, so an accidentally-promoted dev secret can no longer expose the bypass surface on a public production hostname.
+- REQ-PIPE-006 AC 8 added: the daily cleanup pass now retires scrape runs that never reached a terminal status well after the longest plausible tick duration. The history page surfaces these as failed and the operator can kick a fresh pipeline without first manually clearing the stale row.
 
 ## 2026-05-10
 
