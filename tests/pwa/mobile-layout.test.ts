@@ -1,4 +1,4 @@
-// Tests for REQ-PWA-003 — mobile-first responsive layout.
+// Tests for REQ-PWA-003 - mobile-first responsive layout.
 //
 // The Partial flag was set because the implementation ships (viewport
 // meta + safe-area insets + header UserMenu) but nothing verified it.
@@ -21,7 +21,7 @@ import effectsSource from '../../src/scripts/page-effects.ts?raw';
 // pretest time. Use that fixture instead of `?raw` on global.css.
 import { GLOBAL_CSS as globalCss } from '../fixtures/global-css';
 
-describe('viewport meta — REQ-PWA-003 AC 1', () => {
+describe('viewport meta - REQ-PWA-003 AC 1', () => {
   it('REQ-PWA-003: viewport declaration is the exact Safari-compliant triple', () => {
     // viewport-fit=cover is the piece that opts the page INTO
     // Safari's edge-to-edge mode; without it safe-area insets are
@@ -32,7 +32,7 @@ describe('viewport meta — REQ-PWA-003 AC 1', () => {
   });
 });
 
-describe('safe-area insets — REQ-PWA-003 AC 2', () => {
+describe('safe-area insets - REQ-PWA-003 AC 2', () => {
   it('REQ-PWA-003: global.css defines a .safe-top utility backed by env(safe-area-inset-top)', () => {
     // The header uses a utility class `safe-top` (or equivalent)
     // that padding-tops via env(safe-area-inset-top). Without this
@@ -47,14 +47,14 @@ describe('safe-area insets — REQ-PWA-003 AC 2', () => {
   });
 
   it('REQ-PWA-003: header applies safe-top/safe-x utility classes', () => {
-    // Base.astro's <header> must actually OPT IN to the utilities —
+    // Base.astro's <header> must actually OPT IN to the utilities -
     // declaring them in global.css is not enough.
     expect(baseSource).toMatch(/<header[^>]*class="[^"]*\bsafe-top\b/);
     expect(baseSource).toMatch(/<header[^>]*class="[^"]*\bsafe-x\b/);
   });
 });
 
-describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
+describe('navigation consolidation - REQ-PWA-003 AC 3', () => {
   it('REQ-PWA-003: header hosts exactly the brand + ThemeToggle-or-UserMenu, nothing else', () => {
     // AC 3 enumerates the header contents: brand on the left, avatar
     // menu on the right. No stray buttons, no nav links.
@@ -62,7 +62,7 @@ describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
     // UserMenu for authenticated users; ThemeToggle for unauth.
     expect(baseSource).toContain('UserMenu');
     expect(baseSource).toContain('ThemeToggle');
-    // No bottom nav, no sidebar component — assert the legacy class
+    // No bottom nav, no sidebar component - assert the legacy class
     // names never come back.
     expect(baseSource).not.toContain('bottom-nav');
     expect(baseSource).not.toContain('BottomNav');
@@ -73,7 +73,7 @@ describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
   it('REQ-PWA-003: UserMenu dropdown contains History, Starred, Settings, Log out', () => {
     // AC 3 lists the entries that remain inside the dropdown. The
     // theme toggle moved OUT of the dropdown and into the header as a
-    // standalone sun/moon icon (ThemeToggle variant="header") — that
+    // standalone sun/moon icon (ThemeToggle variant="header") - that
     // assertion lives in the next test so a regression would point at
     // the right component.
     expect(userMenuSource).toMatch(/href="\/history"/);
@@ -96,7 +96,7 @@ describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
   });
 
   it('REQ-DES-002 / REQ-PWA-003: Base.astro renders ThemeToggle (header variant) BEFORE UserMenu for authenticated users (avatar on the right, toggle to its left)', () => {
-    // Left-of-avatar positioning is the entire point of the move — if
+    // Left-of-avatar positioning is the entire point of the move - if
     // a future edit swaps the order, this test catches it. CF-021
     // merged HeaderThemeToggle into ThemeToggle so the authenticated
     // header now mounts `<ThemeToggle variant="header" />`.
@@ -108,7 +108,7 @@ describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
   });
 
   it('REQ-PWA-003: header brand link points at /digest (the app home) for authed users', () => {
-    // AC 4 — brand returns to the app home. The href is now an
+    // AC 4 - brand returns to the app home. The href is now an
     // expression: authenticated users get '/digest' directly (no
     // root-redirect round-trip), unauthenticated users still get '/'
     // (the marketing landing). The brand also carries data-brand-home
@@ -140,7 +140,7 @@ describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
 
   it('REQ-PWA-003 AC 4: brand-link listener is document capture-phase with stopPropagation to beat Samsung Internet WebView native anchor dispatch', () => {
     // The brand-tap handler MUST be `document.addEventListener(..., true)`
-    // — capture phase on `document`. Samsung Internet's WebView
+    // - capture phase on `document`. Samsung Internet's WebView
     // dispatches the native anchor handler BEFORE element-level
     // listeners receive the event; an element-bound listener misses
     // the first 2-3 taps of every session because the WebView has
@@ -149,7 +149,7 @@ describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
     // event before WebView's native dispatch and `preventDefault`
     // sticks. `stopPropagation` then prevents the event from reaching
     // any later document delegate (Astro ClientRouter included).
-    // Both `click` and `pointerup` are bound — the same WebViews elide
+    // Both `click` and `pointerup` are bound - the same WebViews elide
     // the synthesised click after touchstart/touchend so pointerup is
     // the reliable fallback.
     expect(effectsSource).toMatch(
@@ -162,7 +162,7 @@ describe('navigation consolidation — REQ-PWA-003 AC 3', () => {
   });
 });
 
-describe('tap / focus styling — REQ-PWA-003 AC 5', () => {
+describe('tap / focus styling - REQ-PWA-003 AC 5', () => {
   it('REQ-PWA-003: -webkit-tap-highlight-color:transparent is applied globally', () => {
     // Default iOS/Android tap highlight is a blue flash on any <a>
     // or button tap. AC 5 requires the global suppress so focus/
@@ -180,13 +180,13 @@ describe('tap / focus styling — REQ-PWA-003 AC 5', () => {
   it('REQ-PWA-003 AC 4: .site-header__brand opts out of iOS double-tap-zoom delay (touch-action: manipulation)', () => {
     // Without `touch-action: manipulation` on the brand link, mobile
     // Safari applies a ~350ms delay on the first tap to disambiguate
-    // from a possible double-tap-to-zoom — manifesting as the
+    // from a possible double-tap-to-zoom - manifesting as the
     // "scroll-to-top needs 4-5 taps to fire" regression the user
     // reported on prod. `manipulation` keeps pinch-zoom and panning
     // while disabling the double-tap delay so the first tap commits
     // immediately to the click handler. A future CSS reorder /
     // prettier pass / selector consolidation that drops the rule
-    // would silently re-introduce the lag — Playwright wouldn't catch
+    // would silently re-introduce the lag - Playwright wouldn't catch
     // it without specific iOS Safari emulation, so this static text
     // assertion is the realistic guard.
     //
@@ -203,12 +203,12 @@ describe('tap / focus styling — REQ-PWA-003 AC 5', () => {
 
   it('REQ-PWA-003 AC 4: .site-header__brand stretches to fill the left half of the header (flex: 1)', () => {
     // Even with `touch-action: manipulation`, a narrow tap target
-    // surface is hard to hit reliably on mobile — the user reported
+    // surface is hard to hit reliably on mobile - the user reported
     // that scroll-to-top still needed multiple taps because the icon
     // + wordmark span maybe ~120px wide and people aim at the
     // visual brand rather than its precise pixels. Stretching the
     // anchor to `flex: 1 1 auto` makes the entire void area between
-    // the wordmark and the nav a hit zone for the same anchor —
+    // the wordmark and the nav a hit zone for the same anchor -
     // visually identical, dramatically larger touch surface. A
     // future CSS reorder that drops the flex declaration would
     // shrink the tap target back without changing the visual layout
@@ -227,8 +227,8 @@ describe('tap / focus styling — REQ-PWA-003 AC 5', () => {
   });
 });
 
-describe('header tap-target minimums — REQ-PWA-003 AC 6', () => {
-  // AC 6 — every interactive header control (theme toggle, user
+describe('header tap-target minimums - REQ-PWA-003 AC 6', () => {
+  // AC 6 - every interactive header control (theme toggle, user
   // menu trigger, anonymous theme toggle) carries the 44×44 CSS-pixel
   // minimum from WCAG 2.5.5 / Apple HIG. Regressing a single one
   // (min-height stripped, compact icon button) breaks one-handed
@@ -238,7 +238,7 @@ describe('header tap-target minimums — REQ-PWA-003 AC 6', () => {
   it('REQ-PWA-003: ThemeToggle (header variant) trigger has min-width: 44px and min-height: 44px', () => {
     // `<button class="theme-toggle theme-toggle--header">` on every
     // authenticated page (CF-021 merge). The rule block below
-    // declares both — stripping either would shrink the tap target.
+    // declares both - stripping either would shrink the tap target.
     expect(themeToggleSource).toMatch(/min-width:\s*44px/);
     expect(themeToggleSource).toMatch(/min-height:\s*44px/);
   });
@@ -250,7 +250,7 @@ describe('header tap-target minimums — REQ-PWA-003 AC 6', () => {
 
   it('REQ-PWA-003: anonymous ThemeToggle (default variant) has min-width: 44px and min-height: 44px', () => {
     // Shown on signed-out pages (landing, auth error). Same source
-    // file as the header variant after CF-021's merge — same tap-
+    // file as the header variant after CF-021's merge - same tap-
     // target contract so the affordance is identical before and
     // after sign-in.
     expect(themeToggleSource).toMatch(/min-width:\s*44px/);

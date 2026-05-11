@@ -1,4 +1,4 @@
-// Tests for src/middleware/security-headers.ts — REQ-OPS-003.
+// Tests for src/middleware/security-headers.ts - REQ-OPS-003.
 // Pins the exact header values required by AC 1-4 byte-for-byte.
 
 import { describe, it, expect } from 'vitest';
@@ -11,7 +11,7 @@ import {
 } from '~/middleware/security-headers';
 
 /** Minimal Astro middleware context shim. The real APIContext has many more
- * fields but the security-headers middleware touches none of them — it only
+ * fields but the security-headers middleware touches none of them - it only
  * awaits `next()` and mutates the response's headers. */
 function makeCtx(): unknown {
   return {
@@ -31,7 +31,7 @@ describe('security-headers middleware', () => {
   // CF-022 (Cycle 1 review): the former `describe('constants', ...)`
   // block asserted that exported string constants equaled hardcoded
   // literals. Those tests passed iff someone typed both sides of the
-  // same string — they did not verify behaviour. Every behavioural
+  // same string - they did not verify behaviour. Every behavioural
   // guarantee is covered by the `describe('stamping', ...)` block
   // below, which sends a request through the middleware and asserts
   // on response headers.

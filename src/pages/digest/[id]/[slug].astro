@@ -10,7 +10,7 @@
 // outlet to open; a single-source article is a direct link to
 // primary_source_url.
 //
-// All text is rendered with Astro's default `{expression}` escaping —
+// All text is rendered with Astro's default `{expression}` escaping -
 // the component NEVER sets raw HTML, never runs a markdown parser,
 // and never loads a sanitizer (REQ-READ-002 AC 2).
 //
@@ -57,7 +57,7 @@ if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
   return new Response('Application not configured', { status: 500 });
 }
 
-// CF-010 — silent-refresh: loadSessionForPage attaches near-expiry
+// CF-010 - silent-refresh: loadSessionForPage attaches near-expiry
 // re-issued cookies and clear-cookie directives onto
 // Astro.response.headers (REQ-AUTH-002 AC 4 / REQ-AUTH-008 AC 4).
 const session = await loadSessionForPage(Astro.request, env, Astro.response.headers);
@@ -65,7 +65,7 @@ if (session.user === null) return Astro.redirect('/', 303);
 Astro.locals.user = session.user;
 
 // CF-031: requireSettingsComplete accepts Pick<APIContext, 'request' | 'locals'>
-// so the SSR caller hands in only what it actually has — no cast needed.
+// so the SSR caller hands in only what it actually has - no cast needed.
 const gated = requireSettingsComplete({
   request: Astro.request,
   locals: Astro.locals,
@@ -85,7 +85,7 @@ if (typeof slug !== 'string' || slug === '') {
   return new Response('Not found', { status: 404 });
 }
 
-// REQ-READ-002 — article lookup in the global pool. The row is NOT
+// REQ-READ-002 - article lookup in the global pool. The row is NOT
 // user-scoped (any authenticated user can view any article); per-user
 // state (read, starred) is joined separately.
 const articleRow = await env.DB.prepare(
@@ -98,7 +98,7 @@ if (articleRow === null) {
   return new Response('Not found', { status: 404 });
 }
 
-// Canonicalise slug against the title — if the URL slug doesn't match
+// Canonicalise slug against the title - if the URL slug doesn't match
 // the title-derived slug, redirect to the canonical URL so that stale
 // history links continue to work.
 const canonicalSlug = slugify(articleRow.title);
@@ -115,13 +115,13 @@ const altSourcesResult = await env.DB.prepare(
   .all<AltSourceRow>();
 const altSourceRows: AltSourceRow[] = altSourcesResult.results ?? [];
 
-// Filter out the primary row from alt-sources — the modal renders it
+// Filter out the primary row from alt-sources - the modal renders it
 // once in the "primary" slot at the top of the list.
 const altSources = altSourceRows.filter(
   (row) => row.source_url !== articleRow.primary_source_url,
 );
 
-// Per-user state — read + starred bools. Star button wire-up lives in
+// Per-user state - read + starred bools. Star button wire-up lives in
 // the star-feature agent's follow-up commit; here we only expose the
 // values so the page has them.
 const readRow = await env.DB.prepare(
@@ -138,7 +138,7 @@ const starRow = await env.DB.prepare(
   .first<StarRow>();
 const isStarred = starRow !== null;
 
-// REQ-READ-003 — idempotent read mark via INSERT OR IGNORE. Best-effort;
+// REQ-READ-003 - idempotent read mark via INSERT OR IGNORE. Best-effort;
 // a failure must not block the render.
 if (!alreadyRead) {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -158,7 +158,7 @@ if (!alreadyRead) {
 // guarantees an array-of-1-to-3, but be defensive against malformed
 // rows so a corrupt entry doesn't crash the render. Some legacy rows
 // store paragraph breaks as a literal "\n" escape sequence rather than
-// a real newline — splitIntoParagraphs normalises both forms.
+// a real newline - splitIntoParagraphs normalises both forms.
 let details: string[] = [];
 try {
   const parsed = JSON.parse(articleRow.details_json) as unknown;
@@ -178,7 +178,7 @@ const transitionName = `card-${canonicalSlug}`;
 // because the field is informational, not interactive.
 //
 // CF-029: editorial-intentional brand-voice choice. The detail page
-// is the only locale-static surface in the app — every other date
+// is the only locale-static surface in the app - every other date
 // surface (digest header countdown, history day-grouping) localizes
 // via Intl. Keeping these labels in the editorial voice matches the
 // magazine-style design; do NOT swap to `Intl.DateTimeFormat` here
@@ -194,7 +194,7 @@ function formatDate(unixSec: number): string {
 const publishedSec = articleRow.published_at;
 const publishedLabel = formatDate(publishedSec);
 
-// Ingestion-time formatting — wall-clock time only. The metadata strip
+// Ingestion-time formatting - wall-clock time only. The metadata strip
 // already shows the published date right before this slot, and the
 // "ingested today" date repeats redundantly when ingestion lands the
 // same day; surfacing just the time keeps the line tight while still
@@ -236,11 +236,11 @@ if (rawSource !== '') {
   }
 }
 
-// Label is always plain "Read at source" — whether there's one
+// Label is always plain "Read at source" - whether there's one
 // source or many. Click behaviour diverges: single-source → direct
 // navigation to primary_source_url; multi-source → open the
 // <AltSourcesModal /> picker so the reader chooses which outlet to
-// read. No '+N' count hint — the label is a read affordance, not an
+// read. No '+N' count hint - the label is a read affordance, not an
 // implementation detail.
 const readAtLabel = 'Read at source';
 
@@ -266,7 +266,7 @@ const articleDataset = {
           land on the dashboard). The inline script below upgrades
           the href to a history.back() call when the user arrived
           via in-app navigation (search results, dashboard, /starred)
-          — so "Back" actually returns to where they came from. */}
+          - so "Back" actually returns to where they came from. */}
       <a href="/digest" class="article-detail__back-link" aria-label="Go back" data-article-back>
         <svg
           class="article-detail__back-icon"
@@ -276,7 +276,7 @@ const articleDataset = {
           fill="currentColor"
           aria-hidden="true"
         >
-          {/* MDI arrow-left — https://pictogrammers.com/library/mdi/icon/arrow-left/ */}
+          {/* MDI arrow-left - https://pictogrammers.com/library/mdi/icon/arrow-left/ */}
           <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />
         </svg>
       </a>
@@ -297,7 +297,7 @@ const articleDataset = {
         <span class="article-detail__meta-sep" aria-hidden="true">·</span>
         <span class="article-detail__meta-item">{ingestedLabel}</span>
         <span class="article-detail__meta-sep" aria-hidden="true">·</span>
-        {/* Implements REQ-STAR-001 — star toggle at the end of the
+        {/* Implements REQ-STAR-001 - star toggle at the end of the
             metadata line. Same optimistic toggle as the card button;
             aria-pressed starts at the server-rendered state. */}
         <button
@@ -365,7 +365,7 @@ const articleDataset = {
             fill="currentColor"
             aria-hidden="true"
           >
-            {/* MDI arrow-right — https://pictogrammers.com/library/mdi/icon/arrow-right/ */}
+            {/* MDI arrow-right - https://pictogrammers.com/library/mdi/icon/arrow-right/ */}
             <path d="M4,11V13H16L10.5,18.5L11.92,19.92L19.84,12L11.92,4.08L10.5,5.5L16,11H4Z" />
           </svg>
         </a>
@@ -384,7 +384,7 @@ const articleDataset = {
             fill="currentColor"
             aria-hidden="true"
           >
-            {/* MDI arrow-right — https://pictogrammers.com/library/mdi/icon/arrow-right/ */}
+            {/* MDI arrow-right - https://pictogrammers.com/library/mdi/icon/arrow-right/ */}
             <path d="M4,11V13H16L10.5,18.5L11.92,19.92L19.84,12L11.92,4.08L10.5,5.5L16,11H4Z" />
           </svg>
         </button>
@@ -416,7 +416,7 @@ const articleDataset = {
     gap: 1.75rem;
   }
 
-  /* Back arrow — icon-only, centred inside a tap-sized square. The
+  /* Back arrow - icon-only, centred inside a tap-sized square. The
      MDI arrow-left glyph sits at the top-left of the reading column,
      giving a clear "leave this article" affordance without competing
      with the headline below. */
@@ -455,7 +455,7 @@ const articleDataset = {
     margin: 0;
     font-family: var(--font-serif);
     /* 32 px anchor but we let it breathe vs the prior 700 weight by
-       dropping to 600 and loosening tracking — hairline heavier glyphs
+       dropping to 600 and loosening tracking - hairline heavier glyphs
        read as "display" without shouting. */
     font-size: var(--text-2xl);
     font-weight: 600;
@@ -484,7 +484,7 @@ const articleDataset = {
   .article-detail__body {
     display: flex;
     flex-direction: column;
-    /* Editorial long-form reading density — was 1.1rem; the prior
+    /* Editorial long-form reading density - was 1.1rem; the prior
        news-article-dense spacing made the detail page feel compressed
        next to the dashboard cards. */
     gap: 1.4rem;
@@ -494,7 +494,7 @@ const articleDataset = {
     margin: 0;
     font-family: var(--font-sans);
     /* 17px is the editorial long-form sweet spot on mobile (NYT,
-       Stratechery, Medium sit between 17–18px). The dashboard card
+       Stratechery, Medium sit between 17-18px). The dashboard card
        one-liners stay at --text-base (16px) so the detail surface
        reads as "slow down and focus" and the grid reads as "scan". */
     font-size: 17px;
@@ -507,7 +507,7 @@ const articleDataset = {
     text-wrap: pretty;
   }
 
-  /* Lead paragraph drop cap — plain float, no initial-letter.
+  /* Lead paragraph drop cap - plain float, no initial-letter.
      Samsung Browser implements `initial-letter` but with a
      size/position offset that floats the cap visibly above line 1
      on mobile (reported via screenshot). Chromium, Safari, and
@@ -521,12 +521,12 @@ const articleDataset = {
        - spans 2 body lines total
 
      Math: the body uses var(--font-sans) (cap-height ratio ≈ 0.71)
-     while the drop-cap uses var(--font-serif) — Charter / Iowan Old
+     while the drop-cap uses var(--font-serif) - Charter / Iowan Old
      Style, which carry a SHORTER cap-height (≈ 0.66) than typical
      sans fonts. The original tuning assumed cap-height ≈ 0.7 across
      the board and produced font-size 3.4em, but that under-sized
      the Charter cap so its baseline rendered ~3 px ABOVE line 2's
-     baseline — visibly out of alignment with both line 1 and line 2.
+     baseline - visibly out of alignment with both line 1 and line 2.
 
      Solving the two-constraint system (drop-cap cap-top = body line-1
      cap-top, drop-cap baseline = body line-2 baseline) with Charter's
@@ -535,7 +535,7 @@ const articleDataset = {
                           = (1.65 + 0.71) / 0.66 ≈ 3.58em
      We round to 3.6em. With the serif's typical ascent ratio (≈ 0.78)
      this lands cap-top within ~0.1 px of body line-1 cap-top and
-     baseline within ~0.2 px of body line-2 baseline — alignment
+     baseline within ~0.2 px of body line-2 baseline - alignment
      restored on every desktop + mobile target we test. */
   .article-detail__paragraph--lead::first-letter {
     float: left;
@@ -547,7 +547,7 @@ const articleDataset = {
     /* Float box math: the glyph is 3.6em tall at line-height 1 and
        body lines are 1.65em each → 2 body lines = 3.30em. Without a
        negative margin-bottom, the float's 3.6em box spills 0.30em
-       into line 3 and shifts that line's leading edge right — the
+       into line 3 and shifts that line's leading edge right - the
        "third line indented" bug reported on Samsung Browser. The
        visible cap occupies ~2.38em of the 3.6em box (cap-height
        0.66 × font-size), leaving ~1.22em of empty descent space
@@ -556,13 +556,13 @@ const articleDataset = {
        absorbing the 0.30em overrun plus a small mobile pixel-
        rounding buffer without ever clipping the rendered glyph;
        line 3 then flows full-width. The safe upper bound on the
-       negative margin is 1 − cap_h − ascent_pad ≈ 1.22em — pushing
+       negative margin is 1 − cap_h − ascent_pad ≈ 1.22em - pushing
        past it would start clipping the cap itself.
 
        NOTE: margin-top was tried at -0.3em in PR #185 to compensate
        for non-Charter ascent ratios on Linux/Windows. The user
        reported it pulled the cap visibly above line 1's cap-top and
-       collided with line 2 leading. Reverted to 0 — vertical
+       collided with line 2 leading. Reverted to 0 - vertical
        position is not perfect across every fallback, but no longer
        broken. Permanent fix requires per-platform tuning (probably
        JS-detected via `font-face-set` + a CSS variable) and is not
@@ -571,7 +571,7 @@ const articleDataset = {
     padding: 0;
   }
 
-  /* Primary source link — stays solid-inverted like the other primary
+  /* Primary source link - stays solid-inverted like the other primary
      actions (Save, Refresh) so the CTA still feels "the button". The
      same class is applied to both the <a> (single-source) and <button>
      (multi-source) variants so the affordance reads identically. */

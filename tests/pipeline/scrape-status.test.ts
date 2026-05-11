@@ -1,4 +1,4 @@
-// Tests for src/pages/api/scrape-status.ts — REQ-PIPE-006 AC 5.
+// Tests for src/pages/api/scrape-status.ts - REQ-PIPE-006 AC 5.
 //
 // The endpoint drives the dashboard's "Update in progress…" label
 // and the settings Force Refresh progress line. Contract:
@@ -79,7 +79,7 @@ function makeDb(
   return { prepare } as unknown as D1Database;
 }
 
-/** Stub KV — chunks_remaining no longer reads KV after CF-007, but the
+/** Stub KV - chunks_remaining no longer reads KV after CF-007, but the
  *  binding still needs to exist for other code paths. */
 function makeKv(): KVNamespace {
   return {
@@ -118,7 +118,7 @@ async function authedRequest(): Promise<Request> {
   });
 }
 
-describe('GET /api/scrape-status — REQ-PIPE-006 AC 5', () => {
+describe('GET /api/scrape-status - REQ-PIPE-006 AC 5', () => {
   it('REQ-PIPE-006: returns 401 when no session cookie is present', async () => {
     const req = new Request('https://test.example.com/api/scrape-status');
     const res = await GET(

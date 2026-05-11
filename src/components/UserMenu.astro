@@ -25,7 +25,7 @@ const { email, login, logoutHref = '/api/auth/logout' } = Astro.props;
  * Hash the normalized email with SHA-256 and return a lowercase hex
  * string. Gravatar accepts SHA-256 hashes directly since 2020; this
  * lets us stay on the Web Crypto API (no MD5 needed). Runs in the
- * Astro frontmatter — resolved at SSR time, not in the browser.
+ * Astro frontmatter - resolved at SSR time, not in the browser.
  */
 async function sha256Hex(input: string): Promise<string> {
   const bytes = new TextEncoder().encode(input);
@@ -55,7 +55,7 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     />
   </summary>
   <div class="user-menu__panel" role="menu">
-    {/* REQ-DES-002 — Theme toggle moved to ThemeToggle (variant="header"),
+    {/* REQ-DES-002 - Theme toggle moved to ThemeToggle (variant="header"),
         which sits to the LEFT of the avatar. Dark mode is no longer
         buried in this dropdown. */}
     <a
@@ -71,12 +71,12 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
           viewBox="0 0 24 24"
           fill="currentColor"
         >
-          {/* MDI history — https://pictogrammers.com/library/mdi/icon/history/ */}
+          {/* MDI history - https://pictogrammers.com/library/mdi/icon/history/ */}
           <path d="M13.5,8H12V13L16.28,15.54L17,14.33L13.5,12.25V8M13,3C8.03,3 4,7.03 4,12H1L4.96,16.03L9,12H6C6,8.14 9.14,5 13,5C16.86,5 20,8.14 20,12C20,15.86 16.86,19 13,19C11.07,19 9.32,18.21 8.06,16.94L6.64,18.36C8.27,20 10.5,21 13,21C17.97,21 22,16.97 22,12C22,7.03 17.97,3 13,3Z" />
         </svg>
       </span>
     </a>
-    {/* Implements REQ-STAR-003 — Starred entry between History and
+    {/* Implements REQ-STAR-003 - Starred entry between History and
         Settings with the MDI star-outline glyph on the right side. */}
     <a
       class="user-menu__item user-menu__row"
@@ -95,7 +95,7 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
           stroke-linecap="round"
           stroke-linejoin="round"
         >
-          {/* MDI star-outline — https://pictogrammers.com/library/mdi/icon/star-outline/ */}
+          {/* MDI star-outline - https://pictogrammers.com/library/mdi/icon/star-outline/ */}
           <path d="M12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61z" />
         </svg>
       </span>
@@ -113,7 +113,7 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
           viewBox="0 0 24 24"
           fill="currentColor"
         >
-          {/* MDI tune-vertical — https://pictogrammers.com/library/mdi/icon/tune-vertical/ */}
+          {/* MDI tune-vertical - https://pictogrammers.com/library/mdi/icon/tune-vertical/ */}
           <path d="M7 3V6H5V8H7V21H9V8H11V6H9V3H7M15 3V12H13V14H15V21H17V14H19V12H17V3H15Z" />
         </svg>
       </span>
@@ -132,7 +132,7 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
             viewBox="0 0 24 24"
             fill="currentColor"
           >
-            {/* MDI logout — https://pictogrammers.com/library/mdi/icon/logout/ */}
+            {/* MDI logout - https://pictogrammers.com/library/mdi/icon/logout/ */}
             <path d="M17 7L15.59 8.41L18.17 11H8V13H18.17L15.59 15.58L17 17L22 12L17 7M4 5H12V3H4C2.9 3 2 3.9 2 5V19C2 20.1 2.9 21 4 21H12V19H4V5Z" />
           </svg>
         </span>
@@ -180,7 +180,7 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     display: block;
   }
 
-  /* Panel sizes tightly around its contents — label + icon with only
+  /* Panel sizes tightly around its contents - label + icon with only
      a small `gap: 12px` between them and the standard padding. The
      prior 260px min-width was leaving a wide empty strip in the
      middle of every row on mobile. `width: max-content` + a
@@ -247,7 +247,7 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
   /* Icons sit at the right edge of every row (the prior layout the
      user preferred). Keep justify-content: space-between so labels
      and glyphs are separated but bound by the tight panel width
-     from `.user-menu__panel` above — now `max-content` instead of
+     from `.user-menu__panel` above - now `max-content` instead of
      a fixed 260px so the gap is dictated by the longest row. */
   .user-menu__row {
     display: flex;
@@ -260,7 +260,7 @@ const avatarUrl = `https://www.gravatar.com/avatar/${emailHash}?s=80&d=mp`;
     align-items: center;
     color: var(--text);
   }
-  /* Row-icon glyphs — slightly larger on mobile to match the bumped
+  /* Row-icon glyphs - slightly larger on mobile to match the bumped
      row height and font size. */
   .user-menu__row-icon svg {
     width: 22px;

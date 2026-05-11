@@ -9,7 +9,7 @@
 // All call sites must consume these exports rather than re-implementing
 // the primitive (CF-005).
 //
-// Constant-time comparison uses Web Crypto's HMAC verify path — a
+// Constant-time comparison uses Web Crypto's HMAC verify path - a
 // JS-level XOR loop is not a guaranteed constant-time primitive under
 // V8 JIT optimisation. `crypto.subtle.verify` IS constant-time by spec.
 
@@ -51,20 +51,20 @@ export function base64UrlDecode(input: string): Uint8Array {
  * The implementation signs `candidate` with `secret`, then asks the
  * runtime to `crypto.subtle.verify` that signature against
  * `enc.encode(expected)`. Because HMAC-SHA256 is collision-resistant,
- * `verify` returns true iff `expected === candidate` byte-for-byte —
+ * `verify` returns true iff `expected === candidate` byte-for-byte -
  * so the function IS a constant-time equality check despite its
  * sign/verify shape.
  *
  * **Argument convention (CF-014 / AD24):** put the server-trusted
  * value first (`expected`) and the caller-supplied / cookie-echoed
- * value second (`candidate`). The implementation is symmetric — order
- * does not change the boolean result — but the convention keeps call
+ * value second (`candidate`). The implementation is symmetric - order
+ * does not change the boolean result - but the convention keeps call
  * sites readable and aligns with the broader "compare(known, unknown)"
  * security idiom. The single OAUTH_JWT_SECRET reuse for both session
  * signing and CSRF state HMAC is documented in AD24 and intentional.
  *
  * `subtle.verify` is constant-time by Web Crypto spec, so timing
- * leakage is bounded by the key-import + sign duration — neither of
+ * leakage is bounded by the key-import + sign duration - neither of
  * which depends on the prefix of `expected` matching the prefix of
  * the freshly-derived MAC.
  *
@@ -112,7 +112,7 @@ export async function verifyHmacSignature(
  * Constant-time byte-equality on two strings of equal length.
  *
  * Returns false when the lengths differ (the length check is itself
- * unsafe to expose timing on, but length is not a secret — the
+ * unsafe to expose timing on, but length is not a secret - the
  * CSRF-state cookie values this helper compares are public-shape
  * tokens whose byte length is fixed by `oauthStateCookieName`).
  *
@@ -122,7 +122,7 @@ export async function verifyHmacSignature(
  * checked against zero in a single equality test.
  *
  * Used in `src/pages/api/auth/[provider]/callback.ts` for the OAuth
- * CSRF state cookie vs. query-param byte equality check (CF-011) —
+ * CSRF state cookie vs. query-param byte equality check (CF-011) -
  * the cookie value is set by the worker itself, so HMAC verification
  * adds no security over plain byte equality there. The
  * {@link verifyHmacSignature} helper remains the correct primitive
@@ -155,7 +155,7 @@ export function hexEncode(bytes: Uint8Array): string {
  * Parse a single cookie value out of a Cookie header string. Returns
  * null when absent. Case-sensitive per RFC 6265.
  *
- * Canonical implementation — `src/middleware/auth.ts` re-exports this
+ * Canonical implementation - `src/middleware/auth.ts` re-exports this
  * for backwards-compat with callers that import from the middleware.
  * Prefer importing from `~/lib/crypto` in new code.
  */

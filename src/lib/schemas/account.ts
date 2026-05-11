@@ -8,7 +8,7 @@
 // present-but-wrong, which a stricter `z.literal('DELETE')` here
 // would replace with a generic `invalid_body`).
 //
-// `.strict()` rejects extra fields — the security benefit of CF-013.
+// `.strict()` rejects extra fields - the security benefit of CF-013.
 
 import { z } from 'zod';
 

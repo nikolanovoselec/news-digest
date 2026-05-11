@@ -9,7 +9,7 @@
 // the field type in Zod would split that into a generic `bad_request`
 // for the first two cases, relaxing the public error contract.
 //
-// `.strict()` rejects unknown extra fields — the CF-013 security
+// `.strict()` rejects unknown extra fields - the CF-013 security
 // benefit. The body parse via `safeParse` also rejects non-object
 // payloads (array, scalar, null) that the previous `as` cast accepted.
 

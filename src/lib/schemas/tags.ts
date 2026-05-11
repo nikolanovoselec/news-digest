@@ -9,7 +9,7 @@
 // keeping it as `unknown` preserves exact existing behavior, including
 // the `invalid_hashtags` error code the route emits.
 //
-// `.strict()` rejects extra fields — the security benefit of CF-013.
+// `.strict()` rejects extra fields - the security benefit of CF-013.
 
 import { z } from 'zod';
 

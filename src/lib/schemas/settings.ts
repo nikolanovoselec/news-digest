@@ -17,7 +17,7 @@
 // The CF-013 security benefit of this change is twofold:
 //   1. The body is parsed through `safeParse`, so a non-object body
 //      (array, scalar, null) is rejected before the route reads it.
-//   2. `.strict()` rejects unknown extra fields — the previous `as`
+//   2. `.strict()` rejects unknown extra fields - the previous `as`
 //      cast silently accepted arbitrary payloads.
 
 import { z } from 'zod';

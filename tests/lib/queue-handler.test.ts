@@ -1,4 +1,4 @@
-// Tests for src/lib/queue-handler.ts — the shared retry envelope all
+// Tests for src/lib/queue-handler.ts - the shared retry envelope all
 // three queue consumers (coordinator, chunk, finalize) ride. Covers:
 //   - ack on successful processing
 //   - retry on transient throws + log shape
@@ -43,7 +43,7 @@ function makeBatch(messages: ReturnType<typeof makeMessage>[]): MessageBatch<Fak
 
 const fakeEnv = {} as Env;
 
-describe('handleBatch — happy path', () => {
+describe('handleBatch - happy path', () => {
   beforeEach(() => mockLog.mockClear());
 
   it('acks the message and does not retry when process resolves', async () => {
@@ -77,7 +77,7 @@ describe('handleBatch — happy path', () => {
   });
 });
 
-describe('handleBatch — transient errors retry until cap', () => {
+describe('handleBatch - transient errors retry until cap', () => {
   beforeEach(() => mockLog.mockClear());
 
   it('retries the message and logs throwLogStatus with attempt count', async () => {
@@ -137,13 +137,13 @@ describe('handleBatch — transient errors retry until cap', () => {
     expect(onTerminalFailure).toHaveBeenCalledWith(fakeEnv, { id: 'a' });
     // Even at the cap the message still goes back on the queue so the
     // platform observes the failure and applies its own dead-letter
-    // behaviour — the consumer's job is to record the failure, not to
+    // behaviour - the consumer's job is to record the failure, not to
     // suppress the platform's signal.
     expect(message.retry).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('handleBatch — terminal-failure double-fault', () => {
+describe('handleBatch - terminal-failure double-fault', () => {
   beforeEach(() => mockLog.mockClear());
 
   it('logs terminalFailureLogStatus when onTerminalFailure itself throws and still retries', async () => {
@@ -184,7 +184,7 @@ describe('handleBatch — terminal-failure double-fault', () => {
   });
 });
 
-describe('handleBatch — NonRetryableError', () => {
+describe('handleBatch - NonRetryableError', () => {
   beforeEach(() => mockLog.mockClear());
 
   it('acks immediately and does not retry when process throws NonRetryableError', async () => {
@@ -227,7 +227,7 @@ describe('handleBatch — NonRetryableError', () => {
   });
 });
 
-describe('handleBatch — maxAttempts resolution', () => {
+describe('handleBatch - maxAttempts resolution', () => {
   beforeEach(() => mockLog.mockClear());
 
   it('reads QUEUE_MAX_RETRIES from env when maxAttempts is not provided', async () => {

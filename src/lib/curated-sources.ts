@@ -12,7 +12,7 @@
 //   - every `kind` is one of `rss | atom | json`
 //   - every `slug` is unique
 //
-// Live-fetch validation is deliberately NOT automated — the dev script
+// Live-fetch validation is deliberately NOT automated - the dev script
 // `scripts/validate-curated-sources.mjs` probes each URL with a real fetch
 // and prints a swap-list for feeds that 4xx/5xx. Run it before every deploy.
 
@@ -24,7 +24,7 @@ type CuratedSourceKind = 'rss' | 'atom' | 'json';
 
 /** A single curated feed entry. */
 export interface CuratedSource {
-  /** Stable unique id — lowercase-kebab, shown in logs + cache keys. */
+  /** Stable unique id - lowercase-kebab, shown in logs + cache keys. */
   slug: string;
   /** Human label shown in UI badges and alt-source lists. */
   name: string;
@@ -38,7 +38,7 @@ export interface CuratedSource {
 
 /**
  * The canonical source registry. Mutating this array is the only way to
- * add/remove/retune feeds — there is no runtime registration path.
+ * add/remove/retune feeds - there is no runtime registration path.
  *
  * Grouping below mirrors the implementation plan; ordering is not
  * observable from outside. Composition covers every default hashtag at
@@ -183,7 +183,7 @@ export const CURATED_SOURCES: readonly CuratedSource[] = [
   },
   {
     slug: 'mit-news-ai',
-    name: 'MIT News — AI',
+    name: 'MIT News - AI',
     feed_url: 'https://news.mit.edu/topic/mitartificial-intelligence2-rss.xml',
     kind: 'rss',
     tags: ['generative-ai'],
@@ -197,7 +197,7 @@ export const CURATED_SOURCES: readonly CuratedSource[] = [
   },
   {
     slug: 'google-news-anthropic',
-    name: 'Google News — Anthropic',
+    name: 'Google News - Anthropic',
     feed_url: 'https://news.google.com/rss/search?q=anthropic+OR+claude+ai&hl=en-US&gl=US&ceid=US:en',
     kind: 'rss',
     tags: ['ai-agents', 'generative-ai'],
@@ -234,7 +234,7 @@ export const CURATED_SOURCES: readonly CuratedSource[] = [
   },
   {
     slug: 'google-news-coding-agents',
-    name: 'Google News — AI Coding Agents',
+    name: 'Google News - AI Coding Agents',
     feed_url: 'https://news.google.com/rss/search?q=%22Cursor+IDE%22+OR+%22GitHub+Copilot%22+OR+%22Claude+Code%22+coding&hl=en-US&gl=US&ceid=US:en',
     kind: 'rss',
     tags: ['coding-agents'],
@@ -348,7 +348,7 @@ export const CURATED_SOURCES: readonly CuratedSource[] = [
   },
   {
     slug: 'google-news-pqc',
-    name: 'Google News — Post-Quantum Cryptography',
+    name: 'Google News - Post-Quantum Cryptography',
     feed_url: 'https://news.google.com/rss/search?q=%22post-quantum+cryptography%22&hl=en-US&gl=US&ceid=US:en',
     kind: 'rss',
     tags: ['pqc'],
@@ -397,7 +397,7 @@ export const CURATED_SOURCES: readonly CuratedSource[] = [
   },
   {
     slug: 'google-news-openziti',
-    name: 'Google News — OpenZiti & Zero Trust Networking',
+    name: 'Google News - OpenZiti & Zero Trust Networking',
     feed_url: 'https://news.google.com/rss/search?q=openziti+OR+%22zero+trust+networking%22&hl=en-US&gl=US&ceid=US:en',
     kind: 'rss',
     tags: ['openziti'],
@@ -510,7 +510,7 @@ export const CURATED_SOURCES: readonly CuratedSource[] = [
 
 /**
  * Set of every tag that appears in {@link CURATED_SOURCES}. Built once at
- * module load — the registry is `readonly` and never mutated at runtime.
+ * module load - the registry is `readonly` and never mutated at runtime.
  */
 const CURATED_TAGS: ReadonlySet<string> = new Set(
   CURATED_SOURCES.flatMap((source) => source.tags),
@@ -518,7 +518,7 @@ const CURATED_TAGS: ReadonlySet<string> = new Set(
 
 /**
  * True iff the curated registry has at least one entry tagged
- * {@link tag}. Discovery is short-circuited for these tags — REQ-DISC-001
+ * {@link tag}. Discovery is short-circuited for these tags - REQ-DISC-001
  * AC 1: an LLM-discovery pass would have to include the mandatory Google
  * News query-RSS fallback per AC 3, which routinely returns
  * namespace-collision matches (e.g., `graymatter` matches Graymatter
@@ -542,7 +542,7 @@ const GOOGLE_NEWS_CURATED_TAGS: ReadonlySet<string> = new Set(
 
 /**
  * Tags whose brand name collides with unrelated companies in Google News
- * results — the auto-synthesised GN query for these tags would pull in
+ * results - the auto-synthesised GN query for these tags would pull in
  * articles about a different entity (e.g., the `graymatter` tag matches
  * "Graymatter Robotics", a different company). These tags are served
  * EXCLUSIVELY by their curated brand source; the coordinator does NOT
@@ -550,7 +550,7 @@ const GOOGLE_NEWS_CURATED_TAGS: ReadonlySet<string> = new Set(
  * for every other tag because `prefer-direct-source` drops the GN copy
  * when a direct publisher copy lands in the same tick.
  */
-// CF-020: not exported — only consulted by googleNewsSourceForTag
+// CF-020: not exported - only consulted by googleNewsSourceForTag
 // below. Kept file-local.
 const BRAND_ONLY_TAGS: ReadonlySet<string> = new Set(['graymatter']);
 

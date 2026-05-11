@@ -1,11 +1,11 @@
 ---
 // Implements REQ-STAR-002
 //
-// /starred — the user's starred-article collection, newest star first.
+// /starred - the user's starred-article collection, newest star first.
 //
 // Behaviour:
 //   - Reuses the DigestCard grid layout (identical to /digest).
-//   - No countdown header — this isn't a live feed; it's a personal
+//   - No countdown header - this isn't a live feed; it's a personal
 //     bookmark list.
 //   - Empty state renders the exact string "No starred articles yet."
 //   - Every card is emitted with `starred={true}` so the star button
@@ -28,7 +28,7 @@ if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
   return new Response('Application not configured', { status: 500 });
 }
 
-// CF-010 — silent-refresh: loadSessionForPage attaches near-expiry
+// CF-010 - silent-refresh: loadSessionForPage attaches near-expiry
 // re-issued cookies and clear-cookie directives onto
 // Astro.response.headers (REQ-AUTH-002 AC 4 / REQ-AUTH-008 AC 4).
 const session = await loadSessionForPage(Astro.request, env, Astro.response.headers);
@@ -36,7 +36,7 @@ if (session.user === null) return Astro.redirect('/', 303);
 Astro.locals.user = session.user;
 
 // CF-031: requireSettingsComplete accepts Pick<APIContext, 'request' | 'locals'>
-// so the SSR caller hands in only what it actually has — no cast.
+// so the SSR caller hands in only what it actually has - no cast.
 const gated = requireSettingsComplete({
   request: Astro.request,
   locals: Astro.locals,
@@ -52,7 +52,7 @@ let payload: Awaited<ReturnType<typeof loadStarredPayload>> = { articles: [] };
 try {
   payload = await loadStarredPayload(env.DB, user.id);
 } catch {
-  // Load failure falls through to the empty state — the user still
+  // Load failure falls through to the empty state - the user still
   // sees the page frame with a "No starred articles yet." message
   // rather than a hard 500.
   payload = { articles: [] };

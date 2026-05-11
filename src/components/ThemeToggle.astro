@@ -130,7 +130,7 @@ const buttonClass =
   // Implements REQ-DES-002 click handler wiring. Uses a document-
   // level delegated click handler gated by a flag on <html> so there
   // is NO race between when the button enters the DOM and when the
-  // script binds — every tap anywhere on a [data-theme-toggle]
+  // script binds - every tap anywhere on a [data-theme-toggle]
   // element fires `toggleTheme` immediately, even if this script
   // happened to execute before Astro's ViewTransition placed the
   // button. Fixes the "tap sometimes does nothing until I reload"
@@ -139,7 +139,7 @@ const buttonClass =
   // CF-021: this is now the SOLE theme-click handler in the app.
   // The duplicate handler that used to live in UserMenu.astro was
   // removed when HeaderThemeToggle.astro was merged into this file
-  // as a variant — both variants share this listener so there is no
+  // as a variant - both variants share this listener so there is no
   // longer a chance of double-firing.
   import { toggleTheme } from '~/scripts/bundled/theme-toggle';
 

@@ -1,4 +1,4 @@
-// Tests for src/queue/pipeline-consumer.ts — REQ-OPS-008.
+// Tests for src/queue/pipeline-consumer.ts - REQ-OPS-008.
 //
 // The pipeline-consumer drives the seven phases of a "Full pipeline
 // run" via self-chained `pipeline-jobs` queue messages. Coverage:
@@ -22,7 +22,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Hoisted mocks: we don't want the helpers (kickCoordinator,
 // runOneBackfillBatch) to actually execute their internal logic in
-// these unit tests — we just want to verify that the consumer
+// these unit tests - we just want to verify that the consumer
 // dispatches them correctly and reacts to their return values.
 vi.mock('~/lib/kick-coordinator', () => ({
   kickCoordinator: vi.fn(),
@@ -114,7 +114,7 @@ beforeEach(() => {
   vi.mocked(runOneBackfillBatch).mockReset();
 });
 
-describe('processOnePipelineMessage — REQ-OPS-008', () => {
+describe('processOnePipelineMessage - REQ-OPS-008', () => {
   it('short-circuits without throwing when audit row is missing', async () => {
     const { db, calls } = makeDb({ pipelineRow: null });
     const { queue: pq, sends } = makeQueue();
@@ -433,12 +433,12 @@ describe('processOnePipelineMessage — REQ-OPS-008', () => {
     });
   });
 
-  // CF-023 — REQ-PIPE-001 AC 10: a stuck scrape_wait loop that has
+  // CF-023 - REQ-PIPE-001 AC 10: a stuck scrape_wait loop that has
   // re-enqueued itself more than SCRAPE_WAIT_MAX_ITERATIONS (12) times
   // must force-fail the scrape_run and mark the pipeline run failed
   // instead of looping forever. Bug-class: without the cap a queue
   // saturation or finalize-consumer crash leaves a pipeline run stuck
-  // at 'running' until an operator manually resets it — operators see
+  // at 'running' until an operator manually resets it - operators see
   // a ghost run on the history page but no failure signal.
   it('REQ-PIPE-001 AC 10 (CF-023): scrape_wait exceeding SCRAPE_WAIT_MAX_ITERATIONS marks scrape_run failed and pipeline failed', async () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -457,7 +457,7 @@ describe('processOnePipelineMessage — REQ-OPS-008', () => {
           embed_processed: 0,
           embed_remaining: 0,
         },
-        // Cast to include wait_iterations — the D1 stub returns this
+        // Cast to include wait_iterations - the D1 stub returns this
         // object verbatim from first(), and the production code reads
         // wait_iterations from it.
         scrapeRow: {
@@ -494,7 +494,7 @@ describe('processOnePipelineMessage — REQ-OPS-008', () => {
       );
       expect(pipelineFailed).toBeDefined();
 
-      // No re-enqueue into PIPELINE_JOBS — the loop must stop.
+      // No re-enqueue into PIPELINE_JOBS - the loop must stop.
       expect(sends.length).toBe(0);
 
       // The structured error log with 'pipeline_scrape_wait_capped'

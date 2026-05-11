@@ -3,10 +3,10 @@
 // Session validation middleware for Astro routes.
 //
 // Auth lives in two cookies:
-//   1. `__Host-news_digest_session` — short-lived (5 min) HMAC-SHA256
+//   1. `__Host-news_digest_session` - short-lived (5 min) HMAC-SHA256
 //      JWT. Carries `sub`, `email`, `ghl`, `sv`, `exp`. Verified on
 //      every request.
-//   2. `__Host-news_digest_refresh` — long-lived (30 day) opaque
+//   2. `__Host-news_digest_refresh` - long-lived (30 day) opaque
 //      random ID. Looked up against the `refresh_tokens` D1 table on
 //      access-token expiry.
 //
@@ -43,11 +43,11 @@ import {
 import type { AuthenticatedUser } from '~/lib/types';
 
 export const SESSION_COOKIE_NAME = '__Host-news_digest_session';
-const SESSION_TTL_SECONDS = 5 * 60; // 5 min — REQ-AUTH-002 AC 1
+const SESSION_TTL_SECONDS = 5 * 60; // 5 min - REQ-AUTH-002 AC 1
 const SESSION_COOKIE_ATTRS = `HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_SECONDS}`;
 
 /**
- * Shape of the minimum user record the middleware needs — this exists
+ * Shape of the minimum user record the middleware needs - this exists
  * so the middleware can be tested without pulling in the full
  * AuthenticatedUser type. Runtime users are upcast to the full type.
  */
@@ -91,16 +91,16 @@ export { buildClearRefreshCookie };
  * signalled by `user === null`. `cookiesToSet` is the list of
  * `Set-Cookie` strings the caller must append to the outgoing
  * response (use {@link applyRefreshCookie}). Possible shapes:
- *   - `{ user: <row>, cookiesToSet: [] }` — access JWT valid.
- *   - `{ user: <row>, cookiesToSet: [session, refresh] }` — refresh
+ *   - `{ user: <row>, cookiesToSet: [] }` - access JWT valid.
+ *   - `{ user: <row>, cookiesToSet: [session, refresh] }` - refresh
  *     rotation succeeded, both new cookies returned.
- *   - `{ user: <row>, cookiesToSet: [session] }` — concurrent-rotation
+ *   - `{ user: <row>, cookiesToSet: [session] }` - concurrent-rotation
  *     grace branch, fresh access JWT only.
- *   - `{ user: null, cookiesToSet: [clearSession, clearRefresh] }` —
+ *   - `{ user: null, cookiesToSet: [clearSession, clearRefresh] }` -
  *     theft (reuse outside grace, or grace-branch fingerprint
  *     mismatch) / expired refresh / unknown row; dead cookies are
  *     cleared so the browser stops replaying them.
- *   - `{ user: null, cookiesToSet: [] }` — no cookies present, or
+ *   - `{ user: null, cookiesToSet: [] }` - no cookies present, or
  *     inline-refresh rate limit hit (don't clear; let the client retry).
  */
 export interface LoadSessionResult {
@@ -108,7 +108,7 @@ export interface LoadSessionResult {
   cookiesToSet: string[];
 }
 
-/** Convenience constant — the cookie strings that clear both auth cookies. */
+/** Convenience constant - the cookie strings that clear both auth cookies. */
 const CLEAR_BOTH_COOKIES: readonly string[] = [
   buildClearSessionCookie(),
   buildClearRefreshCookie(),
@@ -241,7 +241,7 @@ async function tryGraceWindowPath(
   // steady-state path drops it. The two threat models differ:
   //   - Steady-state: legit user's UA drifts across browser auto-
   //     updates between refreshes (minutes / hours / days apart).
-  //     A hard gate would lock them out — anti-pattern.
+  //     A hard gate would lock them out - anti-pattern.
   //   - Grace branch: a token's `revoked_at` is set, and the
   //     replay arrives within 30 seconds of the legit rotation.
   //     For this to be a benign concurrent collision, the same
@@ -293,7 +293,7 @@ async function tryGraceWindowPath(
     surviving_child_id: child.id,
     since_revoked_seconds: sinceRevoked,
   });
-  // Serve the fresh access JWT only — no refresh cookie. The
+  // Serve the fresh access JWT only - no refresh cookie. The
   // client's stale revoked cookie keeps working for the rest
   // of the grace window; their next refresh after the winner's
   // Set-Cookie lands will pick up the winner's value.
@@ -301,7 +301,7 @@ async function tryGraceWindowPath(
 }
 
 /**
- * Theft path — revoke every refresh row for the user and clear cookies.
+ * Theft path - revoke every refresh row for the user and clear cookies.
  * Reached when a revoked refresh token is replayed outside the grace
  * window, or inside the grace window but with no surviving child.
  */
@@ -377,7 +377,7 @@ async function tryRotationPath(
     });
   }
 
-  // All checks passed — rotate.
+  // All checks passed - rotate.
   const userRow = await loadUserById(db, refreshRow.user_id);
   if (userRow === null) return unauthenticated(true);
 
@@ -392,7 +392,7 @@ async function tryRotationPath(
     return unauthenticated(true);
   }
 
-  // Concurrent-rotation collision — another caller rotated this row
+  // Concurrent-rotation collision - another caller rotated this row
   // between our findRefreshToken and rotate calls. The other caller
   // has minted the surviving refresh cookie; we just serve a fresh
   // access JWT (per the grace-window branch above). The client's
@@ -416,7 +416,7 @@ async function tryRotationPath(
 
 /**
  * Load the session user for {@link request} against {@link db} and
- * {@link jwtSecret}. Always returns a {@link LoadSessionResult} —
+ * {@link jwtSecret}. Always returns a {@link LoadSessionResult} -
  * `user === null` signals "not authenticated" and `cookiesToSet` may
  * carry clear-cookie directives that the caller must attach via
  * {@link applyRefreshCookie}. Never throws.
@@ -425,10 +425,10 @@ async function tryRotationPath(
  * Two tiers: AUTH_REFRESH_IP runs before the DB lookup (anti-spam),
  * AUTH_REFRESH_USER runs after a valid refresh row is found (caps a
  * stolen-cookie attacker holding a real user's refresh value). When
- * {@link kv} is omitted both tiers are skipped — only acceptable for
+ * {@link kv} is omitted both tiers are skipped - only acceptable for
  * unit tests; production callers must always pass the namespace.
  *
- * Driver only — the actual branches live in
+ * Driver only - the actual branches live in
  * {@link tryAccessTokenPath}, {@link tryGraceWindowPath},
  * {@link tryRotationPath}, and {@link handleRevokedReplayPath}.
  */
@@ -442,18 +442,18 @@ export async function loadSession(
   const accessToken = readCookie(cookieHeader, SESSION_COOKIE_NAME);
   const refreshValue = readCookie(cookieHeader, REFRESH_TOKEN_COOKIE_NAME);
 
-  // Path 1 — access JWT present & valid.
+  // Path 1 - access JWT present & valid.
   const accessResult = await tryAccessTokenPath(accessToken, db, jwtSecret);
   if (accessResult !== null) return accessResult;
 
-  // Path 2 — fall through to refresh-token flow.
+  // Path 2 - fall through to refresh-token flow.
   if (refreshValue === null) {
     // No refresh cookie either. If the access JWT was present-but-bad
     // we still want to clear it so the browser stops sending it.
     return unauthenticated(accessToken !== null);
   }
 
-  // REQ-AUTH-001 AC 9 — Tier 1 (pre-validation): IP-keyed limit caps
+  // REQ-AUTH-001 AC 9 - Tier 1 (pre-validation): IP-keyed limit caps
   // random-cookie spam without paying a DB lookup per request. The
   // bucket is shared with `POST /api/auth/refresh` (same routeClass)
   // so an attacker can't pivot between the inline and explicit paths.
@@ -469,7 +469,7 @@ export async function loadSession(
         bucket: 'ip',
         retry_after_seconds: rate.retryAfter,
       });
-      // Don't clear cookies — the user may be legitimate and just
+      // Don't clear cookies - the user may be legitimate and just
       // bursty; let the next request after the window succeed.
       return unauthenticated(false);
     }
@@ -478,17 +478,17 @@ export async function loadSession(
   const refreshRow = await findRefreshToken(db, refreshValue);
   if (refreshRow === null) {
     // Cookie value not in DB. Stale cookie from a deleted session, or
-    // a cookie issued before a DB rebuild — clear it.
+    // a cookie issued before a DB rebuild - clear it.
     return unauthenticated(true);
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
 
-  // REQ-AUTH-008 AC 4 — reuse detection vs. concurrent-rotation
+  // REQ-AUTH-008 AC 4 - reuse detection vs. concurrent-rotation
   // tolerance. A revoked token reappearing has two possible causes:
-  //   (a) post-rotation theft — attacker stole the cookie and is
+  //   (a) post-rotation theft - attacker stole the cookie and is
   //       replaying it. This is the case AC 4 protects against.
-  //   (b) benign concurrent rotation — same client made two parallel
+  //   (b) benign concurrent rotation - same client made two parallel
   //       requests against the same expired access JWT, both invoked
   //       refresh, one won the rotation, the other lost. The loser
   //       presents a now-revoked cookie inside the grace window.
@@ -499,7 +499,7 @@ export async function loadSession(
   // every refresh row for the user.
   if (refreshRow.revoked_at !== null) {
     const sinceRevoked = nowSec - refreshRow.revoked_at;
-    // Negative `sinceRevoked` (revoked_at is in the future — clock
+    // Negative `sinceRevoked` (revoked_at is in the future - clock
     // skew, replication lag, malicious DB write) MUST NOT pass the
     // grace check; otherwise an attacker who can advance the row's
     // revoked_at into the future gets unbounded grace.
@@ -515,7 +515,7 @@ export async function loadSession(
       );
       if (graceResult !== null) return graceResult;
     }
-    // Outside grace window OR no surviving child — treat as theft.
+    // Outside grace window OR no surviving child - treat as theft.
     return handleRevokedReplayPath(db, refreshRow, nowSec, sinceRevoked);
   }
 
@@ -532,7 +532,7 @@ export async function loadSession(
 
 /**
  * Apply the cookies a session helper produced to the outgoing response.
- * Pass any object exposing `cookiesToSet: readonly string[]` — typically
+ * Pass any object exposing `cookiesToSet: readonly string[]` - typically
  * a {@link LoadSessionResult} or {@link PageSessionResult}. `null` is
  * accepted as a no-op for legacy callers that may not have a session.
  *
@@ -557,7 +557,7 @@ export function applyRefreshCookie(
   });
 }
 
-/** Subset of `Env` that auth helpers actually need — narrow on purpose so
+/** Subset of `Env` that auth helpers actually need - narrow on purpose so
  *  the helper is testable without constructing the full Env shape. */
 export interface AuthEnv {
   DB: D1Database;
@@ -623,8 +623,8 @@ export interface PageSessionResult {
 
 /**
  * Astro-page session gate. Mutates {@link responseHeaders} (typically
- * `Astro.response.headers`) so refresh-rotation cookies — and clear-
- * cookie directives on the unauthenticated branch — land on the page
+ * `Astro.response.headers`) so refresh-rotation cookies - and clear-
+ * cookie directives on the unauthenticated branch - land on the page
  * response without the caller having to loop manually.
  *
  * Usage:

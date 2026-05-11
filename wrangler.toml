@@ -4,13 +4,13 @@ compatibility_flags = ["nodejs_compat"]
 main = "./dist/_worker.js/_merged.mjs"
 assets = { directory = "./dist", binding = "ASSETS" }
 # Disable the *.workers.dev subdomain. Cloudflare Access does NOT enforce
-# its policy on the workers.dev URL — leaving it enabled would let an
+# its policy on the workers.dev URL - leaving it enabled would let an
 # attacker hit the Worker bypassing Access entirely (see AD11 / CF-031).
 # Forks WITHOUT Cloudflare Access bound may set this back to true; forks
 # WITH Access in production should leave it false to close the bypass.
 workers_dev = false
 
-# IMPORTANT — production resource IDs.
+# IMPORTANT - production resource IDs.
 # `database_id` and the KV `id` below are the live production resources
 # for news.graymatter.ch. Running `wrangler` against this file from an
 # unaudited fork or unfamiliar environment can corrupt prod state in
@@ -60,7 +60,7 @@ binding = "SCRAPE_FINALIZE"
 queue = "scrape-finalize"
 
 # REQ-PIPE-003 AC 9: queue-driven historical-dedup sweep. Decouples the
-# corpus-wide sweep from the operator's browser tab — the kicker
+# corpus-wide sweep from the operator's browser tab - the kicker
 # enqueues one message; the consumer runs one bounded batch per
 # message and re-enqueues a continuation until done.
 [[queues.producers]]
@@ -68,7 +68,7 @@ binding = "DEDUP_SWEEP"
 queue = "dedup-sweep"
 
 # REQ-OPS-008: backend-driven full pipeline orchestrator. Same self-
-# chain pattern as DEDUP_SWEEP, one level up — orchestrates the four
+# chain pattern as DEDUP_SWEEP, one level up - orchestrates the four
 # pipeline phases (scrape, embed-drain, dedup-kick, dedup-wait) so the
 # operator's tab is purely display, never load-bearing.
 [[queues.producers]]
@@ -104,10 +104,10 @@ max_retries = 3
 binding = "AI"
 
 # Cron triggers:
-#   0 */4 * * *           — global-feed coordinator every 4 hours (REQ-PIPE-001)
-#   0 3 * * *             — daily retention cleanup (REQ-PIPE-005)
-#   */5 * * * *           — email dispatcher (REQ-MAIL-001)
-#   2,12,22,32,42,52 * * * * — discovery drain every 10 minutes, offset
+#   0 */4 * * *           - global-feed coordinator every 4 hours (REQ-PIPE-001)
+#   0 3 * * *             - daily retention cleanup (REQ-PIPE-005)
+#   */5 * * * *           - email dispatcher (REQ-MAIL-001)
+#   2,12,22,32,42,52 * * * * - discovery drain every 10 minutes, offset
 #                              from the email cron by 2 minutes so the
 #                              two never share a Worker isolate budget.
 #                              Drains one pending_discoveries batch per
@@ -117,7 +117,7 @@ binding = "AI"
 [triggers]
 crons = ["0 */4 * * *", "0 3 * * *", "*/5 * * * *", "2,12,22,32,42,52 * * * *"]
 
-# REQ-PIPE-003 — Cloudflare Vectorize index for semantic article
+# REQ-PIPE-003 - Cloudflare Vectorize index for semantic article
 # dedup. Populated by the chunk-consumer (each new article → one
 # upsert) and queried by the finalize-consumer + admin
 # historical-dedup route. 768-dim cosine to match the
@@ -131,27 +131,27 @@ index_name = "ai-news-embeddings"
 
 [vars]
 # APP_URL is set as a Worker secret (different per deployment target)
-# CF-004 — single source of truth for the queue retry cap. Both the
+# CF-004 - single source of truth for the queue retry cap. Both the
 # Cloudflare-side per-queue `max_retries` literals and the worker
 # code's batch handler read this value (via `env.QUEUE_MAX_RETRIES`)
 # so a future bump only changes one place. Integers must be quoted as
 # strings here; the consumer `Number.parseInt`s them.
 QUEUE_MAX_RETRIES = "3"
 
-# REQ-PIPE-003 — cosine threshold for semantic dedup. Raised from
+# REQ-PIPE-003 - cosine threshold for semantic dedup. Raised from
 # 0.78 to 0.88 on 2026-05-08 after a 13-source false-merge cluster
 # appeared on news.graymatter.ch on a dense theme topic (AI agent
 # governance). Independent articles in such themes routinely score
 # 0.78-0.86 on cosine alone; the LLM rerank band (between rerank
 # floor and this ceiling) now disambiguates them. See AD39.
 DEDUP_COSINE_THRESHOLD = "0.88"
-# REQ-PIPE-003 — hard time-window in seconds for the dedup match
+# REQ-PIPE-003 - hard time-window in seconds for the dedup match
 # filter. Pairs whose published_at differ by more than this are not
 # the same news event regardless of cosine. 259200 = 72h. Catches
 # cross-news-cycle false merges (e.g. the 9-day spread on the AD39
 # cluster) before the cosine check.
 DEDUP_TIME_WINDOW_SECONDS = "259200"
-# REQ-PIPE-003 AC 11 — same-vendor cosine penalty, subtracted from
+# REQ-PIPE-003 AC 11 - same-vendor cosine penalty, subtracted from
 # the raw cosine before the threshold gate when both articles share
 # an eTLD+1. Lifts the effective same-publisher threshold to 0.83,
 # neutralising publisher-style boilerplate that inflated cosines on
@@ -165,7 +165,7 @@ DEDUP_SAME_VENDOR_PENALTY = "0.05"
 # 0.72 to 0.70 to capture the lower tail of same-cycle financial
 # coverage (PANW valuation week pairs at 0.7286-0.7293).
 DEDUP_RERANK_FLOOR = "0.70"
-# REQ-PIPE-003 — high-confidence cosine bar. Pairs whose RAW cosine
+# REQ-PIPE-003 - high-confidence cosine bar. Pairs whose RAW cosine
 # clears this auto-merge unconditionally, bypassing the same-vendor
 # penalty and the LLM rerank band. Set above the AD39 empirical
 # false-positive floor (0.86) with margin so dense-theme calibration
@@ -176,7 +176,7 @@ DEDUP_RERANK_FLOOR = "0.70"
 DEDUP_HIGH_CONFIDENCE_COSINE = "0.92"
 
 # ---------------------------------------------------------------------------
-# Integration environment — `wrangler deploy --env integration` targets a
+# Integration environment - `wrangler deploy --env integration` targets a
 # fully isolated copy of every resource so risky changes (Astro major bumps,
 # CSP tightening, schema migrations) can be smoke-tested on the live edge
 # without touching production. All resources carry the `-integration`
@@ -199,20 +199,20 @@ assets = { directory = "./dist", binding = "ASSETS" }
 workers_dev = false
 
 [env.integration.vars]
-# CF-004 — must match the top-level [vars] QUEUE_MAX_RETRIES; the
+# CF-004 - must match the top-level [vars] QUEUE_MAX_RETRIES; the
 # integration env doesn't inherit top-level vars automatically.
 QUEUE_MAX_RETRIES = "3"
-# REQ-PIPE-003 — same threshold as production. Forks tuning their
+# REQ-PIPE-003 - same threshold as production. Forks tuning their
 # own corpus may override here without touching prod.
 DEDUP_COSINE_THRESHOLD = "0.88"
-# REQ-PIPE-003 — same time-window as production. See top-level vars
+# REQ-PIPE-003 - same time-window as production. See top-level vars
 # block for rationale.
 DEDUP_TIME_WINDOW_SECONDS = "259200"
-# REQ-PIPE-003 AC 11 — see top-level vars block for rationale.
+# REQ-PIPE-003 AC 11 - see top-level vars block for rationale.
 DEDUP_SAME_VENDOR_PENALTY = "0.05"
 # REQ-PIPE-009 - see top-level vars block for rationale.
 DEDUP_RERANK_FLOOR = "0.70"
-# REQ-PIPE-003 — see top-level vars block for rationale.
+# REQ-PIPE-003 - see top-level vars block for rationale.
 DEDUP_HIGH_CONFIDENCE_COSINE = "0.92"
 
 [env.integration.observability]
@@ -276,7 +276,7 @@ max_retries = 3
 [env.integration.ai]
 binding = "AI"
 
-# REQ-PIPE-003 — integration uses its own Vectorize index so a
+# REQ-PIPE-003 - integration uses its own Vectorize index so a
 # integration retention sweep can never delete production vectors.
 # Create via:
 #   npx -y wrangler vectorize create ai-news-embeddings-integration \
@@ -288,7 +288,7 @@ index_name = "ai-news-embeddings-integration"
 # Crons are intentionally disabled on integration. Trigger scrape runs
 # manually via /api/admin/force-refresh (or the consolidated "Run
 # pipeline now" button on /settings). Note: omitting this section
-# would NOT disable crons — wrangler inherits the top-level
+# would NOT disable crons - wrangler inherits the top-level
 # `crons = [...]` array into every env that doesn't override it.
 # The empty array below is the actual override.
 [env.integration.triggers]

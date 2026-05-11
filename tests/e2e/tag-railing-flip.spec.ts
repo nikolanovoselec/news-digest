@@ -1,6 +1,6 @@
 // Implements REQ-READ-007
 //
-// CF-035 — AD19 mandated Playwright spec for the tag-railing FLIP
+// CF-035 - AD19 mandated Playwright spec for the tag-railing FLIP
 // reorder animation. Replaces the source-grep tests in
 // tests/reading/tag-railing-flip.test.ts that verify the implementation
 // exists but cannot assert on actual DOM mutations or animation state.
@@ -41,7 +41,7 @@ test.beforeAll(() => {
 
 test.describe('REQ-READ-007 tag-railing FLIP cascade', () => {
   test('clicking a tag chip moves it to strip.firstChild', async ({ page }) => {
-    // Collect CSP violations — the FLIP helper applies inline `transform`
+    // Collect CSP violations - the FLIP helper applies inline `transform`
     // during animation; those must not violate the CSP.
     const cspViolations: string[] = [];
     page.on('console', (msg) => {
@@ -57,10 +57,10 @@ test.describe('REQ-READ-007 tag-railing FLIP cascade', () => {
     // position 0 so clicking it can't demonstrate a reorder).
     const strip = page.locator('[data-tag-strip]').first();
     if (await strip.count() === 0) {
-      // CF-024: environment-driven — dev-bypass user has no hashtags
+      // CF-024: environment-driven - dev-bypass user has no hashtags
       // yet, so no [data-tag-strip] is rendered. Reorder behaviour is
       // unobservable without chips.
-      test.skip(true, 'no [data-tag-strip] on /digest — user has no hashtags');
+      test.skip(true, 'no [data-tag-strip] on /digest - user has no hashtags');
     }
 
     const chips = strip.locator('[data-tag]');
@@ -69,7 +69,7 @@ test.describe('REQ-READ-007 tag-railing FLIP cascade', () => {
       // CF-024: reorder needs at least 2 chips to demonstrate the
       // FLIP swap. Single-chip strips have no second position to
       // move to.
-      test.skip(true, '[data-tag-strip] has fewer than 2 chips — cannot demonstrate reorder');
+      test.skip(true, '[data-tag-strip] has fewer than 2 chips - cannot demonstrate reorder');
     }
 
     // Record which tag the SECOND chip carries.
@@ -103,14 +103,14 @@ test.describe('REQ-READ-007 tag-railing FLIP cascade', () => {
     const strip = page.locator('[data-tag-strip]').first();
     if (await strip.count() === 0) {
       // CF-024: same empty-tag-list environmental guard as above.
-      test.skip(true, 'no [data-tag-strip] on /digest — user has no hashtags');
+      test.skip(true, 'no [data-tag-strip] on /digest - user has no hashtags');
     }
 
     const chips = strip.locator('[data-tag]');
     if (await chips.count() < 2) {
-      // CF-024: lock-cleared assertion needs a real cascade — single
+      // CF-024: lock-cleared assertion needs a real cascade - single
       // chip never triggers the FLIP lock.
-      test.skip(true, '[data-tag-strip] has fewer than 2 chips — no cascade to lock');
+      test.skip(true, '[data-tag-strip] has fewer than 2 chips - no cascade to lock');
     }
 
     // Tap any chip and assert lock is gone within the animation budget.

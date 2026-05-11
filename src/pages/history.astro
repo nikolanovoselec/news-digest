@@ -1,7 +1,7 @@
 ---
 // Implements REQ-HIST-001
 //
-// /history — day-grouped list of the authenticated user's last 14 days
+// /history - day-grouped list of the authenticated user's last 14 days
 // of articles, plus per-day aggregates from the global `scrape_runs`
 // table. Each day row expands via a native <details> element to reveal
 // its tick list (every scrape run's timestamp, articles ingested,
@@ -9,7 +9,7 @@
 //
 // Data is loaded in-process from /api/history so the page never pays
 // for a same-origin subrequest hop. The title ("History") stays as-is
-// for this phase — a future phase may rename it to "Search & History"
+// for this phase - a future phase may rename it to "Search & History"
 // and add a live search box.
 
 import Base from '~/layouts/Base.astro';
@@ -25,7 +25,7 @@ interface DayGroup {
   article_count: number;
   articles: WireArticle[];
   // `ticks` (per-scrape-run detail) is returned by /api/history but
-  // not rendered here — cumulative day-level tokens/cost below carry
+  // not rendered here - cumulative day-level tokens/cost below carry
   // the user-facing numbers.
   day_tokens_in: number;
   day_tokens_out: number;
@@ -42,7 +42,7 @@ if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
   return new Response('Application not configured', { status: 500 });
 }
 
-// CF-010 — silent-refresh: loadSessionForPage attaches near-expiry
+// CF-010 - silent-refresh: loadSessionForPage attaches near-expiry
 // re-issued cookies and clear-cookie directives directly onto
 // Astro.response.headers (REQ-AUTH-002 AC 4 / REQ-AUTH-008 AC 4).
 const session = await loadSessionForPage(
@@ -59,7 +59,7 @@ Astro.locals.user = session.user;
 let data: HistoryResponse = { days: [] };
 try {
   // CF-031: getHistory accepts Pick<APIContext, 'request' | 'locals'> so
-  // the SSR caller hands in only what it actually has — no cast needed.
+  // the SSR caller hands in only what it actually has - no cast needed.
   const res = await getHistory({
     request: Astro.request,
     locals: Astro.locals,
@@ -73,7 +73,7 @@ try {
 
 const days = data.days;
 
-// Implements REQ-HIST-001 — deep-link support: /history?date=YYYY-MM-DD
+// Implements REQ-HIST-001 - deep-link support: /history?date=YYYY-MM-DD
 // opens the matching day pre-expanded and filters the list to just
 // that day so users arriving from the dashboard "see today" tile land
 // on a focused single-day view. The back button strips the param and
@@ -88,7 +88,7 @@ const deepLinkedDay =
 const visibleDays = deepLinkedDay !== null ? [deepLinkedDay] : days;
 const isFocused = deepLinkedDay !== null;
 
-// Implements REQ-HIST-001 AC 4/7 — tag railing on Search & History.
+// Implements REQ-HIST-001 AC 4/7 - tag railing on Search & History.
 // Reads ?tags=a,b,c to pre-select chips server-side; the client-side
 // script wires click + URL sync + combined filter (tag AND search).
 const rawTagsParam = Astro.url.searchParams.get('tags');
@@ -103,12 +103,12 @@ const initialSelectedTagSet = new Set<string>(
 
 // SSR the filtered search-grid when tags are active. Without this,
 // server-rendered HTML shows the day-grouped list and the client-
-// script later hides it and populates the search-grid — which means
+// script later hides it and populates the search-grid - which means
 // the View-Transition snapshot and Astro's scrollTo(historyState)
 // both operate on a layout the user never actually sees. On back-
 // nav this broke scroll restoration and the transition animation.
 // Iterate days + day.articles in the order /api/history returns them
-// (ingested_at DESC per day, days newest-first) — same order the
+// (ingested_at DESC per day, days newest-first) - same order the
 // client-side clone path would produce when it walks the day-list
 // DOM. Matching orders makes the client's `apply()` rebuild visually
 // idempotent (the DOM gets wiped and rebuilt but looks identical).
@@ -125,7 +125,7 @@ if (isFilteringByTag) {
   }
 }
 
-// User's active hashtags (from the session row) — drives the chip set.
+// User's active hashtags (from the session row) - drives the chip set.
 const sessionUser = session.user;
 const userTags = parseHashtags(sessionUser.hashtags_json);
 
@@ -136,7 +136,7 @@ const userTagSet = new Set<string>(userTags);
 
 // Count tag occurrences across every article in the 14-day window so
 // each chip can render its count (distinct from dashboard's today-
-// scoped count — here we want the full search pool).
+// scoped count - here we want the full search pool).
 const tagCounts = new Map<string, number>();
 for (const t of userTags) tagCounts.set(t, 0);
 for (const day of days) {
@@ -178,7 +178,7 @@ function formatCostUsd(value: number | null | undefined): string {
       {isFocused && (
         <a class="history__back" href="/history">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            {/* MDI arrow-left — https://pictogrammers.com/library/mdi/icon/arrow-left/ */}
+            {/* MDI arrow-left - https://pictogrammers.com/library/mdi/icon/arrow-left/ */}
             <path d="M20 11H7.83L13.42 5.41L12 4L4 12L12 20L13.41 18.59L7.83 13H20V11Z" />
           </svg>
           <span>Back to all days</span>
@@ -213,7 +213,7 @@ function formatCostUsd(value: number | null | undefined): string {
       </div>
     )}
 
-    {/* Flat grid of matching cards — same breakpoint math as
+    {/* Flat grid of matching cards - same breakpoint math as
         .digest-page__grid on the dashboard so search results feel
         like a dashboard view filtered by query. Pre-populated
         server-side when `?tags=` is active so View-Transition
@@ -277,7 +277,7 @@ function formatCostUsd(value: number | null | undefined): string {
                   <span class="history__cost">{formatCostUsd(day.day_cost_usd)}</span>
                 </summary>
 
-                {/* Day body is just the article grid — per-tick scrape_run
+                {/* Day body is just the article grid - per-tick scrape_run
                     details are now summarised cumulatively in the
                     summary row above (tokens + cost for the whole day).
                     Opening a day shows the articles directly. */}
@@ -326,7 +326,7 @@ function formatCostUsd(value: number | null | undefined): string {
   // tag-trigger init helper re-binds click handlers on each clone.
   // Without that rebind, the # disclosure buttons would be visually
   // present but dead to taps. (Star toggles use document-level
-  // delegation set up by the layout-wide IIFE — they don't need a
+  // delegation set up by the layout-wide IIFE - they don't need a
   // per-card rebind.)
   //
   // Reaches the helper via `window.__cardInteractions.init(root)`,
@@ -334,12 +334,12 @@ function formatCostUsd(value: number | null | undefined): string {
   // interactions.js`). Importing the module statically would cause
   // Astro/Vite to bundle a SECOND copy of the auto-wire IIFE into
   // this page's chunk, producing duplicate document-level listeners
-  // and breaking favourites — see ADR AD20.
+  // and breaking favourites - see ADR AD20.
   //
   // Lifecycle: rewire on every astro:page-load (View Transitions
   // rebuild the DOM), and tear down on every astro:before-swap so
   // the previous listener doesn't leak across navigations.
-  // REQ-READ-007 — shared FLIP cascade for tag-railing reorder.
+  // REQ-READ-007 - shared FLIP cascade for tag-railing reorder.
   import { flipChipToFront, flipChipToPosition, isFlipLocked } from '~/lib/tag-railing-flip';
   import { normalizeHashtag } from '~/lib/hashtags';
 
@@ -384,7 +384,7 @@ function formatCostUsd(value: number | null | undefined): string {
     };
 
     /** Sync q + tags into the URL via replaceState. Keeps the back
-     *  stack clean — a user typing or clicking doesn't append per
+     *  stack clean - a user typing or clicking doesn't append per
      *  keystroke. The /api/auth/... paths and `date` param are
      *  preserved untouched. */
     const syncUrl = (qRaw: string, tags: string[]): void => {
@@ -466,11 +466,11 @@ function formatCostUsd(value: number | null | undefined): string {
       input.addEventListener('input', apply);
     }
 
-    // Tag chip click handler — toggle is-selected and re-run the
+    // Tag chip click handler - toggle is-selected and re-run the
     // combined filter. Bound DIRECTLY to the strip element (not via
     // document-level delegation). Earlier attempts to delegate from
     // `document` survived in theory but kept breaking in practice on
-    // SPA return — most likely because the handler's closure over
+    // SPA return - most likely because the handler's closure over
     // `apply` / `input` got stale even with teardown in place. Binding
     // to the strip itself ties the handler's lifetime to the DOM node
     // it acts on: when the node is swapped out by ClientRouter, its
@@ -479,7 +479,7 @@ function formatCostUsd(value: number | null | undefined): string {
     const stripClickHandler = (e: Event): void => {
       const target = e.target;
       if (!(target instanceof Element)) return;
-      // REQ-READ-007 AC 5 — drop taps received during a flip cascade
+      // REQ-READ-007 AC 5 - drop taps received during a flip cascade
       // so a rapid double-tap can't desync data and DOM order. We
       // peek at any matching strip first since the lock attribute
       // lives on .tag-strip, not the wrap.
@@ -489,7 +489,7 @@ function formatCostUsd(value: number | null | undefined): string {
         e.stopPropagation();
         return;
       }
-      // Remove (×) takes precedence — it sits inside the chip.
+      // Remove (×) takes precedence - it sits inside the chip.
       const removeHit = target.closest<HTMLElement>('[data-tag-remove]');
       if (removeHit !== null) {
         e.preventDefault();
@@ -509,10 +509,10 @@ function formatCostUsd(value: number | null | undefined): string {
       const thisStrip = chip.closest<HTMLElement>('[data-tag-strip]');
       if (thisStrip !== null) {
         if (!wasSelected) {
-          // REQ-READ-007 — select cascade (chip → slot 0).
+          // REQ-READ-007 - select cascade (chip → slot 0).
           void flipChipToFront(thisStrip, chip);
         } else {
-          // REQ-READ-007 AC 3 — unselect cascade (chip → natural
+          // REQ-READ-007 AC 3 - unselect cascade (chip → natural
           // sort position among non-selected chips, count-desc with
           // alpha tiebreak). Mirrors the digest.astro logic.
           const chipCount = Number.parseInt(chip.dataset['count'] ?? '0', 10);
@@ -575,7 +575,7 @@ function formatCostUsd(value: number | null | undefined): string {
     // Skip the initial apply() when the server already rendered the
     // filtered search-grid matching the URL's ?tags= state. Without
     // this, apply() would wipe the SSR'd grid with innerHTML = '' and
-    // rebuild from day-list clones — identical content but the DOM
+    // rebuild from day-list clones - identical content but the DOM
     // churn happens mid-animation, flickers, and disrupts the View-
     // Transition pseudos. Idempotence check: search-grid already has
     // children AND user hasn't typed a search query.
@@ -595,7 +595,7 @@ function formatCostUsd(value: number | null | undefined): string {
     };
   }
 
-  /** Read every tag currently rendered in the strip — the source of
+  /** Read every tag currently rendered in the strip - the source of
    *  truth for the user's active hashtag list on this page. Used by
    *  addTag/removeTag to POST the NEW FULL list to /api/tags (which
    *  expects a replacement array, not a per-tag add/remove). Earlier
@@ -740,7 +740,7 @@ function formatCostUsd(value: number | null | undefined): string {
       try {
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       } catch {
-        // Quota / private mode — silent fallback (no persistence).
+        // Quota / private mode - silent fallback (no persistence).
       }
     }
 
@@ -774,7 +774,7 @@ function formatCostUsd(value: number | null | undefined): string {
     }, true /* capture so we get the first toggle */);
 
     // Also save the latest scroll-y on click of any DigestCard inside
-    // an expanded day — that's the moment the user is about to leave
+    // an expanded day - that's the moment the user is about to leave
     // the page; sessionStorage at that point captures the right Y.
     list.addEventListener(
       'click',
@@ -791,7 +791,7 @@ function formatCostUsd(value: number | null | undefined): string {
     );
 
     // Restore on load. Only runs when no `?date=` deep-link is present
-    // — that path already pre-expands the focused day server-side, so
+    // - that path already pre-expands the focused day server-side, so
     // adding sessionStorage on top would race with the URL state.
     const params = new URLSearchParams(window.location.search);
     if (params.has('date')) return;
@@ -805,7 +805,7 @@ function formatCostUsd(value: number | null | undefined): string {
     const det = day.querySelector<HTMLDetailsElement>('.history__details');
     if (det === null) return;
     det.open = true;
-    // Scroll restoration — wait one paint so the expanded grid lays
+    // Scroll restoration - wait one paint so the expanded grid lays
     // out before we measure / scroll. Browsers' native bfcache tries
     // to do this themselves; the manual restore is the fallback when
     // bfcache is bypassed (which Astro's ClientRouter does).
@@ -823,7 +823,7 @@ function formatCostUsd(value: number | null | undefined): string {
       }
     });
     document.addEventListener('astro:page-load', reinit);
-    // First-load init — only runs once per full page load; subsequent
+    // First-load init - only runs once per full page load; subsequent
     // re-executions of this module on View-Transition returns are
     // handled by the astro:page-load listener above.
     reinit();
@@ -893,7 +893,7 @@ function formatCostUsd(value: number | null | undefined): string {
     display: flex;
   }
 
-  /* Tag railing host on /history — the TagStrip component itself
+  /* Tag railing host on /history - the TagStrip component itself
      ships no margins, so the surrounding page owns the spacing. */
   .history__tag-strip-host {
     margin: 0.75rem 0 0.25rem;
@@ -990,7 +990,7 @@ function formatCostUsd(value: number | null | undefined): string {
     contain: layout style;
   }
 
-  /* Search results grid — matches .digest-page__grid breakpoints so
+  /* Search results grid - matches .digest-page__grid breakpoints so
      typing into Search looks like a dashboard view filtered by the
      query. 1 col on mobile, 2 from 768px, 3 from 1024px. */
   .history__search-grid {

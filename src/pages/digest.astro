@@ -2,15 +2,15 @@
 // Implements REQ-READ-001
 // Implements REQ-READ-005
 //
-// Today's digest view — global article pool filtered by the user's
+// Today's digest view - global article pool filtered by the user's
 // active hashtags. The every-4-hours scrape_run populates the pool; this
 // page renders the 50 newest articles whose tags intersect the user's
 // tag set, plus a countdown header ("Last updated at HH:MM" in the
 // page comment, shown on-screen as "Next update in Xm" or "Xh Ym"
-// aligned to the right end of the title row — wraps below on narrow
+// aligned to the right end of the title row - wraps below on narrow
 // viewports).
 //
-// The page is server-rendered in-process via loadTodayPayload — no
+// The page is server-rendered in-process via loadTodayPayload - no
 // subrequest roundtrip. The tag-strip filter is preserved unchanged.
 // Empty state: "No news for you today, try adding additional tags."
 
@@ -28,7 +28,7 @@ if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
   return new Response('Application not configured', { status: 500 });
 }
 
-// CF-010 — silent-refresh: loadSessionForPage attaches the re-issued
+// CF-010 - silent-refresh: loadSessionForPage attaches the re-issued
 // session cookie to Astro.response when loadSession says it's near
 // expiry (REQ-AUTH-002 AC 4). It also clears dead refresh cookies on
 // the unauthenticated branch (REQ-AUTH-008 AC 4) before we redirect.
@@ -37,7 +37,7 @@ if (session.user === null) return Astro.redirect('/', 303);
 Astro.locals.user = session.user;
 
 // CF-031: requireSettingsComplete accepts Pick<APIContext, 'request' | 'locals'>
-// so the SSR caller hands in only what it actually has — no cast.
+// so the SSR caller hands in only what it actually has - no cast.
 const gated = requireSettingsComplete({
   request: Astro.request,
   locals: Astro.locals,
@@ -71,7 +71,7 @@ const articles = today.articles;
 // from the LLM allowlist) on cards the user opens. Filter at render.
 const userTagSet = new Set<string>(userTags);
 
-// Per-tag article count for the tag-strip — drives the `[count]`
+// Per-tag article count for the tag-strip - drives the `[count]`
 // affordance and the count-desc sort order. Tags with zero articles
 // today render a blank count slot (tag strip CSS collapses the slot).
 const tagCounts = new Map<string, number>();
@@ -92,7 +92,7 @@ const sortedUserTags = [...userTags].sort((a, b) => {
 // deep-links to /history?date=<today-local>. Compute the user's local
 // calendar date so the href resolves to today in their timezone.
 // Fall back to DEFAULT_TZ when the persisted value is empty OR an
-// invalid IANA zone (e.g. a renamed zone in a stale DB row) —
+// invalid IANA zone (e.g. a renamed zone in a stale DB row) -
 // localDateInTz wraps Intl.DateTimeFormat which throws on unknown
 // zones and would 500 the whole dashboard.
 const rawUserTz = user.tz === '' ? DEFAULT_TZ : user.tz;
@@ -126,7 +126,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
 <Base title="Your feed">
   <section class="digest-page" data-digest-page>
     {/* a11y: the brand wordmark carries the visible page-header role,
-        so the "Today's digest" h1 lives offscreen — screen readers
+        so the "Today's digest" h1 lives offscreen - screen readers
         still need a single h1 per page so skip-to-heading navigation
         has somewhere to land. Visually hidden but exposed to the a11y
         tree. */}
@@ -137,11 +137,11 @@ function isCardHidden(articleTags: readonly string[]): boolean {
       role="status"
       hidden
     >
-      You're offline — showing the last digest you viewed.
+      You're offline - showing the last digest you viewed.
     </div>
 
     {/*
-      Tag strip — shared component with Search & History (TagStrip.astro).
+      Tag strip - shared component with Search & History (TagStrip.astro).
       Sole editor for the user's hashtags; no tag configuration in
       /settings anymore. Empty state renders just the "+ add" pill
       which expands into an input on click. Filter behaviour (click
@@ -164,7 +164,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
       No stories match the selected tag(s). Click a selected tag to deselect.
     </p>
 
-    {/* The "Today's digest" <h1> was dropped — the brand wordmark
+    {/* The "Today's digest" <h1> was dropped - the brand wordmark
         at the top-left now plays the page-header role, so a second
         <h1> below it felt redundant. Countdown is preserved as a
         lightweight line above the grid. */}
@@ -208,7 +208,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
               filterHide={isCardHidden(a.tags)}
             />
           ))}
-          {/* REQ-READ-001 AC 5 — slot 30 deep-links to Search &
+          {/* REQ-READ-001 AC 5 - slot 30 deep-links to Search &
               History scoped to today. Tag filtering that reaches
               beyond the visible 29 happens on /history, not here. */}
           <a
@@ -223,7 +223,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
               aria-hidden="true"
               fill="currentColor"
             >
-              {/* MDI gradient-vertical — https://pictogrammers.com/library/mdi/icon/gradient-vertical/ */}
+              {/* MDI gradient-vertical - https://pictogrammers.com/library/mdi/icon/gradient-vertical/ */}
               <path d="M11,9H13V11H11V9M9,11H11V13H9V11M13,11H15V13H13V11M15,9H17V11H15V9M7,9H9V11H7V9M19,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5A2,2 0 0,0 19,3M9,18H7V16H9V18M13,18H11V16H13V18M17,18H15V16H17V18M19,11H17V13H19V15H17V13H15V15H13V13H11V15H9V13H7V15H5V13H7V11H5V5H19V11Z" />
             </svg>
           </a>
@@ -300,7 +300,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     if (el === null || textEl === null) return;
     // If we've been told a scrape is running (via data-running on the
     // countdown wrapper set by the status poll), skip the countdown
-    // math entirely — the label ALREADY reads "Update in progress…".
+    // math entirely - the label ALREADY reads "Update in progress…".
     if (el.dataset['running'] === '1') return;
     const raw = el.dataset['nextAt'];
     if (raw === undefined || raw === '') return;
@@ -393,7 +393,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
 
   function init(): void {
     // The astro:page-load listener below is bound to `document` and
-    // survives ClientRouter navigations — meaning it ALSO fires when
+    // survives ClientRouter navigations - meaning it ALSO fires when
     // the user lands on /history (which shares <TagStrip /> with
     // this page). Without a page-marker guard, init() would
     // re-attach a click handler to [data-tag-strip] on /history,
@@ -441,7 +441,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     chip.setAttribute('aria-pressed', 'false');
     chip.setAttribute(
       'aria-label',
-      `${tag} — 0 articles today. Click to filter, click again to deselect.`,
+      `${tag} - 0 articles today. Click to filter, click again to deselect.`,
     );
     const label = document.createElement('span');
     label.className = 'tag-chip__label';
@@ -466,7 +466,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     remove.setAttribute('role', 'button');
     remove.setAttribute('tabindex', '-1');
     remove.setAttribute('aria-label', `Remove ${tag} from your hashtags`);
-    // CF-032 — build SVG via DOM API instead of innerHTML. Inputs are
+    // CF-032 - build SVG via DOM API instead of innerHTML. Inputs are
     // constants today, but the DOM-construction pattern is what we
     // want every contributor to reach for.
     const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -489,7 +489,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     // The +add button was hoisted OUT of [data-tag-strip] and now
     // lives as a sibling under [data-tag-strip-wrap] so the strip's
     // mask-fade can't paint over it. That means the strip contains
-    // ONLY chips — append the new chip to the end; the +add button
+    // ONLY chips - append the new chip to the end; the +add button
     // sits absolute-positioned on top of the right edge via CSS.
     // The old `strip.querySelector('[data-tag-add]')` always returned
     // null post-hoist and fell through to the same appendChild
@@ -526,7 +526,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     // The +add button and its companion input were hoisted OUT of the
     // scrolling `[data-tag-strip]` and are now SIBLINGS of it under
     // `[data-tag-strip-wrap]` (so the mask-fade on the strip doesn't
-    // paint them). Query the wrapper so we can still find them —
+    // paint them). Query the wrapper so we can still find them -
     // without this lookup, the null-guard below early-returns and the
     // whole strip click handler (tag-select + tag-remove) never binds.
     const wrap = strip.closest<HTMLElement>('[data-tag-strip-wrap]') ?? document;
@@ -591,7 +591,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     /** Sync selected tags into the URL via replaceState so browser
      *  Back from an article detail page (or a tab reload) restores
      *  the exact filter the user left. replaceState avoids clogging
-     *  the history stack — each chip click overwrites the same entry
+     *  the history stack - each chip click overwrites the same entry
      *  rather than pushing a new one. */
     const syncUrlTags = (selected: string[]): void => {
       const url = new URL(window.location.href);
@@ -659,7 +659,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     };
     /** Pin selected chips to the front of the strip. On mobile the
      *  strip is horizontally scrollable and the browser resets the
-     *  scroll to 0 on every navigation — if the user's selected
+     *  scroll to 0 on every navigation - if the user's selected
      *  chip lived at position 15, they'd have to scroll to find it
      *  again. Moving selected chips to scroll-position 0 means the
      *  filter is always visible without any re-scrolling. DOM
@@ -669,7 +669,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
         strip.querySelectorAll<HTMLElement>('[data-tag-chip].is-selected'),
       );
       // Insert in reverse at index 0 so the first selected chip ends
-      // up leftmost — each insertBefore at firstChild pushes earlier
+      // up leftmost - each insertBefore at firstChild pushes earlier
       // entries one slot to the right, so reversed iteration yields
       // the intended order-of-appearance. Uses insertBefore rather
       // than prepend because Astro's emitted Workers + DOM type
@@ -686,7 +686,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     strip.addEventListener('click', (e) => {
       const target = e.target as HTMLElement | null;
       if (target === null) return;
-      // REQ-READ-007 AC 5 — drop taps received while a cascade is
+      // REQ-READ-007 AC 5 - drop taps received while a cascade is
       // mid-flight. Without this guard a rapid double-tap can flip a
       // chip's selected state twice while the FLIP transforms are
       // still settling, leaving data and DOM order desynced.
@@ -728,14 +728,14 @@ function isCardHidden(articleTags: readonly string[]): boolean {
       const nowSelected = chip.classList.toggle('is-selected');
       chip.setAttribute('aria-pressed', nowSelected ? 'true' : 'false');
       if (nowSelected) {
-        // REQ-READ-007 — cascade the chip to slot 0 with the FLIP
+        // REQ-READ-007 - cascade the chip to slot 0 with the FLIP
         // helper. The helper handles tap-pulse, in-flight lockout,
         // and scroll-position preservation (no auto-scroll on tap).
         // applyFilter runs immediately so the grid updates without
         // waiting on the animation; the visual cascade is chrome.
         void flipChipToFront(strip, chip);
       } else {
-        // REQ-READ-007 AC 3 — unselect cascade. Slide the chip back
+        // REQ-READ-007 AC 3 - unselect cascade. Slide the chip back
         // to its natural sort position (count-desc, alpha tiebreak)
         // among the non-selected chips. Walk other chips and find
         // the first one that should sort AFTER this chip; insertBefore
@@ -804,7 +804,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
   /* Visually-hidden h1 for screen readers + skip-to-heading keyboard
      nav. Standard "sr-only" utility pattern: clipped to 1×1 but
      still in the accessibility tree. Uses BOTH the deprecated `clip`
-     (legacy browsers) and `clip-path: inset(50%)` (modern) — the
+     (legacy browsers) and `clip-path: inset(50%)` (modern) - the
      belt-and-suspenders combo every WAI-ARIA authoring-practices
      doc recommends, and what Bootstrap / Tailwind ship. */
   .digest-page__a11y-title {
@@ -820,7 +820,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     border: 0;
   }
 
-  /* REQ-READ-001 — countdown-only header now that the title is gone.
+  /* REQ-READ-001 - countdown-only header now that the title is gone.
      Right-aligned so "Next update in Xm" sits flush against the
      grid's right edge without a heading dragging the visual weight. */
   .digest-page__header {
@@ -858,7 +858,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
   }
 
 
-  /* REQ-READ-001 AC 1 — responsive grid with breathing-room gaps
+  /* REQ-READ-001 AC 1 - responsive grid with breathing-room gaps
      that scale with viewport. Desktop gets a larger gap so the
      cards read as distinct blocks rather than a packed tile-set. */
   .digest-page__grid {
@@ -881,7 +881,7 @@ function isCardHidden(articleTags: readonly string[]): boolean {
     }
   }
 
-  /* REQ-READ-001 AC 5 — the 30th grid slot is a tile that deep-links
+  /* REQ-READ-001 AC 5 - the 30th grid slot is a tile that deep-links
      to /history?date=<today>. Same dimensions as a regular card so it
      reads as part of the grid, but intentionally minimal: no surface
      fill, no border, the page background flows through and the icon

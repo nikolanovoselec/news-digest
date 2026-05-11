@@ -5,7 +5,7 @@
 // Every feed fetch in the scrape pipeline reports its outcome here. A
 // successful fetch clears the counter; a failure increments it. When a
 // URL reaches `CONSECUTIVE_FETCH_FAILURE_LIMIT` consecutive failures the
-// coordinator boundary treats the counter result as an eviction signal —
+// coordinator boundary treats the counter result as an eviction signal -
 // the URL is removed from its `sources:{tag}` KV entry, and if that was
 // the last feed for the tag the tag is re-queued to `pending_discoveries`
 // so a fresh LLM discovery pass replaces it.
@@ -13,7 +13,7 @@
 // The counter is stored in KV under `source_health:{url}` as a UTF-8
 // integer string with a 7-day TTL. The TTL prevents unbounded KV growth
 // while being generous enough that counters are never wiped between
-// scrapes (cron fires every 4 hours — 6 ticks/day × 7 days = 42 ticks
+// scrapes (cron fires every 4 hours - 6 ticks/day × 7 days = 42 ticks
 // of breathing room).
 //
 // Math on the threshold: scrape cadence is 6 ticks/day (every 4 hours).
@@ -36,7 +36,7 @@ const HEALTH_COUNTER_TTL_SECONDS = 7 * 24 * 60 * 60;
  * eviction (the coordinator at the end of the fetch phase) branch on
  * `evicted === true`; callers that don't (individual source fetchers)
  * can ignore the return value. */
-// CF-020: not exported — only consumed as the return type of
+// CF-020: not exported - only consumed as the return type of
 // recordFetchResult below. Callers destructure the object inline.
 interface FeedHealthResult {
   /** True iff this call pushed the counter to the eviction threshold.
@@ -65,7 +65,7 @@ export function healthKey(url: string): string {
  * caller should evict the URL from its tag cache and (if that was the
  * last feed) re-queue the tag for discovery.
  *
- * Never throws — KV errors are logged and treated as a no-op success
+ * Never throws - KV errors are logged and treated as a no-op success
  * (the alternative, treating them as failures, would let a transient
  * KV outage evict every URL in the registry).
  */
@@ -129,7 +129,7 @@ export async function recordFetchResult(
 /**
  * Delete a URL's counter. Called by the coordinator's eviction path
  * after the URL has been removed from its `sources:{tag}` KV entry, so
- * a re-discovered feed at the same URL (rare but possible — the LLM
+ * a re-discovered feed at the same URL (rare but possible - the LLM
  * might suggest it again) starts from zero rather than inheriting the
  * old fail streak.
  */

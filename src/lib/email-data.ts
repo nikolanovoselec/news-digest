@@ -1,7 +1,7 @@
 // Implements REQ-MAIL-001
 //
 // Per-user data fetchers used by the email dispatcher to compose the
-// rich daily digest. Pure D1 reads — never writes — so the email path
+// rich daily digest. Pure D1 reads - never writes - so the email path
 // stays isolated from the reading-surface state machine
 // (REQ-MAIL-002 AC 4: dispatcher must not INSERT/UPDATE/DELETE
 // articles, article_reads, etc.).
@@ -12,7 +12,7 @@
 //     headline list and the dynamic subject line ("12 new articles ...").
 //   - tagTallySinceMidnight: per-tag article counts over the recipient's
 //     local-day window. Drives the "Since midnight: N articles · ..."
-//     line. Intentionally does NOT filter by article_reads — the line
+//     line. Intentionally does NOT filter by article_reads - the line
 //     describes "what happened today across topics you care about",
 //     regardless of read state.
 //
@@ -22,7 +22,7 @@
 
 /** A single headline row destined for the email body. Distinct from the
  * pipeline-level `Headline` in `~/lib/types` (which carries the raw
- * feed-entry shape) — this is the rendered, slugified row that the
+ * feed-entry shape) - this is the rendered, slugified row that the
  * email template iterates over. CF-019: renamed `Headline` →
  * `EmailHeadline` so the two types stop colliding by name. */
 export interface EmailHeadline {
@@ -63,12 +63,12 @@ import { slugify } from '~/lib/slug';
  * user. Returns `[]` for empty `userTags`. Throws on D1 errors so the
  * dispatcher can log + degrade to the static fallback (silently
  * swallowing D1 errors here would hide a misnamed column or a D1
- * outage from operators — every user would silently get the static
+ * outage from operators - every user would silently get the static
  * fallback for every send with no log evidence).
  *
  * Tiebreaker `a.id DESC` after the timestamp ordering keeps the
  * headline list deterministic when two articles share both
- * `ingested_at` and `published_at` — without it, two consecutive
+ * `ingested_at` and `published_at` - without it, two consecutive
  * renders within the same minute could surface different headlines.
  */
 export async function selectUnreadHeadlinesForUser(
@@ -143,7 +143,7 @@ export async function tagTallySinceMidnight(
        )
   `;
 
-  // No defensive try/catch here — D1 failures propagate to the
+  // No defensive try/catch here - D1 failures propagate to the
   // dispatcher's per-user catch so they can be logged. A silent
   // empty-tally fallback would hide schema/index drift from operators.
   const [tallyRes, totalRes] = await Promise.all([

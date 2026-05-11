@@ -1,5 +1,5 @@
 // Implements REQ-DISC-001, REQ-DISC-003, REQ-DISC-005
-// CF-028: priority-aware drain ordering — see processPendingDiscoveries.
+// CF-028: priority-aware drain ordering - see processPendingDiscoveries.
 //
 // LLM-assisted source discovery for per-tag RSS/Atom/JSON feeds.
 //
@@ -7,8 +7,8 @@
 //   1. One Workers AI call with DISCOVERY_SYSTEM + discoveryUserPrompt(tag).
 //   2. Parse strict JSON. Unparseable → empty feed list (treated as failure).
 //   3. For every suggested URL, independently:
-//       a. isUrlSafe() — HTTPS-only, no private/loopback/link-local ranges
-//          (SSRF filter runs BEFORE any fetch — REQ-DISC-005 AC 3/4).
+//       a. isUrlSafe() - HTTPS-only, no private/loopback/link-local ranges
+//          (SSRF filter runs BEFORE any fetch - REQ-DISC-005 AC 3/4).
 //       b. HTTPS GET with AbortSignal.timeout(5000) and a 1 MB body cap.
 //       c. Content-Type must match declared kind (xml/atom for rss/atom,
 //          json for json).
@@ -58,7 +58,7 @@ interface LLMDiscoveryPayload {
 /** Narrow the raw response envelope to LLMDiscoveryPayload. Returns
  *  null when the response was empty or unparseable so runJson surfaces
  *  the failure as `ok: false`. The returned object's `feeds` key may
- *  still be missing/malformed — that's a "we got JSON but the model
+ *  still be missing/malformed - that's a "we got JSON but the model
  *  ignored the schema" case and is logged at the call site. */
 function narrowDiscoveryPayload(raw: unknown): LLMDiscoveryPayload | null {
   if (raw === null || raw === undefined) return null;
@@ -118,7 +118,7 @@ export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed
 
   // Log the missing-feeds case explicitly so operators see a breadcrumb
   // when the model returns a shaped object with no `feeds` key (e.g.
-  // `{feeds_list: [...]}` — a known deviation from the prompt that
+  // `{feeds_list: [...]}` - a known deviation from the prompt that
   // produced silent no-ops before this guard was added).
   if (!Array.isArray(payload.feeds)) {
     log('warn', 'discovery.completed', {
@@ -130,7 +130,7 @@ export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed
   const suggestions = payload.feeds;
   const validated: DiscoveredFeed[] = [];
 
-  // 3. Independently validate each suggestion — a malicious or broken
+  // 3. Independently validate each suggestion - a malicious or broken
   // suggestion cannot taint the rest of the batch.
   for (const suggestion of suggestions) {
     const name = typeof suggestion.name === 'string' ? suggestion.name.trim() : '';
@@ -150,7 +150,7 @@ export async function discoverTag(tag: string, env: Env): Promise<DiscoveredFeed
 
 /**
  * Validate a single candidate feed URL. Every step is an independent
- * gate — any failure short-circuits to false. Never throws.
+ * gate - any failure short-circuits to false. Never throws.
  *
  * - SSRF filter (HTTPS only, no private/loopback/link-local, no userinfo)
  * - HTTP 200 with 5s timeout
@@ -162,12 +162,12 @@ export async function validateFeedUrl(
   url: string,
   kind: 'rss' | 'atom' | 'json',
 ): Promise<boolean> {
-  // Gate 1 — static SSRF filter (no network call yet).
+  // Gate 1 - static SSRF filter (no network call yet).
   if (!isUrlSafe(url)) {
     return false;
   }
 
-  // Gate 2 — GET with 5s timeout.
+  // Gate 2 - GET with 5s timeout.
   let response: Response;
   try {
     response = await fetch(url, {
@@ -184,7 +184,7 @@ export async function validateFeedUrl(
     return false;
   }
 
-  // Gate 3 — Content-Type must match the declared kind. The match is
+  // Gate 3 - Content-Type must match the declared kind. The match is
   // lenient on the surrounding MIME noise (charset params, `application/`
   // vs `text/` prefixes); the keyword must appear.
   const contentType = (response.headers.get('Content-Type') ?? '').toLowerCase();
@@ -192,7 +192,7 @@ export async function validateFeedUrl(
     return false;
   }
 
-  // Gate 4 — bounded read. We cannot trust the Content-Length header,
+  // Gate 4 - bounded read. We cannot trust the Content-Length header,
   // so slice the body after reading to the cap.
   let body: string;
   try {
@@ -205,7 +205,7 @@ export async function validateFeedUrl(
     return false;
   }
 
-  // Gate 5 — parse + item check.
+  // Gate 5 - parse + item check.
   if (kind === 'json') {
     return hasJsonItem(body);
   }
@@ -261,7 +261,7 @@ function hasJsonItem(body: string): boolean {
 /**
  * Return true iff {@link body} parses as RSS 2.0 or Atom 1.0 with at
  * least one item/entry carrying both a title and a link URL. Never
- * throws — unparseable XML is treated as a failure.
+ * throws - unparseable XML is treated as a failure.
  */
 function hasXmlItem(body: string, kind: 'rss' | 'atom'): boolean {
   let doc: unknown;
@@ -294,7 +294,7 @@ function hasXmlItem(body: string, kind: 'rss' | 'atom'): boolean {
     return false;
   }
 
-  // Atom 1.0 — top-level <feed><entry>...</entry></feed>.
+  // Atom 1.0 - top-level <feed><entry>...</entry></feed>.
   const feed = (doc as { feed?: unknown }).feed;
   if (feed === null || typeof feed !== 'object') return false;
   const entries = asArray((feed as { entry?: unknown }).entry);
@@ -336,7 +336,7 @@ function itemHasTitleAndLink(item: unknown, kind: 'rss' | 'atom'): boolean {
     return false;
   }
 
-  // Atom: <link href="..."/> — possibly an array if the entry has
+  // Atom: <link href="..."/> - possibly an array if the entry has
   // multiple links (e.g., alternate + self).
   const linkArr = Array.isArray(linkRaw) ? linkRaw : [linkRaw];
   for (const link of linkArr) {
@@ -348,7 +348,7 @@ function itemHasTitleAndLink(item: unknown, kind: 'rss' | 'atom'): boolean {
 }
 
 /**
- * Cron worker hook — process up to {@link limit} distinct pending tags.
+ * Cron worker hook - process up to {@link limit} distinct pending tags.
  *
  * For each tag:
  *   - Run discoverTag().
@@ -360,7 +360,7 @@ function itemHasTitleAndLink(item: unknown, kind: 'rss' | 'atom'): boolean {
  *     feeds array so REQ-DISC-004 can surface a "Re-discover" button.
  *     Otherwise leave the pending rows in place so the next cron retries.
  *
- * Returns the tags that resolved one way or the other this invocation —
+ * Returns the tags that resolved one way or the other this invocation -
  * `processed` for tags that produced a sources entry, `failed` for tags
  * that were retried or evicted without producing one.
  */
@@ -391,11 +391,11 @@ export async function processPendingDiscoveries(
   const tags = (rows.results ?? []).map((r) => r.tag).filter((t) => typeof t === 'string' && t !== '').slice(0, limit);
 
   for (const tag of tags) {
-    // REQ-DISC-001 AC 1 — discovery is short-circuited for tags covered
+    // REQ-DISC-001 AC 1 - discovery is short-circuited for tags covered
     // by the curated registry. Catch any pending rows that bypassed the
     // user-facing gate (admin paths, pre-fix rows): clear the row and
     // skip the LLM call entirely. Counted as `processed` because the
-    // tag has a working source — it's just not coming from discovery.
+    // tag has a working source - it's just not coming from discovery.
     if (hasCuratedSource(tag)) {
       await env.DB.prepare('DELETE FROM pending_discoveries WHERE tag = ?1')
         .bind(tag)
@@ -412,7 +412,7 @@ export async function processPendingDiscoveries(
       const feeds = await discoverTag(tag, env);
 
       if (feeds.length > 0) {
-        // Success path — persist, reset counter, clear pending.
+        // Success path - persist, reset counter, clear pending.
         const cacheValue: SourcesCacheValue = {
           feeds,
           discovered_at: Date.now(),
@@ -431,13 +431,13 @@ export async function processPendingDiscoveries(
         continue;
       }
 
-      // Failure path — increment the counter.
+      // Failure path - increment the counter.
       const priorRaw = await env.KV.get(`discovery_failures:${tag}`);
       const prior = priorRaw === null ? 0 : Number.parseInt(priorRaw, 10);
       const nextCount = Number.isFinite(prior) && prior >= 0 ? prior + 1 : 1;
 
       if (nextCount >= CONSECUTIVE_FAILURE_LIMIT) {
-        // Give up — write an empty feeds entry so the settings page
+        // Give up - write an empty feeds entry so the settings page
         // can surface the Re-discover button, reset the counter, and
         // clear the pending row.
         const emptyCache: SourcesCacheValue = {
@@ -465,7 +465,7 @@ export async function processPendingDiscoveries(
         });
       }
     } catch (err) {
-      // Unexpected error at the tag level — count as a retryable failure
+      // Unexpected error at the tag level - count as a retryable failure
       // so we don't lose the pending row on transient infra issues.
       failed.push(tag);
       log('error', 'discovery.completed', {

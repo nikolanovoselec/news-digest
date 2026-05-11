@@ -4,14 +4,14 @@
 // settings Force Refresh progress line. Reads the most recent row
 // from `scrape_runs` (one SELECT on an indexed column) and derives
 // chunks_remaining from D1 (one indexed COUNT on
-// `scrape_chunk_completions`). That's it — no LLM, no article read,
+// `scrape_chunk_completions`). That's it - no LLM, no article read,
 // no cost. CF-007 (Cycle 1 review): the legacy KV counter was a stale
 // dual-write that diverged from D1 (the source of truth per AD7); both
 // writers and the KV reader were removed.
 //
 // Response:
-//   { running: false }                                    — idle
-//   { running: true, id, started_at, chunks_remaining,    — busy
+//   { running: false }                                    - idle
+//   { running: true, id, started_at, chunks_remaining,    - busy
 //     chunks_total, articles_ingested }
 //
 // Callers:

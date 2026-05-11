@@ -9,7 +9,7 @@
 // (`failClosed`): fail open for routes where a broken counter must not
 // lock users out (auth_login, auth_callback) and fail closed for
 // security-critical routes where KV outage must not bypass the limit
-// (auth_refresh — a stolen cookie should not benefit from KV downtime).
+// (auth_refresh - a stolen cookie should not benefit from KV downtime).
 //
 // Scheme:
 //   - One KV key per (route_class, identity, time_window).
@@ -22,7 +22,7 @@
 //
 // TOCTOU note: KV has no compare-and-swap. Two requests racing inside
 // the same window can both read N and both write N+1, allowing a small
-// over-shoot under load. Acceptable for rate-limit purposes — over-
+// over-shoot under load. Acceptable for rate-limit purposes - over-
 // permitting by a factor of <2 under contention is fine.
 
 import { log } from '~/lib/log';
@@ -64,7 +64,7 @@ export type RateLimitResult =
  * `concurrency × limit` through under contention (bounded by KV's
  * propagation delay, typically < 60s globally). For most routes the
  * over-permit factor is small (< 2× under realistic burst patterns)
- * and acceptable as defence-in-depth — the absolute ceiling stays
+ * and acceptable as defence-in-depth - the absolute ceiling stays
  * bounded by the window length.
  *
  * For `failClosed: true` rules (e.g. `AUTH_REFRESH_IP`,
@@ -73,7 +73,7 @@ export type RateLimitResult =
  * is best treated as defence-in-depth rather than the primary gate.
  * Cloudflare's zone-level Rate Limiting (WAF) is atomic and should
  * be configured in front of `/api/auth/refresh` for production
- * deployments — without it, a coordinated burst above ~2× the
+ * deployments - without it, a coordinated burst above ~2× the
  * configured limit can succeed during the propagation window.
  */
 export async function enforceRateLimit(
@@ -135,7 +135,7 @@ export async function enforceRateLimit(
     });
   } catch (err) {
     // For fail-closed rules, KV.put failure must NOT silently let the
-    // request through — otherwise a sustained KV write outage means
+    // request through - otherwise a sustained KV write outage means
     // the counter never ticks up, every read returns the previous
     // value, and `failClosed: true` is effectively bypassed.
     if (rule.failClosed === true) {
@@ -148,7 +148,7 @@ export async function enforceRateLimit(
       });
       return { ok: false, retryAfter: rule.windowSec };
     }
-    // For fail-open rules, swallow the error — the next caller's
+    // For fail-open rules, swallow the error - the next caller's
     // read may miss this increment but the absolute ceiling stays
     // bounded by the surrounding window.
   }
@@ -173,7 +173,7 @@ export function rateLimitResponse(retryAfter: number): Response {
  * Extract the request's client IP for use as a rate-limit identity.
  * Cloudflare sets `CF-Connecting-IP` on every inbound request; falls
  * back to a literal "unknown" so the rule still applies (one bucket
- * for all unidentifiable clients — fail-quiet, not fail-open).
+ * for all unidentifiable clients - fail-quiet, not fail-open).
  */
 export function clientIp(request: Request): string {
   const ip = request.headers.get('CF-Connecting-IP');
@@ -183,7 +183,7 @@ export function clientIp(request: Request): string {
 /** Pre-baked rules for the routes PR1 enforces. Add new rules here so
  *  the per-route limits are reviewable in one file. */
 export const RATE_LIMIT_RULES = {
-  // CF-013 / AD23 — fail-closed on KV outage so a KV degradation cannot
+  // CF-013 / AD23 - fail-closed on KV outage so a KV degradation cannot
   // silently lift the auth-flow rate cap. The OAuth code-exchange path
   // is unauthenticated until callback completes, so an attacker who
   // can drive KV failures (or just exploits a partial outage window)
@@ -211,7 +211,7 @@ export const RATE_LIMIT_RULES = {
     limit: 30,
     windowSec: 60,
   },
-  // CF-027 (Cycle 1 review) — bound runaway polling on GET /api/settings.
+  // CF-027 (Cycle 1 review) - bound runaway polling on GET /api/settings.
   // The settings page reads this once per render; legitimate scripted
   // polling has no business above ~2/sec/user. 120/min/user is
   // double-headroom over that ceiling while still capping a misbehaving
@@ -221,7 +221,7 @@ export const RATE_LIMIT_RULES = {
     limit: 120,
     windowSec: 60,
   },
-  // REQ-AUTH-008 — refresh-token rotation. Two-tier rate-limit:
+  // REQ-AUTH-008 - refresh-token rotation. Two-tier rate-limit:
   // AUTH_REFRESH_IP runs BEFORE the DB lookup to bound random-cookie
   // spam without authenticating the caller. 60/min/IP accommodates
   // legitimate flows where one IP fans out across many sessions:
@@ -233,7 +233,7 @@ export const RATE_LIMIT_RULES = {
     routeClass: 'auth_refresh_ip',
     limit: 60,
     windowSec: 60,
-    // A stolen refresh cookie must not benefit from a KV outage —
+    // A stolen refresh cookie must not benefit from a KV outage -
     // fail closed so the limiter denies during KV downtime rather
     // than waving every request through unbounded.
     failClosed: true,
@@ -255,7 +255,7 @@ export const RATE_LIMIT_RULES = {
     windowSec: 60,
     failClosed: true,
   },
-  // REQ-AUTH-002 — bound logout calls per IP. Practical blast radius
+  // REQ-AUTH-002 - bound logout calls per IP. Practical blast radius
   // is small (logout requires a live cookie), but a low ceiling
   // prevents loop-incrementing session_version under attack.
   AUTH_LOGOUT: {
@@ -263,7 +263,7 @@ export const RATE_LIMIT_RULES = {
     limit: 5,
     windowSec: 60,
   },
-  // CF-008 — admin force-refresh kicks the whole pipeline (one scrape
+  // CF-008 - admin force-refresh kicks the whole pipeline (one scrape
   // tick + finalize + dedup). 5/hour/user comfortably covers an
   // operator hammering "refresh" through a real session while bounding
   // accidental loops or compromised-admin abuse.
@@ -273,7 +273,7 @@ export const RATE_LIMIT_RULES = {
     windowSec: 3600,
     failClosed: true,
   },
-  // CF-008 — pipeline-run/wipe is the most expensive admin action
+  // CF-008 - pipeline-run/wipe is the most expensive admin action
   // (re-embeds every article). 2/hour/user is enough for legitimate
   // operator re-runs after a config change while preventing burst abuse.
   ADMIN_PIPELINE_RUN: {
@@ -282,16 +282,16 @@ export const RATE_LIMIT_RULES = {
     windowSec: 3600,
     failClosed: true,
   },
-  // REQ-SET-007 — POST /api/auth/set-tz writes a single users.tz
+  // REQ-SET-007 - POST /api/auth/set-tz writes a single users.tz
   // column. A legitimate user updates this on tz mismatch (rare:
-  // travel, DST edge), so 30/min/user is generous — leaves room for
+  // travel, DST edge), so 30/min/user is generous - leaves room for
   // dev/test loops while still bounding runaway-client patterns.
   SET_TZ: {
     routeClass: 'set_tz',
     limit: 30,
     windowSec: 60,
   },
-  // REQ-SET-006 — GET /api/discovery/status is polled by the settings
+  // REQ-SET-006 - GET /api/discovery/status is polled by the settings
   // page every few seconds while pending discoveries drain. 120/min/user
   // accommodates a 2-second polling cadence with overhead and bounds
   // pathological loops.

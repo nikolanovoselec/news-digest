@@ -18,7 +18,7 @@ import { log } from '~/lib/log';
 // state glyph) on top of the shared base.
 import type { WireArticle as WireArticleBase } from '~/lib/types';
 
-/** Dashboard wire shape — base WireArticle plus per-user reading
+/** Dashboard wire shape - base WireArticle plus per-user reading
  *  state. Exported under the historical name so existing imports of
  *  `WireArticle` from this module keep compiling. */
 export interface WireArticle extends WireArticleBase {
@@ -53,7 +53,7 @@ export interface TodayResponse {
   articles: WireArticle[];
   last_scrape_run: ScrapeRunRow | null;
   /** Unix seconds of the next 4-hour UTC cron tick (00/04/08/12/16/20).
-   *  Always a real timestamp — the countdown renders even when
+   *  Always a real timestamp - the countdown renders even when
    *  lastRun is null because the schedule is independent of any
    *  completed run. */
   next_scrape_at: number;
@@ -65,7 +65,7 @@ export interface TodayResponse {
 }
 
 /**
- * Load the dashboard payload for a user — the 29 most-recently-ingested
+ * Load the dashboard payload for a user - the 29 most-recently-ingested
  * articles from the global pool whose tag set intersects the user's
  * active tags, plus the most recent `ready` scrape_run metadata. The
  * grid renders those 29 cards and slot 30 is a "see today in Search &
@@ -80,7 +80,7 @@ export interface TodayResponse {
  * primary sort so the feed always feels alive.
  *
  * Per-tag filtering that reaches beyond the newest-29 window lives on
- * Search & History, not here — the dashboard is deliberately a narrow
+ * Search & History, not here - the dashboard is deliberately a narrow
  * "just the top 29 you haven't seen" view.
  */
 export async function loadTodayPayload(
@@ -97,7 +97,7 @@ export async function loadTodayPayload(
       )
       .first<ScrapeRunRow>();
   } catch (err) {
-    // CF-035 — a silent fallback to null hides D1 anomalies that
+    // CF-035 - a silent fallback to null hides D1 anomalies that
     // operationally matter (the dashboard countdown stops working).
     log('error', 'digest.today.query_failed', {
       user_id: userId,
@@ -144,8 +144,8 @@ export async function loadTodayPayload(
 
   // Build the IN clause programmatically so the number of placeholders
   // matches the tag-array length. Parameters are bound 1:1 via
-  // positional placeholders (?1 = user_id, ?2..?N = tags) — never
-  // string-interpolated — so tag slugs cannot smuggle SQL.
+  // positional placeholders (?1 = user_id, ?2..?N = tags) - never
+  // string-interpolated - so tag slugs cannot smuggle SQL.
   const tagPlaceholders = userTags.map((_, i) => `?${i + 2}`).join(', ');
   const sql = `
     SELECT a.id, a.canonical_url, a.primary_source_name, a.primary_source_url,
@@ -204,7 +204,7 @@ export async function loadTodayPayload(
 
 /**
  * Compute the unix-seconds timestamp of the next scrape cron tick.
- * The schedule is `0 *\/4 * * *` UTC — 00/04/08/12/16/20. Returns the
+ * The schedule is `0 *\/4 * * *` UTC - 00/04/08/12/16/20. Returns the
  * next such time STRICTLY in the future; rolls to tomorrow 00:00 UTC
  * when we're past 20:00.
  *

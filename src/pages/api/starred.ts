@@ -1,6 +1,6 @@
 // Implements REQ-STAR-002
 //
-// GET /api/starred — list the session user's starred articles, newest
+// GET /api/starred - list the session user's starred articles, newest
 // star first. Limit 60 (two dashboard pages' worth).
 //
 // Same auth + response shape as /api/digest/today.ts, minus the
@@ -24,7 +24,7 @@ import { parseJsonStringArray as parseStringArray } from '~/lib/json-string-arra
 // `starred_at` (the list IS the star timeline) on top of the base.
 import type { WireArticle as WireArticleBase } from '~/lib/types';
 
-/** /starred wire shape — base WireArticle plus per-user reading state
+/** /starred wire shape - base WireArticle plus per-user reading state
  *  and the `starred_at` timestamp that drives ordering. Exported under
  *  the historical name so existing imports keep compiling. */
 export interface WireArticle extends WireArticleBase {
@@ -47,7 +47,7 @@ interface StarredRow {
   read: number | null;
 }
 
-// CF-020: not exported — only the return type of loadStarredPayload
+// CF-020: not exported - only the return type of loadStarredPayload
 // below. starred.astro imports the loader function and infers the
 // shape from its return type at the call site.
 interface StarredResponse {
@@ -84,7 +84,7 @@ export async function loadStarredPayload(
     const result = await db.prepare(sql).bind(userId).all<StarredRow>();
     rows = result.results ?? [];
   } catch (err) {
-    // CF-035 — log before falling through to empty rows so a "no
+    // CF-035 - log before falling through to empty rows so a "no
     // starred articles" UX bug is distinguishable from a real D1
     // failure in the logs.
     log('error', 'starred.query_failed', {

@@ -13,7 +13,7 @@
 //   - 1 MB response cap.
 //   - 20-worker concurrency bucket when called in bulk so 500
 //     candidates don't stampede the network.
-//   - Plaintext output capped at 15000 characters — long-form
+//   - Plaintext output capped at 15000 characters - long-form
 //     essays (Substack/Medium-style posts) need the headroom; a
 //     2-3K cap was clipping at the article's preamble before any
 //     concrete content reached the LLM.
@@ -37,17 +37,17 @@ const SNIPPET_CAP = 15000;
 /**
  * Extract readable text from raw HTML. Runs the heuristic through
  * several container candidates and takes whichever produces the
- * LONGEST cleaned text — sites structure their markup wildly
+ * LONGEST cleaned text - sites structure their markup wildly
  * differently:
  *   <article>, <main>, <div class=".post-content|.entry-content|
  *   .article-body|.post-body|.article-content|.content|.prose|
  *   .markdown-body|.rich-text|.gh-content|.post-entry|...">
  * If NONE of those land a body, fall through to the full stripped
- * `<body>` — catches plain-`<p>`-tag pages too. Script/style/nav/
+ * `<body>` - catches plain-`<p>`-tag pages too. Script/style/nav/
  * header/footer/aside blocks are removed first so their contents
  * don't leak into the text.
  */
-// CF-020: not exported — only consumed inside this file by
+// CF-020: not exported - only consumed inside this file by
 // fetchAndExtract below. Keep as a file-local helper.
 function extractArticleText(html: string): string {
   // Drop non-content blocks BEFORE tag-stripping so their contents
@@ -57,12 +57,12 @@ function extractArticleText(html: string): string {
   // (whitespace, attributes, junk) between the tag name and `>` are
   // accepted (e.g. `</script >`, `</script\t\n>`, `</script foo>`,
   // `</script bar baz>`). HTML parsers tolerate all of these, and a
-  // strict `</script>` literal — or even `</script\s*>` (CodeQL
-  // #171) — lets an attacker smuggle a `<script>...</script foo>`
+  // strict `</script>` literal - or even `</script\s*>` (CodeQL
+  // #171) - lets an attacker smuggle a `<script>...</script foo>`
   // block past the strip and into the LLM-prompt body when the
   // attribute-shaped close is the only closing variant in the doc.
   // The `\b` anchor blocks `</scripted>` collisions.
-  // CF-025 — combined alternation runs ONE regex pass over the body
+  // CF-025 - combined alternation runs ONE regex pass over the body
   // instead of nine sequential passes (~10K full-body passes per cron
   // tick at 100 candidates × 9 strips). Backreference `\1` keeps the
   // open and close tag names in lockstep so cross-tag matches like
@@ -72,7 +72,7 @@ function extractArticleText(html: string): string {
     ' ',
   );
 
-  // Collect every candidate container body text — we take whichever
+  // Collect every candidate container body text - we take whichever
   // produces the longest clean output.
   const candidates: string[] = [];
   for (const m of cleaned.matchAll(/<article[^>]*>([\s\S]*?)<\/article>/gi)) {
@@ -109,7 +109,7 @@ function extractArticleText(html: string): string {
  * null on any failure (SSRF reject, timeout, non-2xx, oversized
  * body, empty after extraction). Never throws.
  *
- * Sends a browser-like User-Agent — some CDN / WAF configs flag
+ * Sends a browser-like User-Agent - some CDN / WAF configs flag
  * any UA containing 'bot' or 'curl' and return 403. Posing as
  * Firefox is honest-ish (we ARE a fetch client) and doesn't
  * trigger those filters.

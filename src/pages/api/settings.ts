@@ -6,9 +6,9 @@
 // Implements REQ-SET-006
 // Implements REQ-AUTH-001
 //
-// GET /api/settings — return the authenticated user's settings snapshot
+// GET /api/settings - return the authenticated user's settings snapshot
 // plus a `first_run` boolean derived from the onboarding-complete rule.
-// PUT /api/settings — validate every field server-side and persist.
+// PUT /api/settings - validate every field server-side and persist.
 //
 // Validation invariants (REQ-SET-002/003/004/005):
 //   - hashtags: array of strings, each matching /^[a-z0-9-]{2,32}$/,
@@ -95,7 +95,7 @@ function isIntegerInRange(value: unknown, min: number, max: number): value is nu
  * Identify tags in {@link incoming} that do not yet have a
  * `sources:<tag>` KV entry AND are not already covered by the curated
  * source registry. Tags covered by a curated source short-circuit
- * discovery — see {@link hasCuratedSource} for the rationale (REQ-DISC-001
+ * discovery - see {@link hasCuratedSource} for the rationale (REQ-DISC-001
  * AC 1). Runs the lookups in parallel since KV `get` is a network call
  * per tag.
  */
@@ -123,7 +123,7 @@ export async function GET(context: APIContext): Promise<Response> {
   if (!auth.ok) return auth.response;
 
   // CF-027 (Cycle 1 review): cap runaway polling. SETTINGS_READ is
-  // 120/min/user — double-headroom above legitimate page-render reads.
+  // 120/min/user - double-headroom above legitimate page-render reads.
   const rl = await enforceRateLimit(
     env,
     RATE_LIMIT_RULES.SETTINGS_READ,
@@ -218,9 +218,9 @@ export async function PUT(context: APIContext): Promise<Response> {
   }
   const body = parsed.data;
 
-  // REQ-SET-002 — hashtags. Hashtags are now managed on the /digest page
+  // REQ-SET-002 - hashtags. Hashtags are now managed on the /digest page
   // (tag strip at top) via POST /api/tags. PUT /api/settings only handles
-  // them when the caller explicitly includes a `hashtags` field — this
+  // them when the caller explicitly includes a `hashtags` field - this
   // keeps the endpoint usable from older clients and from tests without
   // requiring every caller to re-send them.
   let hashtags: string[] | null = null;
@@ -232,7 +232,7 @@ export async function PUT(context: APIContext): Promise<Response> {
     hashtags = tagsCheck.tags;
   }
 
-  // REQ-SET-003 — schedule (hour + minute + tz)
+  // REQ-SET-003 - schedule (hour + minute + tz)
   if (!isIntegerInRange(body.digest_hour, 0, 23)) {
     return errorResponse('invalid_time');
   }
@@ -251,7 +251,7 @@ export async function PUT(context: APIContext): Promise<Response> {
   }
   const tz = body.tz;
 
-  // REQ-SET-004 — model_id must be a catalog entry
+  // REQ-SET-004 - model_id must be a catalog entry
   if (
     typeof body.model_id !== 'string' ||
     !MODELS.some((m) => m.id === body.model_id)
@@ -260,7 +260,7 @@ export async function PUT(context: APIContext): Promise<Response> {
   }
   const modelId = body.model_id;
 
-  // REQ-SET-005 — email_enabled must be a strict boolean
+  // REQ-SET-005 - email_enabled must be a strict boolean
   if (typeof body.email_enabled !== 'boolean') {
     return errorResponse('invalid_email_enabled');
   }
@@ -272,7 +272,7 @@ export async function PUT(context: APIContext): Promise<Response> {
   // hashtags_json. When the user had no tags before this PUT, every
   // discovery row enqueued below gets priority=10 so the dedicated
   // discovery cron jumps them ahead of the steady-state queue. A read
-  // failure falls back to priority=0 — the save still succeeds.
+  // failure falls back to priority=0 - the save still succeeds.
   let priorHashtagsJson: string | null = null;
   let priorReadFailed = false;
   try {
@@ -322,7 +322,7 @@ export async function PUT(context: APIContext): Promise<Response> {
   }
 
   // Queue discovery for any hashtags that do not yet have KV source
-  // entries. Failures here are logged but do not fail the save — the
+  // entries. Failures here are logged but do not fail the save - the
   // discovery cron will pick them up later, and worst case the user
   // re-saves after the next deploy.
   let discovering: string[] = [];
@@ -370,7 +370,7 @@ export async function PUT(context: APIContext): Promise<Response> {
  * The settings page primarily POSTs JSON via fetch from a JS submit
  * handler, but if that handler ever fails to bind (CSP block, mobile
  * webview quirks, ClientRouter race), the browser would default to a
- * GET on the form's current URL with values as query params — silently
+ * GET on the form's current URL with values as query params - silently
  * losing every save. The form now declares `method="post"
  * action="/api/settings"`, so the unhandled native submit hits this
  * POST path with a `application/x-www-form-urlencoded` body.
@@ -381,7 +381,7 @@ export async function PUT(context: APIContext): Promise<Response> {
  */
 export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env;
-  // Native form submissions can't render JSON error bodies — the browser
+  // Native form submissions can't render JSON error bodies - the browser
   // would navigate to the JSON and show raw text. Every error path here
   // 303-redirects back to /settings?error=<code> so the page can render
   // the error inline and the user keeps editing without re-typing.
@@ -417,12 +417,12 @@ export async function POST(context: APIContext): Promise<Response> {
   }
 
   // The form sends `hour` and `minute` as separate fields (two
-  // <select>s on the page — see settings.astro for why we don't use
+  // <select>s on the page - see settings.astro for why we don't use
   // <input type="time">). We also accept the legacy single `time`
   // HH:MM string for back-compat with any stale page in flight when
   // this deploys.
   //
-  // Precedence: when both shapes are present, `hour`+`minute` wins —
+  // Precedence: when both shapes are present, `hour`+`minute` wins -
   // the fresh UI submits both because the form posts every field, and
   // a stale `<input name="time">` cannot exist in the same payload as
   // the new selects unless the page is mid-roll. Treat empty strings

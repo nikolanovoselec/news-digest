@@ -1,22 +1,22 @@
 // Implements REQ-HIST-002
 //
-// GET /api/stats — five aggregated tiles for the settings widget:
+// GET /api/stats - five aggregated tiles for the settings widget:
 //   { digests_generated, articles_read, articles_total,
 //     tokens_consumed, cost_usd }
 //
 // Semantics:
 //   - digests_generated = COUNT(*) FROM scrape_runs WHERE status='ready'
-//     (GLOBAL — one tick = one generation event, shown to every user)
+//     (GLOBAL - one tick = one generation event, shown to every user)
 //   - tokens_consumed   = SUM(tokens_in + tokens_out) FROM scrape_runs
-//     (GLOBAL — the every-4-hours pipeline runs once for everyone)
+//     (GLOBAL - the every-4-hours pipeline runs once for everyone)
 //   - cost_usd          = SUM(estimated_cost_usd) FROM scrape_runs
-//     (GLOBAL — same rationale)
+//     (GLOBAL - same rationale)
 //   - articles_total    = distinct articles in the global pool whose
 //     tag list intersects the user's currently-active tags (per-user
 //     via article_tags JOIN)
 //   - articles_read     = COUNT(*) FROM article_reads WHERE user_id
 //     AND article belongs to the same active-tag pool as articles_total
-//     — so XX of YY always describes "of the articles you can see RIGHT
+//     - so XX of YY always describes "of the articles you can see RIGHT
 //     NOW, how many have you read". Reads on articles whose only tag
 //     is one the user since deselected drop out of the numerator (and
 //     of the denominator), keeping the ratio honest.
@@ -42,7 +42,7 @@ interface SumRow {
 // CF-031: narrowed context type so SSR frontmatter callers
 // (StatsWidget.astro) can pass `{ request, locals, url }` without an
 // `as unknown as APIContext` cast. Astro's runtime still hands in a
-// full APIContext when the route fires over HTTP — parameter
+// full APIContext when the route fires over HTTP - parameter
 // contravariance lets a function accepting fewer fields satisfy the
 // APIRoute contract.
 export async function GET(
@@ -83,7 +83,7 @@ export async function GET(
     // articles_read is scoped to the SAME active-tag pool as
     // articles_total. Empty tag set → 0 (matches articles_total behaviour
     // and avoids an empty IN clause). The first bound parameter is
-    // `user_id`, then the user's tag list — `?2..?N+1` — which is why
+    // `user_id`, then the user's tag list - `?2..?N+1` - which is why
     // the placeholder offset above starts at 2.
     const articlesReadPromise =
       userTags.length === 0
@@ -131,7 +131,7 @@ export async function GET(
     for (const c of auth.cookiesToSet) headers.append('Set-Cookie', c);
     return new Response(JSON.stringify(body), { status: 200, headers });
   } catch (err) {
-    // CF-015 — every comparable handler structured-logs its 500 path
+    // CF-015 - every comparable handler structured-logs its 500 path
     // (settings, tags, articles/[id]/star). A regression in any of the
     // 5 stats queries used to surface as silent zeros; without this log
     // it would be undetectable.

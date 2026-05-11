@@ -2,20 +2,20 @@
 //
 // Shared queue-batch handler. The retry envelope here is the load-bearing
 // piece of REQ-PIPE-008 AC 8 (finalize-consumer intentional asymmetry on
-// terminal failure) — owning it in one module is what keeps that AC honest
+// terminal failure) - owning it in one module is what keeps that AC honest
 // across all three consumers (coordinator, chunk, finalize), each of which
 // previously hand-rolled the same retry loop with the magic number 3
 // (which must match wrangler.toml's `max_retries`).
 //
-// CF-007 — sourcing the retry cap from a single shared constant
+// CF-007 - sourcing the retry cap from a single shared constant
 // removes the silent drift risk: a future bump from 3 to 5 in
 // wrangler.toml that doesn't update every consumer would leave them
 // silently using the old threshold.
 //
-// Finalize's intentional asymmetry — REQ-PIPE-008 AC 8 says the
+// Finalize's intentional asymmetry - REQ-PIPE-008 AC 8 says the
 // finalize consumer must NOT call `finishRun('failed')` on terminal
 // retry, because the merge work is best-effort and the run was
-// already marked `ready` by the chunk consumer — is expressed as
+// already marked `ready` by the chunk consumer - is expressed as
 // "no `onTerminalFailure` passed".
 
 import { log } from '~/lib/log';
@@ -24,7 +24,7 @@ import { log } from '~/lib/log';
  *  (malformed payload, schema mismatch, deleted-parent state) and
  *  retrying will only repeat the same error. The handler logs the
  *  failure, fires `onTerminalFailure` once (if configured), and
- *  acks the message — bypassing the attempt counter that governs
+ *  acks the message - bypassing the attempt counter that governs
  *  transient errors. */
 export class NonRetryableError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -33,11 +33,11 @@ export class NonRetryableError extends Error {
   }
 }
 
-/** CF-004 — cross-consumer queue retry cap, sourced from
+/** CF-004 - cross-consumer queue retry cap, sourced from
  *  `env.QUEUE_MAX_RETRIES` (wrangler.toml `[vars]`). The earlier
  *  shape kept the literal `3` mirrored in this file AND in three
  *  `[[queues.consumers]]` declarations of wrangler.toml, with a grep
- *  parser script enforcing parity — fragile (a Prettier reformat
+ *  parser script enforcing parity - fragile (a Prettier reformat
  *  would silently break the script) and now superseded by reading
  *  the literal once at the platform level.
  *
@@ -70,12 +70,12 @@ interface BatchHandlerOptions<TBody> {
   /** Stable log status emitted when `onTerminalFailure` itself throws.
    *  Required iff `onTerminalFailure` is provided. */
   terminalFailureLogStatus?: string;
-  /** Override for the env-driven cap — tests can pin a smaller value
+  /** Override for the env-driven cap - tests can pin a smaller value
    *  without rebuilding wrangler.toml. */
   maxAttempts?: number;
 }
 
-// CF-055 — use Cloudflare's platform types instead of a hand-rolled
+// CF-055 - use Cloudflare's platform types instead of a hand-rolled
 // duplicate. `MessageBatch<TBody>` from `@cloudflare/workers-types`
 // is structurally identical to our old `QueueBatch<TBody>` but
 // removes one drift vector: if the platform adds fields (e.g. a

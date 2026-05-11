@@ -29,7 +29,7 @@ interface Props {
   noindex?: boolean;
   /**
    * Canonical URL for this page. When omitted, derived from
-   * `Astro.url.origin + Astro.url.pathname` — safe for most routes
+   * `Astro.url.origin + Astro.url.pathname` - safe for most routes
    * since the site doesn't use query-string-driven canonical variants.
    */
   canonical?: string;
@@ -47,16 +47,16 @@ const {
   ogImage,
 } = Astro.props;
 
-// Full title format: "<page> — News Digest" unless the caller passed
+// Full title format: "<page> - News Digest" unless the caller passed
 // the root brand already. Home/landing uses the brand verbatim.
 const fullTitle =
   title === 'News Digest' || title.startsWith('News Digest')
     ? title
-    : `${title} — News Digest`;
+    : `${title} - News Digest`;
 
 const canonicalUrl =
   canonical ?? `${Astro.url.origin}${Astro.url.pathname}`;
-// Default og:image is a 1200×630 branded PNG in public/og.png — raster is
+// Default og:image is a 1200×630 branded PNG in public/og.png - raster is
 // the lowest common denominator across scrapers (Facebook, iMessage, and
 // WhatsApp silently drop SVG og:images). public/og.svg is the master;
 // regenerate the PNG with @resvg/resvg-js when the SVG changes.
@@ -68,7 +68,7 @@ const ogImageType = ogImageUrl.endsWith('.svg') ? 'image/svg+xml' : 'image/png';
 // byte we emit, eliminating the flash where CSS applies the :root (light)
 // tokens before the deferred theme-init.js script runs. The cookie is written
 // by theme-toggle.ts alongside localStorage. Falls back to `light` when the
-// cookie is absent — prefers-color-scheme is only visible client-side.
+// cookie is absent - prefers-color-scheme is only visible client-side.
 function readThemeCookie(cookieHeader: string | null): 'light' | 'dark' | null {
   if (cookieHeader === null || cookieHeader === '') return null;
   for (const pair of cookieHeader.split(';')) {
@@ -114,19 +114,19 @@ const initialTheme = cookieTheme ?? 'light';
     <meta property="og:image:alt" content="News Digest, a daily tech digest curated by an LLM." />
     <meta property="og:locale" content="en_US" />
 
-    {/* Twitter / X card — summary_large_image whenever we ship an og:image. */}
+    {/* Twitter / X card - summary_large_image whenever we ship an og:image. */}
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={fullTitle} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImageUrl} />
     <meta name="twitter:image:alt" content="News Digest, a daily tech digest curated by an LLM." />
 
-    {/* Performance hints — the site itself has no third-party deps on
+    {/* Performance hints - the site itself has no third-party deps on
         the critical path, but the dns-prefetch cost is ~0 and keeps the
         door open for future font/avatar hosts without a redeploy. */}
     <link rel="dns-prefetch" href="//secure.gravatar.com" />
 
-    {/* pwa:apple-tags:start — REQ-PWA-001 AC 3. Keep these markers so this
+    {/* pwa:apple-tags:start - REQ-PWA-001 AC 3. Keep these markers so this
         block stays idempotent across concurrent edits from other phases. */}
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -134,7 +134,7 @@ const initialTheme = cookieTheme ?? 'light';
         OS prefers-color-scheme. Without this, a user in dark mode whose
         device is in light mode sees a white system status bar above an
         otherwise-dark UI on Android Chrome and iOS Safari (and vice
-        versa) — and on every Astro page swap the browser briefly fell
+        versa) - and on every Astro page swap the browser briefly fell
         back to the light value while the head was repainting, producing
         a "white flash" status bar on detail-back navigation.
         transition:persist keeps the same DOM node across navigations so
@@ -148,7 +148,7 @@ const initialTheme = cookieTheme ?? 'light';
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="News Digest" />
-    {/* SVG apple-touch-icon — Safari 13+ supports it; older versions
+    {/* SVG apple-touch-icon - Safari 13+ supports it; older versions
         fall back to the favicon. We don't ship a raster PNG because we
         have no image pipeline to keep it in sync with the SVG master. */}
     <link rel="apple-touch-icon" href="/icons/app-icon.svg" />
@@ -210,7 +210,7 @@ const initialTheme = cookieTheme ?? 'light';
           aria-hidden="true"
           fill="currentColor"
         >
-          {/* MDI newspaper — https://pictogrammers.com/library/mdi/icon/newspaper/ */}
+          {/* MDI newspaper - https://pictogrammers.com/library/mdi/icon/newspaper/ */}
           <path d="M20,11H4V8H20M20,15H13V13H20M20,19H13V17H20M11,19H4V13H11M20.33,4.67L18.67,3L17,4.67L15.33,3L13.67,4.67L12,3L10.33,4.67L8.67,3L7,4.67L5.33,3L3.67,4.67L2,3V19A2,2 0 0,0 4,21H20A2,2 0 0,0 22,19V3L20.33,4.67Z" />
         </svg>
         <span class="site-header__wordmark">
@@ -220,11 +220,11 @@ const initialTheme = cookieTheme ?? 'light';
       <nav class="site-header__nav" aria-label="Primary">
         {/* Anonymous pages (landing, logged-out error pages) get the
             default ThemeToggle. Authenticated pages get the same
-            ThemeToggle in `header` variant — the compact 32px control
+            ThemeToggle in `header` variant - the compact 32px control
             that sits to the LEFT of the UserMenu avatar. CF-021 merged
             HeaderThemeToggle into ThemeToggle with a `variant` prop. */}
         {!Astro.locals.user && <ThemeToggle />}
-        {/* UserMenu is NOT hidden during firstRun — the user still needs
+        {/* UserMenu is NOT hidden during firstRun - the user still needs
             a way to log out if they change their mind about onboarding,
             and the Settings link inside the menu points at the page
             they're already on (harmless). REQ-SET-006 gates navigation
@@ -275,7 +275,7 @@ const initialTheme = cookieTheme ?? 'light';
 
     {/* Scroll save/restore + view-transition handlers also live in
         ~/scripts/page-effects (imported above). They must stay in the
-        same external-loaded module — an inline copy would be dropped
+        same external-loaded module - an inline copy would be dropped
         at runtime by CSP, taking the morph animation and the per-path
         scroll restore with it. */}
 
@@ -325,7 +325,7 @@ const initialTheme = cookieTheme ?? 'light';
 
     <style is:global>
       /* The named site-header view-transition group cross-fades its
-         old + new snapshots — both painted opaque, but each at ~50%
+         old + new snapshots - both painted opaque, but each at ~50%
          opacity mid-transition. Standard alpha compositing then
          resolves to ~75% combined opacity, which lets the body root
          crossfade beneath bleed visibly through the "black bar".
@@ -333,12 +333,12 @@ const initialTheme = cookieTheme ?? 'light';
          backdrop is solid regardless of how its old/new children
          compose, and skipping the cross-fade animation collapses
          the visual to a single steady-state header for the whole
-         transition window — which is correct, because the chrome
+         transition window - which is correct, because the chrome
          is identical on every page and there is nothing to morph.
          Z-order in the transition layer follows DOM order of named
          groups. `src/scripts/page-effects.ts` promotes a single card
          per navigation by setting `view-transition-name: card-{slug}`
-         on the matching `[data-digest-card] a.digest-card__link` —
+         on the matching `[data-digest-card] a.digest-card__link` -
          that one card lives inside <main>, AFTER the site-header in
          body order, so the browser paints the card group ABOVE the
          site-header group while its position interpolates between
@@ -372,7 +372,7 @@ const initialTheme = cookieTheme ?? 'light';
            header. The visible content (icon + wordmark) stays
            left-aligned, but the click/tap target now extends across
            all the void space up to the nav. The narrow text-only
-           target is surprisingly easy to miss on mobile — and a
+           target is surprisingly easy to miss on mobile - and a
            missed tap on the brand returns no feedback, so the user
            keeps tapping. `min-width: 0` lets the flex child shrink
            below its content's intrinsic size on narrow viewports. */
@@ -383,7 +383,7 @@ const initialTheme = cookieTheme ?? 'light';
         /* Tell mobile browsers this is a single-tap target, not a
            potential double-tap-to-zoom. Without this, iOS/mobile
            Safari applies a ~350ms delay on the first tap to wait
-           for a second tap — making the scroll-to-top feel like it
+           for a second tap - making the scroll-to-top feel like it
            "needs 4-5 taps to fire". `manipulation` keeps pinch-zoom
            and panning, just disables the double-tap delay. */
         touch-action: manipulation;
@@ -400,7 +400,7 @@ const initialTheme = cookieTheme ?? 'light';
         flex-shrink: 0;
       }
 
-      /* Wordmark doubles as the page H1 on /digest — the brand
+      /* Wordmark doubles as the page H1 on /digest - the brand
          carries the visual weight of a page header. 2xl on desktop
          bumps to 3xl so it reads as a header. Mobile stays at 2xl
          to keep the 44px sticky-header row comfortable. */
@@ -424,7 +424,7 @@ const initialTheme = cookieTheme ?? 'light';
            text-2xl (32px) which matches the icon's intrinsic 32px so
            `align-items: center` lands cap-height visually on the icon
            midline. At desktop's 40px wordmark, a 32px icon centres
-           below the text's optical midline — the icon reads as
+           below the text's optical midline - the icon reads as
            floating high relative to the wordmark. Match dimensions
            so centre-alignment remains visually balanced. */
         .site-header__mark {
@@ -432,7 +432,7 @@ const initialTheme = cookieTheme ?? 'light';
           height: 40px;
         }
       }
-      /* "news" in muted, "digest" in full text — kerned together without
+      /* "news" in muted, "digest" in full text - kerned together without
          whitespace. Gives the brand character without adding chrome. */
       .site-header__word--one {
         color: var(--text-muted);
@@ -489,7 +489,7 @@ const initialTheme = cookieTheme ?? 'light';
         vertical-align: baseline;
       }
       .site-footer__scramble-ghost {
-        /* Invisible but lays out — this is what reserves "Codeflare"'s
+        /* Invisible but lays out - this is what reserves "Codeflare"'s
            width in the footer's natural font so '·' and '©' never
            shift regardless of what the scrambler paints. */
         visibility: hidden;
@@ -501,7 +501,7 @@ const initialTheme = cookieTheme ?? 'light';
         font-family:
           ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         /* Lock the color to the surrounding .site-footer__link (which
-           is already var(--text-muted) — same tone as "Built with
+           is already var(--text-muted) - same tone as "Built with
            … © 2026 Gray Matter GmbH"). Prevents any browser default
            link-color bleeding into the live layer. */
         color: inherit;

@@ -1,6 +1,6 @@
 // Implements REQ-AUTH-001, REQ-AUTH-002, REQ-AUTH-004, REQ-AUTH-007, REQ-AUTH-008
 //
-// GET /api/auth/<provider>/callback — finish the OAuth/OIDC code flow
+// GET /api/auth/<provider>/callback - finish the OAuth/OIDC code flow
 // for any configured provider. The dynamic `[provider]` segment maps
 // to entries in `~/lib/oauth-providers`; unknown names 404 before any
 // further work.
@@ -8,7 +8,7 @@
 // 1. If the provider returned ?error=, map to a sanitized code
 //    (REQ-AUTH-004) and redirect to the landing page.
 // 2. Validate the opaque `state` query param against the per-provider
-//    state cookie (AC 3 — CSRF defense for the OAuth handshake).
+//    state cookie (AC 3 - CSRF defense for the OAuth handshake).
 // 3. Exchange the authorization code for an access token (and id_token
 //    when the provider issues one).
 // 4. Run the provider's `fetchProfile` adapter to extract a stable
@@ -19,9 +19,9 @@
 //    (`<provider>:<sub>` for non-GitHub providers; bare numeric id
 //    for GitHub for legacy compatibility).
 // 6. Sign a fresh session JWT (sv=1 on create, or the row's current
-//    sv on re-login — never reset existing sv to 1 or we would
+//    sv on re-login - never reset existing sv to 1 or we would
 //    re-validate logged-out tokens).
-// 7. Redirect to /digest for everyone — new users land with complete
+// 7. Redirect to /digest for everyone - new users land with complete
 //    onboarding defaults at insert time.
 
 import type { APIContext } from 'astro';
@@ -61,7 +61,7 @@ interface TokenResponse {
 // the auth middleware stay in sync when the users SELECT changes.
 import { type ExistingUserRow } from '~/lib/auth-types';
 
-// `readCookie` is imported from `~/lib/crypto` (CF-005 — was duplicated
+// `readCookie` is imported from `~/lib/crypto` (CF-005 - was duplicated
 // here, in `auth/logout.ts`, and in `middleware/auth.ts`).
 
 /** Build an HTTP 303 redirect to `/?error=<code>` on the landing page. */
@@ -82,7 +82,7 @@ function errorRedirect(
 }
 
 /**
- * CF-025 — shared helper that logs an auth.callback.failed event, clears
+ * CF-025 - shared helper that logs an auth.callback.failed event, clears
  * the OAuth state cookie, and issues a 303 redirect to the error landing
  * page. Replaces 6 near-identical blocks in the callback handler.
  *
@@ -110,7 +110,7 @@ function respondError(
 }
 
 /**
- * Build a 403 response for state mismatch — the user agent should not
+ * Build a 403 response for state mismatch - the user agent should not
  * follow a redirect in this case because the CSRF invariant already
  * failed once; 403 forces the user to re-initiate.
  */
@@ -127,12 +127,12 @@ function invalidStateResponse(origin: string, extraHeaders: Headers): Response {
   return new Response(body, { status: 403, headers });
 }
 
-// CF-032: htmlAttrEscape removed — replaced by the project's shared
+// CF-032: htmlAttrEscape removed - replaced by the project's shared
 // `escapeHtml` from `~/lib/email-html`, which covers the same five
 // special characters and is already used by the email renderer.
 
 // CSRF state byte-equality uses `constantTimeEq` from `~/lib/crypto`
-// (CF-011 — previously used `verifyHmacSignature` against the cookie
+// (CF-011 - previously used `verifyHmacSignature` against the cookie
 // value, but the cookie is set by the worker itself, so plain constant-
 // time byte equality is the right primitive). `verifyHmacSignature` is
 // still the correct helper when comparing against an HMAC-signed input
@@ -199,7 +199,7 @@ async function exchangeCode(
 }
 
 /**
- * CF-011 — step-pipeline result type. Each numbered step in the GET
+ * CF-011 - step-pipeline result type. Each numbered step in the GET
  * handler either yields a {@link NextState} that the next step consumes
  * (`kind: 'next'`) or short-circuits the request with an early
  * `Response` (`kind: 'respond'`). The handler chains step results with
@@ -244,7 +244,7 @@ interface UpsertedState extends UserResolvedState {
 }
 
 /**
- * Step 1 — provider lookup + config check + rate limit. Pulls the
+ * Step 1 - provider lookup + config check + rate limit. Pulls the
  * provider config and credentials, validates env vars, and applies
  * AUTH_CALLBACK rate limiting. Short-circuits with 404, the
  * `oauth_not_configured` 4xx, or a 429.
@@ -270,7 +270,7 @@ async function step1ResolveProviderAndRateLimit(
     return { kind: 'respond', response: errorResponse('oauth_not_configured') };
   }
 
-  // CF-028 — application-layer rate limit on the OAuth callback so a
+  // CF-028 - application-layer rate limit on the OAuth callback so a
   // misconfigured Access rule or `*.workers.dev` exposure cannot be
   // abused as a free OAuth token-exchange call.
   const rateResult = await enforceRateLimit(
@@ -295,7 +295,7 @@ async function step1ResolveProviderAndRateLimit(
 }
 
 /**
- * Step 2 — provider-returned error (user clicked "Cancel", etc.) short-
+ * Step 2 - provider-returned error (user clicked "Cancel", etc.) short-
  * circuits with a 303 to the landing page; otherwise produces the URL
  * for the next step. The state cookie is cleared on the error path.
  */
@@ -318,7 +318,7 @@ function step2HandleProviderError(
 }
 
 /**
- * Step 3 — CSRF state match against the per-provider cookie (REQ-AUTH-001
+ * Step 3 - CSRF state match against the per-provider cookie (REQ-AUTH-001
  * AC 3). Uses constant-time byte equality. On mismatch returns a 403
  * with the state cookie cleared.
  */
@@ -342,7 +342,7 @@ function step3VerifyCsrfState(
       query_state_present: queryState !== null && queryState !== '',
       cookie_state_present: cookieState !== null && cookieState !== '',
       cookie_header_present: cookieHeader !== null,
-      // Log a count rather than the actual cookie names — anyone with
+      // Log a count rather than the actual cookie names - anyone with
       // log access otherwise learns the exact auth-cookie inventory
       // they'd need to forge a session.
       cookie_count: cookieHeader !== null
@@ -361,7 +361,7 @@ function step3VerifyCsrfState(
 }
 
 /**
- * Step 4 — token exchange + profile fetch. Validates the `code` query
+ * Step 4 - token exchange + profile fetch. Validates the `code` query
  * param, runs the provider's `exchangeCode` adapter, then its
  * `fetchProfile` adapter. Short-circuits with `oauth_error` (cookie
  * cleared) on any failure, or `no_verified_email` if the provider
@@ -452,7 +452,7 @@ async function step4ExchangeCodeAndFetchProfile(
 }
 
 /**
- * Step 5 — resolve `userId` via auth_links (REQ-AUTH-007). Three paths:
+ * Step 5 - resolve `userId` via auth_links (REQ-AUTH-007). Three paths:
  *  A. (provider, sub) already linked → reuse the linked user_id.
  *  B. Not linked but a `users` row with the same verified email exists
  *     → link the new (provider, sub) to that existing user_id.
@@ -485,7 +485,7 @@ async function step5ResolveUserId(
       userId = linked.user_id;
     } else {
       // Path B: no link yet. Check whether another provider already
-      // claimed this email — if so, attach the new alias rather than
+      // claimed this email - if so, attach the new alias rather than
       // forking a new user.
       // Exclude both sentinel rows: __system__ (REQ-DISC-003 self-healing
       // queue) and __e2e__ (the synthetic e2e-test sandbox). A real OAuth
@@ -537,7 +537,7 @@ async function step5ResolveUserId(
 }
 
 /**
- * Step 6 — insert (new user) or update (existing user) the users row
+ * Step 6 - insert (new user) or update (existing user) the users row
  * and pair a fresh auth_links alias for first-time logins. Returns the
  * `sessionVersion` to mint into the JWT and a `firstRun` flag the final
  * step uses for logging. DB errors return `oauth_error` with the state
@@ -556,7 +556,7 @@ async function step6UpsertUserRow(
       // pragmatic choice for now and is documented in
       // documentation/architecture.md.
       const defaultHashtagsJson = JSON.stringify(Array.from(DEFAULT_HASHTAGS));
-      // REQ-SET-007 — seed `tz` as empty so the silent auto-correct can
+      // REQ-SET-007 - seed `tz` as empty so the silent auto-correct can
       // distinguish "never explicitly set" (silent path may overwrite)
       // from "user picked this" (silent path must respect). DEFAULT_TZ
       // (`'UTC'`) is the UI fallback used by /settings when reading an
@@ -599,10 +599,10 @@ async function step6UpsertUserRow(
 }
 
 /**
- * Step 7 — mint the session JWT, issue a refresh token row, and emit
+ * Step 7 - mint the session JWT, issue a refresh token row, and emit
  * the final 303 redirect to /digest with all three Set-Cookie strings
  * (state-clear, access JWT, refresh value). Refresh-token issuance is
- * best-effort — a failure logs `auth.callback.failed` but still serves
+ * best-effort - a failure logs `auth.callback.failed` but still serves
  * the 5-min access JWT so the user is not locked out.
  */
 async function step7MintTokensAndRedirect(
@@ -612,7 +612,7 @@ async function step7MintTokensAndRedirect(
   // The `ghl` claim name is preserved for backward compatibility
   // (existing tokens use it; rotating the claim name would invalidate
   // every active session). Its value carries the provider's
-  // displayName for non-GitHub providers — semantic re-use, like the
+  // displayName for non-GitHub providers - semantic re-use, like the
   // `gh_login` column.
   const jwt = await signSession(
     {
@@ -631,7 +631,7 @@ async function step7MintTokensAndRedirect(
     status: 'success',
   });
 
-  // REQ-AUTH-008 AC 1 — issue refresh token for this device.
+  // REQ-AUTH-008 AC 1 - issue refresh token for this device.
   let refreshCookieValue: string;
   try {
     const issued = await issueRefreshToken(state.env.DB, state.userId, context.request, state.nowSec);
@@ -643,7 +643,7 @@ async function step7MintTokensAndRedirect(
       error_code: 'refresh_token_issue_failed',
       detail: String(err).slice(0, 500),
     });
-    // Continue without a refresh token — the user still gets the 5-min
+    // Continue without a refresh token - the user still gets the 5-min
     // access JWT, just no long-lived session. They'll be re-prompted
     // for OAuth on next visit. Failing the whole login here would lock
     // the user out entirely; partial degrade is the better choice.

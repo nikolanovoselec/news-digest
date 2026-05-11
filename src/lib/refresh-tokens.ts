@@ -5,13 +5,13 @@
 // Cookie value vs. row id: the value the client holds is a 32-byte
 // random hex string. We store SHA-256(value) as `token_hash` and look
 // up by that hash. The `id` column is a SEPARATE random 16-byte hex
-// identifier — never the cookie value — so a leaked DB dump cannot
+// identifier - never the cookie value - so a leaked DB dump cannot
 // expose live tokens. (CodeQL js/sensitive-data-treatment.)
 //
 // Rotation: every successful refresh marks the old row revoked,
 // inserts a new row with `parent_id` pointing back, and increments
 // `rotation_count` on the new row. Reuse of a revoked token is
-// treated as theft — see `revokeAllForUser` — UNLESS the revocation
+// treated as theft - see `revokeAllForUser` - UNLESS the revocation
 // happened within `ROTATION_GRACE_SECONDS`, in which case we treat
 // it as a benign concurrent-rotation collision (browser tab firing
 // two parallel requests against the same expired access token at the
@@ -22,7 +22,7 @@
 // at issuance and recorded on every refresh-token row. As of
 // 2026-04-28 the fingerprint is forensic metadata on the steady-state
 // refresh path (UA drift across browser auto-updates was forcing
-// legitimate users back through OAuth on every refresh — anti-pattern
+// legitimate users back through OAuth on every refresh - anti-pattern
 // per RFC 9700 / OWASP / Auth0 / Okta). The hard gate is preserved
 // only on the 30-second concurrent-rotation grace branch, where the
 // UA cannot legitimately drift across two parallel requests fired
@@ -46,11 +46,11 @@ const REFRESH_ROW_ID_BYTES = 16;
 export const ROTATION_GRACE_SECONDS = 30;
 
 /** Path scope for the refresh cookie. `Path=/` so middleware can do
- *  inline silent-refresh on any request — server-side only the refresh
+ *  inline silent-refresh on any request - server-side only the refresh
  *  + logout endpoints look the cookie up, everywhere else ignores it.
  *  Cookie is HttpOnly so JS can't read it, and `__Host-` prefix forces
  *  Secure + Path=/ at the browser level. */
-// CF-020: not exported — only used inside this file to compose the
+// CF-020: not exported - only used inside this file to compose the
 // Set-Cookie strings below. Kept file-local.
 const REFRESH_TOKEN_COOKIE_PATH = '/';
 
@@ -71,7 +71,7 @@ export interface RefreshTokenRow {
 }
 
 /**
- * CF-027 — Generate a fresh random cookie value.
+ * CF-027 - Generate a fresh random cookie value.
  *
  * The value the client holds in the refresh-token cookie.
  * {@link REFRESH_TOKEN_BYTES} bytes (32 by default) from
@@ -81,7 +81,7 @@ export interface RefreshTokenRow {
  * 2^128 hashes would require ~1.8×10^19 tokens stored, which exceeds
  * any feasible deployment by many orders of magnitude.
  *
- * **NOT the DB primary key** — that is {@link generateRowId}. The
+ * **NOT the DB primary key** - that is {@link generateRowId}. The
  * separation means a DB dump does not expose live token values.
  */
 function generateRefreshTokenValue(): string {
@@ -91,7 +91,7 @@ function generateRefreshTokenValue(): string {
 }
 
 /**
- * CF-027 — Generate a fresh random DB row id.
+ * CF-027 - Generate a fresh random DB row id.
  *
  * {@link REFRESH_ROW_ID_BYTES} bytes (16 by default) from
  * `crypto.getRandomValues`, hex-encoded. Used as the PRIMARY KEY in
@@ -146,7 +146,7 @@ export function buildClearRefreshCookie(): string {
 }
 
 /**
- * Issue a brand-new refresh token row (no parent — used at OAuth
+ * Issue a brand-new refresh token row (no parent - used at OAuth
  * callback, not rotation). Returns the cookie value plus the row id.
  */
 export async function issueRefreshToken(
@@ -176,7 +176,7 @@ export async function issueRefreshToken(
 /**
  * Look up a refresh token row by the cookie value.
  *
- * Returns the row when found, regardless of revoked/expired state — the
+ * Returns the row when found, regardless of revoked/expired state - the
  * caller decides what to do (reuse-detection wants to see revoked rows).
  */
 export async function findRefreshToken(
@@ -224,7 +224,7 @@ export async function findUnrevokedChild(
  * row with `parent_id` pointing back, and return the new cookie value.
  *
  * Atomic via D1 batch + a `WHERE revoked_at IS NULL` predicate on the
- * UPDATE. Returns null when the predicate matches zero rows — meaning
+ * UPDATE. Returns null when the predicate matches zero rows - meaning
  * a concurrent caller already rotated this row. The caller should then
  * fall back to {@link findUnrevokedChild} and apply the
  * concurrent-refresh tolerance branch.
@@ -247,13 +247,13 @@ export async function rotateRefreshToken(
 
   // The UPDATE returns affected-row count via D1's `meta.changes`; if
   // it's 0, a concurrent rotation already happened. We DO NOT insert
-  // the new row in that case — let the winner's row be the surviving
+  // the new row in that case - let the winner's row be the surviving
   // child, and the caller decides what to serve.
   //
   // Conditional INSERT predicate guards on "no unrevoked child exists
   // for this parent yet". This is tighter than the more obvious
   // `revoked_at = ?5` predicate, which fails when two rotations land
-  // in the same Math.floor second — both the winner and loser would
+  // in the same Math.floor second - both the winner and loser would
   // see `parent.revoked_at = N` (their shared `now`), and both
   // INSERTs would fire, leaving an orphan unrevoked child. The
   // "no-existing-unrevoked-child" predicate makes the INSERT
@@ -288,7 +288,7 @@ export async function rotateRefreshToken(
       ),
   ]);
 
-  // batch[0].meta.changes — 1 if we won the race, 0 if a concurrent
+  // batch[0].meta.changes - 1 if we won the race, 0 if a concurrent
   // refresh got there first.
   const updateResult = batch[0] as unknown as { meta?: { changes?: number } };
   const updateChanges = updateResult.meta?.changes ?? 0;
@@ -325,7 +325,7 @@ export async function revokeRefreshToken(
  * bump `users.session_version` so any in-flight access JWT is killed.
  *
  * Triggered when a token with `revoked_at` set is presented OUTSIDE
- * the grace window — within the window, see ROTATION_GRACE_SECONDS.
+ * the grace window - within the window, see ROTATION_GRACE_SECONDS.
  * REQ-AUTH-008 AC 4.
  *
  * **Idempotent under retry**: a second call when no unrevoked rows
@@ -346,7 +346,7 @@ export async function revokeRefreshToken(
  * **Race (CF-024):** the prior SELECT-then-batch-UPDATE shape had a
  * TOCTOU window where another isolate could revoke all rows between
  * SELECT and UPDATE. We now gate the bump on `EXISTS` against rows
- * whose `revoked_at` matches the value this call just wrote — and
+ * whose `revoked_at` matches the value this call just wrote - and
  * run BOTH statements inside a single `db.batch()` so the runtime
  * can't preempt between revoke and bump within ONE caller. The batch
  * is atomic relative to D1.
@@ -360,7 +360,7 @@ export async function revokeRefreshToken(
  * both can bump `session_version`. The over-bump is bounded by the
  * per-IP/per-user rate limit on the call sites (logout, refresh,
  * account-delete) and is acceptable because `session_version` is
- * monotonically increasing — extra bumps invalidate exactly the same
+ * monotonically increasing - extra bumps invalidate exactly the same
  * set of stale JWTs an idempotent bump would invalidate.
  *
  * The earlier prose framed this as "intra-batch" no-op semantics; the
@@ -371,7 +371,7 @@ export async function revokeAllForUser(
   userId: string,
   now: number = Math.floor(Date.now() / 1000),
 ): Promise<void> {
-  // CF-029 — capture the prior `session_version` so we can detect a
+  // CF-029 - capture the prior `session_version` so we can detect a
   // cross-isolate over-bump (two concurrent revokeAllForUser calls
   // BOTH passing the EXISTS gate and BOTH incrementing). The bump is
   // bounded by the per-IP/per-user rate limit at the call sites, but
@@ -395,11 +395,11 @@ export async function revokeAllForUser(
         `UPDATE refresh_tokens SET revoked_at = ?2 WHERE user_id = ?1 AND revoked_at IS NULL`,
       )
       .bind(userId, now),
-    // CF-030 — EXISTS sees rows whose `revoked_at` matches `?2`
+    // CF-030 - EXISTS sees rows whose `revoked_at` matches `?2`
     // (this call's `now`). Within a single isolate's batch, those are
     // the rows the previous UPDATE just flipped. ACROSS isolates that
     // both call within the same second, the predicate ALSO matches
-    // rows the OTHER isolate flipped — that's the cross-isolate
+    // rows the OTHER isolate flipped - that's the cross-isolate
     // over-bump documented in the function-level comment above and
     // observed via `auth.refresh.over_bump` (CF-029). Either way, the
     // bump fires only when at least ONE legitimate revocation
@@ -418,7 +418,7 @@ export async function revokeAllForUser(
       .bind(userId, now),
   ]);
 
-  // CF-029 — emit a warn whenever the post-bump version exceeds
+  // CF-029 - emit a warn whenever the post-bump version exceeds
   // priorVersion + 1. Single-isolate execution always lands at
   // exactly priorVersion + 1; anything higher means a concurrent
   // isolate also bumped between our prior-read and our batch. Same

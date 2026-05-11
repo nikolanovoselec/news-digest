@@ -6,11 +6,11 @@
 // both modes. A fully-configured user visiting `/settings?first_run=1`
 // is redirected to `/settings` by the settings-gate middleware helper.
 //
-// All validation is repeated server-side in /api/settings — client-side
+// All validation is repeated server-side in /api/settings - client-side
 // form state is convenience only.
 
 import Base from '~/layouts/Base.astro';
-// CF-057: ModelSelect import removed — showModelSelect is permanently false
+// CF-057: ModelSelect import removed - showModelSelect is permanently false
 // (REQ-SET-004: model selection UI hidden while the global pipeline runs on
 // a single default model). Re-enable by restoring this import and flipping
 // showModelSelect below. The stored model_id column is preserved.
@@ -34,9 +34,9 @@ if (typeof env.OAUTH_JWT_SECRET !== 'string' || env.OAUTH_JWT_SECRET === '') {
   return new Response('Application not configured', { status: 500 });
 }
 
-// Load the authenticated user into locals — the settings-gate helper
+// Load the authenticated user into locals - the settings-gate helper
 // reads from `Astro.locals.user`.
-// CF-010 — silent-refresh: loadSessionForPage attaches near-expiry
+// CF-010 - silent-refresh: loadSessionForPage attaches near-expiry
 // re-issued cookies and clear-cookie directives onto
 // Astro.response.headers (REQ-AUTH-002 AC 4 / REQ-AUTH-008 AC 4).
 const session = await loadSessionForPage(
@@ -51,7 +51,7 @@ Astro.locals.user = session.user;
 // stuck-tag rediscovery). The same ADMIN_EMAIL secret that gates
 // /api/admin/* in `src/middleware/admin-auth.ts` decides which user
 // sees these sections at all. Hiding non-admin entry points is a
-// progressive-disclosure cleanup — the API endpoints themselves stay
+// progressive-disclosure cleanup - the API endpoints themselves stay
 // gated server-side regardless of what the page renders.
 const adminEmail =
   typeof env.ADMIN_EMAIL === 'string' ? env.ADMIN_EMAIL : '';
@@ -61,7 +61,7 @@ const isAdmin =
 
 // Enforce the settings-incomplete / already-complete redirect rules.
 // CF-031: requireSettingsComplete accepts Pick<APIContext, 'request' | 'locals'>
-// so the SSR caller hands in only what it actually has — no cast needed.
+// so the SSR caller hands in only what it actually has - no cast needed.
 const gated = requireSettingsComplete({
   request: Astro.request,
   locals: Astro.locals,
@@ -84,7 +84,7 @@ const tzValue = user.tz === '' ? DEFAULT_TZ : user.tz;
 // Hour/minute options for the two-select time picker. We render the
 // schedule as `<select>`s rather than `<input type="time">` because the
 // native time-input UI ignores the `lang` attribute on Chromium and
-// Safari and falls back to the OS-level locale — a Europe/Zagreb user
+// Safari and falls back to the OS-level locale - a Europe/Zagreb user
 // on an en-US device saw "08:00 AM" with no way to override. `<select>`
 // option labels are literal strings, so we fully control what the user
 // sees.
@@ -116,15 +116,15 @@ const minuteOptions: string[] = MINUTE_STEP_OPTIONS.includes(storedMinuteStr)
 const hourValue = String(digestHour).padStart(2, '0');
 const minuteValue = storedMinuteStr;
 
-// REQ-SET-007 AC 5 — manual tz picker. Render the full IANA inventory
+// REQ-SET-007 AC 5 - manual tz picker. Render the full IANA inventory
 // server-side so the picker is complete before client JS runs. The
 // runtime exposes the list via Intl.supportedValuesOf('timeZone').
 //
-// CRITICAL — `Intl.supportedValuesOf('timeZone')` returns ONLY the
+// CRITICAL - `Intl.supportedValuesOf('timeZone')` returns ONLY the
 // canonical IANA zones; it does NOT include `'UTC'` or any of the
 // `'Etc/*'` aliases (V8/Workers behavior). Our DEFAULT_TZ is `'UTC'`,
 // so a fresh user with `users.tz = 'UTC'` finds NO `<option>` matching
-// `selected={zone === 'UTC'}` — the browser silently falls back to the
+// `selected={zone === 'UTC'}` - the browser silently falls back to the
 // alphabetically-first option (`'Africa/Abidjan'`), and any subsequent
 // form submit POSTs that wrong value back to /api/settings, poisoning
 // the user record. Guard by prepending `tzValue` whenever it isn't in
@@ -161,28 +161,28 @@ const userHashtags = parseJsonStringArray(user.hashtags_json)
   .map((t) => t.trim().toLowerCase().replace(/^#/, ''))
   .filter((t) => t !== '');
 const userHashtagSet = new Set<string>(userHashtags);
-// Restore is shown when at least one default tag is missing — the
+// Restore is shown when at least one default tag is missing - the
 // button would actually add something.
 const showRestoreButton = DEFAULT_HASHTAGS.some((t) => !userHashtagSet.has(t));
-// Delete is shown whenever the user has at least one tag — the
+// Delete is shown whenever the user has at least one tag - the
 // button clears the whole list so the user can start over with a
 // completely custom set. Hides only when the list is already empty,
 // because clearing nothing is a no-op.
 const showDeleteAllButton = userHashtags.length > 0;
 
-// REQ-DISC-004 — identify user tags that have no working source so the
+// REQ-DISC-004 - identify user tags that have no working source so the
 // "Discover missing sources" button can re-trigger discovery. A tag is
 // stuck when:
 //   - it has no entry in the curated registry (CURATED_SOURCES) AND
 //   - either its `sources:{tag}` KV entry is missing, unparseable, or
 //     resolves to a feeds array of length 0
 //
-// Tags that DO have a curated source are never stuck — even if discovery
+// Tags that DO have a curated source are never stuck - even if discovery
 // hasn't run for them yet, the curated feeds keep the dashboard fed.
 //
 // Pre-2026-04-25 behaviour: a missing KV entry was treated as "discovery
 // still pending" and the tag stayed hidden, so a manually-added tag with
-// no curated source AND no successful discovery never surfaced — the
+// no curated source AND no successful discovery never surfaced - the
 // user had no way to trigger re-discovery for it.
 //
 // KV reads run in parallel; transient KV failures fall back to "not
@@ -207,14 +207,14 @@ if (userHashtags.length > 0) {
         try {
           parsed = JSON.parse(raw);
         } catch {
-          return tag; // unparseable — treat as stuck
+          return tag; // unparseable - treat as stuck
         }
         if (parsed === null || typeof parsed !== 'object') return tag;
         const feeds = (parsed as { feeds?: unknown }).feeds;
         if (!Array.isArray(feeds) || feeds.length === 0) return tag;
         return null;
       } catch {
-        return null; // transient KV blip — don't false-flag
+        return null; // transient KV blip - don't false-flag
       }
     }),
   );
@@ -234,7 +234,7 @@ const rediscoverConfirmed =
   rediscoverConfirmedCount !== null && Number.isFinite(rediscoverConfirmedCount);
 
 const heroTitle = isFirstRun
-  ? 'Welcome — pick a time, we handle the rest'
+  ? 'Welcome - pick a time, we handle the rest'
   : 'Settings';
 const heroBody = isFirstRun
   ? 'Choose when your daily digest should arrive and which model powers the summaries. You can add interests once the digest is live.'
@@ -273,7 +273,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
         the browser's native submit hits this same endpoint as a
         form-encoded POST and the server returns a 303 back here.
         Without this, no `method` attribute defaults to GET and the
-        form silently navigates with values as query params — losing
+        form silently navigates with values as query params - losing
         every save. */}
     <form
       class="settings__form"
@@ -281,12 +281,12 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       method="post"
       action="/api/settings"
     >
-      {/* Interests moved to the top of /digest — the tag strip there is
+      {/* Interests moved to the top of /digest - the tag strip there is
           the sole editor for the user's hashtags. Settings controls
           schedule, model, and delivery only. */}
       <fieldset class="settings__section">
         <legend class="settings__legend">Notifications</legend>
-        {/* Two <select>s instead of <input type="time"> — native time
+        {/* Two <select>s instead of <input type="time"> - native time
             inputs render in 12h on Chromium/Safari whenever the OS
             locale is en-US, ignoring `lang="en-GB"` and CSS hints,
             so a user in Europe/Zagreb on an en-US device saw
@@ -324,7 +324,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           </div>
         </fieldset>
         <label class="settings__tz" data-tz-block>
-          {/* Implements REQ-SET-007 AC 5 — manual tz picker. The
+          {/* Implements REQ-SET-007 AC 5 - manual tz picker. The
               <select> renders the full IANA inventory server-side and
               defaults to the stored tz so first-paint is correct. The
               wireTzPicker() init swaps the selection to the
@@ -338,7 +338,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           </select>
         </label>
         {/* CF-057: ModelSelect branch removed. REQ-SET-004 stored preference
-            survives — the hidden input round-trips model_id so the PUT
+            survives - the hidden input round-trips model_id so the PUT
             handler (which validates and persists it) always receives a value. */}
         <input
           type="hidden"
@@ -374,13 +374,13 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
         <fieldset class="settings__section settings__section--standalone">
           <legend class="settings__legend">Interests</legend>
           <p class="settings__hint">
-            Tags live at the top of the digest page — click to select/filter, click
+            Tags live at the top of the digest page - click to select/filter, click
             the × to delete. You can revert to the curated starter list at any time.
           </p>
           <div class="settings__actions-row">
             {/*
               Native <form> POST to /api/tags/restore. MUST sit outside
-              the main <form class='settings__form'> above — nested
+              the main <form class='settings__form'> above - nested
               <form>s are invalid HTML and the browser submits the
               outer one on click, which redirected users to
               /settings?time=08:30 instead of calling the endpoint.
@@ -443,13 +443,13 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
 
     {
       isAdmin && !isFirstRun && emptyFeedTags.length > 0 && (
-        /* Implements REQ-DISC-004 — single bulk "Discover missing
+        /* Implements REQ-DISC-004 - single bulk "Discover missing
            sources" button posts to /api/admin/discovery/retry-bulk which
            re-queues every empty-feed tag in one shot. Gated to admin
-           users only — the API endpoint itself remains gated by
+           users only - the API endpoint itself remains gated by
            ADMIN_EMAIL + Cloudflare Access regardless of what we render
            here. Non-admins simply don't see the section. One bulk
-           button covers every stuck tag — clicking once is enough.
+           button covers every stuck tag - clicking once is enough.
            Native form POST chosen over JS for the same
            Samsung-Browser/in-app-webview reliability reason as the
            rest of the page. */
@@ -573,7 +573,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               Permanently deletes your account, digests, and all associated data.
             </p>
             {/*
-              Native <form method="post" action="/api/auth/account"> —
+              Native <form method="post" action="/api/auth/account"> -
               the server also accepts the JSON DELETE path for API
               callers, but the browser flow goes through POST so the
               JS interceptor can't swallow the submit on flaky mobile
@@ -631,7 +631,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
 <script>
   // Implements REQ-SET-001, REQ-SET-002, REQ-SET-003, REQ-SET-004, REQ-SET-005, REQ-SET-007
   //
-  // Client-side controller for /settings. Framework-free — collects
+  // Client-side controller for /settings. Framework-free - collects
   // form state from DOM data attributes and POSTs JSON to /api/settings.
 
   interface SettingsResponse {
@@ -650,7 +650,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     const minuteSelect = form.querySelector('[data-minute-select]') as HTMLSelectElement | null;
     const tzSelect = form.querySelector('[data-tz-select]') as HTMLSelectElement | null;
     const emailToggle = form.querySelector('[data-email-toggle]') as HTMLInputElement | null;
-    // CRITICAL — model_id field is rendered as <select> when showModelSelect=true
+    // CRITICAL - model_id field is rendered as <select> when showModelSelect=true
     // and as a hidden <input> when false. Selecting `select[name="model_id"]`
     // returned null in production (showModelSelect=false), so modelId became ''
     // and PUT /api/settings 400'd with invalid_model_id BEFORE persisting tz.
@@ -664,7 +664,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     const digestMinute = Number.parseInt(minuteSelect?.value ?? '', 10);
     // TZ comes from the manual <select> (REQ-SET-007 AC 5). The picker
     // is server-rendered with the stored value, then upgraded to the
-    // browser-detected zone by wireTzPicker on load — so .value is
+    // browser-detected zone by wireTzPicker on load - so .value is
     // always the right answer, no Intl fallback needed here.
     const tz = tzSelect?.value ?? '';
     const modelId = modelSelect?.value ?? '';
@@ -719,7 +719,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       // Kick off the user's first digest automatically so they see a
       // live "generating…" card as soon as they land on /digest. If the
       // request fails (e.g., rate-limit, no tags yet), the server still
-      // picks it up on the normal schedule — not worth blocking the
+      // picks it up on the normal schedule - not worth blocking the
       // redirect on it.
       try {
         await fetch('/api/digest/refresh', {
@@ -744,13 +744,13 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
   // deleteAccount() lived here as a JS submit interceptor that
   // POSTed { confirm: 'DELETE' } via fetch. The form is now a native
   // HTML <form method="post" action="/api/auth/account"> so the
-  // browser submits directly — no JS intercept, no race with mobile
+  // browser submits directly - no JS intercept, no race with mobile
   // engines that eat the submit. The server's POST handler returns a
   // 303 to /?account_deleted=1.
 
   // Run ID captured from the post-force-refresh redirect. Sticks
   // until the run finishes so the poll can pin its lookup to that
-  // specific run via ?run_id=… (CF-050) — without it the first few
+  // specific run via ?run_id=… (CF-050) - without it the first few
   // polls race the most-recent ordering and may briefly report the
   // *previous* run's terminal state instead of the new run's
   // start-up. Cleared when the server reports running: false.
@@ -758,7 +758,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
 
   /** Poll /api/scrape-status every 5s and write a "X/Y chunks done,
    *  N articles ingested" line into [data-scrape-progress]. Hides
-   *  the element when no run is active, cheap to keep running —
+   *  the element when no run is active, cheap to keep running -
    *  one SQL SELECT + one KV get per poll, no LLM, no article read. */
   async function pollScrapeProgress(): Promise<void> {
     const el = document.querySelector<HTMLElement>('[data-scrape-progress]');
@@ -786,13 +786,13 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       if (!body.running) {
         el.hidden = true;
         el.textContent = '';
-        // Run finished — drop the pin so the next force-refresh can
+        // Run finished - drop the pin so the next force-refresh can
         // pick up a different run id, and so future polls fall back
         // to the most-recent path.
         pinnedRunId = null;
         return;
       }
-      // Bucketed progress — 0 / 25 / 50 / 75 / 100 %. Snap DOWN to
+      // Bucketed progress - 0 / 25 / 50 / 75 / 100 %. Snap DOWN to
       // the nearest quarter (floor), so a run that's finished 3 of
       // 4 chunks reads as 75%, not 100%. Total unknown → show a
       // plain 'Scrape in progress' line until the coordinator's
@@ -817,7 +817,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
         const s = elapsed % 60;
         parts.push(`${m}m ${s}s elapsed`);
       }
-      el.textContent = parts.join(' — ');
+      el.textContent = parts.join(' - ');
       el.hidden = false;
     } catch {
       /* keep the current text; the next tick retries */
@@ -832,7 +832,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
   }
   /** Clear the scrape-progress poll interval on Astro View-Transition
    *  navigations. Without this the setInterval keeps firing after
-   *  the user leaves /settings — the DOM-query null-guard stops
+   *  the user leaves /settings - the DOM-query null-guard stops
    *  UI writes but the HTTP request still fires every 5s. */
   function teardownScrapeProgress(): void {
     if (scrapeProgressHandle !== null) {
@@ -848,7 +848,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
    * Auto-detect the browser's preferred hour cycle and re-label the
    * hour-picker options to AM/PM when the user is in a 12-hour locale
    * (en-US, en-CA, en-AU, en-PH, …). The server renders 24-hour
-   * labels for everyone — this swaps them client-side based on
+   * labels for everyone - this swaps them client-side based on
    * `Intl.DateTimeFormat().resolvedOptions().hourCycle`. en-US → 12h,
    * en-GB / hr-HR / ja-JP → 24h. No country-by-country hardcoding.
    *
@@ -860,7 +860,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
    *
    * Idempotent: runs again on every `astro:page-load` SPA navigation,
    * but each run reads option values 0..23 and overwrites textContent
-   * the same way — no accumulation, no dataset guard needed.
+   * the same way - no accumulation, no dataset guard needed.
    *
    * Submitted form value is unchanged (canonical 0-23 integer).
    */
@@ -875,9 +875,9 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     // Only re-label for the conventional US-style 12-hour cycle. `h11`
     // semantically maps midnight → "0 AM" not "12 AM", and the runtime
     // returns it primarily for ja-JP where 24h is already the digital
-    // norm — so we leave those users with the 24h labels.
+    // norm - so we leave those users with the 24h labels.
     if (hourCycle !== 'h12') return;
-    // Cast pattern matches the rest of this file — the generic on
+    // Cast pattern matches the rest of this file - the generic on
     // querySelector trips Astro's TypeScript checker because the
     // overloaded lib.dom signature for SVGSVGElement narrowing makes
     // <HTMLSelectElement> overlap-incompatible with the Element
@@ -910,10 +910,10 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
   /** Orchestrate a manual pipeline run from the Settings page.
    *
    *  Two modes from one chained client-side flow:
-   *    'full'    — full scrape → embed → dedup (the multi-phase admin
+   *    'full'    - full scrape → embed → dedup (the multi-phase admin
    *                run that supersedes the three separate admin
    *                buttons).
-   *    'refresh' — scrape only, equivalent to a single 4-hourly cron
+   *    'refresh' - scrape only, equivalent to a single 4-hourly cron
    *                tick. Skips the wipe / embed-backfill / historical
    *                dedup phases entirely.
    *
@@ -921,10 +921,10 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
    *  enqueues the orchestrator; the queue consumer (`pipeline-jobs`)
    *  drives every phase server-side. The browser only polls
    *  /api/admin/pipeline-status?id=… for live progress display. Closing
-   *  the tab does not interrupt the run — reopening /settings restores
+   *  the tab does not interrupt the run - reopening /settings restores
    *  progress from the audit row.
    *
-   *  Refresh mode kicks the coordinator only (phases 1 + 2) — the
+   *  Refresh mode kicks the coordinator only (phases 1 + 2) - the
    *  queue-driven chunk + finalize consumers handle the rest in the
    *  background, exactly like a cron tick.
    *
@@ -997,7 +997,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     if (body.status === 'done') {
       const ingested = body.scrape?.articles_ingested ?? 0;
       const merged = body.dedup?.merged ?? 0;
-      return `Done — ingested ${ingested}, merged ${merged} duplicates.`;
+      return `Done - ingested ${ingested}, merged ${merged} duplicates.`;
     }
     switch (body.current_phase) {
       case 'reembed_flip':
@@ -1116,7 +1116,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     }
   }
 
-  /** Wire the Full / Refresh buttons to runPipeline(). Idempotent —
+  /** Wire the Full / Refresh buttons to runPipeline(). Idempotent -
    *  the data-bound guard prevents double-binding on Astro SPA
    *  navigation back to /settings. */
   function wirePipelineButton(): void {
@@ -1213,7 +1213,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     if (savedRunId === undefined) return;
     void (async () => {
       try {
-        // Try pipeline-status first — if the saved id is a pipeline
+        // Try pipeline-status first - if the saved id is a pipeline
         // run, the orchestrator may still be running on the backend.
         // First call is a probe: if pipeline-status returns ok=true,
         // the saved id IS a pipeline run and we keep polling until
@@ -1358,7 +1358,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           };
           status.textContent = map[errorCode] ?? 'Could not save your settings.';
         }
-        // Force-refresh round-trip — the admin endpoint 303-redirects to
+        // Force-refresh round-trip - the admin endpoint 303-redirects to
         // /settings?force_refresh=ok|reused|error after the operator
         // clicks the button (or after the Cloudflare Access SSO bounce
         // returns as a GET). Surface the outcome on the Force-refresh
@@ -1383,7 +1383,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
             pinnedRunId = runId;
           }
         }
-        // Embed-backfill round-trip — the admin endpoint 303-redirects
+        // Embed-backfill round-trip - the admin endpoint 303-redirects
         // to /settings?embed=done|partial|error|denied with cumulative
         // counts after the operator clicks the button. Surface the
         // outcome on the embed status node so the operator can see how
@@ -1408,7 +1408,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
                       : `Embed backfill: ${embed}`;
           }
         }
-        // Historical-dedup round-trip — same shape as embed, but the
+        // Historical-dedup round-trip - same shape as embed, but the
         // counts are scanned/merged/remaining and the param is `dedup`.
         const dedup = params.get('dedup');
         if (dedup !== null && dedup !== '') {
@@ -1457,12 +1457,12 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       }
     }
 
-    // REQ-SET-007 AC 5 + AC 6 — browser-detected pre-select. Server
+    // REQ-SET-007 AC 5 + AC 6 - browser-detected pre-select. Server
     // rendered the dropdown with the stored tz selected (or 'UTC' as
     // the UI fallback when stored is the empty seed sentinel). We only
     // swap to the browser-resolved zone while the stored value is the
     // seeded sentinel (empty), matching Base.astro's syncBrowserTz gate.
-    // Any non-empty stored value is authoritative — including 'UTC',
+    // Any non-empty stored value is authoritative - including 'UTC',
     // which a user can pick deliberately.
     //
     // Read the stored tz from `document.body.dataset.userTz`, NOT from
@@ -1480,7 +1480,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
           tzSelect.value = browserTz;
         }
       } catch {
-        /* Intl unavailable — leave the stored tz in place. */
+        /* Intl unavailable - leave the stored tz in place. */
       }
     }
 
@@ -1505,12 +1505,12 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       const button = restoreForm.querySelector<HTMLButtonElement>('[data-restore-tags]');
       if (button !== null) button.disabled = true;
       if (restoreStatus !== null) restoreStatus.textContent = 'Restoring…';
-      // Fall through to native POST — browser follows the 303.
+      // Fall through to native POST - browser follows the 303.
     });
   }
 
   /** Wire the Delete-account button's progress indicator. The form
-   *  itself is a native POST so no submit intercept is needed — this
+   *  itself is a native POST so no submit intercept is needed - this
    *  handler only flashes "Deleting…" on click so the user gets
    *  immediate feedback while the browser navigates. */
   function wireDeleteForm(): void {
@@ -1526,7 +1526,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
         button.disabled = true;
         button.textContent = 'Deleting…';
       }
-      // Fall through to native POST — browser follows the 303.
+      // Fall through to native POST - browser follows the 303.
     });
   }
 
@@ -1778,7 +1778,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
 
   /* Custom-styled checkbox so the fill AND the check glyph invert
      correctly across themes. `accent-color: var(--text)` alone broke
-     in dark mode — the native checkmark is always white, so a white
+     in dark mode - the native checkmark is always white, so a white
      fill + white checkmark rendered the tick invisible. Here we draw
      a solid box in var(--text) when checked and paint an inline SVG
      checkmark in var(--bg) (opposite contrast, same rule the primary

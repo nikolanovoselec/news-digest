@@ -109,7 +109,7 @@ const MAX_CANDIDATES_PER_CHUNK = 25;
  * essay-heavy days. */
 const CHUNK_INPUT_CHARS_BUDGET = 280_000;
 
-/** Per-candidate framing overhead in the user prompt — the
+/** Per-candidate framing overhead in the user prompt - the
  * `[N] title`, `source: ...`, `url: ...`, `published_at: ...`
  * lines plus newlines. Added to each candidate's snippet length
  * when estimating its contribution to the chunk's char budget. */
@@ -118,7 +118,7 @@ const PER_CANDIDATE_OVERHEAD_CHARS = 400;
 /** Median post-fetch body length when the feed snippet is below
  * the chunk-consumer's `SNIPPET_FLOOR` and a body fetch fires.
  * Used as the estimator's lower-bound for candidates whose
- * actual body size the coordinator doesn't know yet — body fetch
+ * actual body size the coordinator doesn't know yet - body fetch
  * happens later, in the chunk consumer. Conservative under-estimate
  * is preferred (over-pack a little) over over-estimate (waste budget
  * on chunks that end up half-empty post-fetch). */
@@ -144,7 +144,7 @@ export function estimateCandidateChars(c: ChunkCandidate): number {
  *  candidate would push it past `maxCharsPerChunk` OR the chunk hits
  *  `maxCandidatesPerChunk`, whichever fires first. The first candidate
  *  in an empty chunk is always accepted (a single candidate larger
- *  than the budget gets its own chunk rather than being dropped — the
+ *  than the budget gets its own chunk rather than being dropped - the
  *  consumer's per-field cap takes over downstream).
  *
  *  Pure function. Extracted from `chunkAndEnqueue` for direct testing
@@ -204,7 +204,7 @@ const FRESHNESS_WINDOW_SEC = 48 * 60 * 60;
 
 /** CF-012 + CF-073: cap the chunk fan-out at `max` and emit a single
  *  `coordinator_chunks_capped` warning when truncation actually
- *  happens. Exported for direct testing — the production caller is
+ *  happens. Exported for direct testing - the production caller is
  *  the only other site, so the test surface is the helper itself.
  *
  *  Returns a fresh slice when truncating (immutability over the input
@@ -232,7 +232,7 @@ export function capChunks<T>(
  * and end up rendered as an `href`.
  *
  * CF-021: previously accepted `http:` too, which left the SSRF guard
- * (`isUrlSafe` in src/lib/ssrf.ts — https-only) and this write-time
+ * (`isUrlSafe` in src/lib/ssrf.ts - https-only) and this write-time
  * filter asymmetric. http URLs would land in D1 then silently fail the
  * body fetch. Aligned: both layers reject anything that isn't https. */
 function isSafeWebUrl(url: string): boolean {
@@ -293,17 +293,17 @@ export async function runCoordinator(
 ): Promise<void> {
   const { scrape_run_id } = body;
 
-  // Step 0 — race guard: only one coordinator wins per scrape_run_id.
+  // Step 0 - race guard: only one coordinator wins per scrape_run_id.
   const claimed = await claimCoordinatorDispatch(env, scrape_run_id);
   if (!claimed) return;
 
-  // Step 1 — build full source list (curated + KV-discovered).
+  // Step 1 - build full source list (curated + KV-discovered).
   const allSources = await assembleAllSources(env);
 
-  // Steps 2 + 2b — parallel fetch fan-out, then apply evictions.
+  // Steps 2 + 2b - parallel fetch fan-out, then apply evictions.
   const rawHeadlines = await fetchSourcesAndApplyEvictions(env, allSources, scrape_run_id);
 
-  // Step 2c — drop Google News mirror entries when a direct publisher
+  // Step 2c - drop Google News mirror entries when a direct publisher
   // copy of the same story is present. CF-019 (Cycle 1 review): the
   // coordinator and curated-sources docstrings already documented this
   // pass as running, but the call site had been dropped. Without it the
@@ -312,16 +312,16 @@ export async function runCoordinator(
   // multiple times on /digest.
   const deduplicatedHeadlines = applyPreferDirectOverGoogleNews(rawHeadlines);
 
-  // Step 3 — canonicalize, scheme-gate, and freshness-filter.
+  // Step 3 - canonicalize, scheme-gate, and freshness-filter.
   const candidates = buildCandidates(deduplicatedHeadlines, scrape_run_id);
 
-  // Step 4 — dedupe duplicate URLs that appear across multiple feeds.
+  // Step 4 - dedupe duplicate URLs that appear across multiple feeds.
   const clusters = clusterByCanonical(candidates);
 
-  // Step 5 — filter already-known URLs; aggregate alt-sources for re-seen ones.
+  // Step 5 - filter already-known URLs; aggregate alt-sources for re-seen ones.
   const { survivors } = await filterAndAggregateReSeenClusters(env, clusters, scrape_run_id);
 
-  // Step 6 — empty-pool guard.
+  // Step 6 - empty-pool guard.
   if (survivors.length === 0) {
     await finishRun(env.DB, scrape_run_id, 'ready');
     // CF-001: with no survivors there is no finalize tick to flip the
@@ -335,23 +335,23 @@ export async function runCoordinator(
     return;
   }
 
-  // Step 7 — flatten dedupe-clusters to chunk-ready candidates.
+  // Step 7 - flatten dedupe-clusters to chunk-ready candidates.
   const chunkCandidates = flattenToChunkCandidates(survivors);
 
-  // Step 8 — chunk, prime KV counter, enqueue.
+  // Step 8 - chunk, prime KV counter, enqueue.
   await chunkAndEnqueue(env, chunkCandidates, candidates.length, survivors.length, scrape_run_id);
 }
 
 // ---------- step helpers (colocated; not re-exported) ---------------------
 
 /**
- * Step 0 — Atomic CAS race guard.
+ * Step 0 - Atomic CAS race guard.
  *
  * CF-002: flips `chunk_count` to sentinel -1 in a single conditional UPDATE
  * so only one concurrent coordinator delivery wins the dispatch. Returns
  * `true` when this caller claimed the slot; `false` when another delivery
  * already ran (caller should return immediately). On a DB error, falls
- * through with `true` — the guard is best-effort.
+ * through with `true` - the guard is best-effort.
  *
  * The sentinel is rolled back when the real chunk count is written in Step 8.
  * If dispatch crashes, the `-1` is recoverable on a subsequent retry or via
@@ -381,13 +381,13 @@ async function claimCoordinatorDispatch(env: Env, scrape_run_id: string): Promis
       scrape_run_id,
       detail: String(err).slice(0, 500),
     });
-    // Fall through — race guard is best-effort.
+    // Fall through - race guard is best-effort.
     return true;
   }
 }
 
 /**
- * Step 1 — Build the full source list for this tick.
+ * Step 1 - Build the full source list for this tick.
  *
  * CF-017: purges orphan `sources:{tag}` entries (tags promoted to
  * CURATED_SOURCES since their last discovery) BEFORE the read pass so the
@@ -417,7 +417,7 @@ async function assembleAllSources(env: Env): Promise<SourceForFetch[]> {
   // Synthesise per-tag Google News query-RSS sources. Collect every
   // candidate tag (DEFAULT_HASHTAGS ∪ all curated tags ∪ discovered KV
   // tags) into one set, then `googleNewsSourceForTag` filters out tags
-  // already covered by a bespoke `google-news-*` curated entry — one
+  // already covered by a bespoke `google-news-*` curated entry - one
   // pass through the helper handles dedup so the loop body stays
   // simple. The post-canonical-dedup pass in `prefer-direct-source.ts`
   // drops the GN copy when a direct publisher copy lands in the same
@@ -462,12 +462,12 @@ async function assembleAllSources(env: Env): Promise<SourceForFetch[]> {
 }
 
 /**
- * Steps 2 + 2b — Fetch fan-out, then apply evictions.
+ * Steps 2 + 2b - Fetch fan-out, then apply evictions.
  *
  * Runs the 10-worker fetch semaphore (Step 2) and then, for any URLs whose
  * consecutive-failure counter crossed the eviction threshold, removes them
  * from their `sources:{tag}` KV entry and optionally re-queues the tag for
- * a fresh LLM discovery pass (Step 2b — REQ-DISC-003 AC 2-3).
+ * a fresh LLM discovery pass (Step 2b - REQ-DISC-003 AC 2-3).
  *
  * Returns the flat headline array ready for Step 3.
  */
@@ -484,7 +484,7 @@ async function fetchSourcesAndApplyEvictions(
 }
 
 /**
- * Step 3 — Build the candidate pool from raw headlines.
+ * Step 3 - Build the candidate pool from raw headlines.
  *
  * Applies: scheme gate (http/https only), canonicalization, freshness
  * filter (48-hour window, missing pubDate kept), and assembles the
@@ -506,7 +506,7 @@ function buildCandidates(
     // land as an unsafe href on the detail page's "Read at source"
     // button if we passed it through. Dropping at write time is the
     // strongest defence (render-time escaping of a literal `javascript:`
-    // value in an href attribute is NOT enough — Astro's escaping
+    // value in an href attribute is NOT enough - Astro's escaping
     // prevents HTML injection but a `javascript:` href is valid HTML).
     if (!isSafeWebUrl(row.headline.url)) continue;
     const canonical = canonicalize(row.headline.url);
@@ -523,7 +523,7 @@ function buildCandidates(
     // summarising it wastes LLM budget and clutters the dashboard with
     // 'new ingest, old publish_at' cards that sort below genuinely
     // fresh stories. Candidates with an unparsable pubDate (we fall
-    // back to nowSec) are kept — a missing date is not the same as a
+    // back to nowSec) are kept - a missing date is not the same as a
     // stale date.
     if (hasParsedPub && pub < staleCutoff) {
       droppedStale += 1;
@@ -557,10 +557,10 @@ function buildCandidates(
 }
 
 /**
- * Step 5 — Filter canonical clusters against existing articles; aggregate
+ * Step 5 - Filter canonical clusters against existing articles; aggregate
  * alternative sources for re-seen clusters.
  *
- * Returns `{ survivors }` — the clusters whose canonical URL is NOT yet in
+ * Returns `{ survivors }` - the clusters whose canonical URL is NOT yet in
  * the articles table. As a side-effect, writes alternative source rows for
  * re-seen clusters to `article_sources` using CF-007's batched multi-VALUES
  * INSERT strategy.
@@ -586,17 +586,17 @@ async function filterAndAggregateReSeenClusters(
       reSeenClusters.map((c) => c.primary.canonical_url),
     );
 
-    // CF-007 — dedupe sourceInserts in JS BEFORE building D1 statements.
+    // CF-007 - dedupe sourceInserts in JS BEFORE building D1 statements.
     // The previous shape emitted one prepared statement per (cluster,
     // source) pair without de-duplication, which on a busy re-discovery
     // tick produced thousands of nearly-identical INSERT OR IGNORE
     // statements (most of which collapsed to no-ops at the SQLite PK).
-    // The map is keyed on (article_id, source_url) — the article_sources
-    // PK — so duplicates inside the in-memory candidate set never reach
+    // The map is keyed on (article_id, source_url) - the article_sources
+    // PK - so duplicates inside the in-memory candidate set never reach
     // D1. INSERT OR IGNORE handles any duplicate that already lives in
     // the table (e.g. from a prior re-discovery tick) as a no-op.
     //
-    // All sources — including the cluster's own primary source_url — are
+    // All sources - including the cluster's own primary source_url - are
     // included. The first time an article is ingested its primary source
     // has no row in article_sources; on re-discovery we record that this
     // source is still actively broadcasting the story. INSERT OR IGNORE
@@ -626,7 +626,7 @@ async function filterAndAggregateReSeenClusters(
 
     const inserts = [...dedup.values()];
     if (inserts.length > 0) {
-      // CF-007 — single multi-VALUES INSERT per batch instead of one
+      // CF-007 - single multi-VALUES INSERT per batch instead of one
       // prepared statement per row. D1's placeholder limit is ~100
       // total; with 4 placeholders per row, batch up to 25 rows per
       // statement. INSERT OR IGNORE preserves the per-row idempotency
@@ -667,12 +667,12 @@ async function filterAndAggregateReSeenClusters(
 }
 
 /**
- * Step 7 — Flatten dedupe clusters to chunk-ready candidates.
+ * Step 7 - Flatten dedupe clusters to chunk-ready candidates.
  *
  * NOTE: body-fetch was moved OUT of the coordinator into the chunk consumer
  * (src/queue/scrape-chunk-consumer.ts). Running 500+ HTTP fetches inside the
  * coordinator was exhausting its execution budget before the SCRAPE_CHUNKS.send()
- * loop could run — chunks never enqueued, run stayed 'running' forever, no
+ * loop could run - chunks never enqueued, run stayed 'running' forever, no
  * articles ingested. Per-chunk fetch fits comfortably inside a chunk consumer's
  * budget and parallelises across chunks.
  */
@@ -697,7 +697,7 @@ function flattenToChunkCandidates(
 }
 
 /**
- * Step 8 — Chunk, persist chunk_count, and enqueue.
+ * Step 8 - Chunk, persist chunk_count, and enqueue.
  *
  * Packs `chunkCandidates` via `packCandidatesIntoChunks` (greedy budget-
  * aware: respects `CHUNK_INPUT_CHARS_BUDGET` and `MAX_CANDIDATES_PER_CHUNK`,
@@ -714,7 +714,7 @@ async function chunkAndEnqueue(
   survivorCount: number,
   scrape_run_id: string,
 ): Promise<void> {
-  // Greedy budget-aware packing — see `packCandidatesIntoChunks`. Each
+  // Greedy budget-aware packing - see `packCandidatesIntoChunks`. Each
   // candidate's char cost is estimated (snippet length when known,
   // otherwise the median post-fetch body length); a chunk fills until
   // the next candidate would push it past CHUNK_INPUT_CHARS_BUDGET,
@@ -739,7 +739,7 @@ async function chunkAndEnqueue(
   // Persist total chunk count on the scrape_runs row so the
   // /api/scrape-status endpoint can compute 'X of Y chunks done'
   // for the in-progress UI. Best-effort; a failure here is logged
-  // but doesn't block the fan-out. CF-021 — uses the repo helper
+  // but doesn't block the fan-out. CF-021 - uses the repo helper
   // so all `scrape_runs.chunk_count` writes live in one layer.
   try {
     await updateChunkCount(env.DB, scrape_run_id, totalChunks);
@@ -772,7 +772,7 @@ async function chunkAndEnqueue(
 
 // ---------- internals ----------------------------------------------------
 
-/** A source entry ready for fetchFromSourceWithResult — pairs an adapter
+/** A source entry ready for fetchFromSourceWithResult - pairs an adapter
  * with the pretty name that will land in `articles.primary_source_name`,
  * the feed URL (used as the health-counter key), and the tag that owns
  * the URL in KV (null for curated sources, which have no runtime
@@ -782,12 +782,12 @@ interface SourceForFetch {
   sourceName: string;
   feedUrl: string;
   /** Non-null only for URLs that originated from a `sources:{tag}` KV
-   * entry — the coordinator can remove the URL from that entry if its
+   * entry - the coordinator can remove the URL from that entry if its
    * fetch-failure counter crosses the eviction threshold. */
   discoveredTag: string | null;
 }
 
-/** One evicted feed — emitted by fetchAllSources when a URL's health
+/** One evicted feed - emitted by fetchAllSources when a URL's health
  * counter crosses the threshold. Only discovered feeds participate
  * (curated URLs have `discoveredTag = null` and are skipped upstream). */
 export interface FeedEviction {
@@ -813,7 +813,7 @@ function curatedToAdapter(curated: CuratedSource): SourceAdapter {
   const adapters = adaptersForDiscoveredFeeds([feed], { trusted: true });
   const first = adapters[0];
   if (first !== undefined) return first;
-  // Shouldn't happen — if adaptersForDiscoveredFeeds rejects a curated
+  // Shouldn't happen - if adaptersForDiscoveredFeeds rejects a curated
   // feed, we surface a no-op adapter that returns zero headlines so
   // fetch fan-out continues with the remaining sources.
   return {
@@ -831,7 +831,7 @@ function curatedToAdapter(curated: CuratedSource): SourceAdapter {
  * Behaviour notes:
  *  - Tags that have since been promoted to CURATED_SOURCES are
  *    skipped from the result. CF-017: this function is pure-read
- *    and does NOT delete the orphan KV entry — `purgeOrphanDiscoveredSources`
+ *    and does NOT delete the orphan KV entry - `purgeOrphanDiscoveredSources`
  *    owns that side effect and runs as a separate KV pass before
  *    the read so the read contract stays read-only.
  *  - KV failures are caught per-key so one transient miss doesn't
@@ -840,7 +840,7 @@ function curatedToAdapter(curated: CuratedSource): SourceAdapter {
  *    and the returned set is incomplete; the caller logs a degraded-
  *    state warning so operators don't read an empty `sources` array
  *    as "no discovered tags exist". */
-/** @internal Exported for unit tests only — covers the orphan-skip,
+/** @internal Exported for unit tests only - covers the orphan-skip,
  *  per-key try/catch, and partial-flag contract introduced by CF-015.
  *
  *  CF-017: this function is pure read. Orphan KV entries (tags
@@ -848,7 +848,7 @@ function curatedToAdapter(curated: CuratedSource): SourceAdapter {
  *  but NOT deleted. The companion {@link purgeOrphanDiscoveredSources}
  *  performs the side-effecting delete pass. The coordinator calls
  *  them sequentially so the read contract and the cleanup contract
- *  are no longer coupled — a future read-only caller (admin
+ *  are no longer coupled - a future read-only caller (admin
  *  diagnostic, debug endpoint) cannot inadvertently mutate KV state. */
 export async function loadDiscoveredSources(
   kv: KVNamespace,
@@ -1000,7 +1000,7 @@ async function fetchAllSources(
   // (404/403/timeout/malformed XML) never bubbles up and kills the
   // rest of the pool. Empty result keeps the helper iterating; the
   // logged event gives operators enough signal to swap the URL.
-  // Health tracking only applies to discovered (KV-sourced) feeds —
+  // Health tracking only applies to discovered (KV-sourced) feeds -
   // curated URLs can't be runtime-evicted, so writing their counter
   // just burns KV budget without enabling any action.
   type Slot = {
@@ -1028,7 +1028,7 @@ async function fetchAllSources(
           .slice(0, PER_SOURCE_ITEM_CAP)
           .map((h) => ({ headline: h }));
         let eviction: FeedEviction | null = null;
-        // Only record health for live fetches on discovered feeds —
+        // Only record health for live fetches on discovered feeds -
         // cache hits are neither a liveness signal nor a failure.
         if (trackHealth && fetched) {
           const health = await recordFetchResult(env, job.feedUrl, success);
@@ -1060,7 +1060,7 @@ async function fetchAllSources(
               };
             }
           } catch (healthErr) {
-            // Persistent KV outage — surface once per job so
+            // Persistent KV outage - surface once per job so
             // `wrangler tail` shows the degradation instead of
             // silently dropping signals.
             log('warn', 'source.fetch.failed', {
@@ -1086,8 +1086,8 @@ async function fetchAllSources(
 
 /**
  * Apply feed-level evictions: remove each evicted URL from its
- * `sources:{tag}` entry, clear the per-URL health counter, and — if
- * the tag's feed list has been emptied — enqueue a system-owned
+ * `sources:{tag}` entry, clear the per-URL health counter, and - if
+ * the tag's feed list has been emptied - enqueue a system-owned
  * re-discovery row so the 5-minute discovery cron repopulates the tag.
  *
  * Evictions are coalesced by tag so multiple URLs removed from the
@@ -1136,7 +1136,7 @@ export async function applyEvictions(
       try {
         parsed = JSON.parse(raw);
       } catch {
-        // Corrupt entry — overwrite with an empty feeds list so the
+        // Corrupt entry - overwrite with an empty feeds list so the
         // tag re-queues rather than staying stuck.
         parsed = null;
       }
@@ -1153,11 +1153,11 @@ export async function applyEvictions(
       // so if the 5-minute discovery cron has already replaced the
       // entry between our initial read and this re-check, we'd
       // otherwise silently clobber its freshly-discovered feeds. Bail
-      // on any mismatch — health counters are already cleared above,
+      // on any mismatch - health counters are already cleared above,
       // and the next scrape tick will re-evaluate health against the
       // new feed set.
       //
-      // CF-001 / AD16 — recheck is BYTE-equal via sourcesCacheRawEqual.
+      // CF-001 / AD16 - recheck is BYTE-equal via sourcesCacheRawEqual.
       // The single-writer invariant (every writer routes through
       // `writeSourcesCache`) makes byte-equality sound. An earlier
       // draft used a structural `discovered_at` fallback for
@@ -1217,7 +1217,7 @@ export async function applyEvictions(
       });
 
       if (survivingFeeds.length === 0) {
-        // Last feed for this tag is gone — enqueue a re-discovery pass.
+        // Last feed for this tag is gone - enqueue a re-discovery pass.
         // The system-owned row carries `user_id = SYSTEM_USER_ID` so
         // real-user queries (scoped `WHERE user_id = ?`) naturally
         // exclude it, while the discovery cron (which GROUPs BY tag)
