@@ -876,8 +876,6 @@ async function recordChunkCompletionAndCheckFinalize(
   return { isFirstCompletion, completedCount };
 }
 
-// titlesShareAnyToken / tokenizeTitle moved to ~/lib/title-overlap (CF-058).
-
 /** Load the tag allowlist: DEFAULT_HASHTAGS ∪ any tag whose
  * `sources:{tag}` KV key exists. De-duplicated, lowercase, no leading `#`. */
 async function loadAllowedTags(kv: KVNamespace): Promise<string[]> {

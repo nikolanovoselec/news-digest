@@ -188,6 +188,9 @@ DEDUP_HIGH_CONFIDENCE_COSINE = "0.92"
 name = "ai-news-digest-integration"
 main = "./dist/_worker.js/_merged.mjs"
 assets = { directory = "./dist", binding = "ASSETS" }
+# CF-027: mirror the top-level workers_dev=false so the integration
+# deploy never accidentally exposes a *.workers.dev hostname.
+workers_dev = false
 
 [env.integration.vars]
 # CF-004 — must match the top-level [vars] QUEUE_MAX_RETRIES; the

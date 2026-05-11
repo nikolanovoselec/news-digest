@@ -44,6 +44,7 @@ import { applyRefreshCookie } from '~/middleware/auth';
 import { checkDevEndpointOrigin, originOf } from '~/middleware/origin-check';
 import { generateUlid } from '~/lib/ulid';
 import { enforceRateLimit, RATE_LIMIT_RULES } from '~/lib/rate-limit';
+import { sanitizeErrorDetail } from '~/lib/error-sanitize';
 import type { PipelinePhase } from '~/queue/pipeline-consumer';
 
 type AdminAuthOk = Extract<AdminAuthResult, { ok: true }>;
@@ -218,7 +219,7 @@ async function runKick(
             WHERE id = ?1
               AND status = 'running'`,
         )
-        .bind(pipelineRunId, now, String(err).slice(0, 500))
+        .bind(pipelineRunId, now, sanitizeErrorDetail(err))
         .run();
     } catch {
       /* swallow */
