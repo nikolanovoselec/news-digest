@@ -301,6 +301,13 @@ export async function runCoordinator(
   // Step 6 — empty-pool guard.
   if (survivors.length === 0) {
     await finishRun(env.DB, scrape_run_id, 'ready');
+    // CF-001: with no survivors there is no finalize tick to flip the
+    // gate, so stamp it here. Otherwise runScrapeWait would loop forever
+    // waiting on a finalize that will never run.
+    await env.DB
+      .prepare(`UPDATE scrape_runs SET finalize_recorded = 1 WHERE id = ?1`)
+      .bind(scrape_run_id)
+      .run();
     log('info', 'digest.generation', { status: 'coordinator_empty_pool', scrape_run_id });
     return;
   }

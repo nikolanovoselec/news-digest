@@ -38,6 +38,12 @@ export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env as typeof context.locals.runtime.env &
     DevEnv;
 
+  // CF-019-R: hard prod guard, same as /api/dev/login.
+  const appUrl = typeof env.APP_URL === 'string' ? env.APP_URL : '';
+  if (appUrl.includes('graymatter.ch')) {
+    return new Response(null, { status: 404 });
+  }
+
   const bypass = env.DEV_BYPASS_TOKEN;
   if (typeof bypass !== 'string' || bypass === '') {
     return new Response(null, { status: 404 });

@@ -136,9 +136,13 @@ function makeDb(fixture: DbFixture): D1Database {
 function makeVectorize(opts: {
   queryByIdResults?: Record<string, VectorizeMatches>;
   deleteByIdsFails?: boolean;
+  queryByIdAllFail?: boolean;
 }): Vectorize {
   return {
     queryById: vi.fn().mockImplementation(async (id: string) => {
+      if (opts.queryByIdAllFail) {
+        throw new Error('Vectorize service unavailable');
+      }
       const result = opts.queryByIdResults?.[id];
       return result ?? { count: 0, matches: [] };
     }),
@@ -159,6 +163,7 @@ interface CallOpts {
   remainingCount?: number;
   queryByIdResults?: Record<string, VectorizeMatches>;
   deleteByIdsFails?: boolean;
+  queryByIdAllFail?: boolean;
   cursor?: { pa: number; id: string } | null;
   batch?: number;
   aiRun?: (model: string, params: Record<string, unknown>) => Promise<unknown>;
@@ -183,6 +188,7 @@ async function callBatch(opts: CallOpts) {
   const vectorize = makeVectorize({
     queryByIdResults: opts.queryByIdResults ?? {},
     deleteByIdsFails: opts.deleteByIdsFails ?? false,
+    queryByIdAllFail: opts.queryByIdAllFail ?? false,
   });
   const aiRun =
     opts.aiRun ??
@@ -838,6 +844,100 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
     expect(result.merged).toBe(0);
     expect(fixture.batchCalls.length).toBe(0);
     expect(vectorize.deleteByIds).not.toHaveBeenCalled();
+  });
+
+  it('REQ-PIPE-003 / CF-004: total Vectorize outage returns done:false with input cursor preserved', async () => {
+    // CF-004 (AD45). When every Vectorize.queryById in the batch
+    // throws, the prior implementation silently advanced the cursor
+    // past every failed self, leaving cross-tick duplicates unmerged
+    // once Vectorize recovered. The aligned behavior (mirroring
+    // scrape-finalize-consumer) keeps the cursor at the input position
+    // and reports `done: false` so the queue-driven sweep self-chains
+    // a retry instead of skipping the range.
+    const INPUT_CURSOR = { pa: 1_700_000_000, id: 'cursor-anchor' };
+    const SELF_A = 'self-a';
+    const SELF_B = 'self-b';
+    const { result, vectorize, fixture } = await callBatch({
+      articles: [
+        {
+          id: SELF_A,
+          published_at: 1_700_000_100,
+          primary_source_url: 'https://acme.example/a',
+        },
+        {
+          id: SELF_B,
+          published_at: 1_700_000_200,
+          primary_source_url: 'https://acme.example/b',
+        },
+      ],
+      cursor: INPUT_CURSOR,
+      queryByIdAllFail: true,
+    });
+    expect(result.done).toBe(false);
+    expect(result.merged).toBe(0);
+    expect(result.next_cursor).toEqual(INPUT_CURSOR);
+    expect(result.remaining).toBe(2);
+    expect(result.scanned).toBe(2);
+    // Both rows were attempted; both failed; no merges issued; no
+    // Vectorize.deleteByIds calls (no removedIds to delete).
+    const queryById = vectorize.queryById as ReturnType<typeof vi.fn>;
+    expect(queryById).toHaveBeenCalledTimes(2);
+    expect(fixture.batchCalls.length).toBe(0);
+    const deleteByIds = vectorize.deleteByIds as ReturnType<typeof vi.fn>;
+    expect(deleteByIds).not.toHaveBeenCalled();
+  });
+
+  it('REQ-PIPE-003 / CF-004: partial Vectorize outage still advances cursor (only TOTAL outage halts)', async () => {
+    // If at least one queryById succeeds, we're not in a corpus-wide
+    // outage — the cursor advances normally and `done` reflects the
+    // remaining-count query. This boundary case is what distinguishes
+    // CF-004's gate from "any failure halts the batch."
+    const SELF_OK = 'self-ok';
+    const SELF_FAIL = 'self-fail';
+    const queryByIdMock = vi
+      .fn()
+      .mockImplementationOnce(async () => ({ count: 0, matches: [] }))
+      .mockImplementationOnce(async () => {
+        throw new Error('Vectorize timeout');
+      });
+    const fixture: DbFixture = {
+      articles: [
+        {
+          id: SELF_OK,
+          published_at: 1_700_000_100,
+          primary_source_url: 'https://acme.example/a',
+        },
+        {
+          id: SELF_FAIL,
+          published_at: 1_700_000_200,
+          primary_source_url: 'https://acme.example/b',
+        },
+      ],
+      existenceGuardResults: {},
+      remainingCount: 0,
+      batchCalls: [],
+      allCalls: [],
+    };
+    const db = makeDb(fixture);
+    const vectorize = {
+      queryById: queryByIdMock,
+      deleteByIds: vi.fn().mockResolvedValue({ count: 0, ids: [] }),
+      query: vi.fn(),
+      upsert: vi.fn(),
+    } as unknown as Vectorize;
+    const env = {
+      DB: db,
+      VECTORIZE: vectorize,
+      AI: { run: vi.fn().mockResolvedValue({ response: '{"same_event":false}' }) },
+    } as unknown as Env;
+    const result = await runHistoricalDedupBatch(env, null, 100);
+    // Cursor advanced past both rows (last row is SELF_FAIL).
+    expect(result.done).toBe(true);
+    expect(result.next_cursor).toEqual({
+      pa: 1_700_000_200,
+      id: SELF_FAIL,
+    });
+    expect(queryByIdMock).toHaveBeenCalledTimes(2);
   });
 
   it('REQ-PIPE-009: cosine below floor does not invoke LLM', async () => {

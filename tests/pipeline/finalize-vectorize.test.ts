@@ -1390,4 +1390,44 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
 
     logSpy.mockRestore();
   });
+
+  it('REQ-PIPE-003 / CF-004: total Vectorize.queryById outage throws (queue retry)', async () => {
+    // CF-004 (AD45). When every Vectorize.queryById fails, the
+    // finalize gate stays un-flipped and the consumer rejects so the
+    // queue retry path covers Vectorize recovery. Historical-dedup now
+    // mirrors this behavior (returns done:false with cursor preserved);
+    // this test pins the finalize side of the contract.
+    const SELF_ID = 'survivor-1';
+    const mockDb = makeMockDb({
+      articleRows: [
+        {
+          id: SELF_ID,
+          published_at: 1_700_000_100,
+          ingested_at: 1_700_000_100,
+          primary_source_url: 'https://acme.example/a',
+        },
+      ],
+    });
+    const queryByIdMock = vi.fn().mockImplementation(async () => {
+      throw new Error('Vectorize service unavailable');
+    });
+    const vectorize: Vectorize = {
+      queryById: queryByIdMock,
+      query: vi.fn(),
+      upsert: vi.fn(),
+      deleteByIds: vi.fn().mockResolvedValue({ count: 0, ids: [] }),
+    } as unknown as Vectorize;
+    const env = makeEnv(mockDb.db, vectorize);
+
+    await expect(
+      processOneFinalize(env, { scrape_run_id: 'r1' }),
+    ).rejects.toThrow();
+    // The gate row must NOT have been UPDATEd to finalize_recorded=1.
+    const gateFlip = mockDb.calls.find(
+      (c) =>
+        c.sql.includes('UPDATE scrape_runs') &&
+        c.sql.includes('finalize_recorded = 1'),
+    );
+    expect(gateFlip).toBeUndefined();
+  });
 });

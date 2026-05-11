@@ -110,6 +110,12 @@ interface LLMChunkPayload {
   dedup_groups?: unknown;
 }
 
+/** CF-021: cap on `detail` substrings in structured logs. 500 chars is
+ *  comfortably larger than any single-line error class name + message
+ *  while staying under the per-line log retention budget that
+ *  `wrangler tail` sustains under load. */
+const LOG_PAYLOAD_MAX_CHARS = 500;
+
 /** Handle one batch of `scrape-chunks` messages. Delegates the per-
  * message try/ack/retry/terminal-failure pattern to the shared
  * `handleBatch` envelope. */
@@ -141,6 +147,22 @@ export async function handleChunkBatch(
       const completed = await countChunkCompletions(env.DB, body.scrape_run_id);
       const finalStatus: 'ready' | 'failed' = completed > 0 ? 'ready' : 'failed';
       await finishRun(env.DB, body.scrape_run_id, finalStatus);
+      if (finalStatus === 'failed') {
+        // CF-001: no finalize will run for this scrape_run; stamp the
+        // gate so runScrapeWait sees a terminal state and the pipeline
+        // exits via the failed-status check.
+        await env.DB
+          .prepare(`UPDATE scrape_runs SET finalize_recorded = 1 WHERE id = ?1`)
+          .bind(body.scrape_run_id)
+          .run()
+          .catch((stampErr) => {
+            log('warn', 'digest.generation', {
+              status: 'terminal_failure_finalize_recorded_stamp_failed',
+              scrape_run_id: body.scrape_run_id,
+              detail: String(stampErr).slice(0, LOG_PAYLOAD_MAX_CHARS),
+            });
+          });
+      }
       if (finalStatus === 'ready') {
         // Enqueue finalize so cross-chunk dedup runs over the chunks
         // that did complete. Same atomic-lock pattern as the
@@ -161,12 +183,22 @@ export async function handleChunkBatch(
               )
               .bind(body.scrape_run_id)
               .run()
-              .catch(() => {});
+              .catch((rollbackErr) => {
+                // CF-022: surface the rollback failure instead of
+                // swallowing — without this log the run is silently
+                // stuck with finalize_enqueued=1 and no consumer.
+                log('warn', 'digest.generation', {
+                  status: 'partial_finalize_enqueue_rollback_failed',
+                  scrape_run_id: body.scrape_run_id,
+                  chunk_index: body.chunk_index,
+                  detail: String(rollbackErr).slice(0, LOG_PAYLOAD_MAX_CHARS),
+                });
+              });
             log('error', 'digest.generation', {
               status: 'partial_finalize_enqueue_failed',
               scrape_run_id: body.scrape_run_id,
               chunk_index: body.chunk_index,
-              detail: String(sendErr).slice(0, 500),
+              detail: String(sendErr).slice(0, LOG_PAYLOAD_MAX_CHARS),
             });
           }
         }
@@ -269,7 +301,7 @@ export async function processOneChunk(
   } = alignLlmArticlesToInputs(rawArticles, perInputClusters, mergedClusters, dedupGroups, body);
 
   // Validate + sanitize each survivor; drop articles that fail any gate.
-  const prepared: PreparedArticle[] = [];
+  let prepared: PreparedArticle[] = [];
   for (const s of survivors) {
     const article = validateAndSanitizeArticle(s, allowedTagSet, body);
     if (article !== null) prepared.push(article);
@@ -280,7 +312,7 @@ export async function processOneChunk(
   // failure, articles stay at the validateAndSanitizeArticle default
   // ('failed', null vector) and the admin backfill route picks them
   // up later. REQ-PIPE-003.
-  await attachEmbeddings(env, prepared, body);
+  prepared = await attachEmbeddings(env, prepared, body);
 
   // Write articles + sources + tags in a single atomic D1 batch.
   const statements = buildArticleBatchStatements(env.DB, prepared, body.scrape_run_id);
@@ -832,8 +864,8 @@ async function recordChunkCompletionAndCheckFinalize(
           log('error', 'digest.generation', {
             status: 'finalize_lock_rollback_failed',
             scrape_run_id: body.scrape_run_id,
-            send_error: String(sendErr).slice(0, 500),
-            rollback_error: String(rollbackErr).slice(0, 500),
+            send_error: String(sendErr).slice(0, LOG_PAYLOAD_MAX_CHARS),
+            rollback_error: String(rollbackErr).slice(0, LOG_PAYLOAD_MAX_CHARS),
           });
         }
         throw sendErr;
@@ -843,8 +875,6 @@ async function recordChunkCompletionAndCheckFinalize(
 
   return { isFirstCompletion, completedCount };
 }
-
-// titlesShareAnyToken / tokenizeTitle moved to ~/lib/title-overlap (CF-058).
 
 /** Load the tag allowlist: DEFAULT_HASHTAGS ∪ any tag whose
  * `sources:{tag}` KV key exists. De-duplicated, lowercase, no leading `#`. */
@@ -954,8 +984,8 @@ async function attachEmbeddings(
   env: Env,
   prepared: PreparedArticle[],
   body: ChunkJobMessage,
-): Promise<void> {
-  if (prepared.length === 0) return;
+): Promise<PreparedArticle[]> {
+  if (prepared.length === 0) return prepared;
   const inputs = prepared.map((a) =>
     buildEmbeddingInput({
       title: a.title,
@@ -971,27 +1001,30 @@ async function attachEmbeddings(
       );
     }
     const nowSec = Math.floor(Date.now() / 1000);
-    for (let i = 0; i < prepared.length; i++) {
-      const article = prepared[i];
+    return prepared.map((article, i) => {
       const vector = vectors[i];
-      if (article === undefined || vector === undefined) continue;
-      article.embedding_status = 'embedded';
-      article.embedded_at = nowSec;
-      article.embedding = vector;
-    }
+      if (vector === undefined) return article;
+      return {
+        ...article,
+        embedding_status: 'embedded' as const,
+        embedded_at: nowSec,
+        embedding: vector,
+      };
+    });
   } catch (err) {
-    for (const article of prepared) {
-      article.embedding_status = 'failed';
-      article.embedded_at = null;
-      article.embedding = null;
-    }
     log('warn', 'digest.generation', {
       status: 'chunk_embed_failed',
       scrape_run_id: body.scrape_run_id,
       chunk_index: body.chunk_index,
       article_count: prepared.length,
-      detail: String(err).slice(0, 500),
+      detail: String(err).slice(0, LOG_PAYLOAD_MAX_CHARS),
     });
+    return prepared.map((article) => ({
+      ...article,
+      embedding_status: 'failed' as const,
+      embedded_at: null,
+      embedding: null,
+    }));
   }
 }
 
@@ -1044,7 +1077,7 @@ async function upsertVectors(
       scrape_run_id: body.scrape_run_id,
       chunk_index: body.chunk_index,
       vector_count: embedded.length,
-      detail: String(err).slice(0, 500),
+      detail: String(err).slice(0, LOG_PAYLOAD_MAX_CHARS),
     });
     try {
       // Gate the rollback on the per-attempt embedded_at timestamp.
@@ -1077,7 +1110,7 @@ async function upsertVectors(
         status: 'chunk_vectorize_status_rollback_failed',
         scrape_run_id: body.scrape_run_id,
         chunk_index: body.chunk_index,
-        detail: String(rollbackErr).slice(0, 500),
+        detail: String(rollbackErr).slice(0, LOG_PAYLOAD_MAX_CHARS),
       });
     }
   }

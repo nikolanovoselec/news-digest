@@ -146,6 +146,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx --yes wrangler queues info pipeline-jobs >/dev/null 2>&1 || npx --yes wrangler queues create pipeline-jobs
 
+      # CF-001 — DLQ for finalize + pipeline jobs so terminal queue
+      # retry exhaustion produces a durable artifact rather than vanishing.
+      - name: Provision queue - ai-news-dlq
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler queues info ai-news-dlq >/dev/null 2>&1 || npx --yes wrangler queues create ai-news-dlq
+
       # REQ-PIPE-003 — Vectorize index for semantic same-story dedup.
       # 768-dim cosine matches the @cf/baai/bge-base-en-v1.5 embedding
       # model. Forks that swap the model must update both this step

@@ -47,6 +47,15 @@ export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env as typeof context.locals.runtime.env &
     BypassEnv;
 
+  // CF-019-R: hard prod guard. The DEV_BYPASS_TOKEN gate below is
+  // already the primary defence, but a tokenful prod deploy (operator
+  // mistake, accidental secret promotion) must still 404 here so the
+  // bypass surface never opens on news.graymatter.ch.
+  const appUrl = typeof env.APP_URL === 'string' ? env.APP_URL : '';
+  if (appUrl.includes('graymatter.ch')) {
+    return new Response(null, { status: 404 });
+  }
+
   const bypass = env.DEV_BYPASS_TOKEN;
   if (typeof bypass !== 'string' || bypass === '') {
     return new Response(null, { status: 404 });

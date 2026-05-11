@@ -115,7 +115,9 @@ export async function verifyHmacSignature(
 export function hexEncode(bytes: Uint8Array): string {
   let out = '';
   for (let i = 0; i < bytes.length; i++) {
-    out += bytes[i]!.toString(16).padStart(2, '0');
+    const b = bytes[i];
+    if (b === undefined) continue; // unreachable: i < bytes.length
+    out += b.toString(16).padStart(2, '0');
   }
   return out;
 }

@@ -22,6 +22,15 @@ import { checkOrigin, originOf } from '~/middleware/origin-check';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { applyRefreshCookie } from '~/middleware/auth';
 import { kickCoordinator } from '~/lib/kick-coordinator';
+import { enforceRateLimit, RATE_LIMIT_RULES } from '~/lib/rate-limit';
+
+/** CF-008 — Build a 429 response body shared between POST + GET paths. */
+function rateLimited(retryAfter: number): Response {
+  return new Response('Too Many Requests', {
+    status: 429,
+    headers: { 'Retry-After': String(retryAfter) },
+  });
+}
 
 function redirectToSettings(origin: string, runId: string, reused: boolean): Response {
   const status = reused ? 'reused' : 'ok';
@@ -46,6 +55,13 @@ export async function POST(context: APIContext): Promise<Response> {
 
   const adminAuth = await requireAdminSession(context);
   if (!adminAuth.ok) return adminAuth.response;
+
+  const rl = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.ADMIN_FORCE_REFRESH,
+    `user:${adminAuth.userId}`,
+  );
+  if (!rl.ok) return rateLimited(rl.retryAfter);
 
   const originResult = checkOrigin(context.request, appOrigin);
   if (!originResult.ok) return originResult.response;
@@ -93,6 +109,19 @@ export async function GET(context: APIContext): Promise<Response> {
     return new Response(null, {
       status: 303,
       headers: { Location: `${appOrigin}/settings?force_refresh=denied` },
+    });
+  }
+
+  const rl = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.ADMIN_FORCE_REFRESH,
+    `user:${adminAuth.userId}`,
+  );
+  if (!rl.ok) {
+    if (wantsJson) return rateLimited(rl.retryAfter);
+    return new Response(null, {
+      status: 303,
+      headers: { Location: `${appOrigin}/settings?force_refresh=rate_limited` },
     });
   }
 

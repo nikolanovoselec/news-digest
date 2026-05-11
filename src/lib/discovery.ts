@@ -269,6 +269,8 @@ function hasXmlItem(body: string, kind: 'rss' | 'atom'): boolean {
       ignoreAttributes: false,
       attributeNamePrefix: '@_',
       trimValues: true,
+      // CF-010: disable entity expansion (same rationale as sources.ts).
+      processEntities: false,
     });
     doc = parser.parse(body);
   } catch {

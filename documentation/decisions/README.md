@@ -56,6 +56,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD40 | Add equal-time ULID tie-break, high-confidence cosine band, topK bump, and per-article diagnostic logs to dedup | Architecture | 2026-05-09 |
 | AD41 | Bidirectional finalize merge + automatic post-tick dedup sweep | Architecture | 2026-05-09 |
 | AD42 | Bidirectional historical-dedup + sweep cursor aligned with time window + multi-rerank | Architecture | 2026-05-10 |
+| AD43 | Shared per-match dedup classifier; outer control flow stays per-consumer | Architecture | 2026-05-12 |
+| AD44 | Cloudflare Access JWT `exp` validation; signature still trusted from the perimeter | Security | 2026-05-12 |
 
 ---
 
@@ -1195,6 +1197,56 @@ Three reasons the AD41 fix did not collapse this cluster:
 - This fix is forward-only. The 2026-05-10 fragmented Cloudflare-layoffs cluster is collapsed by the operator-triggered full-corpus historical-dedup sweep that runs alongside this commit; future clusters of similar shape collapse on first finalize tick after the latest sibling lands.
 
 **Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 15 reworded; AC 17 added), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs) (AC 5 reworded for multi-rerank cap)
+
+---
+
+### AD43: Shared per-match dedup classifier; outer control flow stays per-consumer
+
+**Status:** Accepted (2026-05-12)
+
+**Decision:** Both the per-tick finalize consumer and the historical sweep delegate per-match scoring to one classifier (`classifyMatchPair` in `src/lib/bidirectional-dedup.ts`) while keeping their own outer control flow.
+
+**Context:** Pre-AD43 each consumer reimplemented the same per-match logic — time-window gate, high-confidence band, same-vendor penalty, threshold gate, rerank floor, equal-time ULID tie-break, direction flag. Cycle-1 review flagged the drift as CF-002: the two implementations subtly disagreed on what counted as a borderline pair (the historical sweep had no rerank cap; finalize capped at 5), and any future tuning had to be applied in two places under the constant risk of partial application.
+
+**Alternatives considered:**
+- A fully unified `pickMergeDecision(env, self, matches, options)` that owned both per-match scoring AND winner selection AND rerank dispatch. Rejected: the two consumers have fundamentally different intents (finalize picks one chosen pair per article; the historical sweep runs PASS 1 looking for the oldest anchor + PASS 2 absorbing newer matches sequentially). A unified decision function would have re-encoded the per-consumer divergence as a parameter matrix instead of removing it.
+- Leave the two implementations as-is and rely on review discipline to keep them in sync. Rejected: the drift CF-002 surfaced is the empirical evidence that this doesn't hold.
+
+**Rationale:** The classifier captures the part of the logic that is genuinely shared (per-pair scoring rules and band classification). The outer control flow — single-pass winner selection in finalize vs PASS 1/PASS 2 anchor-and-absorb in the historical sweep — is genuinely different intent and belongs at the call site. The split makes the boundary explicit instead of letting it drift.
+
+**Consequences:**
+
+- Both consumers now produce identical band classifications for the same (self, match, params) tuple, eliminating CF-002's drift class.
+- Outer control flow is preserved verbatim. Finalize keeps RERANK_CANDIDATE_CAP=5; the historical sweep keeps its no-cap pattern (the queue consumer has a 15-min budget per message). The per-consumer caps are explicit and visible at each call site.
+- Future tuning of the scoring rules (e.g., adding a tertiary penalty) happens in one place.
+- CF-029 (cache the comparator secondary key) is satisfied naturally — each match is classified exactly once and reuses the result.
+
+**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs)
+
+---
+
+### AD44: Cloudflare Access JWT `exp` validation; signature still trusted from the perimeter
+
+**Status:** Accepted (2026-05-12)
+
+**Decision:** `decodeAccessJwt` in `src/middleware/admin-auth.ts` now validates the `exp` claim is present and in the future. JWT signature continues to be unverified server-side (AD25 → AD29).
+
+**Context:** Cycle-1 review flagged CF-007: the access-token decoder accepted any well-formed JSON payload, including one with no `exp` claim or an `exp` in the past. Cloudflare Access stamps `exp` on every legitimate token, and the perimeter rejects expired tokens before they reach the worker. But defence-in-depth requires the worker to also reject expired tokens — a stolen long-lived token from before a rotation window, or a synthetic non-Access token that somehow reached the worker, would otherwise pass admin auth despite being unusable upstream.
+
+**Alternatives considered:**
+- Verify the JWT signature server-side. Rejected per AD29: requires fetching the JWKS, caching it in KV with rotation, and the perimeter already does this. The signature trust boundary stays at Access.
+- Validate every JWT claim Cloudflare Access emits (`iat`, `iss`, `nbf`). Rejected: not all claims are stable across Access versions, and the security delta over `exp` alone is negligible since the perimeter already enforces them.
+
+**Rationale:** `exp` is the one claim with concrete defence-in-depth value: it catches the long-lived-stolen-token replay class without re-litigating the signature-trust boundary AD29 established. The check is a single comparison against `Date.now()`, no external dependencies.
+
+**Consequences:**
+
+- A long-lived stolen Access JWT from before the perimeter rotated keys is now rejected even if it somehow reaches the worker.
+- A synthetic non-Access JWT missing `exp` is rejected with the same null path as malformed payloads.
+- Test fixtures that minted Access JWTs without `exp` need to add one (single fixture function change).
+- Signature trust still terminates at the Access perimeter. Worker code does not verify the RS256 signature, and AD29 + AD30 remain the governing decisions for the perimeter contract.
+
+**Related requirements:** [REQ-AUTH-001](../../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)
 
 ---
 

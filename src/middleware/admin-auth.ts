@@ -57,6 +57,22 @@ interface AccessJwtClaims {
   exp?: number;
 }
 
+function isAccessJwtClaims(p: unknown): p is AccessJwtClaims {
+  if (typeof p !== 'object' || p === null) return false;
+  const o = p as Record<string, unknown>;
+  if (
+    o['aud'] !== undefined &&
+    typeof o['aud'] !== 'string' &&
+    !Array.isArray(o['aud'])
+  ) {
+    return false;
+  }
+  if (o['email'] !== undefined && typeof o['email'] !== 'string') return false;
+  if (o['sub'] !== undefined && typeof o['sub'] !== 'string') return false;
+  if (o['exp'] !== undefined && typeof o['exp'] !== 'number') return false;
+  return true;
+}
+
 function decodeAccessJwt(jwt: string): AccessJwtClaims | null {
   const parts = jwt.split('.');
   if (parts.length !== 3) return null;
@@ -74,8 +90,15 @@ function decodeAccessJwt(jwt: string): AccessJwtClaims | null {
   } catch {
     return null;
   }
-  if (typeof parsed !== 'object' || parsed === null) return null;
-  return parsed as AccessJwtClaims;
+  if (!isAccessJwtClaims(parsed)) return null;
+  // CF-007-R: reject access tokens whose `exp` is in the past or
+  // missing. Cloudflare Access stamps `exp` on every issued JWT; a
+  // missing field means the token shape is non-standard (synthetic or
+  // tampered) and a past `exp` means a replay attempt with an
+  // expired credential. Either way the JWT must be treated as invalid.
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (typeof parsed.exp !== 'number' || parsed.exp < nowSec) return null;
+  return parsed;
 }
 
 function audMatches(

@@ -63,6 +63,12 @@ jobs:
       - name: REQ backlink coverage
         run: node scripts/check-req-backlinks.mjs
 
+      # CF-016 — wrangler.toml [vars] and [env.integration.vars] must
+      # share the same key set so a missing variable can't silently
+      # change behavior on one env but not the other.
+      - name: Wrangler vars parity (prod vs integration)
+        run: node scripts/check-wrangler-vars-parity.mjs
+
       # AD20 — fail the build if any src/pages/** or src/components/**
       # statically imports a top-level src/scripts/*.ts file. That
       # double-bundles the script (standalone IIFE + page chunk),

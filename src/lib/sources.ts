@@ -39,6 +39,12 @@ const XML_PARSER = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '',
   trimValues: true,
+  // CF-010: disable HTML entity decoding. The defaults expand &lt;, &amp;,
+  // and numeric entities which could otherwise produce a downstream
+  // XSS vector if a malicious feed re-encoded a payload as a numeric
+  // entity. We treat feed XML as untrusted bytes and let the
+  // sanitizer-on-render path normalize the content instead.
+  processEntities: false,
 });
 
 /**
@@ -57,16 +63,6 @@ export interface SourceAdapter {
   kind: 'json' | 'rss' | 'atom';
   extract: (parsed: unknown) => Headline[];
 }
-
-// CF-022 / E5 — `GENERIC_SOURCES`, `fanOutForTags`, and the three
-// per-source adapters (HACKER_NEWS, GOOGLE_NEWS, REDDIT) were removed
-// alongside the 2026-04-23 global-feed rework. Production resolves
-// every per-tag feed through `adaptersForDiscoveredFeeds` (below),
-// which builds adapters directly from `DiscoveredFeed` records held
-// in KV `sources:{tag}`. The three Algolia/Google/Reddit adapters
-// were never referenced by `adaptersForDiscoveredFeeds` and were
-// pure dead weight after the rework — code-reviewer flagged them
-// as unused-variable lint warnings under `--deny-warnings`.
 
 // ---------- Fetch one source for one tag ---------------------------------
 

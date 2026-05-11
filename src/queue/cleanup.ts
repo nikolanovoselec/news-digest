@@ -1,5 +1,6 @@
 // Implements REQ-PIPE-003 (Vectorize retention sync)
 // Implements REQ-PIPE-005
+// Implements REQ-PIPE-006 (orphan scrape-run retirement, AC 8)
 // Implements REQ-PIPE-007
 // Implements REQ-DISC-006
 //
@@ -77,6 +78,7 @@ export async function runCleanup(env: Env): Promise<{
   stuckTagsPruned: number;
   refreshTokensPurged: number;
   chunkCompletionsPurged: number;
+  orphanScrapeRunsPurged: number;
 }> {
   const articlesDeleted = await runArticleRetention(
     env,
@@ -95,13 +97,50 @@ export async function runCleanup(env: Env): Promise<{
   );
   const refreshTokensPurged = await runRefreshTokenPurge(env);
   const chunkCompletionsPurged = await runChunkCompletionsPurge(env);
+  const orphanScrapeRunsPurged = await runOrphanScrapeRunSweep(env);
   return {
     articlesDeleted,
     orphanTagsDeleted,
     stuckTagsPruned,
     refreshTokensPurged,
     chunkCompletionsPurged,
+    orphanScrapeRunsPurged,
   };
+}
+
+/** CF-018 — fail any scrape_run stuck with `chunk_count = -1` (the
+ *  coordinator dispatch sentinel) for more than 6 hours. A dispatch
+ *  that crashed between the CAS flip and the chunk-count rollback in
+ *  Step 8 leaves the row in the dispatch-claimed state, blocking
+ *  future force-refresh attempts. 6h is well past any legitimate
+ *  in-flight dispatch (chunk consumers exhaust within minutes). */
+async function runOrphanScrapeRunSweep(env: Env): Promise<number> {
+  try {
+    const result = await env.DB
+      .prepare(
+        `UPDATE scrape_runs
+            SET status = 'failed',
+                finalize_recorded = 1
+          WHERE chunk_count = -1
+            AND created_at < unixepoch() - 21600
+            AND status = 'running'`,
+      )
+      .run();
+    const purged = result.meta?.changes ?? 0;
+    if (purged > 0) {
+      log('warn', 'digest.generation', {
+        status: 'cleanup_orphan_scrape_runs_purged',
+        purged,
+      });
+    }
+    return purged;
+  } catch (err) {
+    log('error', 'digest.generation', {
+      status: 'cleanup_orphan_scrape_runs_failed',
+      detail: errMsg(err),
+    });
+    return 0;
+  }
 }
 
 /** CF-008 — delete `scrape_chunk_completions` rows for runs whose

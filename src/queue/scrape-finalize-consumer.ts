@@ -51,7 +51,7 @@ import {
   deleteVectorsBatched,
 } from '~/lib/embeddings';
 import { readRerankFloor, rerankBorderlinePair } from '~/lib/dedup-rerank';
-import { sameVendor } from '~/lib/etld';
+import { classifyMatchPair } from '~/lib/bidirectional-dedup';
 import { generateUlid } from '~/lib/ulid';
 
 /** Hard cap on candidates per finalize call. Comfortable headroom over
@@ -315,6 +315,13 @@ export async function processOneFinalize(
     let bestCosineRaw = 0;
     let bestCosineAdjusted = 0;
 
+    const classifierParams = {
+      threshold,
+      sameVendorPenalty,
+      rerankFloor,
+      timeWindowSeconds,
+      highConfidenceCosine,
+    };
     for (const match of matches) {
       if (match.id === self.id) continue;
       // A candidate already absorbed by a prior iteration of this same
@@ -325,95 +332,61 @@ export async function processOneFinalize(
         continue;
       }
       candidatesSeen += 1;
-      const meta = match.metadata as
-        | { published_at?: unknown; primary_source_url?: unknown }
-        | undefined;
-      const matchPublishedAt =
-        typeof meta?.published_at === 'number' ? meta.published_at : null;
-      if (matchPublishedAt === null) continue;
-      // Hard time-window gate — pairs further apart than the configured
-      // window are not the same news event regardless of how high the
-      // cosine score is. Cuts dense-theme false-merges (e.g. "AI agent
-      // governance") that score above the cosine ceiling on topical
-      // overlap alone. Applied BEFORE same-vendor penalty + threshold.
-      const deltaSeconds = Math.abs(self.published_at - matchPublishedAt);
-      if (deltaSeconds > timeWindowSeconds) {
+      const c = classifyMatchPair(self, match, classifierParams);
+      if (c.kind === 'no_metadata') continue;
+      if (c.kind === 'out_of_window') {
+        // Hard time-window gate — pairs further apart than the configured
+        // window are not the same news event regardless of how high the
+        // cosine score is. Cuts dense-theme false-merges (e.g. "AI agent
+        // governance") that score above the cosine ceiling on topical
+        // overlap alone. Applied BEFORE same-vendor penalty + threshold.
         candidatesSkippedTimeWindow += 1;
         log('info', 'digest.generation', {
           status: 'finalize_match_skipped_time_window',
           scrape_run_id: body.scrape_run_id,
           self_id: self.id,
           match_id: match.id,
-          delta_seconds: deltaSeconds,
+          delta_seconds: c.deltaSeconds,
         });
         continue;
       }
-      // High-confidence band (AD40, 2026-05-09): pairs whose RAW
-      // cosine clears `highConfidenceCosine` auto-merge unconditionally,
-      // bypassing the same-vendor penalty. At raw >= 0.92 the articles
-      // are essentially restating each other (wire-syndicated stories,
-      // near-identical headlines) and the penalty would otherwise drop
-      // genuine duplicates into the rerank band where an LLM
-      // hallucination can reject them.
-      const isHighConfidence = match.score >= highConfidenceCosine;
-      // Apply the same-vendor cosine penalty BEFORE the threshold gate
-      // (skipped for high-confidence pairs). Same-publisher pairs
-      // (cloud.google.com vs blog.google, workos.com vs blog.workos.com)
-      // consistently produced inflated cosines on LLM-summary
-      // embeddings because the model carried publisher-style
-      // boilerplate; the offset neutralises that without forbidding
-      // genuine same-publisher merges.
-      const matchUrl =
-        typeof meta?.primary_source_url === 'string'
-          ? meta.primary_source_url
-          : '';
-      const sameEtld1 =
-        matchUrl !== '' && sameVendor(self.primary_source_url, matchUrl);
-      const adjustedScore = sameEtld1 && !isHighConfidence
-        ? match.score - sameVendorPenalty
-        : match.score;
-      // Direction. self_is_older means self IS the older article in
-      // the pair — the cluster anchors at self and we'd absorb match
-      // INTO self. self_is_older=false means match is older — self
-      // folds into match (the pre-2026-05-09 direction). Equal
-      // `published_at` is tie-broken by ULID; lower id = older. The
-      // strict-older branches below reject the impossible self.id ===
-      // match.id case (already filtered above).
-      const selfIsOlder =
-        self.published_at < matchPublishedAt ||
-        (self.published_at === matchPublishedAt && self.id < match.id);
-      if (selfIsOlder) {
+      // Direction. selfIsOlder=true means self IS the older article
+      // in the pair — the cluster anchors at self and we'd absorb match
+      // INTO self. selfIsOlder=false means match is older — self folds
+      // into match (the pre-2026-05-09 direction). Equal `published_at`
+      // is tie-broken by ULID; lower id = older.
+      if (c.selfIsOlder) {
         candidatesSelfOlder += 1;
       } else {
         candidatesSelfNewer += 1;
       }
-      if (adjustedScore > bestCosineAdjusted) {
+      if (c.adjustedScore > bestCosineAdjusted) {
         bestCosineRaw = match.score;
-        bestCosineAdjusted = adjustedScore;
+        bestCosineAdjusted = c.adjustedScore;
       }
-      if (isHighConfidence) candidatesHighConfidence += 1;
-      if (isHighConfidence || adjustedScore >= threshold) {
+      if (c.isHighConfidence) candidatesHighConfidence += 1;
+      if (c.isAutoMerge) {
         candidatesAboveThreshold += 1;
         candidatesAboveFloor += 1;
         const cand: AutoCandidate = {
           matchId: match.id,
-          matchPublishedAt,
-          adjustedScore,
-          selfIsOlder,
+          matchPublishedAt: c.matchPublishedAt,
+          adjustedScore: c.adjustedScore,
+          selfIsOlder: c.selfIsOlder,
         };
         if (isBetterAutoCandidate(cand, bestAuto)) {
           bestAuto = cand;
         }
-      } else if (adjustedScore >= rerankFloor) {
+      } else if (c.isBorderline) {
         candidatesAboveFloor += 1;
         // Push EVERY borderline candidate into the list. The rerank
         // pass below sorts by `isBetterBorderCandidate` and walks
         // top-down, taking the first LLM=yes verdict.
         borderCandidates.push({
           matchId: match.id,
-          matchPublishedAt,
-          adjustedScore,
-          selfIsOlder,
+          matchPublishedAt: c.matchPublishedAt,
+          adjustedScore: c.adjustedScore,
+          selfIsOlder: c.selfIsOlder,
         });
       }
     }

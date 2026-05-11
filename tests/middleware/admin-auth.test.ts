@@ -18,7 +18,11 @@ const ADMIN_EMAIL = 'admin@example.com';
 function makeAccessJwt(claims: Record<string, unknown>): string {
   const enc = new TextEncoder();
   const headerB64 = base64UrlEncode(enc.encode(JSON.stringify({ alg: 'RS256' })));
-  const payloadB64 = base64UrlEncode(enc.encode(JSON.stringify(claims)));
+  // CF-007-R: decodeAccessJwt now validates `exp`. Default to a future
+  // expiry so existing tests stay green; callers exercising the
+  // expired-token path pass an explicit `exp` claim that overrides this.
+  const withExp = { exp: Math.floor(Date.now() / 1000) + 600, ...claims };
+  const payloadB64 = base64UrlEncode(enc.encode(JSON.stringify(withExp)));
   // Signature is opaque to the decoder (we never verify it in-Worker —
   // Cloudflare Access already verified before forwarding).
   return `${headerB64}.${payloadB64}.signature`;
@@ -178,6 +182,56 @@ describe('requireAdminSession — Layer 0: Cf-Access-Jwt-Assertion (optional)', 
     });
     const badResult = await requireAdminSession(badCtx as never);
     expect(badResult.ok).toBe(false);
+  });
+
+  it('CF-007-R: returns 401 when the Access JWT exp is in the past', async () => {
+    const expiredJwt = makeAccessJwt({
+      aud: 'tenant-aud-tag',
+      exp: Math.floor(Date.now() / 1000) - 60,
+    });
+    const sessionJwt = await signSession(
+      { sub: 'user-1', email: ADMIN_EMAIL, ghl: 'admin', sv: 1 },
+      SECRET,
+    );
+    const ctx = await makeContext({
+      accessJwt: expiredJwt,
+      cookieJwt: sessionJwt,
+      row: defaultUserRow(),
+      cfAccessAud: 'tenant-aud-tag',
+    });
+    const result = await requireAdminSession(ctx as never);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(401);
+    }
+  });
+
+  it('CF-007-R: returns 401 when the Access JWT has no exp claim', async () => {
+    // Build the JWT inline to omit `exp` entirely (the makeAccessJwt
+    // helper bakes in a default future exp, which we explicitly do
+    // NOT want here).
+    const enc = new TextEncoder();
+    const headerB64 = base64UrlEncode(enc.encode(JSON.stringify({ alg: 'RS256' })));
+    const payloadB64 = base64UrlEncode(
+      enc.encode(JSON.stringify({ aud: 'tenant-aud-tag' })),
+    );
+    const noExpJwt = `${headerB64}.${payloadB64}.signature`;
+
+    const sessionJwt = await signSession(
+      { sub: 'user-1', email: ADMIN_EMAIL, ghl: 'admin', sv: 1 },
+      SECRET,
+    );
+    const ctx = await makeContext({
+      accessJwt: noExpJwt,
+      cookieJwt: sessionJwt,
+      row: defaultUserRow(),
+      cfAccessAud: 'tenant-aud-tag',
+    });
+    const result = await requireAdminSession(ctx as never);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(401);
+    }
   });
 });
 

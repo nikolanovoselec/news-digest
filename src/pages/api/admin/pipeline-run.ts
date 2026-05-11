@@ -43,6 +43,8 @@ import {
 import { applyRefreshCookie } from '~/middleware/auth';
 import { checkDevEndpointOrigin, originOf } from '~/middleware/origin-check';
 import { generateUlid } from '~/lib/ulid';
+import { enforceRateLimit, RATE_LIMIT_RULES } from '~/lib/rate-limit';
+import { sanitizeErrorDetail } from '~/lib/error-sanitize';
 import type { PipelinePhase } from '~/queue/pipeline-consumer';
 
 type AdminAuthOk = Extract<AdminAuthResult, { ok: true }>;
@@ -84,6 +86,25 @@ export async function POST(context: APIContext): Promise<Response> {
     });
   }
 
+  // CF-008
+  const rl = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.ADMIN_PIPELINE_RUN,
+    `user:${adminAuth.userId}`,
+  );
+  if (!rl.ok) {
+    if (wantsJson) {
+      return new Response('Too Many Requests', {
+        status: 429,
+        headers: { 'Retry-After': String(rl.retryAfter) },
+      });
+    }
+    return new Response(null, {
+      status: 303,
+      headers: { Location: `${appOrigin}/settings?pipeline=rate_limited` },
+    });
+  }
+
   const mode = await parseModeFromBody(context.request);
   return runKick(env, adminAuth, appOrigin, wantsJson, mode);
 }
@@ -110,6 +131,45 @@ export async function GET(context: APIContext): Promise<Response> {
   const url = new URL(context.request.url);
   const requestedMode: 'full' | 'wipe' =
     url.searchParams.get('mode') === 'wipe' ? 'wipe' : 'full';
+
+  // CF-009: `wipe` re-embeds the entire corpus — destructive enough
+  // that we refuse to serve it from a GET. Browser callers must POST
+  // the form; idempotent `full` continues to be reachable via GET
+  // (the post-SSO redirect chain depends on it).
+  if (requestedMode === 'wipe') {
+    if (wantsJson) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'method_not_allowed' }),
+        {
+          status: 405,
+          headers: { 'Content-Type': 'application/json', Allow: 'POST' },
+        },
+      );
+    }
+    return new Response('Use POST for mode=wipe', {
+      status: 405,
+      headers: { Allow: 'POST' },
+    });
+  }
+
+  // CF-008
+  const rl = await enforceRateLimit(
+    env,
+    RATE_LIMIT_RULES.ADMIN_PIPELINE_RUN,
+    `user:${adminAuth.userId}`,
+  );
+  if (!rl.ok) {
+    if (wantsJson) {
+      return new Response('Too Many Requests', {
+        status: 429,
+        headers: { 'Retry-After': String(rl.retryAfter) },
+      });
+    }
+    return new Response(null, {
+      status: 303,
+      headers: { Location: `${appOrigin}/settings?pipeline=rate_limited` },
+    });
+  }
 
   return runKick(env, adminAuth, appOrigin, wantsJson, requestedMode);
 }
@@ -159,7 +219,7 @@ async function runKick(
             WHERE id = ?1
               AND status = 'running'`,
         )
-        .bind(pipelineRunId, now, String(err).slice(0, 500))
+        .bind(pipelineRunId, now, sanitizeErrorDetail(err))
         .run();
     } catch {
       /* swallow */

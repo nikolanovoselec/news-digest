@@ -253,6 +253,25 @@ export const RATE_LIMIT_RULES = {
     limit: 5,
     windowSec: 60,
   },
+  // CF-008 — admin force-refresh kicks the whole pipeline (one scrape
+  // tick + finalize + dedup). 5/hour/user comfortably covers an
+  // operator hammering "refresh" through a real session while bounding
+  // accidental loops or compromised-admin abuse.
+  ADMIN_FORCE_REFRESH: {
+    routeClass: 'admin_force_refresh',
+    limit: 5,
+    windowSec: 3600,
+    failClosed: true,
+  },
+  // CF-008 — pipeline-run/wipe is the most expensive admin action
+  // (re-embeds every article). 2/hour/user is enough for legitimate
+  // operator re-runs after a config change while preventing burst abuse.
+  ADMIN_PIPELINE_RUN: {
+    routeClass: 'admin_pipeline_run',
+    limit: 2,
+    windowSec: 3600,
+    failClosed: true,
+  },
   // REQ-SET-007 — POST /api/auth/set-tz writes a single users.tz
   // column. A legitimate user updates this on tz mismatch (rare:
   // travel, DST edge), so 30/min/user is generous — leaves room for
