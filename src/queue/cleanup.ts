@@ -1,5 +1,6 @@
 // Implements REQ-PIPE-003 (Vectorize retention sync)
 // Implements REQ-PIPE-005
+// Implements REQ-PIPE-006 (orphan scrape-run retirement, AC 8)
 // Implements REQ-PIPE-007
 // Implements REQ-DISC-006
 //
