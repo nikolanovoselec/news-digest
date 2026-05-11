@@ -90,17 +90,25 @@ function hostIsBlocked(url: string): boolean {
 }
 
 /** Return true when the headline's source_name contains any token from
- *  {@link BLOCKED_NAME_TOKENS} (lowercased substring match). The check
- *  is intentionally loose because RSS `<source>` text varies in
- *  formatting (with/without trademark glyphs, with/without trailing
- *  ", Inc." etc.). Returns false on null/empty input. */
+ *  {@link BLOCKED_NAME_TOKENS} as a whole-word match. Word boundaries
+ *  are needed because short tokens (e.g. "msn", "cnbc") would otherwise
+ *  substring-match unrelated publisher names ("Comsnet News",
+ *  "Demsnews"). A "word" here is a maximal run of letters/digits, with
+ *  punctuation and whitespace acting as separators — so a token like
+ *  "yahoo finance" matches "Yahoo Finance" and "Yahoo! Finance" alike
+ *  (the bang is a separator between two word-runs). Case-insensitive.
+ *  Returns false on null/empty input. */
 function nameIsBlocked(sourceName: string | null | undefined): boolean {
   if (sourceName === null || sourceName === undefined || sourceName === '') {
     return false;
   }
-  const haystack = sourceName.toLowerCase();
+  // Normalise the haystack: lowercase + collapse any non-alphanumeric
+  // run to a single space, then pad with spaces so all word boundaries
+  // become " token " runs detectable by simple substring.
+  const haystack = ' ' + sourceName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
   for (const token of BLOCKED_NAME_TOKENS) {
-    if (haystack.includes(token)) return true;
+    const needle = ' ' + token.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
+    if (haystack.includes(needle)) return true;
   }
   return false;
 }

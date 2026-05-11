@@ -1185,10 +1185,11 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
     expect(msg.cursor?.pa).toBeGreaterThan(0); // some recent epoch second
     // The cursor must seed the sweep at "now - 7d" - i.e., NOT 0
     // (which would scan the full corpus) and NOT some shorter span
-    // that would miss eligible cluster anchors.
-    // AUTO_SWEEP_LOOKBACK_SECONDS = 7 * 24 * 3600, matching
-    // DEDUP_TIME_WINDOW_SECONDS per REQ-PIPE-003 AC 17 (bumped from
-    // 72h on 2026-05-11 to cover observed long-running clusters).
+    // that would miss eligible cluster anchors. The auto-sweep
+    // lookback is derived from DEDUP_TIME_WINDOW_SECONDS at runtime
+    // (via autoSweepLookbackSeconds) so REQ-PIPE-003 AC 17 holds
+    // under any env override. Default = 7d, bumped 2026-05-11 from
+    // 72h to cover observed long-running clusters.
     const now = Math.floor(Date.now() / 1000);
     expect(msg.cursor?.pa).toBeGreaterThan(now - 8 * 24 * 3600);
     expect(msg.cursor?.pa).toBeLessThan(now - 6 * 24 * 3600);

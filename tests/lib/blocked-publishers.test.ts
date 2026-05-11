@@ -137,6 +137,43 @@ describe('blocked-publishers — RSS source-name match (Google News redirect cas
       ),
     ).toBe(true);
   });
+
+  it('does NOT block on accidental substring of "msn" (word-boundary match)', () => {
+    // Guards against the 3-letter "msn" token false-positiving on
+    // unrelated publishers. The token must match a whole word.
+    expect(
+      isBlockedPublisher(
+        mkHeadline({ url: GN, source_name: 'Comsnet News' }),
+      ),
+    ).toBe(false);
+    expect(
+      isBlockedPublisher(
+        mkHeadline({ url: GN, source_name: 'Amsnews Today' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('does NOT block on accidental substring of "cnbc" inside an unrelated name', () => {
+    expect(
+      isBlockedPublisher(
+        mkHeadline({ url: GN, source_name: 'Cnbcdesktop Software Review' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('blocks "MSN" as a standalone token even with surrounding decoration', () => {
+    // Whole-word matching still catches the real cases.
+    expect(
+      isBlockedPublisher(
+        mkHeadline({ url: GN, source_name: 'MSN Money' }),
+      ),
+    ).toBe(true);
+    expect(
+      isBlockedPublisher(
+        mkHeadline({ url: GN, source_name: '[MSN] Breaking' }),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe('blocked-publishers — filterBlockedPublishers', () => {

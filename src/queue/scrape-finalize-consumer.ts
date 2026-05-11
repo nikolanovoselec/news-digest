@@ -625,7 +625,8 @@ export async function processOneFinalize(
     // consistency (same-batch articles upserted moments earlier may
     // not yet be queryable), plus any cross-tick or late-arriving-
     // older pairs that escape the per-tick window. Scoped to the last
-    // `AUTO_SWEEP_LOOKBACK_SECONDS` so each tick's auto-sweep stays
+    // `DEDUP_TIME_WINDOW_SECONDS` (via {@link autoSweepLookbackSeconds})
+    // so each tick's auto-sweep stays
     // cheap (sub-corpus walk, ~50-100 articles in a busy 48h window
     // vs. the full 1.3k-article corpus on the operator-triggered
     // /api/admin/historical-dedup path). Best-effort: a failure here
@@ -677,30 +678,37 @@ async function flipGate(
   return (result.meta?.changes ?? 0) === 1;
 }
 
-/** Lookback window for the post-tick auto-sweep. Aligned with
- *  `DEDUP_TIME_WINDOW_SECONDS` (7d, bumped 2026-05-11 from 72h) so
- *  the cursor scope and the per-pair time-window gate cover the same
- *  span. REQ-PIPE-003 AC 17 mandates this equality — any pair the
- *  per-pair gate accepts must be reachable by the automatic post-tick
- *  matcher, otherwise cross-cycle clusters fragment.
+/** Lookback window for the post-tick auto-sweep. Derived from
+ *  `DEDUP_TIME_WINDOW_SECONDS` at runtime via `readTimeWindowSeconds`
+ *  so the cursor scope and the per-pair time-window gate cover the
+ *  same span under any env override. REQ-PIPE-003 AC 17 mandates this
+ *  equality — any pair the per-pair gate accepts must be reachable by
+ *  the automatic post-tick matcher, otherwise cross-cycle clusters
+ *  fragment. Tying both reads to the same env var prevents the
+ *  "operator bumps DEDUP_TIME_WINDOW_SECONDS, auto-sweep silently
+ *  desyncs" footgun.
  *
  *  History: started at 48h, widened to 72h after the
  *  Cloudflare-layoffs cluster (2026-05-10, 13 articles spanning 70h,
- *  anchor fell out of cursor) per AD41/AD42. Now 7d after the PANW
- *  valuation-week cluster (2026-05-11, four articles spanning 100h
- *  with the 0.89-cosine pair at 75h fell outside the old 72h window).
- *  7d covers every observed cluster while keeping cost bounded; the
- *  14d retention window is reachable via the operator-triggered
- *  /api/admin/historical-dedup endpoint when needed.
+ *  anchor fell out of cursor) per AD41/AD42. Now 7d (default) after
+ *  the PANW valuation-week cluster (2026-05-11, four articles spanning
+ *  100h with the 0.89-cosine pair at 75h fell outside the old 72h
+ *  window). 7d covers every observed cluster while keeping cost
+ *  bounded; the 14d retention window is reachable via the
+ *  operator-triggered /api/admin/historical-dedup endpoint when needed.
  *
  *  Cost: each tick enqueues ONE sweep message that paginates through
  *  the lookback window via the queue consumer. Wall-time is unaffected
  *  (consumer rate-limits itself); the cost is N more Vectorize queries
- *  per tick, bounded by corpus-in-7d (~750 articles in steady state). */
-const AUTO_SWEEP_LOOKBACK_SECONDS = 7 * 24 * 3600;
+ *  per tick, bounded by corpus-in-window (~750 articles at 7d). */
+function autoSweepLookbackSeconds(
+  env: Pick<Env, 'DEDUP_TIME_WINDOW_SECONDS'>,
+): number {
+  return readTimeWindowSeconds(env);
+}
 
 /** Enqueue a single dedup-sweep continuation message scoped to the
- *  last {@link AUTO_SWEEP_LOOKBACK_SECONDS}. Mirrors the body shape
+ *  last {@link autoSweepLookbackSeconds}. Mirrors the body shape
  *  of `/api/admin/historical-dedup`'s queue path: insert a
  *  `dedup_runs` audit row with status='running', then send one
  *  `DedupSweepMessage` carrying the seeded composite cursor.
@@ -712,7 +720,7 @@ async function enqueueAutoSweep(
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
   const sweepRunId = generateUlid();
-  const cursorPa = now - AUTO_SWEEP_LOOKBACK_SECONDS;
+  const cursorPa = now - autoSweepLookbackSeconds(env);
   await env.DB
     .prepare(
       `INSERT INTO dedup_runs (id, status, scanned, merged, batch_count,
