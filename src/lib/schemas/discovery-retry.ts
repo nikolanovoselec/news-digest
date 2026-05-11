@@ -20,4 +20,4 @@ export const DiscoveryRetryBodySchema = z
   })
   .strict();
 
-export type DiscoveryRetryBody = z.infer<typeof DiscoveryRetryBodySchema>;
+type DiscoveryRetryBody = z.infer<typeof DiscoveryRetryBodySchema>;

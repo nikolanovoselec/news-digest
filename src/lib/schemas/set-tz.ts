@@ -23,4 +23,4 @@ export const SetTzBodySchema = z
   })
   .strict();
 
-export type SetTzBody = z.infer<typeof SetTzBodySchema>;
+type SetTzBody = z.infer<typeof SetTzBodySchema>;
