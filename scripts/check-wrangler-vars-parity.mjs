@@ -15,7 +15,11 @@ const text = readFileSync(tomlPath, 'utf-8');
 function parseSection(name) {
   // Match a section header on its own line, then read until the next
   // section header or EOF. Strip comments and blank lines.
-  const re = new RegExp(`^\\[${name.replace(/\./g, '\\.')}\\]\\s*$`, 'm');
+  // Escape ALL regex metacharacters in the section name (not just `.`)
+  // so the pattern is safe even if a future caller passes a name
+  // containing backslashes, brackets, or quantifiers.
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^\\[${escaped}\\]\\s*$`, 'm');
   const m = re.exec(text);
   if (m === null) return null;
   const start = m.index + m[0].length;
