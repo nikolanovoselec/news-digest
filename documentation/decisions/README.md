@@ -1317,22 +1317,22 @@ Three reasons the AD41 fix did not collapse this cluster:
 
 **Status:** Accepted (2026-05-12)
 
-**Decision:** Three documentation files exceed the per-file soft budgets from `documentation-discipline.md` Pass 2 and carry intentional `<!-- doc-allow-large -->` hatches. This AD formalizes the three carve-outs so the hatch markers point at a discoverable decision rather than at bare prose.
+**Decision:** Three documentation files exceed the per-file soft budgets from `documentation-discipline.md` Pass 2 and carry intentional `doc-allow-large` hatches. This AD formalizes the three carve-outs so the hatch markers point at a discoverable decision rather than at bare prose.
 
 - **AD46a — `deployment.md` colocation.** The deploy runbook, dev-bypass runbook, and admin-routes operator contract live in `deployment.md` despite their lane-split candidates (the admin-routes contract notionally belongs in `api-reference.md`; the dev-bypass runbook notionally belongs in `troubleshooting.md`). Splitting fragments the operator workflow: a contributor running a deploy follows a single linear runbook across pre-flight, deploy, post-deploy verification, and emergency recovery. Forcing the reader to jump between three files at each step is more expensive than the budget violation.
 - **AD46b — `architecture.md` diagram-section exemption.** Two ASCII data-flow diagrams in `architecture.md` are load-bearing reference art (the component map and the pipeline flow). Each diagram needs its surrounding prose to be readable in one scroll; splitting the diagram from its caption breaks the reader's mental model. The file's total line count is dominated by these diagrams and their context, not by prose drift.
 - **AD46c — `decisions/README.md` single-file design.** All ADRs colocate in one file (this one) rather than one-file-per-ADR. Per-file ADR storage fragments cross-references: ADR-A frequently cites ADR-B by linking to a section anchor; a per-file design makes anchor stability fragile and obscures the chronological reading path (`AD1 → AD46` reads as a single document). The file IS the index.
 
-**Context:** `documentation-discipline.md` Pass 6 (hatch audit) flags bare `<!-- doc-allow-large -->` markers as MEDIUM and prose-justification-without-ADR markers as the same shape the rule was written to prevent. Cycle 3 review (CF-006) flagged four markers across `deployment.md`, `architecture.md` (×2), and `decisions/README.md` that all carry the same root justification but no ADR backlink.
+**Context:** `documentation-discipline.md` Pass 6 (hatch audit) flags bare `doc-allow-large` markers as MEDIUM and prose-justification-without-ADR markers as the same shape the rule was written to prevent. Cycle 3 review (CF-006) flagged four markers across `deployment.md`, `architecture.md` (×2), and `decisions/README.md` that all carried the same root justification but no ADR backlink.
 
 **Rationale:** The hatch was designed to surface design tradeoffs as ADRs — a decision the reader can discover, revisit, and supersede. A bare or prose-only marker hides the decision in the marker itself. This AD pulls the decisions into the discoverable ADR ledger; the markers become referential, not load-bearing.
 
 **Consequences:**
 
-- The four affected markers now carry `<!-- doc-allow-large: AD46{a,b,c} ... -->` syntax. `doc-updater` Pass 6 audit accepts the markers under the existing ADR-reference rule.
+- The four affected markers now reference `AD46` directly (e.g., `doc-allow-large: AD46 deployment-doc colocation`). The `doc-updater` Pass 6 audit accepts them under the ADR-reference rule.
 - Future doc growth in any of the three files should reopen this AD rather than adding new bare hatches.
 - If `deployment.md` grows to the point where the operator workflow itself becomes hard to follow, the split should be a deliberate workflow redesign (e.g., a master deploy runbook with linked sub-pages), not a lane-discipline split.
-- The ADR ledger's single-file design (AD46c) implicitly limits the ledger's growth ceiling. If the ledger exceeds ~50 ADRs or ~2500 lines, this AD should be revisited in favor of a per-AD layout with an explicit index.
+- The ADR ledger's single-file design implicitly limits the ledger's growth ceiling. If the ledger exceeds ~50 ADRs or ~2500 lines, this AD should be revisited in favor of a per-AD layout with an explicit index.
 
 **Related requirements:** none direct — operational/documentation concern.
 
