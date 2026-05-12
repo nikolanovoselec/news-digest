@@ -36,6 +36,13 @@ describe('enforceRateLimit', () => {
     );
     expect(result.ok).toBe(true);
     expect(env.KV.put).toHaveBeenCalledTimes(1);
+    // CF-022: pair the call-count with a value assertion so a regression
+    // that wrote the wrong counter value (e.g. '0' instead of '1', or
+    // the wrong key) is caught instead of silently passing.
+    const putCall = env.KV.put.mock.calls[0] as
+      | [string, string, ...unknown[]]
+      | undefined;
+    expect(putCall?.[1]).toBe('1');
   });
 
   it('CF-028: rejects when the existing counter is at the limit', async () => {

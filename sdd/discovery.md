@@ -40,8 +40,7 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 **Priority:** P1
 **Dependencies:** REQ-DISC-001
 **Verification:** Integration test
-**Status:** Deprecated
-**Removed In:** 2026-04-24
+**Status:** Implemented
 
 ---
 

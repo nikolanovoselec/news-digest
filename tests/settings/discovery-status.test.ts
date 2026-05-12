@@ -1,5 +1,6 @@
-// Tests for src/pages/api/discovery/status.ts — REQ-SET-006 adjacent.
-// The endpoint returns the authenticated user's pending discovery tags.
+// Tests for src/pages/api/discovery/status.ts — covers REQ-SET-006 and
+// REQ-DISC-002. The endpoint returns the authenticated user's pending
+// discovery tags.
 
 import { describe, it, expect, vi } from 'vitest';
 import { GET } from '~/pages/api/discovery/status';
@@ -145,7 +146,7 @@ describe('GET /api/discovery/status', () => {
     expect(body.pending).toEqual([]);
   });
 
-  it('REQ-SET-006: returns tags from pending_discoveries table', async () => {
+  it('REQ-SET-006 / REQ-DISC-002: returns tags from pending_discoveries table', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       JWT_SECRET,

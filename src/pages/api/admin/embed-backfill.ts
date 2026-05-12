@@ -15,15 +15,17 @@
 // `Accept: application/json` get the cumulative JSON shape.
 //
 // Three-layer admin auth (CF-001) — same gate every other admin route
-// uses. No Origin check on POST because the backfill is also driven
-// from curl / scripts via the dev-bypass session; CSRF defence-in-
-// depth on form posts would block the legitimate scripted flow.
+// uses. CF-015: Origin check is applied to browser-driven calls so a
+// logged-in admin clicking a malicious link cannot trigger a corpus-
+// wide re-embed (Workers AI cost). Scripted callers opt out via
+// `Authorization: Bearer ...` (the dev-bypass curl path carries no
+// cookies, so it is not a CSRF surface).
 
 import type { APIContext } from 'astro';
 import { log } from '~/lib/log';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { applyRefreshCookie } from '~/middleware/auth';
-import { originOf } from '~/middleware/origin-check';
+import { checkOrigin, hasBearerAuth, originOf } from '~/middleware/origin-check';
 import { buildEmbeddingInput, embedTexts } from '~/lib/embeddings';
 
 /** Per-batch ceiling. 50 articles × 768-dim ≈ 150 KB of vectors per
@@ -77,6 +79,15 @@ async function handle(context: APIContext): Promise<Response> {
   const wantsJson = (context.request.headers.get('Accept') ?? '').includes(
     'application/json',
   );
+
+  // CF-015: defence-in-depth CSRF guard for browser-driven calls only
+  // on state-changing methods (POST). GET is exempt per REQ-AUTH-003
+  // (idempotent). Scripted Bearer callers carry no cookies and are
+  // not a CSRF surface.
+  if (context.request.method === 'POST' && !hasBearerAuth(context.request)) {
+    const originResult = checkOrigin(context.request, appOrigin);
+    if (!originResult.ok) return originResult.response;
+  }
 
   const adminAuth = await requireAdminSession(context);
   if (!adminAuth.ok) {

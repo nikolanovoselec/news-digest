@@ -37,22 +37,31 @@ import {
 interface BypassEnv {
   DEV_BYPASS_TOKEN?: string;
   DEV_BYPASS_USER_ID?: string;
+  IS_PRODUCTION?: string;
 }
 
 // `verifyHmacSignature` is imported from `~/lib/crypto` (CF-005 — was
 // open-coded as a JS XOR loop here and in dev/trigger-scrape.ts;
 // renamed in CF-014 from `timingSafeEqualHmac`).
 
+/** CF-017: only the literal `"false"` value of `IS_PRODUCTION` admits
+ *  the dev-bypass routes. Anything else — missing, empty, `"true"`,
+ *  typos — is treated as production and the endpoint stays 404. The
+ *  previous guard `appUrl.includes('graymatter.ch')` failed open when
+ *  `APP_URL` was unset on a fork or accidentally cleared. */
+function devBypassEnabled(env: { IS_PRODUCTION?: string }): boolean {
+  return env.IS_PRODUCTION === 'false';
+}
+
 export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env as typeof context.locals.runtime.env &
     BypassEnv;
 
-  // CF-019-R: hard prod guard. The DEV_BYPASS_TOKEN gate below is
-  // already the primary defence, but a tokenful prod deploy (operator
-  // mistake, accidental secret promotion) must still 404 here so the
-  // bypass surface never opens on news.graymatter.ch.
-  const appUrl = typeof env.APP_URL === 'string' ? env.APP_URL : '';
-  if (appUrl.includes('graymatter.ch')) {
+  // CF-017 (replacing CF-019-R substring guard): fail-closed check on
+  // an explicit production flag. The DEV_BYPASS_TOKEN gate below is
+  // the primary defence, but the explicit boolean guarantees the dev
+  // surface never opens on a deploy where the flag was forgotten.
+  if (!devBypassEnabled(env)) {
     return new Response(null, { status: 404 });
   }
 
@@ -91,6 +100,17 @@ export async function POST(context: APIContext): Promise<Response> {
   let userId = env.DEV_BYPASS_USER_ID;
   if (typeof userId !== 'string' || userId === '') {
     userId = E2E_USER_ID;
+  }
+
+  // CF-017: the dev-bypass routes exist to mint sessions for synthetic
+  // accounts. Refuse to mint for any user id that doesn't start with
+  // the `__e2e__` sentinel prefix. This stops an accidentally-set
+  // `DEV_BYPASS_USER_ID` (or a typo'd real user id) from minting a
+  // real-account session on integration. The default path above always
+  // resolves to `E2E_USER_ID` which carries the prefix, so the
+  // synthetic flow stays green.
+  if (!userId.startsWith('__e2e__')) {
+    return new Response(null, { status: 403 });
   }
 
   // SessionClaims requires email + ghl (verifySession → isSessionClaims

@@ -1,5 +1,10 @@
 # Security Policy
 
+This file is the project's GitHub-facing vulnerability disclosure
+policy. For the application-layer security controls (CSP, cookie
+attributes, rate limits, auth flow), see
+[`documentation/security.md`](documentation/security.md).
+
 ## Supported Versions
 
 Only the deployed `main` branch is supported. The repo's `develop`

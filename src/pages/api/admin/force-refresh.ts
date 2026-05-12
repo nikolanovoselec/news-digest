@@ -18,7 +18,7 @@
 
 import type { APIContext } from 'astro';
 import { log } from '~/lib/log';
-import { checkOrigin, originOf } from '~/middleware/origin-check';
+import { checkOrigin, hasBearerAuth, originOf } from '~/middleware/origin-check';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { applyRefreshCookie } from '~/middleware/auth';
 import { kickCoordinator } from '~/lib/kick-coordinator';
@@ -63,8 +63,13 @@ export async function POST(context: APIContext): Promise<Response> {
   );
   if (!rl.ok) return rateLimited(rl.retryAfter);
 
-  const originResult = checkOrigin(context.request, appOrigin);
-  if (!originResult.ok) return originResult.response;
+  // CF-015: defence-in-depth CSRF guard. Scripted callers presenting
+  // `Authorization: Bearer ...` carry no cookies and are not a CSRF
+  // surface, so they bypass the Origin check.
+  if (!hasBearerAuth(context.request)) {
+    const originResult = checkOrigin(context.request, appOrigin);
+    if (!originResult.ok) return originResult.response;
+  }
 
   try {
     const { run_id, reused } = await kickCoordinator(env);

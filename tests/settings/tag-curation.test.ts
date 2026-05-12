@@ -10,11 +10,18 @@
 //   - AC 8: /settings exposes a "Restore initial tags" action
 
 import { describe, it, expect } from 'vitest';
-import digestPage from '../../src/pages/digest.astro?raw';
+import digestPageAstro from '../../src/pages/digest.astro?raw';
+import digestBundled from '../../src/scripts/bundled/digest-page.ts?raw';
 import tagStrip from '../../src/components/TagStrip.astro?raw';
 import settingsPage from '../../src/pages/settings.astro?raw';
 import digestCard from '../../src/components/DigestCard.astro?raw';
 import { RESTORE_DEFAULTS_LABEL } from '~/lib/default-hashtags';
+
+// CF-039: the digest page's client script was extracted to
+// src/scripts/bundled/digest-page.ts so oxlint can lint it. The
+// extractScriptRegion helper at the bottom of this file now walks
+// the bundled script as well as the page markup.
+const digestPage = `${digestPageAstro}\n${digestBundled}`;
 
 describe('tag strip selection — REQ-SET-002 AC 2', () => {
   it('REQ-SET-002: every tag chip starts with aria-pressed="false" for a11y toggle semantics', () => {

@@ -71,6 +71,14 @@ interface Env {
   DEV_BYPASS_TOKEN?: string;
   DEV_BYPASS_USER_ID?: string;
 
+  // CF-017 / REQ-AUTH-001 AC 10 — fail-closed production guard. Set to
+  // the literal string `"false"` for dev/integration environments to
+  // unlock the `/api/dev/*` surface and tolerate JWKS-verification skip
+  // paths. Anything else (including unset) is treated as production:
+  // dev routes return 404 and JWKS verification must succeed before
+  // an id_token's claims are trusted.
+  IS_PRODUCTION?: string;
+
   // CF-004 — queue retry cap. Sourced from wrangler.toml [vars] /
   // [env.integration.vars] (string-typed). The runtime parses to int
   // and falls back to 3 when unset (e.g. unit-test environments that

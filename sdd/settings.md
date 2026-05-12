@@ -77,10 +77,10 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. The model dropdown lists entries from a hardcoded `MODELS` list, grouped under "Featured" and "Budget" section headers.
+1. The model dropdown lists the same model options that other config surfaces accept, grouped under "Featured" and "Budget" section headers.
 2. Each option shows a short description and an estimated per-digest cost computed from the model's per-million-token prices.
-3. The default selection is the `DEFAULT_MODEL_ID` constant.
-4. On save, the server rejects any `model_id` not present in `MODELS` with HTTP 400 and error code `invalid_model_id`.
+3. The dropdown pre-selects the system default model.
+4. On save, the server rejects any model identifier not in the accepted list with HTTP 400 and error code `invalid_model_id`.
 5. The model dropdown lives inside an "Advanced" collapsible section, collapsed by default.
 
 **Constraints:** CON-LLM-001

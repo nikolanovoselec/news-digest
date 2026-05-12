@@ -176,7 +176,7 @@ Returns the set of hashtags the authenticated user has queued for background sou
 
 **Rate limit:** 120 / 60 s per user id (`discovery_status`). Fail open. Exhausted → `429` with `Retry-After`. Sized to accommodate a 2-second polling cadence with overhead.
 
-**Implements:** [REQ-SET-006](../sdd/settings.md#req-set-006-settings-incomplete-gate), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9
+**Implements:** [REQ-DISC-002](../sdd/discovery.md#req-disc-002-discovery-progress-visibility), [REQ-SET-006](../sdd/settings.md#req-set-006-settings-incomplete-gate), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9
 
 ---
 

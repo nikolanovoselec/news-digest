@@ -28,6 +28,7 @@ import { checkDevEndpointOrigin } from '~/middleware/origin-check';
 
 interface DevEnv {
   DEV_BYPASS_TOKEN?: string;
+  IS_PRODUCTION?: string;
 }
 
 // `verifyHmacSignature` from ~/lib/crypto replaces the previously
@@ -38,9 +39,12 @@ export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env as typeof context.locals.runtime.env &
     DevEnv;
 
-  // CF-019-R: hard prod guard, same as /api/dev/login.
-  const appUrl = typeof env.APP_URL === 'string' ? env.APP_URL : '';
-  if (appUrl.includes('graymatter.ch')) {
+  // CF-017 (replacing CF-019-R substring guard): fail-closed check on
+  // an explicit production flag. Only the literal `"false"` admits the
+  // dev-bypass routes; anything else (missing, empty, `"true"`, typo)
+  // keeps the endpoint 404. The previous `appUrl.includes(...)` guard
+  // failed open when APP_URL was unset.
+  if (env.IS_PRODUCTION !== 'false') {
     return new Response(null, { status: 404 });
   }
 

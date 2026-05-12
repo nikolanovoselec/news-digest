@@ -76,9 +76,23 @@ The destructive wipe-and-re-embed pipeline mode (`mode=wipe`) is only reachable 
 
 ---
 
+## Google id_token RS256 verification (REQ-AUTH-001)
+
+The Google OAuth callback verifies the `id_token` signature using RS256 against Google's published JWKS endpoint (`https://www.googleapis.com/oauth2/v3/certs`). Implemented in `src/lib/google-jwks.ts`. The keys are cached for 1 hour in KV under `oidc:jwks:google` so a stale-key scenario after a Google JWKS rotation self-heals within the hour. Prior to this (CF-013), claims were decoded without signature verification, relying solely on the TLS channel to the token endpoint.
+
+The gate is fail-closed in production: if KV is unbound or the JWKS endpoint is unreachable, the `id_token` claims are discarded and the callback falls through to the userinfo endpoint as the authoritative source. On integration and test deployments (`IS_PRODUCTION = "false"`) the skip path is tolerated so a stubbed KV does not block sign-in. The `isProduction` flag is derived from `IS_PRODUCTION` in `callback.ts` and threaded into `ProfileFetcher` — see [`configuration.md`](configuration.md#worker-vars-non-secret).
+
+---
+
+## Admin POST endpoints: Origin check with Bearer bypass (REQ-AUTH-001)
+
+Admin POST endpoints (`embed-backfill`, `force-refresh`, `historical-dedup`) enforce an Origin check on browser-driven calls. Requests presenting an `Authorization: Bearer ...` header bypass the Origin check — scripted curl flows and dev-bypass sessions carry no session cookie and are not a CSRF surface. A browser-driven POST without a Bearer header must present an `Origin` matching `APP_URL` or receive `403 forbidden_origin`. See [`api-reference-admin.md`](api-reference-admin.md) for per-endpoint auth notes.
+
+---
+
 ## Dev-bypass prod guard (REQ-AUTH-001 AC 10)
 
-Routes under `/api/dev/*` return `404` on any deployment whose `APP_URL` identifies it as a production hostname (currently: any hostname containing `graymatter.ch`). This guard fires regardless of whether `DEV_BYPASS_TOKEN` is set, so an accidentally-promoted dev secret cannot open the bypass surface on production. Integration deployments (`news.novoselec.ch`) are not subject to this guard; see the [Dev-bypass runbook](deployment.md#dev-bypass-runbook-integration-only) for integration usage.
+Routes under `/api/dev/*` return `404` on any deployment where the `IS_PRODUCTION` Worker var is `"true"` (see [`configuration.md`](configuration.md#worker-vars-non-secret)). The guard is fail-closed: a missing or unrecognised value is treated as production. `DEV_BYPASS_TOKEN` being set does not override this gate. Integration deployments set `IS_PRODUCTION = "false"`; see the [Dev-bypass runbook](deployment.md#dev-bypass-runbook-integration-only) for integration usage.
 
 ---
 

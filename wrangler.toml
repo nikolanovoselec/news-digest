@@ -137,6 +137,16 @@ index_name = "ai-news-embeddings"
 # so a future bump only changes one place. Integers must be quoted as
 # strings here; the consumer `Number.parseInt`s them.
 QUEUE_MAX_RETRIES = "3"
+# CF-017 - explicit production-mode flag. Replaces the previous
+# substring guard `appUrl.includes('graymatter.ch')` in the dev-bypass
+# routes. The substring approach failed open whenever `APP_URL` was
+# unset on a fork or accidentally cleared. This boolean is read fail-
+# closed: anything other than the literal `"false"` is treated as
+# production by the dev-bypass routes, so a missing var locks the dev
+# endpoints down rather than exposing them. Production deployments
+# leave this at `"true"`; only the integration env overrides it to
+# `"false"` so e2e scripts on news.novoselec.ch can drive the bypass.
+IS_PRODUCTION = "true"
 
 # REQ-PIPE-003 - cosine threshold for semantic dedup. Raised from
 # 0.78 to 0.88 on 2026-05-08 after a 13-source false-merge cluster
@@ -209,6 +219,11 @@ workers_dev = false
 # CF-004 - must match the top-level [vars] QUEUE_MAX_RETRIES; the
 # integration env doesn't inherit top-level vars automatically.
 QUEUE_MAX_RETRIES = "3"
+# CF-017 - integration env is the only deployment target where the
+# dev-bypass routes are reachable. Set to the literal `"false"` so
+# the fail-closed guard in `/api/dev/*` admits the bypass token; any
+# other value (including unset on a fork) keeps the routes 404.
+IS_PRODUCTION = "false"
 # REQ-PIPE-003 - same threshold as production. Forks tuning their
 # own corpus may override here without touching prod.
 DEDUP_COSINE_THRESHOLD = "0.88"

@@ -131,6 +131,12 @@ async function callRoute(opts: CallOpts) {
   if (opts.authenticated !== false) {
     const cookie = await adminCookieJwt();
     headers['Cookie'] = `${SESSION_COOKIE_NAME}=${cookie}`;
+    // CF-015: defence-in-depth Origin check requires a matching
+    // origin on browser-driven POSTs. Browser-cookie callers carry
+    // an Origin; set it to APP_URL so the gate passes for the
+    // happy-path tests. Negative-Origin coverage lives in dedicated
+    // tests below.
+    headers['Origin'] = APP_URL;
   }
   const init: RequestInit = { method: 'POST', headers };
   if (opts.body !== undefined) {
@@ -262,6 +268,7 @@ describe('POST /api/admin/historical-dedup — kicker', () => {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
         Cookie: `${SESSION_COOKIE_NAME}=${cookie}`,
+        Origin: APP_URL,
       },
     });
     const env = {

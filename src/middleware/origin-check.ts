@@ -80,3 +80,15 @@ export function checkDevEndpointOrigin(
   if (typeof appUrl !== 'string' || appUrl === '') return true;
   return origin === originOf(appUrl);
 }
+
+/**
+ * CF-015: scripted-caller bypass for the admin Origin check. Returns
+ * true when the request presents an `Authorization: Bearer ...`
+ * header. Bearer-authenticated requests carry no cookies in the
+ * dev-bypass curl flow, so they are not a CSRF surface; the Origin
+ * check is therefore only meaningful for browser-driven calls.
+ */
+export function hasBearerAuth(request: Request): boolean {
+  const auth = request.headers.get('Authorization') ?? '';
+  return /^Bearer\s+\S/i.test(auth);
+}

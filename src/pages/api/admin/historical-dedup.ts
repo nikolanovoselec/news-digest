@@ -32,15 +32,18 @@
 // synchronous batch; an empty body = enqueue a fresh background run.
 //
 // Three-layer admin auth (CF-001) — same gate every other admin route
-// uses. No Origin check on POST because the kicker is also driven
-// from curl / scripts via the dev-bypass session; CSRF defence-in-
-// depth on form posts would block the legitimate scripted flow.
+// uses. CF-015: Origin check is applied to browser-driven calls
+// (cookie + cross-site request) so a logged-in admin clicking a
+// malicious link cannot trigger pipeline operations with LLM-cost
+// consequences. Scripted callers opt out by sending `Authorization:
+// Bearer ...` (the dev-bypass curl path uses this header and carries
+// no cookie context, so it is not a CSRF surface).
 
 import type { APIContext } from 'astro';
 import { log } from '~/lib/log';
 import { requireAdminSession } from '~/middleware/admin-auth';
 import { applyRefreshCookie } from '~/middleware/auth';
-import { originOf } from '~/middleware/origin-check';
+import { checkOrigin, hasBearerAuth, originOf } from '~/middleware/origin-check';
 import { generateUlid } from '~/lib/ulid';
 import {
   runHistoricalDedupBatch,
@@ -92,6 +95,16 @@ async function handle(context: APIContext): Promise<Response> {
   const wantsJson = (context.request.headers.get('Accept') ?? '').includes(
     'application/json',
   );
+
+  // CF-015: defence-in-depth CSRF guard on the browser-driven path.
+  // Skip when the caller presents `Authorization: Bearer ...` — that
+  // path is the scripted dev-bypass flow which carries no cookies and
+  // is therefore not a CSRF surface. Browser POSTs always carry the
+  // session cookie and must present an Origin matching APP_URL.
+  if (!hasBearerAuth(context.request)) {
+    const originResult = checkOrigin(context.request, appOrigin);
+    if (!originResult.ok) return originResult.response;
+  }
 
   const adminAuth = await requireAdminSession(context);
   if (!adminAuth.ok) {

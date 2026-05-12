@@ -21,6 +21,7 @@ Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are a
 - REQ-AUTH-001 AC 8a extended: an access token forwarded by the perimeter is now rejected when its expiry claim is in the past or missing, in addition to the existing audience check.
 - REQ-AUTH-001 AC 10 added: production-hostname deployments now serve the test-only dev-bypass routes as 404 regardless of token or session state, so an accidentally-promoted dev secret can no longer expose the bypass surface on a public production hostname.
 - REQ-PIPE-006 AC 8 added: the daily cleanup pass now retires scrape runs that never reached a terminal status well after the longest plausible tick duration. The history page surfaces these as failed and the operator can kick a fresh pipeline without first manually clearing the stale row.
+- REQ-DISC-002 restored to Implemented: the discovery progress banner and `/api/discovery/status` endpoint have continued to ship throughout; the prior Deprecated marker was a spec-vs-shipped drift recorded in error.
 
 ## 2026-05-10
 
