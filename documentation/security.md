@@ -87,7 +87,7 @@ Admin side-effecting endpoints (force-refresh, pipeline-run) carry their own per
 
 The admin gate in `src/middleware/admin-auth.ts` enforces two layers in order:
 
-1. **Optional Layer 0** (when `CF_ACCESS_AUD` is set): the request must carry a Cloudflare Access assertion whose `aud` claim matches the configured audience tag. The `exp` claim on the Access JWT is validated server-side — an expired assertion is rejected even if the perimeter would ordinarily have caught it first (defence-in-depth against long-lived stolen tokens and synthetic non-Access payloads). Signature verification stays at the Access perimeter per [AD29](decisions/README.md#ad29-cloudflare-access-as-opt-in-additive-perimeter-not-security-boundary) and [AD44](decisions/README.md#ad44-cloudflare-access-jwt-exp-validation-signature-still-trusted-from-the-perimeter).
+1. **Optional Layer 0** (when `CF_ACCESS_AUD` set): request must carry a Cloudflare Access assertion whose `aud` and `exp` claims are valid. Expired assertions are rejected server-side. Signature stays at the Access perimeter ([AD29](decisions/README.md#ad29-cloudflare-access-as-opt-in-additive-perimeter-not-security-boundary), [AD44](decisions/README.md#ad44-cloudflare-access-jwt-exp-validation-signature-still-trusted-from-the-perimeter)).
 2. **Baseline** (always): valid session cookie + `ADMIN_EMAIL` match (case-insensitive).
 
 **Threat:** Privileged action by a non-operator — either a stolen Access assertion that has since expired, a synthetic non-Access payload spoofing the header, or an authenticated non-admin user reaching an admin route.

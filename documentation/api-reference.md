@@ -12,6 +12,12 @@ Every mutating endpoint requires a valid session cookie and an `Origin` header m
 
 ### GET /
 
+**Method:** GET
+**Path:** /
+**Auth:** none (public)
+**Request:** none
+**Response:** `200` (anonymous, landing page) or `303` → `/digest` (authenticated)
+
 Returns the landing page.
 
 - **Anonymous:** `200` — renders the landing page with sign-in buttons for each configured provider.
@@ -21,11 +27,23 @@ Returns the landing page.
 
 ### GET /404
 
+**Method:** GET
+**Path:** /404
+**Auth:** none (public)
+**Request:** none
+**Response:** `200` — static error page
+
 Catch-all not-found page. Rendered by Astro for any URL that no route file claims. Carries `noindex=true` so stale bookmarks and mistyped URLs do not contaminate search engine indexes. Presents a calm headline ("Page not found") and a "Back to home" link.
 
 **Implements:** [REQ-READ-006](../sdd/reading.md#req-read-006-empty-error-and-offline-pages) AC 5
 
 ### GET /500
+
+**Method:** GET
+**Path:** /500
+**Auth:** none (public)
+**Request:** none
+**Response:** `200` — static error page
 
 Generic server-error fallback. Shown when an uncaught exception bubbles up to Astro's error-page handler. Carries `noindex=true`. Presents "Something went wrong" with a "Back to home" link.
 
@@ -37,6 +55,12 @@ Generic server-error fallback. Shown when an uncaught exception bubbles up to As
 
 ### POST /api/auth/{provider}/login (also GET)
 
+**Method:** POST (also GET)
+**Path:** /api/auth/{provider}/login
+**Auth:** none (public; exempt from Origin check)
+**Request:** none (query params passed to provider authorize URL)
+**Response:** `302` → provider authorize URL | `404` unknown provider | `429` rate limited
+
 Initiates the OAuth/OIDC authorization-code flow. `{provider}` matches the provider registry (`github`, `google`); unknown names return `404`. Sets a 10-minute `state` cookie and redirects to the provider's authorize URL. Exempt from the Origin check.
 
 **Rate limit:** 10 / 60 s per IP (`auth_login`). Fails closed on KV errors (see [AD23](decisions/README.md#ad23-auth-rate-limit-fail-closed-without-waf-backstop)). Exhausted → `429` with `Retry-After`.
@@ -44,6 +68,12 @@ Initiates the OAuth/OIDC authorization-code flow. `{provider}` matches the provi
 **Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9, [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
 
 ### GET /api/auth/{provider}/callback
+
+**Method:** GET
+**Path:** /api/auth/{provider}/callback
+**Auth:** none (provider-supplied `state` cookie is the CSRF gate)
+**Request:** `?code=...&state=...` (provider redirect)
+**Response:** `302` → `/digest` (success) | `302` → `/?error=...` (failure) | `403` invalid state
 
 Validates the per-provider `state` cookie, exchanges the code for tokens, extracts a stable provider identifier and verified email. Resolves `user_id` via the three-path `auth_links` lookup ([REQ-AUTH-007](../sdd/authentication.md#req-auth-007-cross-provider-account-dedup)):
 
@@ -65,9 +95,12 @@ New accounts are seeded with default hashtags, `digest_hour=8`, `email_enabled=1
 
 ### POST /api/auth/refresh
 
-Force-rotates the refresh-token row and mints a new access JWT. Used by long-running tabs before a state-changing XHR.
-
+**Method:** POST
+**Path:** /api/auth/refresh
 **Auth:** Refresh cookie required (access JWT need not be valid). Origin check applies.
+**Request:** none
+
+Force-rotates the refresh-token row and mints a new access JWT. Used by long-running tabs before a state-changing XHR.
 
 **Rate limit:** Two tiers, both fail-closed. Per-IP `auth_refresh_ip` 60 / 60 s (pre-validation); per-user `auth_refresh_user` 30 / 60 s (post-validation). Buckets shared with the inline middleware refresh path. Exhausted → `429` with `Retry-After`.
 
@@ -85,9 +118,12 @@ Force-rotates the refresh-token row and mints a new access JWT. Used by long-run
 
 ### POST /api/auth/logout
 
-Bumps `session_version`, revokes the active refresh-token row (single-device only), clears both cookies, redirects to `/?logged_out=1`.
-
+**Method:** POST
+**Path:** /api/auth/logout
 **Auth:** Valid session. Origin check applies.
+**Request:** none
+
+Bumps `session_version`, revokes the active refresh-token row (single-device only), clears both cookies, redirects to `/?logged_out=1`.
 
 **Rate limit:** 5 / 60 s per IP (`auth_logout`).
 
@@ -99,6 +135,9 @@ Bumps `session_version`, revokes the active refresh-token row (single-device onl
 
 ### POST /api/auth/set-tz
 
+**Method:** POST
+**Path:** /api/auth/set-tz
+**Auth:** Valid session. Origin check applies.
 **Request:** `{ tz: string }` (IANA timezone — validated via `Intl.supportedValuesOf('timeZone')`)
 
 **Response:** `200 { ok: true, tz: string }` | `400 invalid_tz` | `401 unauthorized` | `403 forbidden_origin`
@@ -111,6 +150,9 @@ Session near-expiry triggers a `Set-Cookie` refresh in the same response.
 
 ### DELETE /api/auth/account
 
+**Method:** DELETE
+**Path:** /api/auth/account
+**Auth:** Valid session. Origin check applies.
 **Request:** JSON body `{ confirm: "DELETE" }`
 
 **Response:** `200 { ok: true, redirect: "/?account_deleted=1" }` (both cookies cleared — access and refresh, FK cascade deletes all user data, KV entries under `user:{id}:*` deleted best-effort) | `400 bad_request` (missing/unparseable body) | `400 confirmation_required` | `401 unauthorized` | `403 forbidden_origin`
@@ -118,6 +160,10 @@ Session near-expiry triggers a `Set-Cookie` refresh in the same response.
 **Implements:** [REQ-AUTH-005](../sdd/authentication.md#req-auth-005-account-deletion), [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
 
 ### POST /api/auth/account
+
+**Method:** POST
+**Path:** /api/auth/account
+**Auth:** Valid session. Origin check applies.
 
 Native-form transport path for account deletion. Accepts a `application/x-www-form-urlencoded` body with field `confirm=DELETE`. Intended for browsers that do not reliably fire the JS intercept layer (Samsung Browser, some in-app webviews). Enforces the same Origin check, session requirement, and confirmation contract as the DELETE path.
 
@@ -133,12 +179,19 @@ Native-form transport path for account deletion. Accepts a `application/x-www-fo
 
 ### GET /api/settings
 
+**Method:** GET
+**Path:** /api/settings
+**Auth:** Valid session.
+**Request:** none
 **Response:** `{ hashtags: string[], digest_hour: int, digest_minute: int, tz: string, model_id: string, email_enabled: bool, first_run: bool }`
 
 **Implements:** [REQ-SET-001](../sdd/settings.md#req-set-001-unified-first-run-and-edit-flow)
 
 ### PUT /api/settings
 
+**Method:** PUT
+**Path:** /api/settings
+**Auth:** Valid session. Origin check applies.
 **Request (JSON):** `{ hashtags: string[], digest_hour: int, digest_minute: int, model_id: string, email_enabled: bool }`
 
 **Response:** `200 { ok: true, discovering: string[] }` — `discovering` lists any newly-added tags that will trigger discovery on the next cron.
@@ -148,6 +201,10 @@ Native-form transport path for account deletion. Accepts a `application/x-www-fo
 **Implements:** [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation), [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone), [REQ-SET-004](../sdd/settings.md#req-set-004-model-selection) *(Partial — model selection UI hidden; API still validates and persists `model_id`)*, [REQ-SET-005](../sdd/settings.md#req-set-005-email-notification-preference)
 
 ### POST /api/settings
+
+**Method:** POST
+**Path:** /api/settings
+**Auth:** Valid session. Origin check applies.
 
 Native form-encoded fallback for the same settings update. Used when the JS fetch handler does not bind.
 
@@ -168,9 +225,12 @@ Native form-encoded fallback for the same settings update. Used when the JS fetc
 
 ### GET /api/discovery/status
 
-Returns the set of hashtags the authenticated user has queued for background source discovery. The settings page polls this endpoint after a save to show "Still discovering sources for #foo" inline status.
-
+**Method:** GET
+**Path:** /api/discovery/status
 **Auth:** Required (session cookie).
+**Request:** none
+
+Returns the set of hashtags the authenticated user has queued for background source discovery. The settings page polls this endpoint after a save to show "Still discovering sources for #foo" inline status.
 
 **Response:** `{ pending: string[] }` — list of tag strings whose `pending_discoveries` row has not yet been drained by the discovery cron.
 
@@ -183,6 +243,11 @@ Returns the set of hashtags the authenticated user has queued for background sou
 ## Digests
 
 ### GET /api/digest/today
+
+**Method:** GET
+**Path:** /api/digest/today
+**Auth:** Valid session.
+**Request:** none
 
 **Response:**
 ```json
@@ -207,15 +272,32 @@ Up to 29 articles from the article pool filtered by the user's active hashtags. 
 
 ### GET /api/digest/:id
 
+**Method:** GET
+**Path:** /api/digest/:id
+**Auth:** n/a (tombstoned)
+**Request:** n/a
+**Response:** `410 Gone`
+**Implements:** Retired — see [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+
 **Retired.** Removed when the `digests` table was dropped in migration 0003. Stale clients receive `410 Gone`. `POST /api/digest/:id` is also tombstoned.
 
 ### POST /api/digest/refresh
+
+**Method:** POST
+**Path:** /api/digest/refresh
+**Auth:** n/a (tombstoned)
+**Request:** n/a
+**Response:** `410 Gone`
+**Implements:** Retired — see [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint)
 
 **Retired.** Replaced by the every-4-hours global scrape pipeline (REQ-PIPE-001) that auto-refreshes the article pool. Stale clients receive `410 Gone`. Operators that want to force a refresh use `POST /api/admin/force-refresh` (REQ-OPS-005) instead.
 
 ### GET /api/scrape-status
 
+**Method:** GET
+**Path:** /api/scrape-status
 **Auth:** Required (session cookie).
+**Request:** `?run_id=<ULID>` (optional — pins to a specific run)
 
 **Response (idle):**
 ```json
@@ -248,9 +330,19 @@ Both responses carry a `Set-Cookie` refresh when the session is within 5 minutes
 
 ## Discovery
 
-> **Admin auth.** Every `/api/admin/*` route is gated by the Worker-side middleware. Baseline (always enforced): valid Worker session cookie + session email matches `ADMIN_EMAIL` (case-insensitive). Optional perimeter (Layer 0, AD29): when `CF_ACCESS_AUD` is set, the request must additionally carry a Cloudflare Access assertion whose `aud` claim matches the configured audience tag — without the assertion or with a mismatched audience the request is rejected before the baseline runs. The `exp` claim on the Access JWT is validated server-side; an expired assertion is rejected even if the Access perimeter would ordinarily have caught it first ([AD44](decisions/README.md#ad44-cloudflare-access-jwt-exp-validation-signature-still-trusted-from-the-perimeter)). When `CF_ACCESS_AUD` is unset, Layer 0 is skipped entirely. Operators who bind Access MUST also bind it on the `*.workers.dev` URL or disable that subdomain (AD30). See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8, AC 8a.
+> **Admin auth — baseline (always enforced):** valid Worker session cookie + session email matches `ADMIN_EMAIL` (case-insensitive).
+>
+> **Optional perimeter (Layer 0, AD29):** when `CF_ACCESS_AUD` is set, the request must also carry a Cloudflare Access assertion whose `aud` claim matches; missing or mismatched is rejected before baseline runs. The `exp` claim is validated server-side ([AD44](decisions/README.md#ad44-cloudflare-access-jwt-exp-validation-signature-still-trusted-from-the-perimeter)). When `CF_ACCESS_AUD` is unset, Layer 0 is skipped.
+>
+> Operators binding Access must also bind it on the `*.workers.dev` URL or disable that subdomain (AD30). See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8, AC 8a.
 
 ### POST /api/admin/discovery/retry
+
+**Method:** POST
+**Path:** /api/admin/discovery/retry
+**Auth:** Valid session + `ADMIN_EMAIL` match. Origin check applies.
+**Request:** `{ "tag": "<tag>" }` (JSON) or `tag=<tag>` (form-encoded)
+**Response:** `200 { "ok": true }` (JSON) or `303 → /settings?rediscover=ok&tag=<tag>` (form)
 
 Re-queues a single stuck tag. Validates the tag is in the user's `hashtags_json`, clears `sources:{tag}` and `discovery_failures:{tag}` KV, inserts a `pending_discoveries` row.
 
@@ -264,6 +356,12 @@ Re-queues a single stuck tag. Validates the tag is in the user's `hashtags_json`
 **Implements:** [REQ-DISC-004](../sdd/discovery.md#req-disc-004-manual-re-discover)
 
 ### POST /api/admin/discovery/retry-bulk (also GET)
+
+**Method:** POST (also GET for browser navigation)
+**Path:** /api/admin/discovery/retry-bulk
+**Auth:** Valid session + `ADMIN_EMAIL` match. GET path: Cloudflare Access is sole gate.
+**Request:** none (operates on caller's full tag list)
+**Response:** `303 → /settings?rediscover=ok&count=<N>` (browser) or `200 { ok: true, count: N }` (scripted)
 
 Re-queues every stuck tag for the session user in one D1 batch. Backs the **Discover missing sources** button. A tag is stuck when its `sources:{tag}` entry has an explicitly empty `feeds` array; brand-new tags are not stuck (still discovering).
 
@@ -283,6 +381,11 @@ Re-queues every stuck tag for the session user in one D1 batch. Backs the **Disc
 
 ### POST /api/articles/:id/star
 
+**Method:** POST
+**Path:** /api/articles/:id/star
+**Auth:** Valid session. Origin check applies.
+**Request:** none (article id is in path)
+
 Stars an article. Optimistic — the UI flips the icon before the response returns. Protected by the Origin check.
 
 **Rate limit:** 60 requests / 60 seconds per user id (`article_star` rule). Exhausted → `429 Too Many Requests` with `Retry-After` header.
@@ -293,6 +396,11 @@ Stars an article. Optimistic — the UI flips the icon before the response retur
 
 ### DELETE /api/articles/:id/star
 
+**Method:** DELETE
+**Path:** /api/articles/:id/star
+**Auth:** Valid session. Origin check applies.
+**Request:** none (article id is in path)
+
 Unstars an article. Same auth, Origin, rate-limit, and error contract as POST.
 
 **Response:** `200 { ok: true, starred: false }` | `401` | `403` | `404` | `429`
@@ -301,6 +409,10 @@ Unstars an article. Same auth, Origin, rate-limit, and error contract as POST.
 
 ### GET /api/starred
 
+**Method:** GET
+**Path:** /api/starred
+**Auth:** Valid session.
+**Request:** none
 **Response:** `{ articles: WireArticle[] }` — the session user's starred articles, newest star first, limit 60. Same article shape as `/api/digest/today`.
 
 **Implements:** [REQ-STAR-002](../sdd/reading.md#req-star-002-starred-articles-page)
@@ -310,6 +422,10 @@ Unstars an article. Same auth, Origin, rate-limit, and error contract as POST.
 ## Tags
 
 ### PUT /api/tags
+
+**Method:** PUT
+**Path:** /api/tags
+**Auth:** Valid session. Origin check applies.
 
 Add or remove a single hashtag from the user's tag list. Persists immediately — no form submit required. Normalises to lowercase, strips `#`, rejects characters outside `[a-z0-9-]`, enforces 2–32 char length and max 25 tags.
 
@@ -323,6 +439,11 @@ Add or remove a single hashtag from the user's tag list. Persists immediately �
 
 ### POST /api/tags/restore
 
+**Method:** POST
+**Path:** /api/tags/restore
+**Auth:** Valid session. Origin check applies.
+**Request:** none
+
 Replaces the user's hashtag list with the curated default seed from `DEFAULT_HASHTAGS`.
 
 **Rate limit:** 30 requests / 60 seconds per user id (`tags_mutation` rule). Shared with `PUT /api/tags`.
@@ -335,9 +456,12 @@ Replaces the user's hashtag list with the curated default seed from `DEFAULT_HAS
 
 ### POST /api/tags/delete-initial
 
-Clears the new-user "would you like our suggested tags?" seed prompt by writing an empty `hashtags_json = '[]'` for the calling user. The settings page checks `hashtags_json IS NULL` to decide whether to show the seed prompt; setting it to a JSON empty array dismisses the prompt without committing the user to any tags.
-
+**Method:** POST
+**Path:** /api/tags/delete-initial
 **Auth:** Required (session cookie). Origin check applies — the form submits as `application/x-www-form-urlencoded` from `/settings` with the same-origin Origin header.
+**Request:** none (form-encoded, no meaningful body fields)
+
+Clears the new-user "would you like our suggested tags?" seed prompt by writing an empty `hashtags_json = '[]'` for the calling user. The settings page checks `hashtags_json IS NULL` to decide whether to show the seed prompt; setting it to a JSON empty array dismisses the prompt without committing the user to any tags.
 
 **Rate limit:** 30 requests / 60 seconds per user id (`tags_mutation` rule).
 
@@ -353,19 +477,27 @@ Clears the new-user "would you like our suggested tags?" seed prompt by writing 
 
 ### POST /api/dev/login
 
-Mints a pre-baked session cookie for the synthetic e2e user (`__e2e__`) so test runs never mutate a real account. Set `DEV_BYPASS_USER_ID` to impersonate a different id (staging only).
+**Method:** POST
+**Path:** /api/dev/login
+**Auth:** `Authorization: Bearer <DEV_BYPASS_TOKEN>` (timing-safe). Returns `404` when token unset or mismatches.
+**Request:** none
+**Response:** `204` with `Set-Cookie: oauth_session=…` | `401` (missing Bearer) | `404` (disabled or token mismatch)
+**Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 10 (dev route guard)
 
-**Response:** `204` with `Set-Cookie: oauth_session=…` | `401` (missing Bearer) | `404` (disabled or token mismatch).
+Mints a pre-baked session cookie for the synthetic e2e user (`__e2e__`) so test runs never mutate a real account. Set `DEV_BYPASS_USER_ID` to impersonate a different id (staging only).
 
 **Used by:** `scripts/e2e-test.sh`, local Playwright runs.
 
 ### POST /api/dev/trigger-scrape
 
+**Method:** POST
+**Path:** /api/dev/trigger-scrape
+**Auth:** `Authorization: Bearer <DEV_BYPASS_TOKEN>`. Returns `404` when token unset or mismatches.
+**Request:** none
+**Response:** `202 { ok: true, scrape_run_id, status_url: "/api/scrape-status" }` | `500 { ok: false, error: "start_run_failed" | "enqueue_failed" }`
+**Implements:** [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) (dev trigger path), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 10
+
 Kicks a real scrape without waiting for the cron. Inserts a `scrape_runs` row and sends `SCRAPE_COORDINATOR`.
-
-**Response (success):** `202 { ok: true, scrape_run_id, status_url: "/api/scrape-status" }`
-
-**Error responses:** `500 { ok: false, error: "start_run_failed" | "enqueue_failed" }`
 
 Poll `GET /api/scrape-status` until `status='ready'`.
 
@@ -381,11 +513,23 @@ Moved to its own page so this reference stays under its line budget. See [api-re
 
 ### GET /sitemap.xml
 
+**Method:** GET
+**Path:** /sitemap.xml
+**Auth:** none (public)
+**Request:** none
+**Response:** `200` XML sitemap | `Cache-Control: public, max-age=3600`
+
 Dynamic XML sitemap. Lists only the public landing page (`/`). `changefreq=daily`, `priority=1.0`, `lastmod` set to the current date at request time. `Cache-Control: public, max-age=3600`. Referenced from `robots.txt`.
 
 **Implements:** [REQ-OPS-004](../sdd/observability.md#req-ops-004-crawler-policy-and-public-surface-discoverability) AC 4, [REQ-OPS-007](../sdd/observability.md#req-ops-007-public-sitemap-for-crawler-discovery)
 
 ### GET /robots.txt
+
+**Method:** GET
+**Path:** /robots.txt
+**Auth:** none (public)
+**Request:** none
+**Response:** `200` plain text robots policy
 
 Static file served from `public/robots.txt`. Allows crawlers access to the landing page and public assets; explicitly disallows `/api/`, `/digest`, `/starred`, `/history`, `/settings`. Blocks known AI training user agents (GPTBot, anthropic-ai, ClaudeBot, Google-Extended, CCBot, PerplexityBot) with a blanket `Disallow: /`. References the sitemap URL.
 
@@ -393,11 +537,23 @@ Static file served from `public/robots.txt`. Allows crawlers access to the landi
 
 ### GET /llms.txt
 
+**Method:** GET
+**Path:** /llms.txt
+**Auth:** none (public)
+**Request:** none
+**Response:** `200` plain text agents policy
+
 Static machine-readable agents policy (served from `public/llms.txt`). Describes the product, what is public, that every surface beyond the landing page requires a federated OAuth session (GitHub or Google), and an explicit request not to train on content behind the login. Links to the sitemap and `robots.txt`.
 
 **Implements:** [REQ-OPS-004](../sdd/observability.md#req-ops-004-crawler-policy-and-public-surface-discoverability) AC 3
 
 ### GET /llms-full.txt
+
+**Method:** GET
+**Path:** /llms-full.txt
+**Auth:** none (public)
+**Request:** none
+**Response:** `200` plain text extended agents policy
 
 Extended machine-readable agents policy (`public/llms-full.txt`). Superset of `llms.txt` — adds technology stack detail, storage layer, and GDPR basis for withholding per-user content.
 
@@ -408,6 +564,11 @@ Extended machine-readable agents policy (`public/llms-full.txt`). Superset of `l
 ## History and Stats
 
 ### GET /api/history
+
+**Method:** GET
+**Path:** /api/history
+**Auth:** Valid session.
+**Request:** `?date=YYYY-MM-DD` (optional — filter to single local day)
 
 **Query parameters:**
 
@@ -429,6 +590,10 @@ Each article also includes `alt_source_count: number` — the count of sources i
 
 ### GET /api/stats
 
+**Method:** GET
+**Path:** /api/stats
+**Auth:** Valid session.
+**Request:** none
 **Response:** `{ digests_generated: int, articles_read: int, articles_total: int, tokens_consumed: int, cost_usd: number }`
 
 Global counters (`digests_generated`, `tokens_consumed`, `cost_usd`) come from `scrape_runs` — one scrape run is one shared event. Per-user counters (`articles_total`, `articles_read`) are scoped to the user's currently-active tag list, so the ratio always describes "of articles you can see now, how many have you read" ([REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget) AC 3).
@@ -441,7 +606,11 @@ Global counters (`digests_generated`, `tokens_consumed`, `cost_usd`) come from `
 
 ### Structured log events
 
-Implements [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-logging). Every log line is `JSON.stringify`'d to `console.log` so Cloudflare Logs parses it as a structured record.
+<!-- doc-template-exempt: AD46 observability reference section, not an HTTP endpoint -->
+
+**Implements:** [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-logging)
+
+Not an HTTP endpoint — documents the JSON log shape emitted to Cloudflare Logs via `console.log`. Every log line is `JSON.stringify`'d so Cloudflare Logs parses it as a structured record.
 
 **Envelope** (all events):
 

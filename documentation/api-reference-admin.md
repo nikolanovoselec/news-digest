@@ -10,6 +10,11 @@ Extracted from [api-reference.md](api-reference.md) so the main reference stays 
 
 ### POST /api/admin/force-refresh (also GET)
 
+**Method:** POST (also GET — see method table below)
+**Path:** /api/admin/force-refresh
+**Auth:** Three-layer admin gate (CF Access when `CF_ACCESS_AUD` set + session + `ADMIN_EMAIL`). POST: Origin check. GET: `Sec-Fetch-Site` guard.
+**Request:** none
+
 Kicks the global-feed coordinator on demand — identical to the every-4-hours cron. Inserts a `scrape_runs` row, sends `SCRAPE_COORDINATOR`. A 120-second reuse window absorbs double-clicks: a new request that finds a `running` row younger than 120 s reuses it.
 
 POST enforces Origin for browser-driven calls. GET enforces a `Sec-Fetch-Site` guard: `same-origin` and `none` (top-level navigation, including the post-SSO AD38 redirect chain) are allowed; `cross-site` and `cross-origin` receive `403 "Cross-site request denied"`. `curl` and scripted callers send no `Sec-Fetch-Site` header and are unaffected. Scripted callers that present `Authorization: Bearer <DEV_BYPASS_TOKEN>` bypass the Origin check on POST — Bearer requests carry no session cookie and are not a CSRF surface.
@@ -30,6 +35,12 @@ POST enforces Origin for browser-driven calls. GET enforces a `Sec-Fetch-Site` g
 
 ### POST /api/admin/embed-backfill
 
+**Method:** POST (also GET — see method table below)
+**Path:** /api/admin/embed-backfill
+**Auth:** Admin session. Browser POST requires Origin matching `APP_URL`; `Authorization: Bearer <DEV_BYPASS_TOKEN>` bypasses Origin check.
+**Request:** none (empty body); `?reembed=1` forces full corpus re-embed (POST only)
+**Response:** `200 { ok, processed, failed, remaining, done }` | `401` | `403` | `405 "reembed requires POST"` | `500`
+
 Resumable embedding backfill for articles whose `embedding_status` is `NULL` or `'failed'`. Each call processes up to 50 rows oldest-first by `published_at`, embeds them via the AI binding, upserts the vectors into Vectorize, and stamps the row `embedding_status='embedded'`. Operators loop the route until `done: true`.
 
 | Method | Auth | Request body | Query params |
@@ -48,6 +59,12 @@ Resumable embedding backfill for articles whose `embedding_status` is `NULL` or 
 ---
 
 ### POST /api/admin/historical-dedup
+
+**Method:** POST
+**Path:** /api/admin/historical-dedup
+**Auth:** Admin session. Browser POST requires Origin matching `APP_URL`; `Authorization: Bearer <DEV_BYPASS_TOKEN>` bypasses Origin check.
+**Request:** empty body (kicker path) or `{ "cursor"?: { "pa": number, "id": string }, "batch"?: number }` (scripted sync path)
+**Response:** `202 { ok, run_id, enqueued, started_at }` (kicker) | `200 { ok, scanned, merged, remaining, next_cursor, done, elapsed_ms }` (sync) | `401` | `403` | `500`
 
 Cross-article same-story sweep. Walks the article pool oldest-first by `(published_at, id)`; for each article, queries Vectorize for top-K matches. Auto-merge-band matches (>= `DEDUP_COSINE_THRESHOLD`) fold into the current (older) article via `mergeAsAltSource` without an LLM call. Borderline-band matches (>= `DEDUP_RERANK_FLOOR`, < `DEDUP_COSINE_THRESHOLD`) go to a binary same-event judgment by the language model and merge only on a positive verdict. Each batch caps rerank calls to prevent budget exhaustion; the cap is logged when hit.
 
@@ -73,9 +90,13 @@ A scripted caller may opt into the legacy synchronous path by sending `{ "cursor
 
 ### GET /api/admin/dedup-status
 
-Polling endpoint for the queue-driven historical-dedup sweep. Returns a snapshot of the named `dedup_runs` row so the `/settings` surface can paint live progress while the queue consumer chains across batches. The settings JS hits this every 5 seconds while a sweep is in flight; the queue consumer updates the underlying row after each batch.
+**Method:** GET
+**Path:** /api/admin/dedup-status
+**Auth:** Admin session required (same three-layer gate). No Origin check (read-only GET).
+**Request:** `?run_id=<ULID>` (required — ULID from the kicker call)
+**Response:** `200 { ok, run_id, status, scanned, merged, batch_count, remaining, last_cursor, done, failed, error, started_at, updated_at }` | `400` | `401` | `403` | `404` | `500`
 
-**Auth:** Admin session required (same three-layer gate as every other `/api/admin/*` route). No Origin check (read-only GET).
+Polling endpoint for the queue-driven historical-dedup sweep. Returns a snapshot of the named `dedup_runs` row so the `/settings` surface can paint live progress while the queue consumer chains across batches. The settings JS hits this every 5 seconds while a sweep is in flight; the queue consumer updates the underlying row after each batch.
 
 **Query parameters:**
 
@@ -93,9 +114,13 @@ Polling endpoint for the queue-driven historical-dedup sweep. Returns a snapshot
 
 ### POST /api/admin/pipeline-run
 
-Kicker for the backend-driven full pipeline run. Creates a `pipeline_runs` audit row and enqueues exactly one `pipeline-jobs` queue message; the consumer (`src/queue/pipeline-consumer.ts`) drives the seven phases server-side without depending on the operator's browser tab. Used by the **Full pipeline run** button on `/settings`.
+**Method:** POST
+**Path:** /api/admin/pipeline-run
+**Auth:** Admin session required. Origin check applies: no `Origin` header passes (curl / dev-bypass); cross-origin `Origin` rejected with `403 forbidden_origin`.
+**Request:** JSON optional `{ "mode": "full" | "wipe" }` (default `"full"`)
+**Response:** `202 { ok, pipeline_run_id, mode, current_phase, started_at }` | `401` | `403` | `405` | `429` | `500`
 
-**Auth:** Admin session required. Origin check applies (CSRF gate via `checkDevEndpointOrigin`): requests with no `Origin` header pass (curl / dev-bypass); a browser-sent cross-origin `Origin` is rejected with `403 forbidden_origin`.
+Kicker for the backend-driven full pipeline run. Creates a `pipeline_runs` audit row and enqueues exactly one `pipeline-jobs` queue message; the consumer (`src/queue/pipeline-consumer.ts`) drives the seven phases server-side without depending on the operator's browser tab. Used by the **Full pipeline run** button on `/settings`.
 
 **Request body (JSON, optional):**
 
@@ -115,9 +140,13 @@ Kicker for the backend-driven full pipeline run. Creates a `pipeline_runs` audit
 
 ### GET /api/admin/pipeline-run
 
-Browser-navigation variant of the pipeline kicker. Used by `settings.astro` via `window.location.assign()` because Cloudflare Access cannot be traversed by `fetch()` in CORS mode. On success the endpoint enqueues the pipeline job and responds with `303 See Other` to `/settings?pipeline=enqueued&pipeline_run_id=...`; the settings page reads those URL parameters on load to resume progress polling. On auth failure it redirects to `/settings?pipeline=denied`.
+**Method:** GET
+**Path:** /api/admin/pipeline-run
+**Auth:** Admin session required. No Origin check (top-level navigation — see [AD38](decisions/README.md#ad38-cf-access-protected-admin-endpoints-must-be-invoked-via-top-level-navigation-not-fetch)).
+**Request:** `?mode=full|wipe` (default `full`; `wipe` via GET returns `405`)
+**Response:** `303` → `/settings?pipeline=enqueued&pipeline_run_id=...` | `303` → `/settings?pipeline=denied` (auth failure) | `405` (`mode=wipe` via GET) | `500`
 
-**Auth:** Admin session required. No Origin check (top-level navigation carries no `Origin` header; the CSRF surface is equivalent to a browser form POST, scoped to authenticated operators only via CF Access + admin-email gate). See [AD38](decisions/README.md#ad38-cf-access-protected-admin-endpoints-must-be-invoked-via-top-level-navigation-not-fetch) for the security boundary rationale.
+Browser-navigation variant of the pipeline kicker. Used by `settings.astro` via `window.location.assign()` because Cloudflare Access cannot be traversed by `fetch()` in CORS mode. On success the endpoint enqueues the pipeline job and responds with `303 See Other` to `/settings?pipeline=enqueued&pipeline_run_id=...`; the settings page reads those URL parameters on load to resume progress polling. On auth failure it redirects to `/settings?pipeline=denied`.
 
 **Query parameters:**
 
@@ -135,9 +164,13 @@ Browser-navigation variant of the pipeline kicker. Used by `settings.astro` via 
 
 ### GET /api/admin/pipeline-status
 
-Polling endpoint for the backend-driven full pipeline run. Returns the named `pipeline_runs` row plus nested snapshots of the `scrape_runs` and `dedup_runs` rows the pipeline kicked, so the settings surface can paint live progress without driving the orchestration. The settings JS hits this every 5 seconds while a run is in flight.
-
+**Method:** GET
+**Path:** /api/admin/pipeline-status
 **Auth:** Admin session required. No Origin check (read-only GET).
+**Request:** `?id=<ULID>` (optional — when omitted returns most recent pipeline run)
+**Response:** `200 { ok, pipeline_run_id, status, mode, current_phase, embed_processed, embed_remaining, error, started_at, updated_at, scrape, dedup, done, failed }` | `401` | `403` | `404` | `500`
+
+Polling endpoint for the backend-driven full pipeline run. Returns the named `pipeline_runs` row plus nested snapshots of the `scrape_runs` and `dedup_runs` rows the pipeline kicked, so the settings surface can paint live progress without driving the orchestration. The settings JS hits this every 5 seconds while a run is in flight.
 
 **Query parameters:**
 
@@ -155,9 +188,13 @@ Polling endpoint for the backend-driven full pipeline run. Returns the named `pi
 
 ### GET /api/admin/dedup-diag (REQ-PIPE-003 AC 10, AC 11)
 
-Returns the cosine similarity between two articles' stored Vectorize embeddings, the currently-effective same-story threshold, the same-vendor cosine penalty, and a flag for whether the two articles share the same registrable domain (eTLD+1). Intended for evaluating threshold changes against known true-positive and false-positive pairs before committing them to configuration.
+**Method:** GET
+**Path:** /api/admin/dedup-diag
+**Auth:** Admin session required (same three-layer gate). No Origin check (read-only GET).
+**Request:** `?a=<article_id>&b=<article_id>` (both required; must differ)
+**Response:** `200 { ok, a, b, cosine, same_etld1, adjusted_score, same_vendor_penalty, threshold, above_threshold }` | `400` | `401` | `403` | `404` | `500`
 
-**Auth:** Admin session required (same three-layer gate as every other `/api/admin/*` route — see the admin auth note above). No `Origin` check (read-only GET).
+Returns the cosine similarity between two articles' stored Vectorize embeddings, the currently-effective same-story threshold, the same-vendor cosine penalty, and a flag for whether the two articles share the same registrable domain (eTLD+1). Intended for evaluating threshold changes against known true-positive and false-positive pairs before committing them to configuration.
 
 **Query parameters:**
 
@@ -168,6 +205,7 @@ Returns the cosine similarity between two articles' stored Vectorize embeddings,
 
 **Success (200):**
 
+<!-- doc-allow-large: AD46 dedup-diag response shape — full JSON is the contract -->
 ```json
 {
   "ok": true,

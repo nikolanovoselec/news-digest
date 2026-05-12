@@ -1,6 +1,6 @@
 # Deployment
 
-<!-- doc-allow-large: AD46a deployment-doc colocation -->
+<!-- doc-allow-large: AD46 deployment-doc colocation -->
 
 **Audience:** Developers, Operators
 
@@ -52,7 +52,7 @@ npx wrangler deploy
 CI/CD: `.github/workflows/deploy.yml` triggers on a `workflow_run` event — fires only when "PR Checks" on `main` completes with `success`. `workflow_dispatch` is retained for manual re-runs.
 
 The deploy job:
-1. Applies D1 migrations (drift-tolerant). SQLite has no `ADD COLUMN IF NOT EXISTS`, so a migration manually run out-of-band leaves the column in place but unrecorded in `d1_migrations`. The CI step handles this with a retry loop: on a "duplicate column" or "already exists" error it stamps the failing migration name into `d1_migrations` and retries, up to 5 attempts. Real SQL errors (syntax, constraint violations) surface immediately. Both `deploy.yml` (production) and `deploy-integration.yml` run the same loop.
+1. Applies D1 migrations (drift-tolerant). "Duplicate column" / "already exists" errors are handled by stamping the migration into `d1_migrations` and retrying up to 5 attempts. Real SQL errors surface immediately.
 2. Runs the same two-step security audit as PR Checks (advisory HIGH+, blocking CRITICAL) as a defence-in-depth gate — catches CVEs introduced between the merge and the deploy (transient transitive bumps, Dependabot lockfile regenerations, etc.).
 3. Pushes Worker secrets via `wrangler secret put` (file-redirect form). Conditional secrets (`ADMIN_EMAIL`, `CF_ACCESS_AUD`, `DEV_BYPASS_USER_ID`) are pushed only when the corresponding GitHub Actions secret is non-empty.
 4. Deploys the Worker.
@@ -111,9 +111,9 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 **One-time per-fork setup:**
 
 1. **Create the GitHub Environment.** Repo → Settings → Environments → New environment → name it `integration`. The empty environment is what activates the secret-fallback semantics in the workflow.
-2. **Set `APP_URL` as an environment variable** (Variables tab, NOT Secrets — it's a public hostname). The value is the URL the integration worker will serve, e.g., `https://news.example.com` if you have a custom domain on Cloudflare. Leave unset to deploy to the auto-assigned `*.workers.dev` URL.
+2. **Set `APP_URL` as an environment variable** (Variables tab, not Secrets — it's a public hostname). Use the custom domain URL, or leave unset to deploy to the auto-assigned `*.workers.dev` URL.
 3. **Confirm the OAuth callback URL is registered** with whichever providers you use — `${APP_URL}/api/auth/google/callback` and/or `${APP_URL}/api/auth/github/callback`.
-4. **(Optional) Override secrets per-env.** Any secret added under Environments → integration → Secrets takes precedence over the repo-level secret with the same name. Useful for isolating `OAUTH_JWT_SECRET` between prod and integration so a leaked integration JWT can't be replayed against prod.
+4. **(Optional) Override secrets per-env.** Secrets added under Environments → integration → Secrets take precedence over repo-level secrets. Use this to isolate `OAUTH_JWT_SECRET` so a leaked integration JWT cannot be replayed against prod.
 
 **How to deploy:**
 
@@ -121,7 +121,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 2. GitHub → Actions → "Deploy Integration" → "Run workflow" → green button.
 3. The branch dropdown in the dispatch dialog is irrelevant — the workflow always pulls `develop`'s current HEAD.
 4. ~3 minutes for first-deploy (resources provisioned), ~2 minutes for subsequent deploys.
-5. After the deploy completes, hit the URL manually. There is no automated smoke step on integration — GHA runner IPs are blocked by Cloudflare bot management at the edge, so a curl from CI reliably returns `403` regardless of worker health. `wrangler deploy` exit code is the authoritative success signal. Open `vars.APP_URL` (or the `*.workers.dev` URL the deploy log prints) in a browser to confirm the worker is reachable.
+5. After deploy, open the URL in a browser. No CI smoke step — GHA runner IPs return `403` from Cloudflare bot management regardless of worker health. `wrangler deploy` exit code is the success signal.
 
 **Triggering a scrape on integration** (since crons are off):
 
@@ -238,11 +238,12 @@ Keep the Cloudflare Access policy in sync with deploys so unauthorized clicks la
 
 **Two secrets, two failure modes the deploy creates:**
 
-1. `DEV_BYPASS_TOKEN` — pushed by the deploy from the `DEV_BYPASS_TOKEN` GitHub Actions secret. Past deploys have written an empty/encoded value when the GH-side secret push had a CR/LF or trailing-newline issue, leaving `/api/dev/login` returning 404 for a token the local file claims is valid.
-2. `DEV_BYPASS_USER_ID` — actively **deleted** by the deploy (`wrangler secret delete DEV_BYPASS_USER_ID`, idempotent). This is intentional — it stops a stale impersonation override from outliving its testing window. Effect for the runbook: every integration deploy reverts the dev-login user to the synthetic `__e2e__` row, which does **not** match `ADMIN_EMAIL`, so admin endpoints return 401/403 even with a valid session cookie.
+1. `DEV_BYPASS_TOKEN` — pushed by the deploy from the GitHub Actions secret. Past deploys have written an empty/encoded value due to CR/LF issues, leaving `/api/dev/login` returning 404 for a token that looks valid locally.
+2. `DEV_BYPASS_USER_ID` — actively **deleted** by the deploy (idempotent). Prevents stale impersonation from outliving its window. Every deploy reverts dev-login to `__e2e__`, which does not match `ADMIN_EMAIL` — admin endpoints return 401/403 even with a valid session.
 
 **After every integration deploy, re-stamp both secrets via the Cloudflare REST API.** Wrangler's `/memberships` preflight fails in this container (token has Workers Scripts edit but not Account Read) — go direct to the secrets endpoint instead:
 
+<!-- doc-allow-large: AD46 dev-bypass-runbook secret re-stamp block -->
 ```bash
 # From the operator's local env. ACCOUNT_ID lives in the
 # `CLOUDFLARE_ACCOUNT_ID` GitHub Actions repo variable; export it from
@@ -271,6 +272,7 @@ curl -s -X PUT \
 
 Both writes propagate within ~5-10 seconds. Then mint a session and drive any admin endpoint:
 
+<!-- doc-allow-large: AD46 dev-bypass-runbook session-mint and admin-drive block -->
 ```bash
 # Mint a session — Origin header is required (the route enforces same-origin POST).
 curl -s -X POST "https://news.novoselec.ch/api/dev/login" \

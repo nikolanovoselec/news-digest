@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-<!-- doc-allow-large: AD46c ADR index single-file design -->
+<!-- doc-allow-large: AD46 ADR index single-file design -->
 
 Decisions made during implementation, with rationale.
 
@@ -77,6 +77,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** The codeflare repo has a proven pattern at this exact shape. Writing ~250 lines avoids a dependency with ~50 transitive ones, eliminates ORM coupling, and simplifies deployment. Migration to Better Auth later is a bounded one-day project if scope expands.
 
+**Consequences:** Any new OAuth provider requires one registry entry and a `fetchProfile` adapter. Session-management bugs are owned entirely by this codebase - no upstream library to patch. Reviewers must know the custom JWT shape (`src/lib/jwt.ts`) when auditing auth flows.
+
 **Related requirements:** [REQ-AUTH-001](../../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-002](../../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation)
 
 ---
@@ -96,6 +98,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** Queues give natural per-message isolation (each job in its own isolate, no shared memory), default 10-wide concurrency with built-in backpressure, and 3-retry semantics. Cron stays a tiny dispatcher. This is the primitive Cloudflare built exactly for this shape of problem.
 
+**Consequences:** At-least-once delivery requires all queue consumers to be idempotent. The scrape pipeline carries explicit dedup gates (AD7, AD10) specifically because queue redelivery is normal. Changing queue bindings or retry counts requires coordinated `wrangler.toml` and consumer-code updates.
+
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence). Original framing was for the per-user generation pipeline (REQ-GEN-001, REQ-GEN-002, both Deprecated 2026-04-23 in the global-feed rework); the queue mechanism survived the rework intact.
 
 ---
@@ -114,6 +118,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** An SSRF denylist, 8 s timeout, and 1.5 MB size cap bring the risk to negligible. Fan-out is bounded-concurrency at 20 workers. The quality improvement on short-snippet feeds justifies the added complexity.
 
+**Consequences:** The SSRF denylist (`src/lib/ssrf-guard.ts`) must be kept current as RFC-1918 and link-local ranges evolve. Article-body fetches add latency to chunk processing; the 8 s timeout is the ceiling. New feed sources from publishers behind aggressive anti-scraping CDNs will silently fall back to snippet-only summaries.
+
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) AC 8
 
 ---
@@ -124,7 +130,9 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Decision (historical):** Prohibit all server-side article-body fetching. Summaries rely entirely on the feed-provided snippet.
 
-**Context (historical):** Drafted 2026-04-22 to avoid SSRF risk and Cloudflare-range rate-limiting by publishers. Reversed during the global-feed rework when summary quality on short-snippet feeds proved unacceptable and the risk surface was demonstrated to be manageable with explicit denylist + timeout + size cap.
+**Context:** Drafted 2026-04-22 to avoid SSRF risk and Cloudflare-range rate-limiting by publishers. Reversed during the global-feed rework when summary quality on short-snippet feeds proved unacceptable and the risk surface was demonstrated to be manageable with explicit denylist + timeout + size cap.
+
+**Consequences:** Superseded. See AD3 for current behaviour and its consequences.
 
 **Why preserved:** Documentation-discipline.md prescribes immutable original ADRs with a separate superseding ADR. This entry is the archived original; AD3 above is the current decision.
 
@@ -144,6 +152,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** Plaintext + `textContent` makes XSS impossible by construction. One less dependency, one less configuration surface, zero sanitizer updates to track. Detail paragraphs are stored as a `string[]` and rendered via `textContent`, so the same invariant holds regardless of how many paragraphs the LLM returns. The constraint survived the 2026-04-23 global-feed rework (which retired the per-user generation REQs REQ-GEN-002/006) and now applies via REQ-PIPE-002.
 
+**Consequences:** LLM prompts must explicitly forbid markdown and HTML in output. Any future feature that needs rich article rendering (bold headings, links) requires revisiting this decision and introducing a sanitizer. Template authors must use `set:text` (or `textContent`) - never `set:html` or `innerHTML` - when rendering article titles or summaries.
+
 **Related requirements:** [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-READ-002](../../sdd/reading.md#req-read-002-article-detail-view) (original decision applied to REQ-GEN-005, Deprecated 2026-04-23, Replaced By REQ-PIPE-002)
 
 ---
@@ -161,6 +171,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 - Put everything in KV for speed.
 
 **Rationale:** Caches tolerate ~60 s lag and benefit from edge reads. Pending discovery work needs transactional semantics (`SELECT ... LIMIT 3` + `DELETE`) that KV's list/scan can't provide cleanly. Using each primitive for what it's designed for keeps both simpler.
+
+**Consequences:** KV writers are centralised through `src/lib/kv/` helpers (AD27) to keep the byte-equal invariant load-bearing. Any new strongly-consistent state (counters requiring transactions, per-user locking) must go into D1, not KV. AD7 applied this directly to chunk-completion tracking.
 
 **Related requirements:** [REQ-DISC-001](../../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery), [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) (original decision applied to REQ-GEN-003, Deprecated 2026-04-23, Replaced By REQ-PIPE-001)
 
@@ -180,6 +192,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** Polling `GET /api/scrape-status` (one D1 SELECT + one KV get) is negligible overhead at the operator-only volume this endpoint serves. No DO complexity, no WebSocket protocol, no phase-update machinery. The UX difference is imperceptible for a one-shot status flip.
 
+**Consequences:** The 5-second poll cadence is the resolution floor for progress visibility. If scrape runs become significantly faster (sub-10 s), the polling interval should be revisited. Clients that close the browser tab during a run will miss intermediate progress but can rehydrate via `/api/scrape-status` on next open.
+
 **Related requirements:** [REQ-PIPE-006](../../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress)
 
 ---
@@ -190,7 +204,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Decision:** Move the "last chunk done" gate from a KV decrement (`scrape_run:{id}:chunks_remaining`) to a D1 `INSERT OR IGNORE` + `SELECT COUNT(*)` pattern on a dedicated `scrape_chunk_completions` table, with a follow-up conditional `UPDATE scrape_runs SET finalize_enqueued = 1 WHERE finalize_enqueued = 0` to gate the finalize handoff.
 
-**Context (CF-002):** The original KV implementation used a read-modify-write decrement: each chunk consumer read the counter, decremented it, and wrote it back. Under Cloudflare Queues' at-least-once delivery, this exposed two races:
+**Context:** The original KV implementation (CF-002) used a read-modify-write decrement: each chunk consumer read the counter, decremented it, and wrote it back. Under Cloudflare Queues' at-least-once delivery, this exposed two races:
 
 1. **Decrement race:** two concurrent last-chunk consumers read the same value before either wrote. Both saw "zero remaining", both enqueued a finalize pass, and both stamped the run as `ready`.
 2. **Send-gate race:** even if the count check held, both consumers could call `SCRAPE_FINALIZE.send` before either set the KV gate.
@@ -202,6 +216,8 @@ KV's eventual consistency made both races effectively undetectable via testing i
 - KV with Compare-And-Swap (`getWithMetadata` + `put` with `expirationTtl` as a CAS surrogate) - fragile; KV has no native CAS and the surrogate is not atomic.
 
 **Rationale:** AD5's own principle applies directly: completion counting needs transactional semantics. `INSERT OR IGNORE` into a table keyed by `(scrape_run_id, chunk_index)` is idempotent under redelivery and gives an exact count via `SELECT COUNT(*)` - no race. The finalize-enqueue gate is collapsed into a single atomic `UPDATE … WHERE finalize_enqueued = 0`; D1 returns `meta.changes` for exactly one consumer. The KV counter (`scrape_run:{id}:chunks_remaining`) is retained as a derived mirror for the `/api/scrape-status` progress display but is no longer authoritative. Implements [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) and [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) AC 1 and AC 9.
+
+**Consequences:** The `scrape_chunk_completions` table grows one row per chunk per run; the retention cron (03:00 UTC) must cover this table or it will grow unbounded. The KV mirror is best-effort and may lag behind D1 by up to one propagation window - consumers must not rely on it for correctness, only for display.
 
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)
 
@@ -223,7 +239,7 @@ KV's eventual consistency made both races effectively undetectable via testing i
 
 **Rationale:**
 - The attributes are load-bearing identifiers - security reviewers grep `__Host-`, `HttpOnly`, `SameSite=Lax` directly to verify the contract holds in source, tests, and the rendered Set-Cookie header.
-- Translating to user-observable language loses information: the AC then doesn't constrain whether `__Host-` vs `__Secure-` prefix is used, doesn't pin the SameSite policy, doesn't require Path scoping. A future contributor reading the AC would not know the contract still constrains these.
+- Translating to user-observable language loses load-bearing detail: the AC would no longer constrain `__Host-` vs `__Secure-` prefix, SameSite policy, or Path scoping. See Consequences for the full impact.
 - Same precedent as the existing `email_enabled` exception in `sdd/.user-overrides.md` (column name IS the contract because it's the shared identifier across UI, DB, dispatcher).
 
 **Consequences:**
@@ -251,9 +267,9 @@ KV's eventual consistency made both races effectively undetectable via testing i
 - Split each REQ into a behavior REQ (in `sdd/`) and a schema doc (in `documentation/`) - substantial AC reshape risk.
 
 **Rationale:**
-- These names are the load-bearing identifiers shared across SQL, the Workers runtime, and any future migration tooling. They are how `INSERT OR IGNORE INTO pending_discoveries`, `SELECT session_version FROM users`, and `KV.get('sources:' + tag)` are written in source - and how reviewers grep to verify a behavior holds.
+- These names are the load-bearing identifiers shared across SQL, the Workers runtime, and future migration tooling. They are how reviewers grep to verify behavior holds; abstracting them away makes the contract harder to audit, not easier.
 - Same precedent as the existing `email_enabled` exception in `sdd/.user-overrides.md` (the column name IS the contract noun shared across UI, DB, dispatcher).
-- The mechanism-leakage rule was authored against frontend-heavy projects where storage names are usually behind ORM abstractions. This project is intentionally close-to-the-metal (raw SQL strings, no ORM, KV keys hand-built) - the storage names are *the* user-facing surface for anyone who runs migrations or writes new queries.
+- The mechanism-leakage rule targets ORM-abstracted projects. This project uses raw SQL and hand-built KV keys; storage names are the developer-facing contract, not hidden implementation detail. Same principle as the env-var-as-contract allowlist.
 
 **Consequences:**
 - spec-reviewer skips these five REQs via the `Overrides:` header above.
@@ -273,12 +289,12 @@ KV's eventual consistency made both races effectively undetectable via testing i
 **Context:** Two existing call sites use this shape today: (a) `scrape-chunk-consumer.ts` flips `finalize_enqueued` 0→1 to gate the `SCRAPE_FINALIZE.send` (REQ-PIPE-008 AC 3); (b) `scrape-finalize-consumer.ts` flips `finalize_recorded` 0→1 inside the same UPDATE that also folds tokens + cost into the run's totals (REQ-PIPE-008 AC 5/AC 7). Code-review on 2026-04-29 (CF-026) flagged the duplicated shape and proposed a generic `acquireOnceLock(db, table, id, column)` helper.
 
 **Alternatives considered:**
-- **`acquireOnceLock` helper:** generic boolean-returning wrapper. The chunk-consumer site fits cleanly, but the finalize-consumer site fuses the gate with the per-attempt stats fold inside one atomic statement - extracting a bare "did I win?" helper would force splitting that into a lock + a separate UPDATE, losing the atomicity that protects against a transient mid-statement error leaving the gate flipped without the stats recorded.
+- **`acquireOnceLock` helper:** fits the chunk-consumer cleanly, but breaks the finalize-consumer. See rationale for why the fused atomic UPDATE cannot be split.
 - **`scrape_run_locks` keyed table** (one row per `scrape_run_id` × `lock_name`): cleaner if the number of gates grows beyond two. Today's two-site count doesn't justify the migration + new repo layer; revisit when a third gate would land.
 
 **Rationale:**
 - The pattern is two lines of SQL plus a meta.changes check. Wrapping it in a function adds an indirection the reader must follow with no ergonomics win on the call sites that exist.
-- The composite UPDATE in finalize-consumer is genuinely load-bearing for atomicity - refactoring to "lock then stats" would re-introduce the failure mode that the consolidated atomic UPDATE was specifically designed (in PR #166) to eliminate.
+- The composite UPDATE in finalize-consumer is load-bearing for atomicity. The `acquireOnceLock` helper would force a "lock then stats" split, re-introducing the failure mode PR #166's fused atomic UPDATE was designed to eliminate.
 - Source-grep for `WHERE finalize_recorded = 0` and `WHERE finalize_enqueued = 0` is sufficient to find every gate site; the duplication is at the syntactic surface, not at the semantic level.
 
 **Consequences:**
@@ -298,7 +314,7 @@ KV's eventual consistency made both races effectively undetectable via testing i
 
 **Context:** Two architectural patterns in the codebase write to inline style attributes from JavaScript at runtime:
 
-1. **FLIP chip animations** (`src/lib/tag-railing-flip.ts`) - when the user toggles a hashtag, every chip in the tag strip measures its old and new positions, then writes `chip.style.transform = translate(${dx}px, ${dy}px)` on the inverse step and `chip.style.transform = 'translate(0,0)'` on the play step. The values are computed per-frame from real layout measurements; they cannot be enumerated at build time.
+1. **FLIP chip animations** (`src/lib/tag-railing-flip.ts`) - inline `chip.style.transform` writes on every tag-strip toggle. Values are computed per-frame from real layout measurements; they cannot be enumerated at build time.
 
 2. **View-transition-name pre-flight** (`src/scripts/page-effects.ts`) - before an SPA navigation, the active card writes `link.style.setProperty('view-transition-name', card-${slug})` so the browser's View Transitions API can pair the source card with the destination article-detail header. The slug is per-article, not per-build.
 
@@ -308,13 +324,13 @@ CSP3 `style-src` enforces the same allowlist on **runtime** style-attribute writ
 
 - **`'unsafe-hashes'` directive (CSP3)** - allows hash-source to validate inline event handlers and `.style.X` writes. Requires a hash for every possible value. The FLIP transforms have continuous values (`translate(${dx}px, ${dy}px)`); enumeration is impossible. Rejected.
 
-- **CSS custom properties via `setProperty('--var', value)`** - write to `--flip-translate` against a static CSS rule `transform: var(--flip-translate)`. Browser behavior on whether `style-src` enforces against custom-property writes is **inconsistent across engines** (the values are stored as opaque token strings, not parsed CSS at write time). Could work, but relies on a gray-area interpretation; would need cross-browser verification. Rejected as fragile.
+- **CSS custom properties via `setProperty('--var', value)`** - write to `--flip-translate` against a static CSS rule. Browser enforcement of `style-src` against custom-property writes is engine-inconsistent (values stored as opaque tokens). Relies on a gray-area CSP interpretation; cross-browser fragile. Rejected.
 
-- **Web Animations API rewrite** - `chip.animate([...])` runs entirely in JS, never touches the style attribute, CSP-exempt. Would require ~3-5h refactor of `tag-railing-flip.ts` plus a parallel rewrite of view-transition-name to use class toggles with a single fixed name. Working, but the security gain does not justify the regression risk on user-visible animation code that is hard to validate without a browser.
+- **Web Animations API rewrite** - CSP-exempt JS path. Requires ~3-5h refactor of `tag-railing-flip.ts` plus a view-transition-name rewrite. Security gain does not justify regression risk on animation code that is hard to validate without a real browser.
 
 - **Dynamic `<style nonce="...">` injection** - generate a per-request nonce, inject one `<style>` per FLIP frame, append/remove. Massive overhead per animation step; complicates the FLIP loop. Rejected.
 
-- **Migrate CSP entirely to Astro 6 `security.csp`** - Astro 6 emits per-page CSP via `<meta>` tag with auto-generated hashes. Combined with the middleware's response-header CSP, browsers enforce the intersection - and the runtime `.style.X` writes still wouldn't have hashes. Same fundamental blocker. Also blocked separately by the still-pinned `astro@5.18.1` (see `package.json`'s pin commit).
+- **Migrate CSP to Astro 6 `security.csp`** - Astro 6 auto-generates hashes but runtime `.style.X` writes still wouldn't have them. Same fundamental blocker. Also blocked by the pinned `astro@5.18.1`. Rejected.
 
 **Rationale:** The actual security cost of `'unsafe-inline'` on `style-src`, given the rest of the policy, is small:
 
@@ -328,7 +344,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 **Consequences:**
 
 - The CSP comment block in `src/middleware/security-headers.ts` documents `'unsafe-inline'` as required, and points at this ADR for the full reasoning.
-- A future contributor who proposes removing `'unsafe-inline'` from `style-src` MUST also propose a concrete alternative for the FLIP and view-transition-name mutation patterns. The "just drop it" path will reliably break production (this is the third time it has been attempted on this project - see `hotfix/csp-style-unsafe-inline` history).
+- Any proposal to remove `'unsafe-inline'` from `style-src` MUST include a concrete alternative for FLIP and view-transition-name mutations. Dropping it has broken production three times already (see `hotfix/csp-style-unsafe-inline` history).
 - If Astro ever ships native CSP support that handles runtime style mutations (e.g., via per-element nonces resolved at runtime), revisit this decision.
 - `tests/e2e/csp-violation.spec.ts` continues to act as the merge gate for any CSP tightening - it subscribes to `securitypolicyviolation` events on a live `/digest` navigation and fails the build if any fire.
 
@@ -347,7 +363,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 **Alternatives considered:**
 
 - **Branch-based auto-deploy** (push to `integration` branch → auto-deploy). Rejected: forces operator to maintain a parallel branch and remember to push it; rebase friction every time develop moves.
-- **Same workflow with environment dropdown** (codeflare's pattern: one `deploy.yml`, manual dispatch picks production or integration). Cleaner but requires deeper restructuring (drop `[env.integration]` blocks in wrangler.toml in favour of `--name` CLI overrides + per-env `vars.X`). The two-workflow shape was the lower-risk path to ship integration today; the single-workflow refactor is a good cleanup later.
+- **Same workflow with environment dropdown** (codeflare's pattern). Cleaner long-term but requires dropping `[env.integration]` wrangler.toml blocks for `--name` CLI overrides. Two-workflow shape was the lower-risk path to ship integration quickly; single-workflow refactor is a later cleanup.
 - **Auto-deploy on every push to develop** (mirror production's gate-on-PR-Checks pattern). Rejected: develop receives many small commits during iteration. Auto-deploys would consume time-to-deploy and the operator would lose the "deliberately staged a coherent change to test" workflow.
 - **Shared resources (one D1, one KV) across prod and integration**. Rejected: integration migrations would corrupt prod data; integration force-refresh would compete with prod scrape state.
 - **Cron triggers enabled on integration**. Rejected: would consume Workers AI budget on every-four-hour scrape runs that nobody is watching, and integration's empty seed data isn't representative enough to be worth the cost.
@@ -359,8 +375,8 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - 2× Cloudflare resource provisioning. Negligible cost on the small-data tier (D1, KV, queues are pennies/month).
 - Operator must remember to manually trigger. There's no automation enforcing "test on integration before merging to main"; that discipline is on the human.
 - Per-env GitHub Environment scoping is in place (`environment: integration`) so any secret can later be overridden without touching workflow code (e.g., a separate `OAUTH_JWT_SECRET` to isolate cross-env JWT identity confusion).
-- Integration's `APP_URL` is sourced from a GitHub Environment **variable** (`vars.APP_URL` on the `integration` environment), NOT a secret and NOT hardcoded in `wrangler.toml`. The codeflare pattern: variables for non-sensitive per-environment config, secrets for credentials. Any fork sets their own integration hostname under Settings → Environments → integration → Variables → APP_URL without touching code.
-- All Cloudflare resources (D1, KV, queues, Vectorize) are provisioned by inline `wrangler` lookup-or-create blocks directly in both deploy workflows. D1 + KV resolved IDs are patched into a CI-only copy of `wrangler.toml` before `wrangler deploy` runs, so forks land with zero pre-deploy setup; the committed IDs in the repo are the owner's, kept in place for local `wrangler dev`.
+- Integration's `APP_URL` is a GitHub Environment **variable** (not a secret, not hardcoded). Forks set their own hostname under Settings → Environments → integration → Variables → APP_URL without touching code.
+- All Cloudflare resources are provisioned by inline `wrangler` lookup-or-create blocks in both deploy workflows. Resolved IDs are patched into a CI-only `wrangler.toml` copy at deploy time; forks need zero pre-deploy setup.
 
 **Related requirements:** [REQ-OPS-006](../../sdd/observability.md#req-ops-006-integration-deployment-target)
 
@@ -379,7 +395,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 **Consequences:**
 - Reviewing this ADR is a mandatory step on any PR adding `Set-Cookie` for non-auth purposes.
 - Telemetry/analytics integrations must use cookieless approaches (aggregated edge logs, one-shot beacon to a first-party endpoint with no client-side identifier, etc.) or this ADR must be superseded with an explicit decision and a tagline-copy revision.
-- Until a dedicated `documentation/security.md` is bootstrapped, the essential cookie inventory lives inline in this ADR set (AD8 covers session + refresh-token cookies; OAuth state and theme cookies are documented at their respective issue sites). When `security.md` is eventually written it consolidates and supersedes those scattered entries.
+- Until `documentation/security.md` is bootstrapped, the cookie inventory is inline in this ADR set (AD8 covers session + refresh-token cookies; OAuth state and theme cookies at their issue sites). `security.md` consolidates them when written.
 
 **Related requirements:** none (this is a product-trust contract, not a behavioral REQ).
 
@@ -417,7 +433,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 **Alternatives considered:**
 
 - **Force `npm run build` in the test pool setup.** Rejected: doubles CI wall-time on every test run, and the merged module shape is still incompatible with the Workers pool runtime.
-- **Hand-roll a Worker entry that composes the Astro middleware in code, used by both prod and tests.** Rejected: mirrors what `@astrojs/cloudflare` already does, churn on every Astro upgrade, no test wins because the middleware is exercised end-to-end via Playwright already.
+- **Hand-roll a Worker entry composing Astro middleware.** Rejected: duplicates what `@astrojs/cloudflare` already does, churns on every Astro upgrade, and middleware is covered end-to-end by Playwright anyway.
 - **Drop unit tests of cross-cutting middleware entirely.** Rejected: Playwright covers the integration path, but unit tests for individual middleware functions (origin check, rate limit, JWT verify) remain valuable and live in `tests/middleware/`.
 
 **Rationale:** The production middleware chain is verified end-to-end by Playwright (`tests/e2e/csp-violation.spec.ts` and the new `tests/e2e/csp-policy.spec.ts` from D3 below). Unit tests cover middleware functions in isolation. The test/prod entry inversion is acceptable as long as the contract gate stays in Playwright, not in vitest.
@@ -442,9 +458,9 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 
 **Alternatives considered:**
 
-- **Move `sources:{tag}` to D1.** D1's conditional UPDATE+WHERE makes read-modify-write atomic by construction (the AD7 path). Stronger guarantee but a meaningful schema migration; the eviction path is bounded write volume (a few hundred tags × every-4-hour cron) so KV's eventual consistency is acceptable here. Defer; revisit if write volume grows.
+- **Move `sources:{tag}` to D1.** Stronger atomicity guarantee (the AD7 path) but requires a schema migration. Eviction write volume is bounded (few hundred tags × 4h cron), so KV eventual consistency is acceptable. Deferred; revisit if volume grows.
 - **Per-write monotonic version counter (CAS-style).** Adds a column without strengthening the gate; `discovered_at` already conveys the monotonic signal but is not consulted in the byte-equal recheck because byte-equality already covers the contract. Rejected.
-- **Structural-recheck fallback on `discovered_at`.** Initially considered as belt-and-suspenders. Reviewer flagged the failure mode: two writers landing on the same `Date.now()` millisecond with genuinely different feed sets would have been treated as equivalent, silently clobbering one of the writes. The byte path under the single-writer invariant is the right contract.
+- **Structural-recheck fallback on `discovered_at`.** Rejected: two writers landing the same millisecond with different feed sets would be treated as equivalent, silently clobbering one write. Byte-equality under the single-writer invariant is the correct contract.
 - **Trust the comment** ("byte-equal compare valid because JSON.stringify is sole writer"). This is what the previous code did. Reviewer churn confirmed comments don't enforce invariants - the invariant is one careless PR away from breaking.
 
 **Rationale:** Centralising the writer is the cheapest way to make the byte-equal invariant load-bearing instead of comment-bearing. Once `writeSourcesCache` is the sole writer with a fixed serialisation, byte-equality is the right race signal: any byte divergence MUST be a different write, and the eviction recheck correctly bails.
@@ -574,14 +590,14 @@ function getBindFlags() {
 
 **Alternatives considered:**
 
-- **Strip the page-level import; rely solely on the layout-wide auto-wire.** Would close the dual-bundle hole but also strip the page's ability to rebind clones synchronously after filter actions. Possible but requires either (a) exposing `initCardInteractions` on `window` from the IIFE and calling it via `window.__cardInteractions.init(searchGrid)` in history.astro, or (b) letting history.astro fire a custom event that the IIFE listens for. Both are larger refactors.
-- **Move the auto-wire IIFE OUT of `card-interactions.ts` into `card-interactions-bootstrap.ts`.** Then the page-level import would only pull pure functions (no side-effect IIFE). Cleaner architecturally but ties Pattern B-vs-Pattern A to a file-naming convention, and any future page-level importer who imports the bootstrap by mistake re-introduces the bug.
+- **Strip the page-level import; rely on the layout-wide auto-wire.** Closes the dual-bundle hole but removes synchronous clone rebinding. Requires exposing `initCardInteractions` on `window` or a custom event - both larger refactors than the chosen fix.
+- **Move the auto-wire IIFE to `card-interactions-bootstrap.ts`.** Cleaner architecturally but ties Pattern B/A separation to a file-naming convention; a future importer who grabs the bootstrap by mistake re-introduces the bug.
 - **`window`-scoped token (chosen).** Smallest diff, strongest guarantee, works regardless of how many copies of the module run.
 
 **Consequences:**
 
 - All future `src/scripts/*.ts` files that need to register global listeners AND might be imported by a page MUST use the window-scoped token pattern. The closure-flag pattern is a foot-gun.
-- `scripts/check-no-page-pattern-b.mjs` is added as a CI gate (run via `node scripts/check-no-page-pattern-b.mjs` in `.github/workflows/test.yml`): it scans `src/pages/**/*.astro` and `src/components/**/*.astro` for static imports of any top-level `src/scripts/*.ts` (i.e. NOT `src/scripts/bundled/*`). Any such import fails the build with a pointer to this ADR. Future contributors who want to import a script from a page must move it under `src/scripts/bundled/`.
+- `scripts/check-no-page-pattern-b.mjs` is added as a CI gate: it scans Astro pages and components for static imports of top-level `src/scripts/*.ts` files. Any match fails the build with a pointer to this ADR. Scripts for page import must live under `src/scripts/bundled/`.
 - The `__resetForTests` helper in `card-interactions.ts` clears `window.__cardInteractionsBound` instead of closure variables.
 
 **Related requirements:** [REQ-STAR-001](../../sdd/reading.md#req-star-001), [REQ-READ-001](../../sdd/reading.md#req-read-001)
@@ -679,8 +695,8 @@ PR #185 attempted to compensate with `margin-top: -0.3em`. The user reported thi
 
 **Consequences:**
 - Single secret to rotate (operational simplicity).
-- If a future threat model surfaces (e.g., a side-channel that leaks the CSRF-state HMAC computation but not the JWT signing path, or a partial-disclosure crypto bug in the underlying primitive), this decision must be revisited and a HKDF-derived sub-key introduced.
-- The `verifyHmacSignature` rename (from `timingSafeEqualHmac`) was the CF-014 cleanup - the function is constant-time string equality via HMAC, symmetric in result for both arguments. The rename plus a `(expected, candidate, secret)` argument convention removes the misleading "argument-order is load-bearing" framing of the prior name. Orthogonal to the key-reuse decision recorded here.
+- If a partial-disclosure threat surfaces (e.g., a side-channel leaking the CSRF-state HMAC but not the JWT signing path), revisit this decision and introduce a HKDF-derived sub-key.
+- The `verifyHmacSignature` rename (from `timingSafeEqualHmac`, CF-014) adopts a `(expected, candidate, secret)` convention that removes the misleading "argument-order is load-bearing" framing. Orthogonal to the key-reuse decision recorded here.
 
 **Related requirements:** [REQ-AUTH-001](../../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-003](../../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
 
@@ -696,7 +712,7 @@ PR #185 attempted to compensate with `margin-top: -0.3em`. The user reported thi
 
 **Alternatives considered:**
 - **JWKS-based signature verification inside the worker.** Strict defence-in-depth; requires fetching/caching Cloudflare's JWKS, periodic refresh, and key-rotation handling. Rejected as duplicative of the edge verification.
-- **Drop the `aud` check and rely entirely on the edge.** Loses the audience-binding signal that catches misconfigured deployments where Access is bound to a different application. Rejected - the `aud` check is a cheap deployment-misconfiguration tripwire even without signature verification.
+- **Drop the `aud` check and rely entirely on the edge.** Rejected - the `aud` check is a cheap deployment-misconfiguration tripwire that catches Access bound to the wrong application.
 - **Verify signature only when `CF_ACCESS_AUD` is unset (fail-loud configuration error).** More complex than just refusing to start; rejected in favour of treating `CF_ACCESS_AUD` as a hard deployment requirement.
 
 **Rationale:** Cloudflare Access verifies the JWT at the edge before requests reach the worker. Re-verifying inside the worker (e.g., via JWKS) duplicates work without changing the security posture, provided the worker is properly bound to a custom domain with `workers_dev = false` and `CF_ACCESS_AUD` configured. The deployment configuration itself is the security boundary - the alternative (in-worker JWKS verification) does not strengthen the posture if the deployment is correct, and does not save the deployment if it is misconfigured (an attacker reaching `*.workers.dev` directly would also have a fresh JWT-forging window if the audience check is the only gate).
@@ -802,15 +818,15 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Alternatives considered:**
 
-- **Keep CF Access mandatory; require operators to bind Access on every environment.** Rejected - forces a Zero Trust deploy as a prerequisite for using force-refresh, even on isolated test/staging instances where the perimeter is not warranted. Increases setup friction for forks.
-- **Hard-coded dev bypass via `DEV_BYPASS_TOKEN` for admin routes.** Rejected - `/api/dev/trigger-scrape` already exists for unattended pipeline drives, but threading a bypass into the admin middleware confuses the auth model and forks the policy across two paths. Keeping admin policy declarative (one env var) is cleaner.
-- **Require `CF_ACCESS_AUD` to be set even in environments without Access.** Rejected - that conflates "perimeter configured" (operator decision) with "perimeter enforced server-side" (code policy). The two should be coupled: setting the var IS the way the operator opts into perimeter enforcement.
+- **Keep CF Access mandatory.** Rejected - forces a Zero Trust deploy as a prerequisite for force-refresh, even on isolated test/staging instances. Increases setup friction for forks unnecessarily.
+- **Hard-coded `DEV_BYPASS_TOKEN` for admin routes.** Rejected - `/api/dev/trigger-scrape` already covers unattended pipeline drives. Threading another bypass into admin middleware forks the policy. One env var (`CF_ACCESS_AUD`) keeps the policy declarative.
+- **Require `CF_ACCESS_AUD` even where Access is absent.** Rejected - that conflates "perimeter configured" with "perimeter enforced." Setting the var IS the opt-in signal; requiring it unconditionally breaks environments that legitimately run without Access.
 
 **Rationale:** ADMIN_EMAIL gating + signed-in OAuth session is sufficient as the baseline admin policy. CF Access is a defence-in-depth perimeter that an operator may add when the security profile warrants it (production, larger deployments). Coupling Layer 0 enforcement to `CF_ACCESS_AUD` presence makes the opt-in explicit: setting the var means the operator has bound Access in front and wants the worker to verify the JWT's `aud` claim; clearing the var means the worker should not assume Access is present and should not reject on its absence.
 
 **Consequences:**
 
-- Production deploys with Access bound MUST set `CF_ACCESS_AUD` AND must satisfy AD30 (Access bound to the `*.workers.dev` URL too, or that subdomain disabled). Without both, the perimeter is forgeable from anywhere on the public internet and admin reduces to ADMIN_EMAIL alone.
+- Production deploys with Access MUST set `CF_ACCESS_AUD` AND satisfy AD30 (`*.workers.dev` covered or disabled). Without both, the perimeter is forgeable and admin reduces to ADMIN_EMAIL alone.
 - Integration and forks without Access keep `CF_ACCESS_AUD` unset and rely on session + ADMIN_EMAIL.
 - Discovery retry endpoints (`/api/admin/discovery/*`) inherit the same gate. Their existing tests pass an opaque assertion value that is now ignored unless `CF_ACCESS_AUD` is set in the test env - no behaviour change there.
 - Future review passes that grep the admin path for unconditional Cloudflare Access enforcement should match this ADR's `Overrides:` line and not flag the conditional check as a missing perimeter.
@@ -824,7 +840,11 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 **Status:** Accepted (2026-05-05)
 **Overrides:** workers-dev-exposure:REQ-AUTH-001
 
-**Decision:** Whether the auto-assigned `*.workers.dev` subdomain sits behind Cloudflare Access is the operator's responsibility, not the worker's. The application code does NOT detect the request host or reject `workers.dev` traffic, and reviewers MUST NOT flag this as a perimeter gap. When an operator binds Access on the custom domain they are expected to also bind it on the `workers.dev` hostname (or disable that hostname) at the Cloudflare dashboard; failing to do so is an accepted risk owned by the operator.
+**Decision:** Whether the auto-assigned `*.workers.dev` subdomain sits behind Cloudflare Access is the operator's responsibility, not the worker's. The application code does NOT detect the request host or reject `workers.dev` traffic, and reviewers MUST NOT flag this as a perimeter gap. When an operator binds Access on the custom domain they are expected to also bind it on the `*.workers.dev` hostname (or disable that hostname) at the Cloudflare dashboard; failing to do so is an accepted risk owned by the operator.
+
+**Context:** Cloudflare Workers always get a `*.workers.dev` URL in addition to any custom domain. Binding Cloudflare Access to only the custom domain leaves the `*.workers.dev` URL unprotected, bypassing the Access perimeter entirely. Host-detection in the worker code was considered and rejected (AD29 rationale) because the worker correctly trusts the Access edge for JWT validation; the perimeter coverage gap is a deployment configuration concern, not a code concern.
+
+**Consequences:** Operators deploying with `CF_ACCESS_AUD` set MUST also bind Access on the `*.workers.dev` URL or disable it via the Cloudflare dashboard. The deployment runbook in `deployment.md` documents this requirement. The worker does not enforce or detect missing `*.workers.dev` coverage.
 
 **Related requirements:** REQ-AUTH-001 AC 8.
 
@@ -840,7 +860,7 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Alternatives considered:**
 
-- **Discovery owns GN, coordinator skips tags whose KV entry already contains GN** - rejected. Discovery runs once per tag at settings save; the KV cache can drift if a tag's needs change. Centralising GN at the coordinator means the baseline is recomputed every tick from the live tag union.
+- **Discovery owns GN, coordinator skips tags already having a GN entry.** Rejected: discovery runs once at settings save; the KV cache drifts as tag needs change. Coordinator ownership recomputes the baseline every tick from the live tag union.
 - **Both paths coexist permanently** - rejected as a stable end-state. The redundant fan-out wastes a small amount of LLM and fetch budget and complicates future debugging when a GN URL turns out to be wrong (which path produced it?).
 
 **Rationale:** The coordinator already owns the per-tick source list; making it the single owner of the GN baseline matches the "coordinator decides which sources fan out" concept. Discovery's job becomes "find first-party feeds for this tag" - a narrower, more useful prompt that should produce better results. Keeping the legacy LLM-emitted GN fallback as a transitional state avoids a same-PR rewrite of the discovery prompt and its tests.
@@ -865,9 +885,9 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Alternatives considered:**
 
-- **Tighten the finalize LLM prompt** - rejected. The prompt was already tightened twice; the next tightening would re-introduce the false-merge failure mode the current prompt was guarding against. The corpus-scale problem (49 articles in a single context) is structural, not a prompt-tuning issue.
+- **Tighten the finalize LLM prompt** - rejected. Already tightened twice; further tightening re-introduces the false-merge failure mode it was guarding against. The 49-article context-scale problem is structural, not a prompt issue.
 - **Token-Jaccard fallback** - proven mathematically broken in the previous attempt (PR #205). Same-event Anthropic articles measured Jaccard 0.10-0.13 regardless of threshold tuning; no threshold could separate same-event from different-event without also dropping unrelated topics into the merge bucket.
-- **Cross-encoder reranker on top of dense retrieval** - rejected for v1. The cosine threshold alone (validated 0.81-0.91 same-event vs 0.77-0.84 different-event vs <0.73 unrelated on 11 production articles) gave a clean separation. Adding a reranker would double the AI binding's per-tick spend without evidence of false merges in the validation set.
+- **Cross-encoder reranker on top of dense retrieval** - rejected for v1. Cosine threshold alone (0.81-0.91 same-event vs 0.77-0.84 different-event) gave a clean separation on 11 production articles. Adding a reranker doubles per-tick AI spend without evidence of false merges.
 
 **Rationale:** Embeddings capture meaning, not vocabulary. Validation on the production corpus showed 0.85 cleanly separates same-event paraphrases from different-event articles on the same topic. Vectorize is queried by id (the article that was just embedded), so the matcher sees every surviving article in the pool, not just the current scrape tick - closing the cross-tick blind spot the LLM finalize had by construction. Cost shifts from one LLM call per finalize (gpt-oss-120b on ~49 articles) to one embedding call per ingested article (bge-base on 1-100 texts) - substantially cheaper at the per-article rate.
 
@@ -876,7 +896,7 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - REQ-PIPE-008 (LLM finalize dedup) is deprecated as of 2026-05-06; the finalize prompt and its parameters are removed from `src/lib/prompts.ts`.
 - The retention sweep (REQ-PIPE-005) MUST dual-delete: D1 row drop plus `VECTORIZE.deleteByIds`. Single-side deletes leak vectors that future articles will match against, producing phantom merges into rows that no longer exist.
 - Forks must provision their own Vectorize index (`ai-news-embeddings` for production, `ai-news-embeddings-integration` for the integration env). Index creation is wired into both deploy workflows via `wrangler vectorize create`, idempotent on subsequent deploys.
-- The 0.85 threshold is validated against the current corpus and embedding model. If the model is bumped or the corpus shifts substantially, re-validate against a fresh sample before relying on this number. Operators tune via `DEDUP_COSINE_THRESHOLD` without a code change.
+- The 0.85 threshold is validated against the current corpus and model. Re-validate before relying on it after a model bump or major corpus shift. Operators tune via `DEDUP_COSINE_THRESHOLD` without a code change.
 - Vectorize cold-start lag on the first query of a new index (≈30 s) means the first scrape tick after a fresh deploy may produce duplicates; the historical-dedup admin route resolves them on demand.
 - Embedding-model drift: bge-base-en-v1.5 is pinned by id in `src/lib/embeddings.ts`. A future Cloudflare catalogue upgrade does not silently change the vector space.
 
@@ -894,9 +914,9 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Alternatives considered:**
 
-- **Tighten threshold to 0.90.** Rejected. Phase-0 data shows same-event different-vendor cosines as low as 0.71 with the LLM-summary input; raising the threshold trades the FP rate for missed merges of cross-vendor TPs. The compressed dynamic range is the underlying problem.
+- **Tighten threshold to 0.90.** Rejected. Same-event different-vendor cosines fall as low as 0.71 with LLM-summary input; raising the threshold trades FP rate for missed cross-vendor TPs. Compressed dynamic range is the underlying problem.
 - **Cross-encoder reranker (`@cf/baai/bge-reranker-base`).** Deferred to phase 2. Source-text + same-vendor offset alone is expected to clear the precision target; if 90%+ precision is not reached after re-embed + sweep on integration, the reranker becomes the next gate.
-- **Forbid same-vendor merges entirely (binary cliff).** Rejected. Genuine same-publisher dupes do exist (e.g., a vendor's blog post and the same vendor's product launch announcement). A subtractive penalty preserves the merge path with a stricter signal requirement; a binary cliff loses real merges to avoid a measurable FP cluster.
+- **Forbid same-vendor merges entirely (binary cliff).** Rejected. Genuine same-publisher dupes exist (e.g., vendor blog post + same vendor's launch announcement). The subtractive penalty preserves real merges at a stricter threshold; a binary cliff loses them.
 
 **Rationale:** Source-text widens the embedding distribution - independent reporting of the same event shares concrete phrases (entity names, numbers, technical terms) that the LLM rewrite paraphrases away. The same-vendor offset is a precise countermeasure for the dominant FP class (publisher-style inflation) without forbidding genuine same-publisher merges; with `0.05` the effective threshold for same-publisher pairs is 0.90, requiring a stronger source-text signal than cross-publisher merges.
 
@@ -925,7 +945,7 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 **Alternatives considered:**
 
 - **Lower `DEDUP_COSINE_THRESHOLD` to 0.78.** Rejected. The 0.81-0.91 same-event band overlaps with the 0.77-0.84 distinct-same-publisher band; lowering the auto-merge bar to catch the borderline misses re-introduces the false-merge class AD32 was tuned to prevent.
-- **Cross-encoder reranker (`@cf/baai/bge-reranker-base`).** Deferred. The same-event question is a semantic equivalence call, not just a similarity sharpening - bge-reranker-base was trained for relevance ranking, not event identity. A general-purpose LLM with a one-shot system prompt is the simpler path; if cost or latency becomes a problem the reranker becomes the next gate.
+- **Cross-encoder reranker (`@cf/baai/bge-reranker-base`).** Deferred. Same-event identity is a semantic equivalence call; bge-reranker-base was trained for relevance ranking, not event identity. LLM with a one-shot prompt is simpler; reranker is the next gate if cost or latency becomes a problem.
 - **Always rerank every match (regardless of cosine).** Rejected. Per-tick cost would scale with the auto-merge band's volume (the dominant case); the borderline band is small and the LLM call only adds value where embeddings alone are inconclusive.
 
 **Rationale:** The LLM judgment is the only signal that distinguishes "same event, different framing" from "same domain, different event" without lowering the auto-merge bar. A conservative-on-failure default (treat parse failure / network error as "different events") preserves the property that no pair is merged on the strength of an unreliable model answer. The per-invocation cap is a hard safety net for bad-day clusters (a feed pushing 100 near-duplicates in one tick) so the rerank pass cannot exhaust the isolate budget.
@@ -956,14 +976,14 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - **Cloudflare Cron Trigger** - overkill for an operator-triggered, on-demand sweep; cron schedules are discouraged for one-shot work and can't take a `run_id` parameter.
 - **Durable Object with `setAlarm`** - viable but adds a new primitive (no DOs in this project today) and storage that isn't queryable from D1 for the operator surface.
 - **`ctx.waitUntil` with self-fetch chaining** - bounded by the Worker invocation lifetime (~30s); a multi-thousand-article sweep would not finish in one invocation, and there's no built-in retry or visibility.
-- **Queue-driven self-chain** *(chosen)* - reuses an existing primitive (the project already runs three queues for the scrape pipeline), inherits Cloudflare Queues' built-in retry and DLQ semantics, and the `dedup_runs` audit row gives the operator surface a queryable progress signal that survives a browser refresh or fresh visit.
+- **Queue-driven self-chain** *(chosen)* - reuses an existing primitive (three queues already run in the scrape pipeline), inherits built-in retry and DLQ semantics, and `dedup_runs` gives a queryable progress signal that survives browser refresh.
 
 **Rationale:** The queue primitive is already part of the system's mental model and operational vocabulary; adding a fourth queue is cheaper than introducing a Durable Object. Self-chaining (consumer re-enqueues continuation) is a well-known pattern with predictable failure modes - terminal failure flips the audit row to `'failed'` with the error string. The `dedup_runs` table makes the sweep observable from any admin surface, not just the tab that started it, and the polling endpoint cleanly separates execution (queue) from observability (D1).
 
 **Consequences:**
 
 - New queues `dedup-sweep` (production) and `dedup-sweep-integration` are declared in `wrangler.toml` and provisioned by inline `wrangler queues info ... || wrangler queues create ...` steps in both deploy workflows. A fresh fork's first deploy provisions both without manual setup.
-- Migration `0013_dedup_runs.sql` adds the audit table and is picked up by the existing drift-tolerant migration step in both deploy workflows; the consumer's first UPDATE depends on the table existing, so the migration must run before the deploy lands the consumer code (the workflows enforce this ordering).
+- Migration `0013_dedup_runs.sql` adds the audit table. The consumer's first UPDATE requires the table to exist, so the migration must run before the consumer code deploys. Both deploy workflows enforce this ordering.
 - The synchronous body-driven path on `POST /api/admin/historical-dedup` is preserved (when `cursor`/`batch` is in the body) so dev-bypass curl scripts and the existing test suite continue to work without rewriting.
 - The browser-driven `while(true)` loop on `/settings` is replaced by a 5-second poll on `/api/admin/dedup-status`; the page can resume mid-sweep on tab reload by reading the persisted `runId` from pipeline state.
 - Future sweeps (e.g., re-embed + dedup) can be modelled the same way without re-litigating the shape.
@@ -978,14 +998,16 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Decision:** `DEDUP_COSINE_THRESHOLD` drops from `"0.85"` to `"0.78"` and `DEDUP_RERANK_FLOOR` drops from `"0.72"` to `"0.70"` on both production and integration. The per-batch rerank cap (`MAX_RERANKS_PER_BATCH = 4`) is removed from `runHistoricalDedupBatch`; the queue consumer's wall-clock budget bounds the work per message instead. The rerank prompt is loosened from "SAME news event" to "SAME news cycle for the SAME subject" with explicit examples of close follow-on coverage (multiple analyst takes published the same week, multiple security outlets covering the same vulnerability) so genuine same-cycle pairs that are not literally the same announcement still merge.
 
-**Context:** A 2026-05-07 production audit on `news.graymatter.ch` after AD32-AD35 had landed found two clusters that the calibration based on a single Anthropic financial-AI cluster (pairwise cosine 0.81-0.91 - an outlier) had silently left unmerged. A PAN-OS zero-day cluster spanning four security outlets sat at pairwise cosine 0.75-0.78. A Palo Alto Networks valuation-week cluster spanning analyst notes published the same week sat at 0.73-0.80. Both clusters were entirely below the 0.85 auto-merge bar; the larger valuation cluster also produced six borderline pairs in a single batch, of which only two reached the LLM rerank because the per-batch cap of 4 (a leftover from the synchronous browser-loop era when the operator's tab paid the wall-clock cost) silently dropped the rest. After the manual sweep on prod with the old constants the cluster was still visibly duplicated on the digest surface.
+**Context:** A 2026-05-07 production audit on `news.graymatter.ch` after AD32-AD35 had landed found two clusters that the calibration based on a single Anthropic financial-AI cluster (pairwise cosine 0.81-0.91 - an outlier) had silently left unmerged. A PAN-OS zero-day cluster spanning four security outlets sat at pairwise cosine 0.75-0.78. A Palo Alto Networks valuation-week cluster spanning analyst notes published the same week sat at 0.73-0.80.
+
+Both clusters were entirely below the 0.85 auto-merge bar; the larger valuation cluster also produced six borderline pairs in a single batch, of which only two reached the LLM rerank because the per-batch cap of 4 (a leftover from the synchronous browser-loop era when the operator's tab paid the wall-clock cost) silently dropped the rest. After the manual sweep on prod with the old constants the cluster was still visibly duplicated on the digest surface.
 
 **Alternatives considered:**
 
-- **Keep 0.85 and rely on rerank to catch same-cycle pairs in [0.72, 0.85).** Rejected. 6/8 PAN-OS pairs and most PANW pairs sat below 0.78, and the rerank cap dropped the rest. With the cap removed and the floor lowered, the borderline band still does the headline-paraphrase work it was designed for, but the auto-merge band absorbs the upper half of legitimate same-cycle clusters that don't need an LLM call.
-- **Keep 0.85 and lower only the rerank floor.** Rejected. Same-cycle pairs at 0.78-0.85 would still pay the LLM cost on every batch when the embedding signal alone is already strong enough; we'd be spending ~5 LLM calls per batch on pairs the embedding model already separates from unrelated content.
-- **Drop to 0.75.** Rejected. Phase-0 dedup-diag showed unrelated articles clustering up to 0.71 with the LLM-summary input and same-publisher boilerplate inflated cosines further; 0.75 leaves no margin against the unrelated-pair tail. 0.78 sits in the gap between the unrelated upper tail and the same-cycle lower tail with the same-vendor penalty doing the rest of the same-publisher protection.
-- **Keep the rerank cap at a higher number (e.g., 25).** Rejected. The cap was the wrong shape, not the wrong number - the queue consumer has a 15-minute wall-clock budget per message; the rerank loop is bounded by the outer batch size (≤500) × topK (5) which is already much smaller than that budget at p99 LLM latency.
+- **Keep 0.85 and rely on rerank.** Rejected. 6/8 PAN-OS pairs and most PANW pairs sat below 0.78; the rerank cap dropped the rest. Removing the cap and lowering the floor absorbs same-cycle clusters without unnecessary LLM calls.
+- **Keep 0.85 and lower only the rerank floor.** Rejected. Same-cycle pairs at 0.78-0.85 would pay LLM cost when the embedding signal is already strong enough. ~5 unnecessary LLM calls per batch on pairs the model clearly separates.
+- **Drop to 0.75.** Rejected. Unrelated articles cluster up to 0.71; boilerplate pushes cosines higher. 0.75 leaves no safety margin. 0.78 sits in the gap between the unrelated upper tail and same-cycle lower tail; the same-vendor penalty handles same-publisher overlap.
+- **Keep a higher rerank cap (e.g., 25).** Rejected. The cap was wrong in shape, not number. The 15-minute queue budget already bounds the loop via batch size × topK; a per-batch cap is redundant and silently degrades recall.
 
 **Rationale:** The 0.85 number was tuned against a single outlier cluster (pairwise 0.81-0.91) and never had a population behind it. Real same-cycle clusters at production scale span 0.73-0.80 and the calibration evidence is now broad enough (two distinct subject domains, eight outlets, two clusters) to set a defensible auto-merge bar at 0.78. The rerank cap was a synchronous-loop-era safety belt that quietly degraded recall once the sweep moved to queues; removing it restores the documented behaviour ("rerank every borderline pair") without touching the cost ceiling (the consumer's wall-clock budget already bounds it).
 
@@ -1013,7 +1035,7 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 - **`ctx.waitUntil(self.fetch(…))` chains.** Rejected. `waitUntil` extends the current isolate's CPU budget; long chains still pay per-request edge cuts and cannot survive a worker restart. Queue messages cross isolate boundaries cleanly with platform-native retry envelopes.
 - **A single Durable Object per pipeline run.** Rejected as overkill. The per-phase work is already idempotent against queue redelivery via CAS guards; introducing a DO would add a new infrastructure dependency for state that fits in one D1 row.
-- **Keep the browser orchestrator and surface a "tab kept open" warning.** Rejected. The failure mode is silent - operators on mobile do not see the warning at the moment the tab sleeps, and "remember to keep this tab open for five minutes" is not an acceptable UX contract.
+- **Keep the browser orchestrator with a warning.** Rejected. Mobile operators never see the "tab kept open" warning at the moment their tab sleeps. Silent failure is not acceptable; a queue-driven backend removes the dependency entirely.
 
 **Rationale:** Cloudflare Queues self-chain is the same pattern the chunk-finalize handoff and the historical-dedup sweep already use; operators get one mental model ("background pipeline work continues without a tab"). Each phase consumer message gets a fresh CPU budget; transient failures retry via `max_retries=3`. The audit row is the single source of truth - closing the tab and reopening `/settings` later restores progress display from `pipeline_runs` exactly the way reopening recovers `dedup_runs` progress today.
 
@@ -1042,14 +1064,14 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 **Alternatives considered:**
 
 - **`fetch()` with `credentials: 'include'`** against the Access-gated endpoint. Rejected. CORS mode still cannot follow the cross-origin SSO redirect to set a cookie on the Access domain; the browser blocks the redirect with a CORS error before the cookie exchange.
-- **A separate un-gated proxy endpoint** that the fetch calls, which then makes a server-side call to the Access-gated route. Rejected. Adding an un-gated proxy that performs privileged work defeats the purpose of the Access perimeter; any future mistake could expose the proxy without also exposing the gated endpoint.
+- **A separate un-gated proxy endpoint** making server-side calls to the Access-gated route. Rejected: an un-gated proxy performing privileged work defeats the Access perimeter; a future mistake could expose the proxy without exposing the original endpoint.
 - **Keep fetch() and rely solely on the Worker gate (no CF Access).** Acceptable as a long-term state, but Access provides a meaningful UX improvement (SSO redirect vs. bare 401) that operators expect.
 
 **Rationale:** Top-level navigation is the browser's native mechanism for following cross-origin redirects with credential exchange. The `303 -> /settings?pipeline=enqueued` round-trip lets the kicker remain stateless (no WebSocket, no long-poll) while giving the settings UI a clean URL-based handoff signal. The pattern is already used by `force-refresh.ts` for the same reason.
 
 **Consequences:**
 
-- Every state-changing admin endpoint invoked from the browser must use `window.location.assign()` and respond with `303`, or be invoked from a server-side route not protected by CF Access. `fetch()` in CORS mode is not a valid path when Access is active.
+- Every browser-invoked state-changing admin endpoint must use `window.location.assign()` + `303`, or be called from a server-side route not behind CF Access. `fetch()` in CORS mode is not a valid path when Access is active.
 - `Sec-Fetch-Site` headers are unreliable as a defense-in-depth signal for any endpoint reachable via a CF Access redirect chain. Use the Worker admin-auth gate (`CF_ACCESS_AUD` + `ADMIN_EMAIL`) as the authoritative security boundary instead.
 - The settings page must handle the `?pipeline=` URL parameter on load and convert it to localStorage state before any polling logic runs.
 
@@ -1072,13 +1094,13 @@ The 0.78 threshold from AD36 was tuned against tightly-bounded news-cycle cluste
 - **Raise threshold to 0.85 only.** Rejected. 0.85 still leaves several pairs from the false-merge cluster above the auto-merge bar; the empirical floor of dense-theme false-positives sits closer to 0.86 in the 2026-05-08 audit.
 - **Add LLM rerank above the auto-merge threshold.** Rejected as incoherent. Reranking a trusted band signals a misplaced threshold. Raising auto-merge is the correct fix; the uncertain stripe then falls into the rerank band.
 - **Add the time-window gate without raising the threshold.** Rejected as insufficient. Some cluster pairs were within 24h; the time window kills multi-day spread but same-day dense-theme cases still need LLM disambiguation, which only triggers below auto-merge.
-- **Re-run historical dedup with the new constants to un-merge the cluster.** Rejected. Loser article rows were deleted and their vectors removed by `mergeAsAltSource`; un-merging requires re-scraping the original URLs and re-embedding, which is a separate operation. This fix is forward-only.
+- **Re-run historical dedup to un-merge the cluster.** Rejected. Loser rows were deleted and their vectors removed by `mergeAsAltSource`; un-merging requires re-scraping and re-embedding original URLs. Forward-only fix.
 
 **Rationale:** The merge contract is "same news event, not same topic." A 9-day spread on a dense theme is by construction never one event. The time-window gate is a hard filter the operator can reason about without understanding cosine geometry. The threshold raise widens the LLM rerank band so dense-theme cases at 0.78-0.88 get a binary "same event yes/no" judgment instead of auto-merging. The two knobs together cover the two failure modes the AD36 calibration missed: cross-news-cycle theme drift (time window) and within-news-cycle topical similarity (rerank band).
 
 **Consequences:**
 
-- The LLM rerank band widens from 8 cosine points to 18, raising rerank call volume per finalize tick. At typical scrape sizes (≤200 articles per tick) this adds a handful of LLM calls - well under the cron CPU budget.
+- The LLM rerank band widens from 8 to 18 cosine points, adding a handful of LLM calls per tick at typical scrape sizes (≤200 articles). Well under the cron CPU budget.
 - This fix is forward-only; existing false-merge clusters stay merged. To un-merge manually: list `article_sources` rows for the surviving article id, drop false-positive rows, re-scrape the dropped source URLs so the next ingestion embeds them as standalone articles.
 - `DEDUP_TIME_WINDOW_SECONDS` is the env-var lever for tuning the window; the `DEDUP_COSINE_THRESHOLD` lever is unchanged in shape (only the value moved). Both are runtime-tunable without redeploy.
 - Two new structured log lines: `finalize_match_skipped_time_window` and `historical_dedup_match_skipped_time_window`, each carrying `delta_seconds`, `self_id`, `match_id`. These let operators measure how often the time-window gate fires versus how often the cosine gate fires - useful for future calibration.
@@ -1095,8 +1117,8 @@ The 0.78 threshold from AD36 was tuned against tightly-bounded news-cycle cluste
 **Decision:** Four targeted changes to the dedup match-filter pipeline that close a silent-drop bug and add deterministic handling for near-duplicate-headline pairs without re-litigating the AD39 threshold calibration:
 
 1. **Equal-time ULID tie-break** in `scrape-finalize-consumer.ts:256`. Replace `if (matchPublishedAt >= self.published_at) continue;` with the strict-greater check plus a ULID tie-break - `if (matchPublishedAt === self.published_at && self.id <= match.id) continue;` - parallel to `historical-dedup.ts:201-202`. Wire-syndicated stories often share epoch-second `published_at` after RSS pubDate parsing; the prior `>=` filter silently dropped every such pair.
-2. **High-confidence cosine band** (`DEDUP_HIGH_CONFIDENCE_COSINE`, default `"0.92"`). Pairs whose RAW cosine clears this bar auto-merge unconditionally, bypassing both the same-vendor penalty and the LLM rerank band. Set above the AD39 empirical false-positive floor (0.86) with margin so the dense-theme calibration still holds. Catches near-duplicate-headline pairs where the same-vendor penalty would otherwise drop a 0.93 cosine into the rerank band and risk an LLM rejection on a clearly identical event.
-3. **TopK bump 5 → 20** in both `scrape-finalize-consumer.ts` and `historical-dedup.ts`. The AD39 threshold raise widened the rerank band from 8 cosine points (0.70-0.78) to 18 (0.70-0.88); in dense-theme periods the 5 nearest neighbours can be consumed by topical noise above 0.80, starving the loop of the actual same-event candidate at rank 6+. Vectorize cost is per-query, not per-result.
+2. **High-confidence cosine band** (`DEDUP_HIGH_CONFIDENCE_COSINE`, default `"0.92"`). Pairs whose raw cosine clears this bar auto-merge unconditionally, bypassing the same-vendor penalty and the rerank band.
+3. **TopK bump 5 → 20** in both `scrape-finalize-consumer.ts` and `historical-dedup.ts`. Vectorize cost is per-query, not per-result.
 4. **Per-article diagnostic log** (`finalize_dedup_diag`). One structured info line per article; `decision` is one of: `auto_merge`, `rerank_pending`, `no_eligible_older_match`, `no_match_below_floor`, `no_candidates`. High-confidence band hits vs regular-threshold merges are distinguishable via `candidates_high_confidence` counter on the same line - not a separate decision string.
 
 **Context:** The 2026-05-09 production digest on `news.graymatter.ch` showed two clear under-merge cases the post-AD39 calibration could not explain by threshold alone:
@@ -1112,11 +1134,13 @@ External-LLM and Opus-ultrathink critique of the initial fix proposal (multi-rer
 **Alternatives considered:**
 
 - **Lower the threshold back to 0.85.** Rejected. AD39 explicitly rejected 0.85 against the dense-theme empirical false-positive floor of 0.86; the 72h gate alone does not buy enough headroom to revisit it.
-- **Multi-rerank in finalize-consumer (rerank all borderlines, not just top-1).** Deferred. Helps only in same-tick clusters where multiple older candidates share the rerank band; the canonical cross-tick sequence has at most one. Multiplies hallucination probability in dense-theme clusters from 1× to N×. Revisit if production logs show the same-tick case is common.
+- **Multi-rerank in finalize-consumer.** Deferred. Helps only in same-tick clusters with multiple borderline older candidates; the canonical cross-tick sequence has at most one. Multiplies hallucination risk in dense-theme clusters N×. Revisit if production logs show the same-tick case is common.
 - **Lower the same-vendor penalty.** Rejected. The high-confidence band already neutralises the penalty's punishing effect at near-duplicate cosines without weakening it for the genuine same-publisher boilerplate inflation it was tuned against.
-- **Rewrite the `When unsure, prefer false` bias.** Rejected as risky. The conservative bias is load-bearing for the AD39 dense-theme calibration; rewriting it introduces new ambiguity terms (`primary subject`, `same incident`) that bge-base topical clusters can also satisfy. We added concrete positive examples to the prompt (multiple write-ups of the same earnings call, same vulnerability advisory, same workplace incident) without softening the conservative default.
+- **Rewrite the `When unsure, prefer false` bias.** Rejected. The conservative default is load-bearing for AD39's dense-theme calibration. New terms like "same incident" trigger on topical clusters. Concrete positive examples were added to the prompt instead, without softening the default.
 
-**Rationale:** Diagnose first, retune second. The ULID tie-break is a 1-line correctness fix with no calibration risk. The high-confidence band has a deterministic semantic story (`raw cosine >= 0.92 means the headlines and bodies are restating each other`) and sits above AD39's empirical false-positive floor. The topK bump is cheap insurance against starvation. The diagnostic log gives operators the cosine numbers needed to tune the rerank prompt or threshold from real production data instead of speculation. Together these recover the under-merge cases the AD39 fix did not anticipate while preserving the 13-source false-merge protection.
+**Rationale:** Diagnose first, retune second. The ULID tie-break is a 1-line correctness fix with no calibration risk. The high-confidence band has a deterministic semantic story (`raw cosine >= 0.92 means the headlines and bodies are restating each other`) and sits above AD39's empirical false-positive floor of 0.86 with margin; it catches near-duplicate-headline pairs where the same-vendor penalty would otherwise drop a 0.93 cosine into the rerank band.
+
+The AD39 threshold raise widened the rerank band from 8 cosine points (0.70-0.78) to 18 (0.70-0.88); in dense-theme periods the 5 nearest neighbours can be consumed by topical noise above 0.80, starving the loop of the actual same-event candidate at rank 6+ — hence the topK bump as cheap insurance. The diagnostic log gives operators the cosine numbers needed to tune the rerank prompt or threshold from real production data instead of speculation. Together these recover the under-merge cases the AD39 fix did not anticipate while preserving the 13-source false-merge protection.
 
 **Consequences:**
 
@@ -1124,7 +1148,7 @@ External-LLM and Opus-ultrathink critique of the initial fix proposal (multi-rer
 - Same-second `published_at` pairs across sources now merge through the finalize-consumer (one direction; the lower-ULID is the merge target). Previously dropped silently.
 - Per-tick log volume rises by one info line per new article (~20-30 lines per typical scrape tick). Acceptable; the log lines are structured and aggregate cheaply.
 - Vectorize.queryById issues 4× more candidate slots per call (topK=20 vs 5). Bandwidth and per-call latency are negligible at this scale.
-- The rerank prompt now lists four concrete positive-example shapes (earnings calls, CVE advisories, workplace incidents, market-reaction follow-ons) without changing its conservative default. LLM behaviour on the rerank band is expected to shift slightly toward `true` on textbook same-event pairs while leaving the dense-theme calibration intact.
+- The rerank prompt lists four positive-example shapes (earnings calls, CVE advisories, workplace incidents, market follow-ons) without changing the conservative default. LLM behavior shifts slightly toward `true` on textbook same-event pairs while preserving dense-theme calibration.
 - This fix is forward-only; it does NOT un-merge the existing 13-source false-merge cluster from before AD39 (separate operation per AD39 consequences).
 
 **Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 14 added), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs)
@@ -1137,25 +1161,27 @@ External-LLM and Opus-ultrathink critique of the initial fix proposal (multi-rer
 
 **Decision:** Two structural fixes to the same-story matcher that recover the under-merge cases AD39 + AD40 did not address:
 
-1. **Bidirectional finalize merge** in `src/queue/scrape-finalize-consumer.ts`. The pre-2026-05-09 match-filter loop rejected every candidate whose `published_at` was greater than `self.published_at` (`if (matchPublishedAt > self.published_at) continue;`). The intent was "self folds INTO an older match"; the unintended consequence was that a newly-arrived article whose `published_at` predates an already-stored match could never merge through finalize, only through the operator-triggered historical sweep. The match loop now allows both directions: the pair's older article is the winner regardless of which side was just ingested. `mergeAsAltSource(winner, loser)` keeps the older article's title and body, the newer becomes the alt-source row.
-2. **Automatic post-tick dedup sweep** in `processOneFinalize`'s gate-flip block. After `finalize_recorded` flips, the consumer enqueues exactly one `dedup-sweep` continuation message scoped to the last 48h (`AUTO_SWEEP_LOOKBACK_SECONDS`). The sweep then self-chains to completion via the same queue path the operator-triggered `/api/admin/historical-dedup` button uses. The operator path stays available for full-corpus sweeps; the automatic path covers the routine cross-tick collapse.
+1. **Bidirectional finalize merge** in `src/queue/scrape-finalize-consumer.ts`. The match loop now allows both directions; the pair's older article wins regardless of which side was just ingested. `mergeAsAltSource(winner, loser)` keeps the older title/body; the newer becomes the alt-source row.
+2. **Automatic post-tick dedup sweep** in `processOneFinalize`'s gate-flip block. After `finalize_recorded` flips, the consumer enqueues one `dedup-sweep` continuation scoped to `AUTO_SWEEP_LOOKBACK_SECONDS`; the sweep self-chains via the existing operator queue path.
 
 **Context:** The 2026-05-09 production digest on `news.graymatter.ch` showed three distinct unmerged near-duplicate pairs that cosine + threshold tuning alone could not explain:
 
 - **InfoQ ↔ infoq.com** (Cloudflare Dynamic Workflows, cosine **0.924**). Cross-tick (4h apart, Vectorize fully consistent), cross-eTLD+1 (GN proxy URL vs direct), well above the high-confidence band introduced in AD40. Should auto-merge in finalize. Did not.
-- **LA Times ↔ KRON4** (Cloudflare layoffs, cosine **0.896**). Late-arriving older case: KRON4 ingested 24h after LA Times with an EARLIER `published_at`. When KRON4 was the `self` in finalize, the strictly-older filter rejected LA Times because LA Times's `published_at` was greater than KRON4's. The merge-direction logic only handled "fold self into older match," never "fold newer match into self."
-- **Geeky Gadgets ↔ Let's Data Science** (Claude Cowork comparison, cosine **0.881**). Same scrape run, both ingested in the same epoch second. Vectorize eventual consistency: at finalize time, `queryById` did not see the sibling vector that was upserted moments earlier in the same chunk consumer.
+- **LA Times ↔ KRON4** (Cloudflare layoffs, **0.896**). KRON4 arrived 24h after LA Times with an EARLIER `published_at`. The strictly-older filter rejected LA Times - direction logic only handled "fold self into older," never "fold newer match into self."
+- **Geeky Gadgets ↔ Let's Data Science** (Claude Cowork, cosine **0.881**). Same scrape run, same epoch second. Vectorize eventual consistency: at finalize time, `queryById` could not see the sibling vector upserted moments earlier in the same chunk consumer.
 
 Across 153 articles ingested in the 24h window before the diagnosis, only 3 cluster merges had landed. The historical sweep had last run ~26h earlier (operator-triggered, not scheduled) so anything finalize missed accumulated as visible duplicates until the next operator click.
 
 **Alternatives considered:**
 
-- **Intra-batch pairwise cosine in finalize-consumer.** Compute per-batch cosines in-memory using stored vector arrays so same-second siblings see each other regardless of Vectorize indexing latency. Deferred - the auto-sweep approach catches the same case via the existing well-tested sweep code path (40 minutes after Vectorize is consistent), and adding pairwise math in finalize doubles the surface area of the matcher.
-- **Schedule the sweep via cron (`*/30 * * * *`) instead of enqueueing post-finalize.** Rejected. The post-finalize trigger ties the sweep to the data flow (vectors are upserted before the sweep starts); a separate cron risks running the sweep before chunks finish embedding on slow ticks.
+- **Intra-batch pairwise cosine in finalize-consumer.** Deferred. The auto-sweep catches same-second siblings ~40 minutes later via the existing well-tested sweep path. Adding pairwise math in finalize doubles the matcher's surface area without closing the case sooner.
+- **Schedule the sweep via cron instead of enqueueing post-finalize.** Rejected. The post-finalize trigger guarantees vectors are upserted before the sweep starts; a standalone cron risks running before chunks finish embedding on slow ticks.
 - **Sweep the full corpus on every tick.** Rejected on cost. Full-corpus sweeps take ~30 minutes wall-clock at 1.3k articles. A 48h-scoped sweep typically runs sub-minute and exercises the same merge code path.
 - **Make `historical-dedup` a real cron rather than a queue chain.** Rejected. The queue-driven self-chain is the existing pattern (AD35) and lets a long sweep cross isolate boundaries cleanly. Reusing it as the automatic path keeps one mental model.
 
-**Rationale:** Diagnose-first, then close the structural gaps the diagnosis exposed. The bidirectional merge is a 1-direction-to-2-direction generalisation of code already in the consumer; the existing semantics (older wins) is preserved unchanged for the canonical case. The auto-sweep reuses the queue-driven sweep added in AD35 and the `runHistoricalDedupBatch` body extracted there. The 48h lookback is tight enough that each sweep is cheap and overlapping with prior sweeps is harmless (`mergeAsAltSource` is idempotent - the loser is gone after the first merge, subsequent walks skip it).
+**Rationale:** Diagnose-first, then close the structural gaps the diagnosis exposed. The pre-2026-05-09 match-filter loop rejected every candidate whose `published_at` was greater than `self.published_at`; the intent was "self folds INTO an older match", the unintended consequence was that a newly-arrived article predating an already-stored match could merge only through the operator-triggered historical sweep.
+
+The bidirectional merge is a 1-direction-to-2-direction generalisation of code already in the consumer; the existing semantics (older wins) is preserved unchanged for the canonical case. The auto-sweep reuses the queue-driven sweep added in AD35 and the `runHistoricalDedupBatch` body extracted there; the operator path stays available for full-corpus sweeps. The 48h lookback is tight enough that each sweep is cheap and overlapping with prior sweeps is harmless (`mergeAsAltSource` is idempotent - the loser is gone after the first merge, subsequent walks skip it).
 
 **Consequences:**
 
@@ -1164,7 +1190,7 @@ Across 153 articles ingested in the 24h window before the diagnosis, only 3 clus
 - The auto-sweep adds ~50-100 articles per tick to its scan (typical 48h corpus tail size). At sub-minute wall-clock per sweep, the cron-tick budget impact is negligible.
 - `dedup_runs` rows accumulate at one per tick (every 4h) plus operator clicks. Retention sweeping `dedup_runs` is out of scope; rows are small, mostly numeric.
 - Per-article diagnostic log volume in `wrangler tail` doubles for ticks where the sweep also matches a window-overlapping article - the same finalize_dedup_diag shape now appears for the sweep walk too.
-- This fix is forward-only; it does not retroactively un-merge or merge clusters that were stuck before deploy. The next auto-sweep after deploy catches the existing visible duplicates from the 2026-05-09 corpus naturally because they're inside the 48h lookback at deploy time.
+- Forward-only fix. The next auto-sweep after deploy catches existing visible duplicates from the 2026-05-09 corpus, which fall within the 48h lookback at deploy time.
 
 **Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 15 + AC 16 added), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs)
 
@@ -1176,9 +1202,9 @@ Across 153 articles ingested in the 24h window before the diagnosis, only 3 clus
 
 **Decision:** Three further structural fixes to the same-story matcher that recover the under-merge cases AD41 did not anticipate. All three apply to the dedup pipeline downstream of cosine + threshold; none change calibration:
 
-1. **Bidirectional historical-dedup sweep** in `src/lib/historical-dedup.ts`. The pre-2026-05-10 batch loop walked oldest-first and only folded NEWER matches INTO each older `self`. Late-arriving newer articles whose older anchor had already aged out of the auto-sweep cursor window could never merge through the sweep - only through the per-tick finalize. The loop now runs in two passes per `self`: PASS 1 looks for an OLDER auto-merge candidate and folds `self` INTO it (mirrors AD41's bidirectional finalize); PASS 2 is the existing newer-into-self absorption (unchanged).
-2. **Auto-sweep cursor widened from 48h to 72h** in `src/queue/scrape-finalize-consumer.ts` (`AUTO_SWEEP_LOOKBACK_SECONDS`). The pre-2026-05-10 48h cursor and 72h `DEDUP_TIME_WINDOW_SECONDS` (AD39) created a 24h dead zone where pairs the time-window check accepted as same-event could no longer be reached because the older anchor was below the cursor. The two windows now match.
-3. **Multi-rerank in finalize-consumer** in `src/queue/scrape-finalize-consumer.ts`. The pre-2026-05-10 borderline path computed a single `bestBorder` candidate, reranked once, and silently dropped the cluster when the top candidate was unrelated topical noise. The path now sorts ALL borderline candidates by the same ranking (auto direction-prefer + cosine) and walks the top `RERANK_CANDIDATE_CAP=5` in order, taking the first LLM same-event=true verdict.
+1. **Bidirectional historical-dedup sweep** in `src/lib/historical-dedup.ts`. Two passes per `self`: PASS 1 folds `self` into an older auto-merge candidate (mirrors AD41); PASS 2 absorbs newer matches into `self` (unchanged).
+2. **Auto-sweep cursor aligned to `DEDUP_TIME_WINDOW_SECONDS`** in `src/queue/scrape-finalize-consumer.ts` (`AUTO_SWEEP_LOOKBACK_SECONDS` derived at runtime). Closes the prior 24h dead zone between cursor and window.
+3. **Multi-rerank in finalize-consumer** in `src/queue/scrape-finalize-consumer.ts`. Sorts all borderline candidates by direction-preference + cosine and walks the top `RERANK_CANDIDATE_CAP=5`, taking the first same-event=true verdict.
 
 **Context:** The 2026-05-10 production digest on `news.graymatter.ch` showed a 13-article fragmented cluster about the same Cloudflare Q1 2026 earnings + 1100-job AI restructuring story (Reuters, WSJ, KRON4, IBD, Yahoo Finance, CNBC, Hacker News, Barron's, San Francisco Chronicle, Yahoo Finance Singapore - all describing the same news event over 4 days, May 7-10). Direct Vectorize cosine inspection across the cluster (token-by-token via `query_by_id` on production):
 
@@ -1192,9 +1218,9 @@ Across 153 articles ingested in the 24h window before the diagnosis, only 3 clus
 
 Three reasons the AD41 fix did not collapse this cluster:
 
-- Cluster's pub-time spread of 70h (May 7 20:23 → May 10 18:47) exceeds the 48h auto-sweep cursor. After 05-09 20:23, every subsequent sweep saw the older anchors below its cursor and could not absorb the newer cluster siblings. The time-window gate (72h) said "same event"; the cursor (48h) said "out of reach."
-- Even when a sweep `self` was in scope, historical-dedup's one-direction logic could only absorb NEWER matches. Self could not fold INTO a still-eligible older anchor. So when newer cluster members were processed, their older siblings (5-10h apart, well within 72h time-window, cosine in auto-merge band) were silently skipped at line 212.
-- Many cluster pairs (anchor-vs-sibling, e.g., Reuters-vs-WSJ at 0.8666) sit in the rerank band. The single-rerank-per-self path picks the top candidate by cosine; if that top is an unrelated near-neighbour, the cluster never reaches the LLM. With multi-rerank capped at top-5, the same-event sibling typically lands within the first 2-3 rerank attempts.
+- Cluster's pub-time spread of 70h (May 7-10) exceeded the 48h auto-sweep cursor. After 05-09 20:23, older anchors fell below the cursor; the time-window gate (72h) said "same event" but the cursor said "out of reach."
+- Even when a sweep `self` was in scope, the one-direction logic only absorbed NEWER matches. Newer members could not fold INTO older anchors 5-10h away (within the 72h window, cosine in auto-merge band) - silently skipped at line 212.
+- Pairs like Reuters-vs-WSJ (0.8666) sit in the rerank band. The single-rerank path picks the top candidate; if it is an unrelated near-neighbour, the same-event sibling is missed. Multi-rerank capped at top-5 finds it within 2-3 attempts.
 
 **Alternatives considered:**
 
@@ -1226,7 +1252,7 @@ Three reasons the AD41 fix did not collapse this cluster:
 **Context:** Pre-AD43 each consumer reimplemented the same per-match logic - time-window gate, high-confidence band, same-vendor penalty, threshold gate, rerank floor, equal-time ULID tie-break, direction flag. Cycle-1 review flagged the drift as CF-002: the two implementations subtly disagreed on what counted as a borderline pair (the historical sweep had no rerank cap; finalize capped at 5), and any future tuning had to be applied in two places under the constant risk of partial application.
 
 **Alternatives considered:**
-- A fully unified `pickMergeDecision(env, self, matches, options)` that owned both per-match scoring AND winner selection AND rerank dispatch. Rejected: the two consumers have fundamentally different intents (finalize picks one chosen pair per article; the historical sweep runs PASS 1 looking for the oldest anchor + PASS 2 absorbing newer matches sequentially). A unified decision function would have re-encoded the per-consumer divergence as a parameter matrix instead of removing it.
+- **Fully unified `pickMergeDecision`** owning scoring, winner selection, and rerank dispatch. Rejected: consumers have different intents (finalize picks one pair; sweep runs PASS 1 + PASS 2). A single function re-encodes the divergence as a parameter matrix, not removes it.
 - Leave the two implementations as-is and rely on review discipline to keep them in sync. Rejected: the drift CF-002 surfaced is the empirical evidence that this doesn't hold.
 
 **Rationale:** The classifier captures the part of the logic that is genuinely shared (per-pair scoring rules and band classification). The outer control flow - single-pass winner selection in finalize vs PASS 1/PASS 2 anchor-and-absorb in the historical sweep - is genuinely different intent and belongs at the call site. The split makes the boundary explicit instead of letting it drift.
@@ -1276,9 +1302,9 @@ Three reasons the AD41 fix did not collapse this cluster:
 **Context:** Cycle-1 review flagged CF-001: four orchestration files exceed the project's 800-line cap from `coding-style.md`. AD17, AD18, and AD19 already rejected three specific narrow extractions (`dedupe-groups.ts`, `deferred-candidates.ts`, `tag-railing-flip-core.ts`) on the same files. This AD generalizes that pattern: the orchestration hot paths are dense, sequentially-coupled state machines whose readability lives in keeping the full pipeline visible in one file. Splitting them speculatively into per-step modules costs more in import-site churn and reviewer context-switching than it saves.
 
 **Alternatives considered:**
-- **Extract coordinator's Step 1-8 into `src/queue/coordinator/step-N-*.ts`.** Rejected: the steps share `scrape_run_id`, `env`, and partial result state through closure. Refactoring into eight modules requires either a shared context object (which becomes the new god-type) or per-step argument lists that re-derive state. Either way the cognitive load moves rather than shrinks.
-- **Extract `processOneFinalize` (483 lines) and `runHistoricalDedupBatch` (351 lines) per-self loop bodies.** Rejected at this scope: these are individual functions inside the accepted files. The per-function size rule still applies to them and they may be extracted individually if a future change makes the extraction natural.
-- **Extract `settings.astro`'s inline `<script>` to `src/scripts/settings-page.ts` and inline `<style>` to `src/styles/settings.css`.** Rejected: the script is tightly coupled to the page's DOM IDs and the Pattern B IIFE constraint (AD20). The style is scoped via Astro's component-scoped CSS and would lose that isolation when extracted.
+- **Extract coordinator's Step 1-8 into `step-N-*.ts` modules.** Rejected: the steps share `scrape_run_id`, `env`, and partial result state through closure. Eight modules require either a shared god-type context object or per-step argument lists re-deriving state. Cognitive load moves, not shrinks.
+- **Extract `processOneFinalize` and `runHistoricalDedupBatch` loop bodies.** Rejected at this scope: they are individual functions inside the accepted files. The per-function size rule still applies; extraction is welcomed when a future change makes it natural.
+- **Extract `settings.astro`'s inline `<script>` and `<style>`.** Rejected: the script is tightly coupled to DOM IDs and the Pattern B IIFE constraint (AD20). The style uses Astro's component-scoped CSS and would lose isolation if extracted.
 
 **Rationale:** The files are large because the orchestration is genuinely complex, not because the code is poorly factored. AD17/18/19 demonstrated that targeted extractions on these same files yielded worse code (extra modules, broken downstream gating, lost DOM coupling). Pre-emptively splitting without a forcing function repeats that anti-pattern at scale. The 800-line cap remains the default for new code and for files outside this list.
 
@@ -1297,22 +1323,28 @@ Three reasons the AD41 fix did not collapse this cluster:
 
 **Status:** Accepted (2026-05-12)
 
-**Decision:** Three documentation files exceed the per-file soft budgets from `documentation-discipline.md` Pass 2 and carry intentional `<!-- doc-allow-large -->` hatches. This AD formalizes the three carve-outs so the hatch markers point at a discoverable decision rather than at bare prose.
+**Decision:** Three documentation files exceed the per-file soft budgets from `documentation-discipline.md` Pass 2 and carry intentional `doc-allow-large` hatches. This AD formalizes the three carve-outs so the hatch markers point at a discoverable decision rather than at bare prose.
 
-- **AD46a — `deployment.md` colocation.** The deploy runbook, dev-bypass runbook, and admin-routes operator contract live in `deployment.md` despite their lane-split candidates (the admin-routes contract notionally belongs in `api-reference.md`; the dev-bypass runbook notionally belongs in `troubleshooting.md`). Splitting fragments the operator workflow: a contributor running a deploy follows a single linear runbook across pre-flight, deploy, post-deploy verification, and emergency recovery. Forcing the reader to jump between three files at each step is more expensive than the budget violation.
-- **AD46b — `architecture.md` diagram-section exemption.** Two ASCII data-flow diagrams in `architecture.md` are load-bearing reference art (the component map and the pipeline flow). Each diagram needs its surrounding prose to be readable in one scroll; splitting the diagram from its caption breaks the reader's mental model. The file's total line count is dominated by these diagrams and their context, not by prose drift.
-- **AD46c — `decisions/README.md` single-file design.** All ADRs colocate in one file (this one) rather than one-file-per-ADR. Per-file ADR storage fragments cross-references: ADR-A frequently cites ADR-B by linking to a section anchor; a per-file design makes anchor stability fragile and obscures the chronological reading path (`AD1 → AD46` reads as a single document). The file IS the index.
+- **AD46a — `deployment.md` colocation.** Deploy runbook, dev-bypass, and admin-routes contract colocate in `deployment.md`. Splitting them (admin-routes to `api-reference.md`, dev-bypass to `troubleshooting.md`) fragments the operator's linear deploy workflow across three files.
 
-**Context:** `documentation-discipline.md` Pass 6 (hatch audit) flags bare `<!-- doc-allow-large -->` markers as MEDIUM and prose-justification-without-ADR markers as the same shape the rule was written to prevent. Cycle 3 review (CF-006) flagged four markers across `deployment.md`, `architecture.md` (×2), and `decisions/README.md` that all carry the same root justification but no ADR backlink.
+  The three sections form one operational document: a contributor executing a deploy needs all of them in a single scroll without context-switching between files.
+- **AD46b — `architecture.md` diagram-section exemption.** Two ASCII data-flow diagrams (component map and pipeline flow) are load-bearing reference art. Each must sit beside its surrounding prose in one scroll; splitting diagram from caption breaks the reader's model.
+
+  The file's total line count is dominated by these diagrams and their immediate context, not by prose drift elsewhere in the file.
+- **AD46c — `decisions/README.md` single-file design.** All ADRs colocate here rather than one-file-per-ADR. Per-file ADR storage fragments cross-references: ADR-A frequently cites ADR-B via section anchor; separate files make anchor stability fragile.
+
+  The chronological reading path (`AD1 → AD46`) works as a single document. The file IS the index.
+
+**Context:** `documentation-discipline.md` Pass 6 (hatch audit) flags bare `doc-allow-large` markers as MEDIUM and prose-justification-without-ADR markers as the same shape the rule was written to prevent. Cycle 3 review (CF-006) flagged four markers across `deployment.md`, `architecture.md` (×2), and `decisions/README.md` that all carried the same root justification but no ADR backlink.
 
 **Rationale:** The hatch was designed to surface design tradeoffs as ADRs — a decision the reader can discover, revisit, and supersede. A bare or prose-only marker hides the decision in the marker itself. This AD pulls the decisions into the discoverable ADR ledger; the markers become referential, not load-bearing.
 
 **Consequences:**
 
-- The four affected markers now carry `<!-- doc-allow-large: AD46{a,b,c} ... -->` syntax. `doc-updater` Pass 6 audit accepts the markers under the existing ADR-reference rule.
+- The four affected markers now reference `AD46` directly (e.g., `doc-allow-large: AD46 deployment-doc colocation`). The `doc-updater` Pass 6 audit accepts them under the ADR-reference rule.
 - Future doc growth in any of the three files should reopen this AD rather than adding new bare hatches.
 - If `deployment.md` grows to the point where the operator workflow itself becomes hard to follow, the split should be a deliberate workflow redesign (e.g., a master deploy runbook with linked sub-pages), not a lane-discipline split.
-- The ADR ledger's single-file design (AD46c) implicitly limits the ledger's growth ceiling. If the ledger exceeds ~50 ADRs or ~2500 lines, this AD should be revisited in favor of a per-AD layout with an explicit index.
+- The ADR ledger's single-file design implicitly limits the ledger's growth ceiling. If the ledger exceeds ~50 ADRs or ~2500 lines, this AD should be revisited in favor of a per-AD layout with an explicit index.
 
 **Related requirements:** none direct — operational/documentation concern.
 
