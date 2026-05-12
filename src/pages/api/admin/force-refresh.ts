@@ -48,13 +48,14 @@ function redirectToSettings(origin: string, runId: string, reused: boolean): Res
 
 export async function POST(context: APIContext): Promise<Response> {
   const env = context.locals.runtime.env;
+
+  const adminAuth = await requireAdminSession(context);
+  if (!adminAuth.ok) return adminAuth.response;
+
   if (typeof env.APP_URL !== 'string' || env.APP_URL === '') {
     return new Response('Application not configured', { status: 500 });
   }
   const appOrigin = originOf(env.APP_URL);
-
-  const adminAuth = await requireAdminSession(context);
-  if (!adminAuth.ok) return adminAuth.response;
 
   const rl = await enforceRateLimit(
     env,
@@ -98,10 +99,6 @@ export async function GET(context: APIContext): Promise<Response> {
   // because GET is idempotent in spec — but the underlying coordinator
   // dispatch is not, so we still require admin auth.
   const env = context.locals.runtime.env;
-  if (typeof env.APP_URL !== 'string' || env.APP_URL === '') {
-    return new Response('Application not configured', { status: 500 });
-  }
-  const appOrigin = originOf(env.APP_URL);
   const wantsJson = (context.request.headers.get('Accept') ?? '').includes('application/json');
 
   const adminAuth = await requireAdminSession(context);
@@ -111,10 +108,41 @@ export async function GET(context: APIContext): Promise<Response> {
     // an explicit deny marker so the operator can see what happened.
     // Scripts that opted into JSON keep the raw status response.
     if (wantsJson) return adminAuth.response;
+    // Need APP_URL to build the redirect. If unset, fall back to the
+    // raw auth response (acceptable: misconfigured deployment).
+    if (typeof env.APP_URL !== 'string' || env.APP_URL === '') {
+      return adminAuth.response;
+    }
+    const denyOrigin = originOf(env.APP_URL);
     return new Response(null, {
       status: 303,
-      headers: { Location: `${appOrigin}/settings?force_refresh=denied` },
+      headers: { Location: `${denyOrigin}/settings?force_refresh=denied` },
     });
+  }
+
+  // CF-011: post-auth APP_URL check (no pre-auth config leak).
+  if (typeof env.APP_URL !== 'string' || env.APP_URL === '') {
+    return new Response('Application not configured', { status: 500 });
+  }
+  const appOrigin = originOf(env.APP_URL);
+
+  // CF-011: Sec-Fetch-Site defense-in-depth. AD38 designates the GET
+  // path as the post-SSO callback target, so `none` (top-level
+  // navigation) must remain allowed. `same-origin` is the legitimate
+  // first-party fetch case. Anything else is a cross-site initiator;
+  // CF Access perimeter + admin session would still gate the actual
+  // dispatch, but this closes the residual same-browser-CSRF gap.
+  const secFetchSite = context.request.headers.get('Sec-Fetch-Site');
+  if (
+    secFetchSite !== null &&
+    secFetchSite !== 'same-origin' &&
+    secFetchSite !== 'none'
+  ) {
+    log('warn', 'admin.access', {
+      status: 'force-refresh:sec-fetch-site:rejected',
+      sec_fetch_site: secFetchSite.slice(0, 32),
+    });
+    return new Response('Cross-site request denied', { status: 403 });
   }
 
   const rl = await enforceRateLimit(

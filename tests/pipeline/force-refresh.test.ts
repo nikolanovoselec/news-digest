@@ -169,11 +169,16 @@ async function refreshRequest(
     accessJwt?: string | null;
     /** Override the session cookie. null = no cookie. */
     cookieJwt?: string | null;
+    /** Sec-Fetch-Site header value (CF-011). undefined = header omitted. */
+    secFetchSite?: string;
   } = {},
 ): Promise<Request> {
   const headers = new Headers({ 'Content-Type': 'application/json' });
   if (options.origin != null) {
     headers.set('Origin', options.origin);
+  }
+  if (options.secFetchSite !== undefined) {
+    headers.set('Sec-Fetch-Site', options.secFetchSite);
   }
   headers.set('Accept', options.accept ?? 'application/json');
   // CF-001 — admin auth headers default to "valid admin" so existing
@@ -419,6 +424,45 @@ describe('GET /api/admin/force-refresh', () => {
     const req = await refreshRequest('GET', { accept: 'application/json', cookieJwt: jwt });
     const res = await GET(makeContext(req, makeEnv(db, queue)) as never);
     expect(res.status).toBe(403);
+  });
+
+  it('CF-011: GET rejects Sec-Fetch-Site=cross-site with 403 even when admin auth is valid', async () => {
+    // Defense-in-depth against same-browser CSRF. Coordinator dispatch
+    // is already auth-gated, but a cross-site fetch initiated by an
+    // attacker page must not reach the rate limiter or coordinator.
+    const fixture: DbFixture = { calls: [] };
+    const db = makeDb(fixture);
+    const qsent: unknown[] = [];
+    const queue = makeQueue({ sent: qsent });
+    const req = await refreshRequest('GET', { secFetchSite: 'cross-site' });
+    const res = await GET(makeContext(req, makeEnv(db, queue)) as never);
+    expect(res.status).toBe(403);
+    // Coordinator was not dispatched.
+    expect(qsent).toHaveLength(0);
+  });
+
+  it('CF-011: GET accepts Sec-Fetch-Site=same-origin (legitimate first-party fetch)', async () => {
+    const fixture: DbFixture = { calls: [] };
+    const db = makeDb(fixture);
+    const qsent: unknown[] = [];
+    const queue = makeQueue({ sent: qsent });
+    const req = await refreshRequest('GET', { secFetchSite: 'same-origin' });
+    const res = await GET(makeContext(req, makeEnv(db, queue)) as never);
+    expect(res.status).toBe(200);
+    expect(qsent).toHaveLength(1);
+  });
+
+  it('CF-011: GET accepts Sec-Fetch-Site=none (top-level nav / SSO callback per AD38)', async () => {
+    // AD38 designates the GET path as the post-SSO callback target.
+    // Cloudflare Access top-level navigation sets Sec-Fetch-Site: none.
+    const fixture: DbFixture = { calls: [] };
+    const db = makeDb(fixture);
+    const qsent: unknown[] = [];
+    const queue = makeQueue({ sent: qsent });
+    const req = await refreshRequest('GET', { secFetchSite: 'none' });
+    const res = await GET(makeContext(req, makeEnv(db, queue)) as never);
+    expect(res.status).toBe(200);
+    expect(qsent).toHaveLength(1);
   });
 
   it('GET does NOT run Origin check (deliberately — the endpoint is gated by Cloudflare Access, not by browser cookies)', async () => {
