@@ -211,7 +211,13 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) -
 | `src/lib/kick-coordinator.ts` | Shared atomic-claim coordinator kicker used by both the operator-driven force-refresh route and the pipeline-consumer's `scrape_kick` phase. Inserts a `scrape_runs` row + sends one `SCRAPE_COORDINATOR` message under a `WHERE NOT EXISTS` guard to coalesce concurrent kicks. | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) |
 | `migrations/0014_pipeline_runs.sql` | `pipeline_runs` audit table for the backend-driven full pipeline orchestrator: ULID primary key, status (`'running'` / `'done'` / `'failed'`), mode (`'full'` / `'wipe'`), `current_phase`, scrape_run_id + dedup_run_id references, embed counters, error, started_at + updated_at. Indexed on `started_at DESC` for the polling endpoint. | [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) |
 
-**`scrape-finalize-consumer.ts` detail ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 2, 3, 14, 15, 16, [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) AC 5):** Per-article Vectorize top-K query (topK=20, AD40), time-window pre-filter (`DEDUP_TIME_WINDOW_SECONDS`), same-vendor cosine penalty, two-tier merge logic with auto-merge band (>= `DEDUP_COSINE_THRESHOLD`) and borderline band (>= `DEDUP_RERANK_FLOOR`) where `dedup-rerank.ts` decides via LLM judgment. Bidirectional merge (AD41) - winner is always the older article in the pair regardless of which side was just ingested. Multi-rerank (AD42) - all borderline candidates sorted by direction-preference + cosine; walks up to `RERANK_CANDIDATE_CAP=5` in order, taking the first same-event=true verdict instead of stopping at the top candidate. After the `finalize_recorded` gate flips, enqueues exactly one `dedup-sweep` continuation scoped to the last 7d (AD42 - derived from `DEDUP_TIME_WINDOW_SECONDS` at runtime via `autoSweepLookbackSeconds` so the cursor scope and the per-pair gate always match under any env override; REQ-PIPE-003 AC 17) so cross-tick pairs the per-tick pass cannot see merge automatically without operator action. Atomic `finalize_recorded` gate prevents double-counting on redelivery.
+**`scrape-finalize-consumer.ts` detail ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 2, 3, 14, 15, 16, [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) AC 5):**
+
+Per-article Vectorize top-K query (topK=20, AD40), time-window pre-filter (`DEDUP_TIME_WINDOW_SECONDS`), same-vendor cosine penalty, two-tier merge logic with auto-merge band (>= `DEDUP_COSINE_THRESHOLD`) and borderline band (>= `DEDUP_RERANK_FLOOR`) where `dedup-rerank.ts` decides via LLM judgment.
+
+Bidirectional merge (AD41) - winner is always the older article in the pair regardless of which side was just ingested. Multi-rerank (AD42) - all borderline candidates sorted by direction-preference + cosine; walks up to `RERANK_CANDIDATE_CAP=5` in order, taking the first same-event=true verdict instead of stopping at the top candidate.
+
+After the `finalize_recorded` gate flips, enqueues exactly one `dedup-sweep` continuation scoped to the last 7d (AD42 - derived from `DEDUP_TIME_WINDOW_SECONDS` at runtime via `autoSweepLookbackSeconds` so the cursor scope and the per-pair gate always match under any env override; REQ-PIPE-003 AC 17) so cross-tick pairs the per-tick pass cannot see merge automatically without operator action. Atomic `finalize_recorded` gate prevents double-counting on redelivery.
 
 ## 5. Request Lifecycles
 
@@ -294,6 +300,7 @@ Cron daily 03:00 UTC
 
 Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9. The sweep is operator-triggered from `/settings`, runs server-side independent of the operator's browser tab, and is observable via a status endpoint.
 
+<!-- doc-allow-large: AD46 diagram-section exemption (historical-dedup flow) -->
 ```
 Operator clicks "Run historical-dedup sweep" on /settings
   └─► POST /api/admin/historical-dedup (empty body - kicker mode)

@@ -16,6 +16,7 @@ Every mutating endpoint requires a valid session cookie and an `Origin` header m
 **Path:** /
 **Auth:** none (public)
 **Request:** none
+**Response:** `200` (anonymous, landing page) or `303` → `/digest` (authenticated)
 
 Returns the landing page.
 
@@ -329,7 +330,11 @@ Both responses carry a `Set-Cookie` refresh when the session is within 5 minutes
 
 ## Discovery
 
-> **Admin auth.** Every `/api/admin/*` route is gated by the Worker-side middleware. Baseline (always enforced): valid Worker session cookie + session email matches `ADMIN_EMAIL` (case-insensitive). Optional perimeter (Layer 0, AD29): when `CF_ACCESS_AUD` is set, the request must additionally carry a Cloudflare Access assertion whose `aud` claim matches the configured audience tag — without the assertion or with a mismatched audience the request is rejected before the baseline runs. The `exp` claim on the Access JWT is validated server-side; an expired assertion is rejected even if the Access perimeter would ordinarily have caught it first ([AD44](decisions/README.md#ad44-cloudflare-access-jwt-exp-validation-signature-still-trusted-from-the-perimeter)). When `CF_ACCESS_AUD` is unset, Layer 0 is skipped entirely. Operators who bind Access MUST also bind it on the `*.workers.dev` URL or disable that subdomain (AD30). See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8, AC 8a.
+> **Admin auth — baseline (always enforced):** valid Worker session cookie + session email matches `ADMIN_EMAIL` (case-insensitive).
+>
+> **Optional perimeter (Layer 0, AD29):** when `CF_ACCESS_AUD` is set, the request must also carry a Cloudflare Access assertion whose `aud` claim matches; missing or mismatched is rejected before baseline runs. The `exp` claim is validated server-side ([AD44](decisions/README.md#ad44-cloudflare-access-jwt-exp-validation-signature-still-trusted-from-the-perimeter)). When `CF_ACCESS_AUD` is unset, Layer 0 is skipped.
+>
+> Operators binding Access must also bind it on the `*.workers.dev` URL or disable that subdomain (AD30). See [Deployment: Admin-only routes](deployment.md#admin-only-routes-cloudflare-access-gating). Implements [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8, AC 8a.
 
 ### POST /api/admin/discovery/retry
 

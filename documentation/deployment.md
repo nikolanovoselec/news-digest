@@ -243,6 +243,7 @@ Keep the Cloudflare Access policy in sync with deploys so unauthorized clicks la
 
 **After every integration deploy, re-stamp both secrets via the Cloudflare REST API.** Wrangler's `/memberships` preflight fails in this container (token has Workers Scripts edit but not Account Read) — go direct to the secrets endpoint instead:
 
+<!-- doc-allow-large: AD46 dev-bypass-runbook secret re-stamp block -->
 ```bash
 # From the operator's local env. ACCOUNT_ID lives in the
 # `CLOUDFLARE_ACCOUNT_ID` GitHub Actions repo variable; export it from
@@ -271,6 +272,7 @@ curl -s -X PUT \
 
 Both writes propagate within ~5-10 seconds. Then mint a session and drive any admin endpoint:
 
+<!-- doc-allow-large: AD46 dev-bypass-runbook session-mint and admin-drive block -->
 ```bash
 # Mint a session — Origin header is required (the route enforces same-origin POST).
 curl -s -X POST "https://news.novoselec.ch/api/dev/login" \
