@@ -24,6 +24,7 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
    c. The session user is the configured operator (email match, case-insensitive).
    A request that fails any enforced layer is rejected at the first failing layer with no observable side effect on the application. Operators who bind Cloudflare Access in front of the worker MUST also bind it in front of the auto-assigned `*.workers.dev` URL (or disable that subdomain) per AD30, otherwise the perimeter is forgeable from anywhere on the public internet.
    d. The destructive pipeline mode that wipes and re-embeds the entire corpus is reachable only via an explicit POST to the admin pipeline-run endpoint. The same endpoint reached via GET with the wipe mode parameter is rejected with a method-not-allowed response, so cross-origin GET vectors (image tags, bookmarks, link previews) can never trigger a corpus-wide re-embed; idempotent modes remain reachable via either method.
+   e. Admin GET endpoints additionally reject requests originating from a cross-site context with a denial response. Top-level navigation (operator bookmarks, post-SSO callback redirects) remains accepted; only fetches initiated by another site are blocked. This narrows REQ-AUTH-003 AC 3's blanket GET exemption for the admin surface specifically, closing the residual same-browser-CSRF gap that the POST-only Origin check leaves open for idempotent admin actions like a manual feed refresh.
 9. Application-layer rate limits protect authentication, mutation, and admin endpoints:
    a. Every `/api/auth/*` route, every authenticated mutation route, every authenticated endpoint that legitimate clients poll on a sub-minute cadence, and every admin side-effecting endpoint is rate-limited.
    b. Unauthenticated paths key the limit by IP; authenticated mutation paths key it by user id; admin paths key by the authenticated operator id so even a successfully-authenticated admin session is bounded.
@@ -72,7 +73,7 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 **Acceptance Criteria:**
 1. Every `POST`, `PUT`, `PATCH`, and `DELETE` endpoint that acts on an authenticated session rejects requests whose `Origin` header is missing or does not equal the app's canonical origin.
 2. Rejection returns HTTP 403 with JSON body `{ error, code: "forbidden_origin" }`.
-3. GET endpoints are not subject to this check (the session cookie's `SameSite=Lax` handles cross-origin GETs).
+3. Non-admin GET endpoints are not subject to this check (the session cookie's `SameSite=Lax` handles cross-origin GETs). Admin GET endpoints additionally narrow this exemption per REQ-AUTH-001 AC 8: a cross-site initiator on an admin GET is rejected with a denial response, while top-level navigation (operator bookmark, post-SSO redirect) remains accepted.
 4. OAuth flow entry points that only initiate a redirect to the identity provider and do not mutate authenticated state are exempt from the Origin check. The only effect of such an endpoint is setting a short-lived opaque state cookie and returning a 303 redirect; any actual authentication requires the user to consent at the identity provider. Login-CSRF is mitigated by the identity provider's own consent screen.
 
 **Constraints:** CON-SEC-001
