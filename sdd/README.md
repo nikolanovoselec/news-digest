@@ -45,10 +45,9 @@ The following were considered and intentionally excluded from the MVP:
 - **Multiple digests per day** — one scheduled run per user per local day, with rate-limited manual refreshes
 - **Slack, Telegram, or RSS output channels** — email is the only notification channel in MVP
 - **User-added feeds / OPML import** — discovery via LLM + generic search APIs covers both default and custom hashtags without per-user feed management
-- **Sharing, bookmarking, cross-user recommendations** — the product is personal, not social
-- **Embeddings or vector search** — a single LLM call handles ranking; embeddings would add a dependency without measurable quality gain at this scale
+- **Cross-user sharing and recommendations** — the product is personal, not social. Per-user starring (REQ-STAR-001) is in scope and keeps an article exempt from the 14-day retention sweep; what stays out of scope is publishing or recommending one user's reading list to others.
 - **Unbounded server-side fetching** — article body fetching is in scope per REQ-PIPE-001 AC 8 but only via the SSRF filter (HTTPS-only, no private/loopback/link-local ranges), an 8-second timeout, and a 1.5 MB download cap; arbitrary URL resolution remains explicitly out of scope
-- **Admin actor / multi-tenancy** — single actor (User) for MVP
+- **Multi-tenancy** — every deployment serves a single end-user (the **User** actor); the **Admin** actor is the deployment operator. Cross-user isolation, per-tenant data partitioning, and shared-instance billing are not in scope.
 - **Cloudflare WAF-based OAuth rate limiting** (was REQ-AUTH-006) — infrastructure policy, not product behaviour; handled outside the spec if ever needed
 - **Sender domain verification walkthrough** (was REQ-MAIL-003) — operational setup task; deployment docs already cover Resend DNS configuration
 - **Offline reading via service worker cache** (was REQ-PWA-002) — PWA installability (REQ-PWA-001) ships without offline content caching; the dashboard requires network on launch
