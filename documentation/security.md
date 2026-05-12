@@ -80,6 +80,8 @@ The destructive wipe-and-re-embed pipeline mode (`mode=wipe`) is only reachable 
 
 The Google OAuth callback verifies the `id_token` signature using RS256 against Google's published JWKS endpoint (`https://www.googleapis.com/oauth2/v3/certs`). Implemented in `src/lib/google-jwks.ts`. The keys are cached for 1 hour in KV under `oidc:jwks:google` so a stale-key scenario after a Google JWKS rotation self-heals within the hour. Prior to this (CF-013), claims were decoded without signature verification, relying solely on the TLS channel to the token endpoint.
 
+The gate is fail-closed in production: if KV is unbound or the JWKS endpoint is unreachable, the `id_token` claims are discarded and the callback falls through to the userinfo endpoint as the authoritative source. On integration and test deployments (`IS_PRODUCTION = "false"`) the skip path is tolerated so a stubbed KV does not block sign-in. The `isProduction` flag is derived from `IS_PRODUCTION` in `callback.ts` and threaded into `ProfileFetcher` — see [`configuration.md`](configuration.md#worker-vars-non-secret).
+
 ---
 
 ## Admin POST endpoints: Origin check with Bearer bypass (REQ-AUTH-001)
