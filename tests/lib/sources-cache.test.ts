@@ -10,6 +10,11 @@ import {
   sourcesCacheRawEqual,
   writeSourcesCache,
 } from '~/lib/sources-cache';
+import type { DiscoveredFeed } from '~/lib/types';
+
+function feed(url: string, name = url, kind: DiscoveredFeed['kind'] = 'rss'): DiscoveredFeed {
+  return { name, url, kind };
+}
 
 function makeKv(): {
   KV: KVNamespace;
@@ -35,25 +40,28 @@ describe('writeSourcesCache', () => {
     // loudly so callers do not silently start clobbering peer writes
     // on the recheck.
     const { KV, putCalls } = makeKv();
+    const a = feed('https://a.example/feed.xml', 'A');
+    const b = feed('https://b.example/feed.xml', 'B');
     await writeSourcesCache(KV, 'cf', {
-      feeds: ['https://a.example/feed.xml', 'https://b.example/feed.xml'],
+      feeds: [a, b],
       discovered_at: 1700000000,
     });
     expect(putCalls).toHaveLength(1);
     expect(putCalls[0]?.[0]).toBe('sources:cf');
     expect(putCalls[0]?.[1]).toBe(
-      '{"feeds":["https://a.example/feed.xml","https://b.example/feed.xml"],"discovered_at":1700000000}',
+      `{"feeds":[${JSON.stringify(a)},${JSON.stringify(b)}],"discovered_at":1700000000}`,
     );
   });
 
   it('returns the same byte string it wrote (callers pair with recheck)', async () => {
     const { KV } = makeKv();
+    const x = feed('https://x.example/feed.xml', 'X');
     const raw = await writeSourcesCache(KV, 'ml', {
-      feeds: ['https://x.example/feed.xml'],
+      feeds: [x],
       discovered_at: 42,
     });
     expect(raw).toBe(
-      '{"feeds":["https://x.example/feed.xml"],"discovered_at":42}',
+      `{"feeds":[${JSON.stringify(x)}],"discovered_at":42}`,
     );
   });
 
@@ -62,11 +70,16 @@ describe('writeSourcesCache', () => {
     // serialise must preserve that order, since `sourcesCacheRawEqual`
     // is a byte compare and any swap would read as a fresh peer write.
     const { KV, putCalls } = makeKv();
+    const b = feed('b', 'B');
+    const a = feed('a', 'A');
+    const c = feed('c', 'C');
     await writeSourcesCache(KV, 'go', {
-      feeds: ['b', 'a', 'c'],
+      feeds: [b, a, c],
       discovered_at: 1,
     });
-    expect(putCalls[0]?.[1]).toBe('{"feeds":["b","a","c"],"discovered_at":1}');
+    expect(putCalls[0]?.[1]).toBe(
+      `{"feeds":[${JSON.stringify(b)},${JSON.stringify(a)},${JSON.stringify(c)}],"discovered_at":1}`,
+    );
   });
 
   it('puts under the sources: prefix and the supplied tag', async () => {
