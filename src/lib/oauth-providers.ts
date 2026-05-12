@@ -45,6 +45,11 @@ export type ProfileFetcher = (args: {
    *  for RS256 id_token signature verification. Providers that do not
    *  need JWKS (currently GitHub) ignore this field. */
   kv: KVNamespace;
+  /** CF-013: when true, refuse to trust id_token claims if signature
+   *  verification cannot be performed (unbound KV, unreachable JWKS).
+   *  Non-production environments tolerate the skip so tests with a
+   *  stubbed KV can still complete sign-in. */
+  isProduction: boolean;
 }) => Promise<ProviderProfile>;
 
 export interface ProviderConfig {
@@ -164,6 +169,7 @@ async function fetchGitHubProfile(args: {
   idToken: string | null;
   clientId: string;
   kv: KVNamespace;
+  isProduction: boolean;
 }): Promise<ProviderProfile> {
   const headers = {
     Authorization: `Bearer ${args.accessToken}`,
@@ -239,6 +245,7 @@ async function fetchGoogleProfile(args: {
   idToken: string | null;
   clientId: string;
   kv: KVNamespace;
+  isProduction: boolean;
 }): Promise<ProviderProfile> {
   let claims: GoogleIdTokenClaims | null = null;
   let fromIdToken = false;
@@ -252,12 +259,12 @@ async function fetchGoogleProfile(args: {
     // check is treated identically to a missing id_token: the
     // userinfo endpoint becomes the authoritative source instead.
     //
-    // Verification is best-effort defence-in-depth: skipped when KV
-    // is unbound (test environment, deploy misconfiguration) or the
-    // JWKS endpoint is transiently unreachable. In production KV is
-    // always bound and the fetch is to a Google-CDN endpoint, so the
-    // skip path fires only under failures where blocking sign-in
-    // entirely would be worse than the original TLS-only trust.
+    // Production fails closed: if KV is unbound or the JWKS endpoint
+    // is unreachable, we refuse to trust id_token claims and fall
+    // through to the userinfo endpoint (which carries a stronger
+    // trust binding via the access-token-authenticated session). In
+    // non-production environments (tests, dev) the skip path keeps
+    // sign-in working when KV is stubbed out.
     let signatureOk = false;
     let verificationAvailable = false;
     if (
@@ -272,7 +279,9 @@ async function fetchGoogleProfile(args: {
         verificationAvailable = false;
       }
     }
-    if (signatureOk || !verificationAvailable) {
+    const trustIdToken =
+      signatureOk || (!verificationAvailable && !args.isProduction);
+    if (trustIdToken) {
       claims = decodeJwtClaims<GoogleIdTokenClaims>(args.idToken);
       fromIdToken = claims !== null;
     }

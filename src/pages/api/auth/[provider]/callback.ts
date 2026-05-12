@@ -422,6 +422,10 @@ async function step4ExchangeCodeAndFetchProfile(
       // its JWKS for RS256 signature verification. Other providers
       // ignore this field.
       kv: state.env.KV,
+      // CF-013: production fails closed when JWKS verification is
+      // unavailable (unbound KV, unreachable endpoint); dev/test
+      // tolerates the skip so a stubbed KV doesn't block sign-in.
+      isProduction: state.env.IS_PRODUCTION !== 'false',
     });
   } catch (err) {
     return {

@@ -27,6 +27,11 @@ function googleEnv(db: D1Database): Partial<Env> {
     OAUTH_JWT_SECRET: JWT_SECRET,
     APP_URL,
     DB: db,
+    // CF-013: non-production gates the JWKS-skip path so tests with
+    // no KV binding can still complete sign-in via id_token claims.
+    // Production callbacks set this to 'true' (or omit it, since the
+    // production gate is fail-closed: anything ≠ 'false' is prod).
+    IS_PRODUCTION: 'false',
   };
 }
 
