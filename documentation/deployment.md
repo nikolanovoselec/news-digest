@@ -52,7 +52,7 @@ npx wrangler deploy
 CI/CD: `.github/workflows/deploy.yml` triggers on a `workflow_run` event — fires only when "PR Checks" on `main` completes with `success`. `workflow_dispatch` is retained for manual re-runs.
 
 The deploy job:
-1. Applies D1 migrations (drift-tolerant). On a "duplicate column" or "already exists" error the step stamps the migration name into `d1_migrations` and retries up to 5 attempts, handling columns already applied out-of-band. Real SQL errors surface immediately. Both `deploy.yml` and `deploy-integration.yml` run the same loop.
+1. Applies D1 migrations (drift-tolerant). "Duplicate column" / "already exists" errors are handled by stamping the migration into `d1_migrations` and retrying up to 5 attempts. Real SQL errors surface immediately.
 2. Runs the same two-step security audit as PR Checks (advisory HIGH+, blocking CRITICAL) as a defence-in-depth gate — catches CVEs introduced between the merge and the deploy (transient transitive bumps, Dependabot lockfile regenerations, etc.).
 3. Pushes Worker secrets via `wrangler secret put` (file-redirect form). Conditional secrets (`ADMIN_EMAIL`, `CF_ACCESS_AUD`, `DEV_BYPASS_USER_ID`) are pushed only when the corresponding GitHub Actions secret is non-empty.
 4. Deploys the Worker.
@@ -121,7 +121,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 2. GitHub → Actions → "Deploy Integration" → "Run workflow" → green button.
 3. The branch dropdown in the dispatch dialog is irrelevant — the workflow always pulls `develop`'s current HEAD.
 4. ~3 minutes for first-deploy (resources provisioned), ~2 minutes for subsequent deploys.
-5. After deploy, open the URL in a browser. No automated smoke step exists — GHA runner IPs are blocked by Cloudflare bot management, so CI `curl` reliably returns `403` regardless of worker health. `wrangler deploy` exit code is the authoritative success signal.
+5. After deploy, open the URL in a browser. No CI smoke step — GHA runner IPs return `403` from Cloudflare bot management regardless of worker health. `wrangler deploy` exit code is the success signal.
 
 **Triggering a scrape on integration** (since crons are off):
 
@@ -239,7 +239,7 @@ Keep the Cloudflare Access policy in sync with deploys so unauthorized clicks la
 **Two secrets, two failure modes the deploy creates:**
 
 1. `DEV_BYPASS_TOKEN` — pushed by the deploy from the GitHub Actions secret. Past deploys have written an empty/encoded value due to CR/LF issues, leaving `/api/dev/login` returning 404 for a token that looks valid locally.
-2. `DEV_BYPASS_USER_ID` — actively **deleted** by the deploy (idempotent). Intentional: prevents a stale impersonation override from outliving its testing window. Every integration deploy reverts dev-login to the synthetic `__e2e__` row, which does not match `ADMIN_EMAIL` — admin endpoints return 401/403 even with a valid session.
+2. `DEV_BYPASS_USER_ID` — actively **deleted** by the deploy (idempotent). Prevents stale impersonation from outliving its window. Every deploy reverts dev-login to `__e2e__`, which does not match `ADMIN_EMAIL` — admin endpoints return 401/403 even with a valid session.
 
 **After every integration deploy, re-stamp both secrets via the Cloudflare REST API.** Wrangler's `/memberships` preflight fails in this container (token has Workers Scripts edit but not Account Read) — go direct to the secrets endpoint instead:
 
