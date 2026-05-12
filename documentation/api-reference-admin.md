@@ -12,7 +12,7 @@ Extracted from [api-reference.md](api-reference.md) so the main reference stays 
 
 Kicks the global-feed coordinator on demand — identical to the every-4-hours cron. Inserts a `scrape_runs` row, sends `SCRAPE_COORDINATOR`. A 120-second reuse window absorbs double-clicks: a new request that finds a `running` row younger than 120 s reuses it.
 
-POST enforces Origin; GET is exempt (so operators can bookmark or `curl`).
+POST enforces Origin for browser-driven calls; GET is exempt (so operators can bookmark or `curl`). Scripted callers that present `Authorization: Bearer <DEV_BYPASS_TOKEN>` bypass the Origin check on POST — Bearer requests carry no session cookie and are not a CSRF surface.
 
 | Method | Caller | Success response |
 |---|---|---|
@@ -39,7 +39,9 @@ Resumable embedding backfill for articles whose `embedding_status` is `NULL` or 
 
 **Success (200):** `{ ok: true, processed: N, failed: M, remaining: K, done: boolean }` — `done` is `true` when `remaining` is 0 after the call. A row whose embed or upsert fails is stamped `'failed'` and counted under `failed`; the next call retries it.
 
-**Error responses:** `401 unauthorized` | `403 forbidden` | `405 "reembed requires POST"` (GET with `?reembed=1`) | `500 "Backfill failed"`.
+**Auth:** Admin session required. Browser POST requires an `Origin` matching `APP_URL`; requests presenting `Authorization: Bearer <DEV_BYPASS_TOKEN>` bypass the Origin check (scripted curl path).
+
+**Error responses:** `401 unauthorized` | `403 forbidden` | `403 forbidden_origin` (cross-origin browser POST without Bearer) | `405 "reembed requires POST"` (GET with `?reembed=1`) | `500 "Backfill failed"`.
 
 **Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 12 for `?reembed=1`), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phases 0 and 3)
 
@@ -61,7 +63,9 @@ A scripted caller may opt into the legacy synchronous path by sending `{ "cursor
 
 **Success (200, sync batch path):** `{ ok: true, scanned: N, merged: M, remaining: K, next_cursor: { pa: number, id: string } | null, done: boolean, elapsed_ms: T }`.
 
-**Error responses:** `401 unauthorized` | `403 forbidden` | `500 historical_dedup_kick_failed` | `500 historical_dedup_failed` (sync path only).
+**Auth:** Admin session required. Browser POST requires an `Origin` matching `APP_URL`; requests presenting `Authorization: Bearer <DEV_BYPASS_TOKEN>` bypass the Origin check (scripted curl path).
+
+**Error responses:** `401 unauthorized` | `403 forbidden` | `403 forbidden_origin` (cross-origin browser POST without Bearer) | `500 historical_dedup_kick_failed` | `500 historical_dedup_failed` (sync path only).
 
 **Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 3, AC 9, AC 11, [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phase 4)
 

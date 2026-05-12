@@ -106,6 +106,7 @@ Every source file annotates the REQ-IDs it implements via `// Implements REQ-X-N
 | `log.ts` | Structured JSON log emitter with closed `LogEvent` enum | [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-logging) |
 | `default-hashtags.ts` | Seed hashtag list for new accounts | [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation) |
 | `models.ts` | `MODELS` catalog, `DEFAULT_MODEL_ID` (`@cf/openai/gpt-oss-120b`), cost estimator (cost accounting still live for chunk + discovery LLM calls; per-user model selection *Deprecated 2026-04-23 with REQ-SET-004*) | [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress) |
+| `google-jwks.ts` | RS256 signature verification for Google `id_token`s via JWKS (`https://www.googleapis.com/oauth2/v3/certs`); caches the key set for 1 hour in KV (`oidc:jwks:google`) to bound isolate-level fetch cost (CF-013) | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) |
 | `oauth-providers.ts` | GitHub + Google adapters with id_token validation | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) |
 | `oauth-errors.ts` | OAuth error code allowlist and sanitizer | [REQ-AUTH-004](../sdd/authentication.md#req-auth-004-oauth-error-surfacing) |
 | `prompts.ts` | LLM system prompts for chunk processing and source discovery (the finalize-pass dedup prompt was removed when REQ-PIPE-003 replaced LLM dedup with embedding-based same-story matching) | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery) |
@@ -366,7 +367,7 @@ The site CSP is `script-src 'self'`, which blocks every inline `<script>...</scr
 <script>import { toggleTheme } from '~/scripts/bundled/<module>';</script>
 ```
 
-Astro emits the code as an external `<script type="module" src="/_astro/...js">` bundle that CSP allows. New Pattern A files go directly under `src/scripts/bundled/`; the build script ignores that subdirectory.
+Astro emits the code as an external `<script type="module" src="/_astro/...js">` bundle that CSP allows. New Pattern A files go directly under `src/scripts/bundled/`; the build script ignores that subdirectory. Scripts currently using this pattern: `digest-page.ts` (digest grid interactivity), `history-page.ts` (history pagination and tag filtering), `tag-railing-flip.ts` (settings tag railing).
 
 **Pattern B - static mirror (lives at `src/scripts/<module>.ts`):** for scripts that must run on every page regardless of which Astro page initiated the navigation (e.g., `card-interactions.ts` running on `/digest`, `/history`, and `/starred`), the build script compiles the TypeScript into `public/scripts/<module>.js` and the layout loads it directly:
 
