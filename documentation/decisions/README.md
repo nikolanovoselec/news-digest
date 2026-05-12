@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-<!-- doc-allow-large: AD46c ADR index single-file design -->
+<!-- doc-allow-large: AD46 ADR index single-file design -->
 
 Decisions made during implementation, with rationale.
 

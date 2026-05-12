@@ -12,7 +12,7 @@ This document describes **what** the system is and **how requests flow through i
 
 `news-digest` is a single Cloudflare Worker serving an Astro-rendered web app. A 4-hour scrape run scrapes a curated set of RSS/Atom/JSON feeds, summarises new candidates with Workers AI, and writes them to the shared **article pool**. Per-user dashboards filter the pool by the user's hashtags - there are no per-user LLM calls. A 5-minute cron drains pending feed-discovery jobs and dispatches daily digest emails. A 03:00 UTC cron purges articles older than 14 days (starred articles exempt).
 
-<!-- doc-allow-large: AD46b diagram-section exemption (component map) -->
+<!-- doc-allow-large: AD46 diagram-section exemption (component map) -->
 ```
 ┌────────────────────────────────────────────────────────────────────┐
 │                     Cloudflare Worker (Astro)                      │
@@ -217,7 +217,7 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) -
 
 ### 5.1 Global-feed pipeline (every 4 hours)
 
-<!-- doc-allow-large: AD46b diagram-section exemption (pipeline flow) -->
+<!-- doc-allow-large: AD46 diagram-section exemption (pipeline flow) -->
 ```
 Cron (00/04/08/12/16/20 UTC)
   └─► SCRAPE_COORDINATOR queued

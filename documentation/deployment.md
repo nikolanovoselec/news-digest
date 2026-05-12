@@ -1,6 +1,6 @@
 # Deployment
 
-<!-- doc-allow-large: AD46a deployment-doc colocation -->
+<!-- doc-allow-large: AD46 deployment-doc colocation -->
 
 **Audience:** Developers, Operators
 
