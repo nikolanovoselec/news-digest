@@ -169,11 +169,12 @@ describe('cron dispatch — REQ-PIPE-001 / REQ-PIPE-005', () => {
       (c) => c.sql.includes('INSERT INTO scrape_runs') && c.kind === 'run',
     );
     expect(insert).toBeDefined();
-    // And exactly one coordinator message was sent with a scrape_run_id.
+    // And exactly one coordinator message was sent with a scrape_run_id
+    // matching the row just inserted (ULID format, 26 chars Crockford base32).
     expect(coordinator.sendCalls).toHaveLength(1);
     const msg = coordinator.sendCalls[0] as { scrape_run_id: string };
-    expect(typeof msg.scrape_run_id).toBe('string');
-    expect(msg.scrape_run_id.length).toBeGreaterThan(0);
+    expect(msg.scrape_run_id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(insert!.params).toContain(msg.scrape_run_id);
   });
 
   it('REQ-PIPE-001: legacy hourly cron "0 * * * *" is NOT handled by the dispatcher (regression guard for the 4h rollout)', async () => {

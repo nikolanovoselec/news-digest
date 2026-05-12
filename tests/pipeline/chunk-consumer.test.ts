@@ -279,8 +279,10 @@ describe('scrape-chunk-consumer - REQ-PIPE-002', () => {
     ) as [string, Record<string, unknown>] | undefined;
     expect(chunkCall).toBeDefined();
     const [model, params] = chunkCall as [string, Record<string, unknown>];
-    expect(typeof model).toBe('string');
-    expect(model.length).toBeGreaterThan(0);
+    // The chunk LLM model identifier must be a non-empty namespaced
+    // Workers AI binding ID (`@cf/...` or `@hf/...`). A bare empty
+    // string would be a regression: env.AI.run rejects it.
+    expect(model).toMatch(/^@\w+\//);
     const messages = params.messages as Array<{ role: string; content: string }>;
     expect(messages[0]?.role).toBe('system');
     expect(messages[0]?.content).toBe(PROCESS_CHUNK_SYSTEM);
