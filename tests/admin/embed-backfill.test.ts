@@ -161,6 +161,10 @@ async function buildContextAndCall(opts: BuildContextOpts): Promise<{
       'Content-Type': 'application/json',
       Accept: 'application/json',
       Cookie: `${SESSION_COOKIE_NAME}=${cookie}`,
+      // CF-015: defence-in-depth Origin check requires a matching
+      // origin on browser-driven POSTs. Tests stand in for browser
+      // calls, so set the Origin to APP_URL.
+      Origin: APP_URL,
     },
   });
   const env = {

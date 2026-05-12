@@ -16,8 +16,16 @@
 
 import { describe, it, expect } from 'vitest';
 
-import historyPageSource from '../../src/pages/history.astro?raw';
+import historyPageAstro from '../../src/pages/history.astro?raw';
+import historyBundled from '../../src/scripts/bundled/history-page.ts?raw';
 import userMenuSource from '../../src/components/UserMenu.astro?raw';
+
+// CF-039: the history page's client script was extracted to
+// src/scripts/bundled/history-page.ts so oxlint can lint it. Tests
+// that assert on the page's observable contract walk both the .astro
+// markup AND the bundled JS — the source variable concatenates them
+// so existing `?raw` substring matches keep finding their targets.
+const historyPageSource = `${historyPageAstro}\n${historyBundled}`;
 
 describe('history.astro — REQ-HIST-001', () => {
   // CF-033: REQ-ID presence theater removed — CI gate covers annotations.

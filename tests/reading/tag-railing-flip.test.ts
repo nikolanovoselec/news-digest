@@ -20,8 +20,18 @@
 import { describe, it, expect } from 'vitest';
 import flipHelper from '../../src/lib/tag-railing-flip.ts?raw';
 import tagStrip from '../../src/components/TagStrip.astro?raw';
-import digestPage from '../../src/pages/digest.astro?raw';
-import historyPage from '../../src/pages/history.astro?raw';
+import digestPageAstro from '../../src/pages/digest.astro?raw';
+import historyPageAstro from '../../src/pages/history.astro?raw';
+import digestBundled from '../../src/scripts/bundled/digest-page.ts?raw';
+import historyBundled from '../../src/scripts/bundled/history-page.ts?raw';
+
+// CF-039: the host pages' chip-click handlers were extracted to
+// src/scripts/bundled/{digest,history}-page.ts. The chip-click
+// integration assertions below walk both the markup and the bundled
+// script so the existing `?raw` substring matches keep finding their
+// targets.
+const digestPage = `${digestPageAstro}\n${digestBundled}`;
+const historyPage = `${historyPageAstro}\n${historyBundled}`;
 
 describe('tag-railing FLIP reorder — REQ-READ-007', () => {
   it('REQ-READ-007: helper exports flipChipToFront and isFlipLocked', () => {

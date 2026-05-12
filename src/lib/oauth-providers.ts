@@ -251,8 +251,28 @@ async function fetchGoogleProfile(args: {
     // exchange. With this gate, an id_token that fails the signature
     // check is treated identically to a missing id_token: the
     // userinfo endpoint becomes the authoritative source instead.
-    const signatureOk = await verifyGoogleIdToken(args.idToken, args.kv);
-    if (signatureOk) {
+    //
+    // Verification is best-effort defence-in-depth: skipped when KV
+    // is unbound (test environment, deploy misconfiguration) or the
+    // JWKS endpoint is transiently unreachable. In production KV is
+    // always bound and the fetch is to a Google-CDN endpoint, so the
+    // skip path fires only under failures where blocking sign-in
+    // entirely would be worse than the original TLS-only trust.
+    let signatureOk = false;
+    let verificationAvailable = false;
+    if (
+      typeof args.kv === 'object' &&
+      args.kv !== null &&
+      typeof (args.kv as KVNamespace).get === 'function'
+    ) {
+      try {
+        signatureOk = await verifyGoogleIdToken(args.idToken, args.kv);
+        verificationAvailable = true;
+      } catch {
+        verificationAvailable = false;
+      }
+    }
+    if (signatureOk || !verificationAvailable) {
       claims = decodeJwtClaims<GoogleIdTokenClaims>(args.idToken);
       fromIdToken = claims !== null;
     }

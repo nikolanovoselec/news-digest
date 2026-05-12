@@ -9,8 +9,16 @@
 
 import { describe, it, expect } from 'vitest';
 
-import digestPageSource from '../../src/pages/digest.astro?raw';
+import digestPageAstro from '../../src/pages/digest.astro?raw';
+import digestBundled from '../../src/scripts/bundled/digest-page.ts?raw';
 import digestCardSource from '../../src/components/DigestCard.astro?raw';
+
+// CF-039: the digest page's client script was extracted to
+// src/scripts/bundled/digest-page.ts so oxlint can lint it. Tests
+// that assert on the page's observable contract walk both the .astro
+// markup AND the bundled JS — the source variable concatenates them
+// so existing `?raw` substring matches keep finding their targets.
+const digestPageSource = `${digestPageAstro}\n${digestBundled}`;
 
 describe('digest.astro — REQ-READ-001 grid', () => {
   // CF-033: REQ-ID presence theater assertions removed. The
