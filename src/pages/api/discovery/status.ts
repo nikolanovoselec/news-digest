@@ -1,4 +1,5 @@
 // Implements REQ-SET-006
+// Implements REQ-DISC-002
 //
 // GET /api/discovery/status — return the set of hashtags the
 // authenticated user has queued for background source discovery.
