@@ -336,6 +336,8 @@ Both responses carry a `Set-Cookie` refresh when the session is within 5 minutes
 **Method:** POST
 **Path:** /api/admin/discovery/retry
 **Auth:** Valid session + `ADMIN_EMAIL` match. Origin check applies.
+**Request:** `{ "tag": "<tag>" }` (JSON) or `tag=<tag>` (form-encoded)
+**Response:** `200 { "ok": true }` (JSON) or `303 → /settings?rediscover=ok&tag=<tag>` (form)
 
 Re-queues a single stuck tag. Validates the tag is in the user's `hashtags_json`, clears `sources:{tag}` and `discovery_failures:{tag}` KV, inserts a `pending_discoveries` row.
 
@@ -353,6 +355,8 @@ Re-queues a single stuck tag. Validates the tag is in the user's `hashtags_json`
 **Method:** POST (also GET for browser navigation)
 **Path:** /api/admin/discovery/retry-bulk
 **Auth:** Valid session + `ADMIN_EMAIL` match. GET path: Cloudflare Access is sole gate.
+**Request:** none (operates on caller's full tag list)
+**Response:** `303 → /settings?rediscover=ok&count=<N>` (browser) or `200 { ok: true, count: N }` (scripted)
 
 Re-queues every stuck tag for the session user in one D1 batch. Backs the **Discover missing sources** button. A tag is stuck when its `sources:{tag}` entry has an explicitly empty `feeds` array; brand-new tags are not stuck (still discovering).
 
@@ -596,6 +600,8 @@ Global counters (`digests_generated`, `tokens_consumed`, `cost_usd`) come from `
 ## Observability
 
 ### Structured log events
+
+<!-- doc-template-exempt: AD46 observability reference section, not an HTTP endpoint -->
 
 **Implements:** [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-logging)
 
