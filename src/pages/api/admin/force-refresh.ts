@@ -138,7 +138,7 @@ export async function GET(context: APIContext): Promise<Response> {
     secFetchSite !== 'same-origin' &&
     secFetchSite !== 'none'
   ) {
-    log('warn', 'admin.access', {
+    log('warn', 'admin.auth.denied', {
       status: 'force-refresh:sec-fetch-site:rejected',
       sec_fetch_site: secFetchSite.slice(0, 32),
     });

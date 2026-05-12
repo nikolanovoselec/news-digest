@@ -30,11 +30,12 @@ function isStandalone(): boolean {
 function isIos(): boolean {
   if (typeof navigator === 'undefined') return false;
   const nav = navigator as IosNavigator;
-  return isIosPure({
+  const arg: { userAgent: string; standalone?: boolean; maxTouchPoints?: number } = {
     userAgent: nav.userAgent,
-    standalone: nav.standalone,
-    maxTouchPoints: nav.maxTouchPoints,
-  });
+  };
+  if (nav.standalone !== undefined) arg.standalone = nav.standalone;
+  if (nav.maxTouchPoints !== undefined) arg.maxTouchPoints = nav.maxTouchPoints;
+  return isIosPure(arg);
 }
 
 function initInstallPrompt(): void {
