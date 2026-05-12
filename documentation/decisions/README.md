@@ -77,6 +77,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** The codeflare repo has a proven pattern at this exact shape. Writing ~250 lines avoids a dependency with ~50 transitive ones, eliminates ORM coupling, and simplifies deployment. Migration to Better Auth later is a bounded one-day project if scope expands.
 
+**Consequences:** Any new OAuth provider requires one registry entry and a `fetchProfile` adapter. Session-management bugs are owned entirely by this codebase - no upstream library to patch. Reviewers must know the custom JWT shape (`src/lib/jwt.ts`) when auditing auth flows.
+
 **Related requirements:** [REQ-AUTH-001](../../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-002](../../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation)
 
 ---
@@ -96,6 +98,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** Queues give natural per-message isolation (each job in its own isolate, no shared memory), default 10-wide concurrency with built-in backpressure, and 3-retry semantics. Cron stays a tiny dispatcher. This is the primitive Cloudflare built exactly for this shape of problem.
 
+**Consequences:** At-least-once delivery requires all queue consumers to be idempotent. The scrape pipeline carries explicit dedup gates (AD7, AD10) specifically because queue redelivery is normal. Changing queue bindings or retry counts requires coordinated `wrangler.toml` and consumer-code updates.
+
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence). Original framing was for the per-user generation pipeline (REQ-GEN-001, REQ-GEN-002, both Deprecated 2026-04-23 in the global-feed rework); the queue mechanism survived the rework intact.
 
 ---
@@ -114,6 +118,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** An SSRF denylist, 8 s timeout, and 1.5 MB size cap bring the risk to negligible. Fan-out is bounded-concurrency at 20 workers. The quality improvement on short-snippet feeds justifies the added complexity.
 
+**Consequences:** The SSRF denylist (`src/lib/ssrf-guard.ts`) must be kept current as RFC-1918 and link-local ranges evolve. Article-body fetches add latency to chunk processing; the 8 s timeout is the ceiling. New feed sources from publishers behind aggressive anti-scraping CDNs will silently fall back to snippet-only summaries.
+
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) AC 8
 
 ---
@@ -124,7 +130,9 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Decision (historical):** Prohibit all server-side article-body fetching. Summaries rely entirely on the feed-provided snippet.
 
-**Context (historical):** Drafted 2026-04-22 to avoid SSRF risk and Cloudflare-range rate-limiting by publishers. Reversed during the global-feed rework when summary quality on short-snippet feeds proved unacceptable and the risk surface was demonstrated to be manageable with explicit denylist + timeout + size cap.
+**Context:** Drafted 2026-04-22 to avoid SSRF risk and Cloudflare-range rate-limiting by publishers. Reversed during the global-feed rework when summary quality on short-snippet feeds proved unacceptable and the risk surface was demonstrated to be manageable with explicit denylist + timeout + size cap.
+
+**Consequences:** Superseded. See AD3 for current behaviour and its consequences.
 
 **Why preserved:** Documentation-discipline.md prescribes immutable original ADRs with a separate superseding ADR. This entry is the archived original; AD3 above is the current decision.
 
@@ -144,6 +152,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** Plaintext + `textContent` makes XSS impossible by construction. One less dependency, one less configuration surface, zero sanitizer updates to track. Detail paragraphs are stored as a `string[]` and rendered via `textContent`, so the same invariant holds regardless of how many paragraphs the LLM returns. The constraint survived the 2026-04-23 global-feed rework (which retired the per-user generation REQs REQ-GEN-002/006) and now applies via REQ-PIPE-002.
 
+**Consequences:** LLM prompts must explicitly forbid markdown and HTML in output. Any future feature that needs rich article rendering (bold headings, links) requires revisiting this decision and introducing a sanitizer. Template authors must use `set:text` (or `textContent`) - never `set:html` or `innerHTML` - when rendering article titles or summaries.
+
 **Related requirements:** [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-READ-002](../../sdd/reading.md#req-read-002-article-detail-view) (original decision applied to REQ-GEN-005, Deprecated 2026-04-23, Replaced By REQ-PIPE-002)
 
 ---
@@ -161,6 +171,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 - Put everything in KV for speed.
 
 **Rationale:** Caches tolerate ~60 s lag and benefit from edge reads. Pending discovery work needs transactional semantics (`SELECT ... LIMIT 3` + `DELETE`) that KV's list/scan can't provide cleanly. Using each primitive for what it's designed for keeps both simpler.
+
+**Consequences:** KV writers are centralised through `src/lib/kv/` helpers (AD27) to keep the byte-equal invariant load-bearing. Any new strongly-consistent state (counters requiring transactions, per-user locking) must go into D1, not KV. AD7 applied this directly to chunk-completion tracking.
 
 **Related requirements:** [REQ-DISC-001](../../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery), [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) (original decision applied to REQ-GEN-003, Deprecated 2026-04-23, Replaced By REQ-PIPE-001)
 
@@ -180,6 +192,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Rationale:** Polling `GET /api/scrape-status` (one D1 SELECT + one KV get) is negligible overhead at the operator-only volume this endpoint serves. No DO complexity, no WebSocket protocol, no phase-update machinery. The UX difference is imperceptible for a one-shot status flip.
 
+**Consequences:** The 5-second poll cadence is the resolution floor for progress visibility. If scrape runs become significantly faster (sub-10 s), the polling interval should be revisited. Clients that close the browser tab during a run will miss intermediate progress but can rehydrate via `/api/scrape-status` on next open.
+
 **Related requirements:** [REQ-PIPE-006](../../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress)
 
 ---
@@ -190,7 +204,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Decision:** Move the "last chunk done" gate from a KV decrement (`scrape_run:{id}:chunks_remaining`) to a D1 `INSERT OR IGNORE` + `SELECT COUNT(*)` pattern on a dedicated `scrape_chunk_completions` table, with a follow-up conditional `UPDATE scrape_runs SET finalize_enqueued = 1 WHERE finalize_enqueued = 0` to gate the finalize handoff.
 
-**Context (CF-002):** The original KV implementation used a read-modify-write decrement: each chunk consumer read the counter, decremented it, and wrote it back. Under Cloudflare Queues' at-least-once delivery, this exposed two races:
+**Context:** The original KV implementation (CF-002) used a read-modify-write decrement: each chunk consumer read the counter, decremented it, and wrote it back. Under Cloudflare Queues' at-least-once delivery, this exposed two races:
 
 1. **Decrement race:** two concurrent last-chunk consumers read the same value before either wrote. Both saw "zero remaining", both enqueued a finalize pass, and both stamped the run as `ready`.
 2. **Send-gate race:** even if the count check held, both consumers could call `SCRAPE_FINALIZE.send` before either set the KV gate.
@@ -202,6 +216,8 @@ KV's eventual consistency made both races effectively undetectable via testing i
 - KV with Compare-And-Swap (`getWithMetadata` + `put` with `expirationTtl` as a CAS surrogate) - fragile; KV has no native CAS and the surrogate is not atomic.
 
 **Rationale:** AD5's own principle applies directly: completion counting needs transactional semantics. `INSERT OR IGNORE` into a table keyed by `(scrape_run_id, chunk_index)` is idempotent under redelivery and gives an exact count via `SELECT COUNT(*)` - no race. The finalize-enqueue gate is collapsed into a single atomic `UPDATE … WHERE finalize_enqueued = 0`; D1 returns `meta.changes` for exactly one consumer. The KV counter (`scrape_run:{id}:chunks_remaining`) is retained as a derived mirror for the `/api/scrape-status` progress display but is no longer authoritative. Implements [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) and [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) AC 1 and AC 9.
+
+**Consequences:** The `scrape_chunk_completions` table grows one row per chunk per run; the retention cron (03:00 UTC) must cover this table or it will grow unbounded. The KV mirror is best-effort and may lag behind D1 by up to one propagation window - consumers must not rely on it for correctness, only for display.
 
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)
 
@@ -824,7 +840,11 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 **Status:** Accepted (2026-05-05)
 **Overrides:** workers-dev-exposure:REQ-AUTH-001
 
-**Decision:** Whether the auto-assigned `*.workers.dev` subdomain sits behind Cloudflare Access is the operator's responsibility, not the worker's. The application code does NOT detect the request host or reject `workers.dev` traffic, and reviewers MUST NOT flag this as a perimeter gap. When an operator binds Access on the custom domain they are expected to also bind it on the `workers.dev` hostname (or disable that hostname) at the Cloudflare dashboard; failing to do so is an accepted risk owned by the operator.
+**Decision:** Whether the auto-assigned `*.workers.dev` subdomain sits behind Cloudflare Access is the operator's responsibility, not the worker's. The application code does NOT detect the request host or reject `workers.dev` traffic, and reviewers MUST NOT flag this as a perimeter gap. When an operator binds Access on the custom domain they are expected to also bind it on the `*.workers.dev` hostname (or disable that hostname) at the Cloudflare dashboard; failing to do so is an accepted risk owned by the operator.
+
+**Context:** Cloudflare Workers always get a `*.workers.dev` URL in addition to any custom domain. Binding Cloudflare Access to only the custom domain leaves the `*.workers.dev` URL unprotected, bypassing the Access perimeter entirely. Host-detection in the worker code was considered and rejected (AD29 rationale) because the worker correctly trusts the Access edge for JWT validation; the perimeter coverage gap is a deployment configuration concern, not a code concern.
+
+**Consequences:** Operators deploying with `CF_ACCESS_AUD` set MUST also bind Access on the `*.workers.dev` URL or disable it via the Cloudflare dashboard. The deployment runbook in `deployment.md` documents this requirement. The worker does not enforce or detect missing `*.workers.dev` coverage.
 
 **Related requirements:** REQ-AUTH-001 AC 8.
 
