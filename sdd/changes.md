@@ -9,6 +9,7 @@ Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are a
 ## 2026-05-13
 
 - REQ-OPS-006 (Integration deployment target) moved from Implemented to Partial. The integration topology continues to ship via the `deploy-integration` workflow, but no test file references the REQ ID, so spec-reviewer's literal-match coverage rule could not confirm verification — the demote records that gap until a smoke-test or REQ-ID annotation on the workflow restores coverage.
+- Authentication domain split for actor coherence. REQ-AUTH-001's prior admin / rate-limit / dev-bypass ACs became REQ-AUTH-006 (Admin gating), REQ-AUTH-010 (Operator dev-bypass guard), and new domain `sdd/rate-limits.md` with REQ-RATE-001 (cross-cutting rate-limit policy).
 
 ## 2026-05-11
 

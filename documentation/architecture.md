@@ -6,6 +6,19 @@ System overview, component map, and request lifecycles for `news-digest`.
 
 This document describes **what** the system is and **how requests flow through it**. Implementation rationale ("why this code looks the way it does") lives in source comments. Endpoint contracts live in [`api-reference.md`](api-reference.md). Environment and bindings live in [`configuration.md`](configuration.md). Architectural decisions live in [`decisions/README.md`](decisions/README.md). Product intent lives in [`sdd/`](../sdd/).
 
+## Contents
+
+- [1. Overview](#1-overview)
+- [2. Components](#2-components)
+- [3. Repository Layout](#3-repository-layout)
+- [4. Source Module Map](#4-source-module-map)
+- [5. Request Lifecycles](#5-request-lifecycles)
+- [6. Data Flow](#6-data-flow)
+- [7. Cross-cutting Concerns](#7-cross-cutting-concerns)
+- [8. Build and Deploy](#8-build-and-deploy)
+- [Design System Tokens (REQ-DES-001, REQ-DES-003)](#design-system-tokens-req-des-001-req-des-003)
+- [Related Documentation](#related-documentation)
+
 ---
 
 ## 1. Overview

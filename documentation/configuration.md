@@ -4,6 +4,20 @@
 
 Environment variables, secrets, and platform bindings required to run the system.
 
+## Contents
+
+- [Worker Secrets](#worker-secrets)
+- [GitHub Actions Secrets (CI deploy only)](#github-actions-secrets-ci-deploy-only)
+- [Platform Bindings](#platform-bindings)
+- [Worker Vars (non-secret)](#worker-vars-non-secret)
+- [Cron](#cron)
+- [KV Key Conventions](#kv-key-conventions)
+- [Compatibility](#compatibility)
+- [Observability](#observability)
+- [Security Headers](#security-headers)
+- [Configuration Files](#configuration-files)
+- [Related Documentation](#related-documentation)
+
 ---
 
 ## Worker Secrets

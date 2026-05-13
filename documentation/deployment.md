@@ -6,6 +6,19 @@
 
 Local development setup and production deployment steps.
 
+## Contents
+
+- [Prerequisites](#prerequisites)
+- [Local Development](#local-development)
+- [Tests](#tests)
+- [Production Deployment](#production-deployment)
+- [Integration deployment](#integration-deployment)
+- [Cloudflare Resources](#cloudflare-resources)
+- [Dependency Automation](#dependency-automation)
+- [Admin-only routes (Cloudflare Access gating)](#admin-only-routes-cloudflare-access-gating)
+- [Resend domain verification](#resend-domain-verification)
+- [Related Documentation](#related-documentation)
+
 ---
 
 ## Prerequisites

@@ -8,7 +8,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 **Intent:** One shared scrape per cadence feeds every user's dashboard, so adding users does not multiply LLM spend — the system runs the LLM the same number of times whether 10 people are signed up or 10,000.
 
-**Applies To:** System
+**Applies To:** Admin
 
 **Acceptance Criteria:**
 1. A Cron Trigger fires every 4 hours on the hour (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC) and kicks off a single coordinator run for all users.
@@ -40,7 +40,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 **Intent:** Candidate articles are summarised in batches sized to fit the model's context window so prompt size stays within budget and partial failures only lose one chunk, not the whole tick.
 
-**Applies To:** System
+**Applies To:** Admin
 
 **Acceptance Criteria:**
 1. Each chunk yields a JSON payload shaped `{articles: [{title, details[], tags[]}]}` and no other top-level keys. Cross-source dedup is performed in the separate same-story dedup pass (REQ-PIPE-003) over the surviving article pool rather than at the chunk level, so the chunk pass is summarisation-only (every input candidate gets its own entry).
@@ -64,7 +64,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 **Intent:** The same story published by five outlets appears as one primary card with four alternative-source links rather than five duplicate cards. Two outlets that paraphrase the same event under different headlines collapse to a single card even when they share almost no surface vocabulary, and the collapse holds across scrape ticks so a story discovered today never produces a second card when a different outlet covers the same event tomorrow.
 
-**Applies To:** System
+**Applies To:** Admin
 
 **Acceptance Criteria:**
 1. URLs are canonicalised by stripping `utm_*` and `fbclid` tracking parameters, trimming trailing slashes, and removing default ports before any comparison. A canonical URL already present in the article pool is skipped on subsequent ticks so re-ingestion never produces a duplicate primary card.
@@ -98,7 +98,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 **Intent:** The product covers the full breadth of cloud, AI, security, DevOps, languages, databases, and observability topics without relying on any single aggregator.
 
-**Applies To:** System
+**Applies To:** Admin
 
 **Acceptance Criteria:**
 1. The registry contains at least 50 entries, each declaring a slug, human-readable name, feed URL, feed kind, and at least one tag.
@@ -119,7 +119,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 **Intent:** The global pool stays small and fast by dropping stories older than two weeks, but articles any user has starred are preserved indefinitely.
 
-**Applies To:** System
+**Applies To:** Admin
 
 **Acceptance Criteria:**
 1. A daily cron fires at 03:00 UTC and deletes articles whose published-at timestamp is older than 14 days, when no user has starred the article.
@@ -139,7 +139,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 **Intent:** The per-tick token, cost, article, and dedupe counters feed the user-facing stats widget and history page without having to re-derive totals from article rows, and surface live progress while a run is in flight so users who trigger or wait on a scrape know the system is working.
 
-**Applies To:** System
+**Applies To:** Admin
 
 **Acceptance Criteria:**
 1. Each run records its start time, finish time, articles ingested, articles deduplicated, input and output token counts, estimated cost in USD, model identifier, chunk count, and final status.
@@ -163,7 +163,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 **Intent:** When the last user who selected a tag removes it (or deletes their account), the discovered-feed cache for that tag becomes orphan: no user sees its articles, but the scrape coordinator keeps fetching its feeds and the LLM keeps summarising them on every tick — wasted work and quiet article-pool bloat. The daily cleanup pass deletes those orphan caches so cost scales only with tags that at least one user still cares about.
 
-**Applies To:** System
+**Applies To:** Admin
 
 **Acceptance Criteria:**
 1. The same daily cron that prunes old articles also enumerates the discovered-feed cache, identifies entries whose tag does not appear in any user's saved tag list, and deletes them.
@@ -184,7 +184,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 **Intent:** When two articles describe the same news event but their summaries take different angles (e.g., one frames the event as "PM ousted in no-confidence vote" and another as "government collapses as far-right coalition forms"), embedding similarity alone places them in a borderline band that is too low to auto-merge but too high to safely call them distinct. A targeted same-event judgment by the language model decides those borderline pairs without lowering the auto-merge bar that protects against false merges between distinct same-day stories from the same source.
 
-**Applies To:** System
+**Applies To:** Admin
 
 **Acceptance Criteria:**
 1. Same-story candidates whose similarity falls in a configured borderline band (above a floor and below the auto-merge threshold from REQ-PIPE-003) trigger a single same-event judgment by the language model. Pairs at or above the auto-merge threshold are merged without an LLM call; pairs below the floor stay distinct without an LLM call.
@@ -208,7 +208,7 @@ Superseded by REQ-PIPE-003's same-story dedupe across the entire article history
 
 **Intent:** When the same news story arrives from two sources that landed in different chunks of the same scrape tick, the per-chunk dedup hint cannot collapse them — they were never in the same LLM context. A single post-merge LLM call over the surviving titles plus source names catches these cross-chunk pairs so the dashboard shows one card with two alternative sources rather than two near-identical cards.
 
-**Applies To:** System
+**Applies To:** Admin
 
 **Acceptance Criteria:**
 1. After every chunk of a scrape tick finishes, exactly one finalize pass runs over the articles persisted under that scrape tick and emits one Workers AI call returning the same dedup-groups output contract used by the per-chunk pass. The dedup model receives each candidate's title plus its full summary body so it can identify same-story pairs by their actual content rather than by surface lexical overlap; the source name is deliberately excluded as a signal so two outlets covering the same event are not blocked from clustering by a name mismatch. The pass is skipped when the tick produced one or fewer articles.

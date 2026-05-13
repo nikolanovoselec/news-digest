@@ -1,15 +1,40 @@
 # API Reference
 
+<!-- doc-allow-large: AD46 api-reference single-file design -->
+
 All public and authenticated HTTP endpoints. Operator and admin endpoints live in [api-reference-admin.md](api-reference-admin.md).
 
 **Audience:** Developers
+
+## Contents
+
+- [Conventions](#conventions)
+- [Pages](#pages)
+- [Authentication](#authentication)
+- [Settings](#settings)
+- [Digests](#digests)
+- [Discovery](#discovery)
+- [Stars](#stars)
+- [Tags](#tags)
+- [Developer Tools](#developer-tools)
+- [Operator Tools](#operator-tools)
+- [SEO and Crawler Policy](#seo-and-crawler-policy)
+- [History and Stats](#history-and-stats)
+- [Structured Log Events](#structured-log-events)
+- [Related Documentation](#related-documentation)
 
 ## Conventions
 
 The conventions below apply to every endpoint in this document. They are stated once here and not repeated per endpoint.
 
 - **Error envelope.** Every error response carries the JSON body `{ "error": string, "code": string }`. Additional fields (`detail`, `retry_after`) appear when relevant.
-- **Authentication.** The `Authentication` field on each endpoint uses one of: `none` (public), `session` (valid `__Host-session` cookie), `refresh cookie` (valid `__Host-refresh`, access JWT may be absent), `state cookie` (OAuth `state`), `session + admin email` (session cookie plus `ADMIN_EMAIL` match), `dev-bypass token` (Bearer `DEV_BYPASS_TOKEN`).
+- **Authentication.** The `Authentication` field on each endpoint uses one of the canonical values listed below.
+  - `none` — public endpoint.
+  - `session` — valid `__Host-session` cookie required.
+  - `refresh cookie` — valid `__Host-refresh` cookie required; access JWT may be absent.
+  - `state cookie` — OAuth `state` cookie required.
+  - `session + admin email` — session cookie plus `ADMIN_EMAIL` match required.
+  - `dev-bypass token` — Bearer `DEV_BYPASS_TOKEN` required.
 - **Origin check.** The `Origin check` field uses `applies` (Origin header must match `APP_URL`, mismatch returns `403 forbidden_origin`), `exempt` (intentionally not checked, justified per endpoint), or `n/a` (non-mutating GET). See [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints).
 - **Rate limit.** When present, the `Rate limit` field gives `{count}/{window} per {scope}` and a fail mode (`fail-open` or `fail-closed`). Exhausted buckets return `429` with a `Retry-After` header. See [REQ-AUTH-001 AC 9](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) and [`security.md`](security.md#rate-limiting-req-auth-001-ac-9) for the full matrix.
 - **Implements.** Every endpoint cites the REQ that owns its contract.

@@ -6,6 +6,19 @@ Security controls implemented at the application layer. Each section follows the
 
 For threat-model overview see [REQ-OPS-003](../sdd/observability.md#req-ops-003-security-headers-on-every-response) and [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider).
 
+## Contents
+
+- [Content-Security-Policy (REQ-OPS-003 AC 1)](#content-security-policy-req-ops-003-ac-1)
+- [HSTS (REQ-OPS-003 AC 2)](#hsts-req-ops-003-ac-2)
+- [Auth cookie policy (REQ-AUTH-002 / REQ-AUTH-008)](#auth-cookie-policy-req-auth-002-req-auth-008)
+- [Rate limiting (REQ-AUTH-001 AC 9)](#rate-limiting-req-auth-001-ac-9)
+- [Admin gate and JWT exp validation (REQ-AUTH-001 AC 8, AC 8a - AD44)](#admin-gate-and-jwt-exp-validation-req-auth-001-ac-8-ac-8a-ad44)
+- [Wipe-mode POST guard (REQ-AUTH-001 AC 8d)](#wipe-mode-post-guard-req-auth-001-ac-8d)
+- [Google id_token RS256 verification (REQ-AUTH-001)](#google-id_token-rs256-verification-req-auth-001)
+- [Admin endpoint cross-site guards (REQ-AUTH-001 AC 8, AC 8e)](#admin-endpoint-cross-site-guards-req-auth-001-ac-8-ac-8e)
+- [Dev-bypass prod guard (REQ-AUTH-001 AC 10)](#dev-bypass-prod-guard-req-auth-001-ac-10)
+- [Related Documentation](#related-documentation)
+
 ---
 
 ## Content-Security-Policy (REQ-OPS-003 AC 1)

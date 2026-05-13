@@ -1,39 +1,25 @@
 # Authentication
 
-Federated sign-in via GitHub or Google — no passwords, no email verification flow, no local credential store. Each provider is independently configurable so a deployment can enable either or both; at least one must be configured for the app to function. Sessions are split into a 5-minute HMAC-SHA256 access JWT and a 30-day device-bound refresh token (rotated on every refresh, reuse-detected) so closing the tab for weeks does not log the user out. CSRF defense via Origin check. Account deletion with cascade.
+Federated sign-in via GitHub or Google. No passwords, no email-verification flow, no local credential store. Sessions split into a short-lived access cookie and a long-lived rotated refresh cookie so closing the tab for weeks does not log the user out. CSRF defense via Origin check. Account deletion with cascade.
+
+Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, JWKS verification, dev-bypass gating) lives in [`documentation/security.md`](../documentation/security.md). Cross-cutting rate-limit policy that the auth surface inherits lives in [`sdd/rate-limits.md`](rate-limits.md).
 
 ---
 
 ### REQ-AUTH-001: Sign in with a federated identity provider
 
-**Intent:** Users authenticate with an existing identity at one of the supported providers (GitHub, Google) so there is no password, no email verification flow, and no local credential store to secure. Each provider can be enabled or disabled per-deployment so a fork can ship with only the providers it has configured. Brand-new accounts are seeded with a curated default hashtag list so the first digest has meaningful input before the user touches the tag strip.
+**Intent:** Users authenticate with an existing identity at a supported provider (GitHub, Google) so the deployment never holds a password. Each provider is independently enable-able so a fork can ship with only what it has configured. A new account is usable immediately, with seeded interests and defaults so the first digest has meaningful input.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. The landing page shows one button per provider that the deployment has configured — labelled "Sign in with GitHub", "Sign in with Google" — listed in alphabetical order. Providers without configured credentials are omitted entirely (no greyed-out buttons). When no provider is configured the page surfaces a clear "Sign-in is not configured for this deployment" message instead of dead buttons.
-2. Each button starts a standard OAuth 2.0 / OIDC authorization-code flow with a cryptographically random `state` cookie for CSRF defense. The chosen provider is preserved across the round-trip (in the state cookie or path) so the callback can complete the right exchange.
-3. The callback exchanges the authorization code for an identity assertion and extracts a stable provider-specific user identifier plus a verified email address. Successful consent creates or looks up a user keyed by `<provider>:<provider-user-id>` (with backward-compatibility — the GitHub provider keeps its existing bare-numeric user-id format so legacy accounts are unchanged).
-4. If the chosen provider returns no verified email or otherwise refuses to release one, sign-in fails with error code `no_verified_email` and the user is redirected to the landing page with a clear message naming the affected provider.
-5. New-account creation seeds the user's hashtag list with the 21-entry system default covering the project owner's actual reading topics across cloud platforms, AI/LLM, security, identity, and infrastructure. Every default tag is guaranteed to have at least one curated source so the first digest has meaningful input before the user touches the strip.
-6. New accounts are also seeded with a default scheduled-digest time of 08:00, a default UTC timezone that the reading surface overwrites with the browser's actual IANA zone on first load, and the email-notification preference enabled. As a result, successful sign-in for a brand-new account lands the user directly on the reading surface with real articles visible — there is no forced onboarding detour through the settings form.
-7. Cross-provider sign-in by the same verified email lands in a single account per REQ-AUTH-007 (was previously per-provider isolation).
-8. Operator endpoints under `/api/admin/*` enforce two baseline layers before any side effect, plus an optional perimeter layer:
-   a. (Optional perimeter, AD29 + AD44.) When the deployment is configured with a Cloudflare Access audience tag, the request must carry a valid Cloudflare Access assertion whose audience claim matches the configured value AND whose expiry claim is present and still in the future; an assertion with a mismatched audience, a missing expiry, or an expiry in the past is rejected before the baseline layers run. When no audience tag is configured the deployment treats Cloudflare Access as opt-in additive perimeter — the assertion header is not required and admin is gated by the baseline layers alone.
-   b. The requester holds a live Worker session cookie.
-   c. The session user is the configured operator (email match, case-insensitive).
-   A request that fails any enforced layer is rejected at the first failing layer with no observable side effect on the application. Operators who bind Cloudflare Access in front of the worker MUST also bind it in front of the auto-assigned `*.workers.dev` URL (or disable that subdomain) per AD30, otherwise the perimeter is forgeable from anywhere on the public internet.
-   d. The destructive pipeline mode that wipes and re-embeds the entire corpus is reachable only via an explicit POST to the admin pipeline-run endpoint. The same endpoint reached via GET with the wipe mode parameter is rejected with a method-not-allowed response, so cross-origin GET vectors (image tags, bookmarks, link previews) can never trigger a corpus-wide re-embed; idempotent modes remain reachable via either method.
-   e. Admin GET endpoints additionally reject requests originating from a cross-site context with a denial response. Top-level navigation (operator bookmarks, post-SSO callback redirects) remains accepted; only fetches initiated by another site are blocked. This narrows REQ-AUTH-003 AC 3's blanket GET exemption for the admin surface specifically, closing the residual same-browser-CSRF gap that the POST-only Origin check leaves open for idempotent admin actions like a manual feed refresh.
-9. Application-layer rate limits protect authentication, mutation, and admin endpoints:
-   a. Every `/api/auth/*` route, every authenticated mutation route, every authenticated endpoint that legitimate clients poll on a sub-minute cadence, and every admin side-effecting endpoint is rate-limited.
-   b. Unauthenticated paths key the limit by IP; authenticated mutation paths key it by user id; admin paths key by the authenticated operator id so even a successfully-authenticated admin session is bounded.
-   c. An exhausted limit returns HTTP 429 with a `Retry-After` header.
-   d. Sign-in and OAuth-callback rules fail open on a backing-store outage so a transient outage cannot lock users out of sign-in.
-   e. Refresh-token rules fail closed on a backing-store outage so a stolen refresh cookie cannot benefit from the outage to bypass the limit.
-   f. The refresh-rate-limit bucket gates both the explicit refresh endpoint and the inline middleware refresh path so an attacker cannot pivot to authenticated GET routes to bypass it.
-   g. Admin force-refresh and admin pipeline-run carry their own per-operator hourly buckets, sized so that a compromised or accidentally-looping admin session cannot drive runaway pipeline kicks. Force-refresh and pipeline-run each surface the rate-limited state back to the operator's settings surface with a clear retry-after rather than silently dropping the click.
-10. Dev-bypass endpoints under `/api/dev/*` exist only as a test-only authentication path for integration deployments. On any deployment whose primary hostname identifies it as production, every route in that family returns 404 regardless of token or session state, so the bypass surface is unreachable from public production hostnames even if a dev-bypass secret is accidentally promoted to a production environment.
+
+1. The landing page shows one button per configured provider, labelled "Sign in with {provider}", in alphabetical order. Unconfigured providers are omitted entirely. When zero providers are configured, the page shows a clear "Sign-in is not configured for this deployment" message instead of dead buttons.
+2. Each button starts a standard OAuth 2.0 / OIDC authorization-code flow with cryptographic CSRF state defense. The chosen provider is preserved across the round-trip so the callback completes the correct exchange.
+3. The callback exchanges the authorization code for a verified identity and creates or looks up a user keyed by provider plus provider-user-id. The GitHub provider preserves its legacy bare-numeric key format so existing accounts are unchanged.
+4. If the provider returns no verified email, sign-in fails with error code `no_verified_email` and the user is redirected to the landing page with a clear message naming the affected provider.
+5. A brand-new account is seeded with a curated default hashtag list (covering cloud platforms, AI/LLM, security, identity, and infrastructure) where every default tag has at least one curated source, so the first digest has meaningful input before the user touches the strip.
+6. A brand-new account is also seeded with a default scheduled-digest time of 08:00, a default UTC timezone (overwritten by the browser's IANA zone on first load), and email-notification enabled. Successful first sign-in lands the user directly on the reading surface with real articles visible — no forced onboarding detour.
 
 **Constraints:** CON-AUTH-001
 **Priority:** P0
@@ -45,16 +31,19 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 
 ### REQ-AUTH-002: Access token + refresh token, instant revocation
 
-**Intent:** Keep users signed in for an extended period — at least 30 days of inactivity — without requiring them to re-authenticate, while allowing instant invalidation of every outstanding session on logout or account deletion. Sessions feel like every consumer-grade webapp: closing the tab and coming back next month does not log the user out.
+**Intent:** Users stay signed in for at least 30 days of inactivity without re-authenticating, while logout or account deletion invalidates every outstanding session instantly. Sessions feel like every consumer-grade webapp — closing the tab and coming back next month does not log the user out.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. Two cookies make up an authenticated session: a short-lived **access cookie** (HMAC-SHA256 JWT, 5-minute TTL, `__Host-` prefix, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`) and a long-lived **refresh cookie** (opaque random 32-byte value, 30-day TTL, same cookie attributes). Both are issued at OAuth completion.
-2. Every authenticated request first verifies the access JWT, including its `session_version` claim against the current row's `session_version`. Mismatched or expired access JWTs are rejected even if still cryptographically valid; the request then falls through to the refresh-token flow.
-3. Logout increments the user's `session_version` (immediately invalidating every access JWT previously issued to that user) and revokes the active refresh-token row (immediately invalidating the long-lived cookie). Both cookies are cleared on the response.
-4. When the access JWT is missing or expired but the refresh cookie is valid, middleware mints a new access JWT and rotates the refresh-token row inline on the same request. Both API routes and Astro page routes attach the re-issued cookies so plain navigation extends the session, not just XHR API calls. The user never sees a login prompt as a result of access-token expiry alone.
-5. An explicit refresh endpoint is provided for the case where a long-running tab needs a fresh access JWT before issuing a state-changing request that middleware cannot safely auto-refresh on the same call. The endpoint always force-rotates the refresh-token row when invoked with a valid refresh cookie — calling it does not depend on whether the access JWT is still live, and it returns a new access JWT plus rotated refresh cookie regardless of remaining lifetime. On a successful concurrent-rotation collision (the same client's parallel call won the race), the endpoint returns a fresh access JWT without re-rotating, per the grace-window tolerance in REQ-AUTH-008 AC 4. On any failure path, both the access and refresh cookies are cleared on the response so a half-cleared session cannot persist.
+
+1. An authenticated session is carried by two cookies issued at OAuth completion: a short-lived access cookie unreadable by page JavaScript, and a long-lived refresh cookie with the same protection.
+2. Every authenticated request first verifies the access cookie against a per-user session-version stamp. Mismatched or expired access cookies fall through to the refresh-token flow.
+3. Logout immediately invalidates every access cookie previously issued to the user and revokes the active refresh-token row. Both cookies are cleared on the response.
+4. When the access cookie is missing or expired but the refresh cookie is valid, middleware mints a new access cookie and rotates the refresh-token row inline on the same request. Both API routes and page navigations attach the re-issued cookies, so plain navigation extends the session — the user never sees a login prompt from access-token expiry alone.
+5. An explicit refresh endpoint force-rotates the refresh-token row regardless of remaining access-cookie lifetime, tolerates a concurrent-rotation race per [REQ-AUTH-008](#req-auth-008-refresh-token-rotation-device-binding-reuse-detection), and clears both cookies on any failure path so a half-cleared session cannot persist.
+
+**Notes:** Cookie attribute set (`__Host-` prefix, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`) and the signing algorithm are documented in [`documentation/security.md`](../documentation/security.md#auth-cookie-policy-req-auth-002--req-auth-008).
 
 **Constraints:** CON-AUTH-001, CON-SEC-001
 **Priority:** P0
@@ -71,10 +60,10 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. Every `POST`, `PUT`, `PATCH`, and `DELETE` endpoint that acts on an authenticated session rejects requests whose `Origin` header is missing or does not equal the app's canonical origin.
-2. Rejection returns HTTP 403 with JSON body `{ error, code: "forbidden_origin" }`.
-3. Non-admin GET endpoints are not subject to this check (the session cookie's `SameSite=Lax` handles cross-origin GETs). Admin GET endpoints additionally narrow this exemption per REQ-AUTH-001 AC 8: a cross-site initiator on an admin GET is rejected with a denial response, while top-level navigation (operator bookmark, post-SSO redirect) remains accepted.
-4. OAuth flow entry points that only initiate a redirect to the identity provider and do not mutate authenticated state are exempt from the Origin check. The only effect of such an endpoint is setting a short-lived opaque state cookie and returning a 303 redirect; any actual authentication requires the user to consent at the identity provider. Login-CSRF is mitigated by the identity provider's own consent screen.
+
+1. Every state-changing endpoint (`POST`, `PUT`, `PATCH`, `DELETE`) that acts on an authenticated session rejects requests whose `Origin` header is missing or does not match the app's canonical origin. Rejection returns `HTTP 403` with error code `forbidden_origin`.
+2. Non-admin `GET` endpoints are exempt from the Origin check because the browser will not attach the session cookie to a cross-site GET. Admin `GET` endpoints narrow this exemption per [REQ-AUTH-006](#req-auth-006-admin-surface-gating). Cookie attribute mechanism that delivers this guarantee is documented in [`documentation/security.md`](../documentation/security.md#auth-cookie-policy-req-auth-002-req-auth-008).
+3. OAuth-flow entry points that only initiate a redirect to the identity provider are exempt — their only effect is setting a short-lived state cookie and redirecting, and actual authentication requires consent at the provider.
 
 **Constraints:** CON-SEC-001
 **Priority:** P0
@@ -86,14 +75,15 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 
 ### REQ-AUTH-004: OAuth error surfacing
 
-**Intent:** Common OAuth failures from any configured provider lead to clear user-visible messages without leaking internal details to the browser.
+**Intent:** Common OAuth failures from any configured provider produce clear user-visible messages without leaking internal details to the browser.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. `access_denied` from the identity provider returns the user to the landing page with `?error=access_denied` and a human-readable message.
-2. Missing or unverified email from the identity provider returns `?error=no_verified_email` with instructions to add a verified primary email at the provider and retry.
-3. CSRF state mismatch returns HTTP 403 with `?error=invalid_state`.
+
+1. `access_denied` from the provider returns the user to the landing page with `?error=access_denied` and a human-readable message.
+2. Missing or unverified email returns `?error=no_verified_email` with instructions to add a verified primary email at the provider and retry.
+3. CSRF state mismatch returns `HTTP 403` with `?error=invalid_state`.
 4. Any other provider error returns `?error=oauth_error`; full detail is logged server-side but never surfaced to the browser.
 
 **Constraints:** CON-SEC-001
@@ -111,16 +101,40 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. `/settings` has a "Delete account" control with a confirmation dialog requiring the user to type an explicit confirmation string.
-2. Submitting the confirmed deletion deletes the user and every row owned by the user (stars, read-tracking, pending discoveries) via foreign-key cascade. The shared article pool is unaffected — articles are global, not per-user. The account-deletion endpoint accepts both a JSON API path (used by scripted clients and smoke tests) and a native HTML form submission (used by the settings page) so deletion succeeds on every browser the app supports, including mobile in-app webviews that do not reliably dispatch fetch-based `DELETE` requests.
-3. Both session cookies (access and refresh) are cleared and the user is redirected to the landing page with a one-time confirmation banner.
-4. KV entries keyed by the user's id (if any) are deleted in the same handler.
+
+1. The settings surface offers a "Delete account" control with a confirmation dialog that requires the user to type an explicit confirmation string.
+2. Confirmed deletion removes the user and every row owned by the user (stars, read-tracking, pending discoveries) via foreign-key cascade. The shared article pool is unaffected.
+3. The deletion endpoint accepts both a JSON API path (used by scripted clients) and a native HTML form submission (used by the settings page), so deletion succeeds even on mobile in-app webviews that do not reliably dispatch fetch-based `DELETE`.
+4. Both session cookies are cleared and the user is redirected to the landing page with a one-time confirmation banner.
+5. Any KV entries keyed by the user's id are deleted in the same handler.
 
 **Constraints:** CON-AUTH-001
 **Priority:** P1
 **Dependencies:** REQ-AUTH-001
 **Verification:** Integration test
 **Status:** Implemented
+
+---
+
+### REQ-AUTH-006: Admin surface gating
+
+**Intent:** Operator endpoints under `/api/admin/*` are reachable only by the configured operator, even when an attacker controls a same-browser context with a live non-operator session, and the most destructive mode is reachable only via an explicit operator action.
+
+**Applies To:** Admin
+
+**Acceptance Criteria:**
+
+1. A request to any admin endpoint with no live session, or with a session belonging to a non-operator user, is rejected before any side effect. Deployments configured with an external perimeter layer additionally require that perimeter's assertion before the application gate runs.
+2. The destructive pipeline mode that wipes and re-embeds the entire corpus is reachable only via an explicit `POST`. The same parameter via `GET` is rejected, so cross-origin GET vectors (image tags, bookmarks, link previews) can never trigger a corpus-wide re-embed. Idempotent modes remain reachable via either method.
+3. Admin `GET` endpoints reject requests originating from a cross-site context while continuing to accept top-level navigation (operator bookmarks, post-SSO callback redirects). This closes the residual same-browser-CSRF gap that [REQ-AUTH-003](#req-auth-003-csrf-defense-for-state-changing-endpoints) AC 2's blanket GET exemption leaves open for idempotent admin actions.
+
+**Notes:** Layered-defense mechanism is documented in [`documentation/security.md`](../documentation/security.md#admin-gate-and-jwt-exp-validation-req-auth-001-ac-8-ac-8a--ad44).
+
+**Constraints:** CON-AUTH-001, CON-SEC-001
+**Priority:** P0
+**Dependencies:** REQ-AUTH-001, REQ-AUTH-003
+**Verification:** Integration test
+**Status:** Partial
 
 ---
 
@@ -131,10 +145,11 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. The first time a user signs in via any provider, a new account is created and the (provider, provider identifier) pair is recorded so subsequent sign-ins via the same provider land in the same account.
-2. When a sign-in arrives via a provider not yet linked to any account but with a verified email that matches an existing account, the new (provider, identifier) pair is linked to that existing account instead of creating a duplicate row. The user signs in to the same account regardless of which provider they pick.
-3. The daily digest is sent once per real person — duplicate-email accounts that pre-date this requirement are merged in a single one-time pass; their stars, read marks, and pending discoveries re-point to the surviving account so no user-visible state is lost.
-4. Removing one sign-in path (revoking access at the OAuth provider) does not delete the account or other linked sign-in paths — the account remains reachable via the other provider.
+
+1. The first sign-in via any provider creates an account and records the (provider, provider-id) pair so subsequent sign-ins via the same provider land in the same account.
+2. A sign-in via a provider not yet linked to any account, but with a verified email matching an existing account, links the new (provider, provider-id) pair to that account instead of creating a duplicate row.
+3. The daily digest is sent once per real person. Duplicate-email accounts that pre-date this requirement are merged in a one-time pass; their stars, read marks, and pending discoveries re-point to the surviving account so no user-visible state is lost.
+4. Removing one sign-in path at the OAuth provider does not delete the account or other linked sign-in paths — the account remains reachable via the other provider.
 
 **Constraints:** CON-AUTH-001
 **Priority:** P1
@@ -146,22 +161,43 @@ Federated sign-in via GitHub or Google — no passwords, no email verification f
 
 ### REQ-AUTH-008: Refresh-token rotation, device binding, reuse detection
 
-**Intent:** The 30-day refresh cookie is a high-value secret — anyone holding it can mint access tokens for the user. Bind it to the device that signed in, rotate it on every refresh so a stolen value is single-use, and detect reuse so a stolen-then-rotated token surfaces as theft rather than continuing to work alongside the legitimate session.
+**Intent:** The long-lived refresh cookie is a high-value secret — anyone holding it can mint access tokens for the user. Rotate it on every refresh so a stolen value is single-use, detect reuse so a stolen-then-rotated token surfaces as theft rather than continuing to work alongside the legitimate session, and tolerate concurrent-rotation races so legitimate parallel clients are not falsely flagged.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. **Device fingerprint capture and policy:**
-   a. Every refresh-token row records a User-Agent + country fingerprint at issuance as forensic metadata.
-   b. On the steady-state refresh path, a different fingerprint is logged but does not block the refresh — single-use rotation (AC 2), reuse detection (AC 4), and the 30-day absolute expiry are the binding mechanisms that protect the session.
-   c. On the 30-second concurrent-rotation grace branch (AC 4) the fingerprint check IS enforced: a mismatch inside the grace window is treated as theft and triggers a full session revoke.
-2. Every successful refresh **rotates** the refresh-token row: the existing row is marked revoked with the current timestamp, a new row is inserted with `parent_id` linking back to the old row, and a new opaque cookie value is issued. The old cookie value is single-use — presenting it a second time is treated as reuse per AC 4. The persisted row is identified by an internal random row identifier that is independent of the cookie secret, so a leaked database dump cannot be replayed against the live system.
-3. Logout revokes only the active refresh-token row, not every refresh-token row for the user. Logging out on one device does not sign the user out of other devices they are intentionally still using.
-4. **Reuse detection with concurrent-rotation tolerance** — if a refresh cookie whose row already has `revoked_at` set is presented, the system applies a short grace window (30 seconds from revocation) before deciding the request is theft. Within the grace window, the presentation is treated as a benign concurrent-rotation collision (two parallel requests from the same client both raced to refresh, the loser is replaying the cookie that was rotated under it); a fresh access JWT is served off the surviving rotated row without rotating again, and the client's stale cookie is good for the rest of the window. Outside the grace window, the system cannot distinguish "rightful owner replaying an old cookie" from "attacker using a stolen-then-rotated cookie" and treats it as theft: every refresh-token row for the affected user is revoked AND `users.session_version` is incremented (which kills every in-flight access JWT), forcing the user through OAuth on every device.
-5. Expired and old-revoked refresh-token rows are pruned by the daily retention sweep. Revoked rows are kept for at least 7 days after revocation so the reuse-detection branch above can see the `revoked_at` timestamp before the row is deleted.
+
+1. Every successful refresh rotates the refresh-token row: the existing row is revoked, a new row is issued, and the old cookie value is single-use. The persisted row identifier is independent of the cookie secret, so a leaked database dump cannot be replayed against the live system.
+2. Logout revokes only the active refresh-token row, not every row for the user. Logging out on one device does not sign the user out of other devices.
+3. Presenting an already-revoked refresh cookie within a brief concurrent-rotation grace window is treated as a benign race: a fresh access token is served off the surviving rotated row without rotating again, and the client's stale cookie remains valid for the rest of the window.
+4. Presenting an already-revoked refresh cookie outside the grace window is treated as theft: every refresh-token row for the user is revoked and the per-user session-version is incremented, forcing the user through OAuth on every device.
+5. Each refresh-token row records the User-Agent and country at issuance as forensic metadata. The steady-state refresh path logs but does not block on a fingerprint change. A fingerprint mismatch within the grace window IS enforced, because the only legitimate cause of a grace-window replay is the same client racing itself.
+6. Expired and old-revoked rows are pruned by the daily retention sweep, with a retention floor long enough for the reuse-detection branch to still see `revoked_at` on a stolen-then-rotated cookie.
+
+**Notes:** Grace-window length, retention floor, and the parent-link pointer are documented in [`documentation/security.md`](../documentation/security.md#auth-cookie-policy-req-auth-002--req-auth-008).
 
 **Constraints:** CON-AUTH-001, CON-SEC-001
 **Priority:** P0
 **Dependencies:** REQ-AUTH-002
 **Verification:** Automated test
 **Status:** Implemented
+
+---
+
+### REQ-AUTH-010: Dev-bypass production guard
+
+**Intent:** The test-only authentication path used by integration deployments is unreachable from production, even if a dev-bypass secret is accidentally promoted via a shared config, a typo, or environment-variable inheritance.
+
+**Applies To:** Operator
+
+**Acceptance Criteria:**
+
+1. Every route under `/api/dev/*` returns `404` on any deployment identified as production, regardless of token or session state. The check fail-closes: a missing or unrecognised production flag is treated as production, so an unset variable cannot accidentally enable the surface.
+
+**Notes:** `IS_PRODUCTION` semantics and the integration runbook are documented in [`documentation/security.md`](../documentation/security.md#dev-bypass-prod-guard-req-auth-001-ac-10) and [`documentation/deployment.md`](../documentation/deployment.md).
+
+**Constraints:** CON-SEC-001
+**Priority:** P0
+**Dependencies:** REQ-AUTH-001
+**Verification:** Integration test
+**Status:** Partial
