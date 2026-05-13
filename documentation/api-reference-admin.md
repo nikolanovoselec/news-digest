@@ -1,10 +1,25 @@
 # Admin / Operator API Reference
 
-Operator-facing administrative endpoints. Every route below requires the three-layer admin gate. The conventions block centralises behaviours that recur across endpoints; per-endpoint sections name only what differs.
+Operator-facing administrative endpoints. Every route below sits behind the three-layer admin gate. The conventions block at the top centralises behaviours that recur across endpoints; per-endpoint sections name only what differs.
 
 **Audience:** Operators and developers driving the production pipeline.
 
 Extracted from [api-reference.md](api-reference.md) so the main reference stays under its line budget while the admin surface keeps room to breathe.
+
+## Contents
+
+- [Conventions](#conventions)
+- [POST /api/admin/force-refresh](#post-apiadminforce-refresh)
+- [GET /api/admin/force-refresh](#get-apiadminforce-refresh)
+- [POST /api/admin/embed-backfill](#post-apiadminembed-backfill)
+- [GET /api/admin/embed-backfill](#get-apiadminembed-backfill)
+- [POST /api/admin/historical-dedup](#post-apiadminhistorical-dedup)
+- [GET /api/admin/dedup-status](#get-apiadmindedup-status)
+- [POST /api/admin/pipeline-run](#post-apiadminpipeline-run)
+- [GET /api/admin/pipeline-run](#get-apiadminpipeline-run)
+- [GET /api/admin/pipeline-status](#get-apiadminpipeline-status)
+- [GET /api/admin/dedup-diag](#get-apiadmindedup-diag)
+- [Related Documentation](#related-documentation)
 
 ---
 
@@ -24,7 +39,7 @@ Failure at any layer returns the layer's native deny response (Access challenge,
 
 Browser `POST` calls require an `Origin` header matching `APP_URL`. Scripted callers that present `Authorization: Bearer <DEV_BYPASS_TOKEN>` bypass the Origin check on `POST`, because Bearer requests carry no session cookie and are not a CSRF surface.
 
-### `Sec-Fetch-Site` guard on admin `GET` callbacks
+### Sec-Fetch-Site guard on admin GET callbacks
 
 Admin `GET` endpoints used as post-SSO callback targets (AD38) enforce a `Sec-Fetch-Site` guard rather than an Origin check. `same-origin` and `none` (top-level navigation, including the post-SSO redirect chain) are allowed; `cross-site` and `cross-origin` receive `403 "Cross-site request denied"`. `curl` and scripted callers send no `Sec-Fetch-Site` header and are unaffected.
 
@@ -39,26 +54,11 @@ All error responses are JSON with shape `{ ok: false, error: <slug> }` unless ex
 
 ---
 
-## Contents
-
-- [Conventions](#conventions)
-- [POST /api/admin/force-refresh](#post-apiadminforce-refresh)
-- [GET /api/admin/force-refresh](#get-apiadminforce-refresh)
-- [POST /api/admin/embed-backfill](#post-apiadminembed-backfill)
-- [GET /api/admin/embed-backfill](#get-apiadminembed-backfill)
-- [POST /api/admin/historical-dedup](#post-apiadminhistorical-dedup)
-- [GET /api/admin/dedup-status](#get-apiadmindedup-status)
-- [POST /api/admin/pipeline-run](#post-apiadminpipeline-run)
-- [GET /api/admin/pipeline-run](#get-apiadminpipeline-run)
-- [GET /api/admin/pipeline-status](#get-apiadminpipeline-status)
-- [GET /api/admin/dedup-diag](#get-apiadmindedup-diag)
-- [Related Documentation](#related-documentation)
-
----
+## Endpoints
 
 ### POST /api/admin/force-refresh
 
-Kick the global-feed coordinator on demand — identical to the every-4-hours cron. Used by the **Refresh feeds** form submission on `/settings`.
+Kick the global-feed coordinator on demand: identical work to the every-4-hours cron. Used by the **Refresh feeds** form submission on `/settings`.
 
 ```
 POST /api/admin/force-refresh
@@ -66,14 +66,19 @@ POST /api/admin/force-refresh
 
 **Authentication:** session + admin email
 **Origin check:** applies
+**Rate limit:** per-operator hourly bucket `admin_force_refresh`; exhausted returns `429` with `Retry-After`.
 
-**Request:** none
+**Request:** none.
 
-**Response:** `303` redirect to `/settings?force_refresh={ok|reused}` on success.
+**Response**
 
-**Rate limit:** per-operator hourly bucket (`admin_force_refresh`); exhausted returns `429` with `Retry-After`.
-
-**Error responses:** `401 unauthorized` | `403 forbidden` | `429 rate_limit_exceeded` | `500 "Failed to dispatch coordinator"`.
+| Status | Outcome | Body |
+|---|---|---|
+| `303` | Success | Redirect to `/settings?force_refresh={ok\|reused}` |
+| `401` | No session | `{ error, code: "unauthorized" }` |
+| `403` | Origin mismatch or not admin | `{ error, code: "forbidden" }` or `{ error, code: "forbidden_origin" }` |
+| `429` | Rate limited | `{ error, code: "rate_limit_exceeded" }` |
+| `500` | Dispatch failed | `{ error: "Failed to dispatch coordinator" }` |
 
 **Implements:** [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) (phase 1), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9g
 
@@ -93,19 +98,21 @@ GET /api/admin/force-refresh
 
 **Authentication:** session + admin email
 **Origin check:** n/a (read-only GET; see [Sec-Fetch-Site guard](#sec-fetch-site-guard-on-admin-get-callbacks))
+**Rate limit:** per-operator hourly bucket `admin_force_refresh`; exhausted returns `429` with `Retry-After`.
 
-**Request:** none
+**Request:** none.
 
 **Response**
 
-| Caller | Success status | Body |
+| Status | Outcome | Body |
 |---|---|---|
-| Browser direct | `303` | redirect to `/settings?force_refresh={ok|reused|denied}` |
-| Scripted (`Accept: application/json`) | `200` | `{ ok: true, scrape_run_id, reused }` |
-
-**Rate limit:** per-operator hourly bucket (`admin_force_refresh`); exhausted returns `429` with `Retry-After`.
-
-**Error responses:** `401 unauthorized` | `403 forbidden` | `403 "Cross-site request denied"` (cross-site initiator per the Sec-Fetch-Site guard) | `429 rate_limit_exceeded` | `500 "Failed to dispatch coordinator"`.
+| `200` | Scripted caller (`Accept: application/json`) | `{ ok: true, scrape_run_id, reused }` |
+| `303` | Browser direct | Redirect to `/settings?force_refresh={ok\|reused\|denied}` |
+| `401` | No session | `{ error, code: "unauthorized" }` |
+| `403` | Not admin | `{ error, code: "forbidden" }` |
+| `403` | Cross-site initiator | `{ error: "Cross-site request denied" }` |
+| `429` | Rate limited | `{ error, code: "rate_limit_exceeded" }` |
+| `500` | Dispatch failed | `{ error: "Failed to dispatch coordinator" }` |
 
 **Implements:** [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) (phase 1), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9g
 
@@ -113,7 +120,7 @@ GET /api/admin/force-refresh
 
 ### POST /api/admin/embed-backfill
 
-Resumable embedding backfill, with optional full-corpus re-embed via `?reembed=1`.
+Resumable embedding backfill with optional full-corpus re-embed via `?reembed=1`.
 
 ```
 POST /api/admin/embed-backfill
@@ -122,17 +129,22 @@ POST /api/admin/embed-backfill
 **Authentication:** session + admin email
 **Origin check:** applies (see [Bearer / Origin bypass](#bearer--origin-bypass) for the scripted-curl exception)
 
-**Query parameters:**
+**Query parameters**
 
 | Parameter | Required | Description |
 |---|---|---|
 | `reembed=1` | No | Flips every row to `embedding_status='failed'` before the loop runs so the entire corpus re-embeds against the current `buildEmbeddingInput` definition. `POST` only. |
 
-**Request:** empty body
+**Request:** empty body.
 
-**Response:** `200 { ok: true, processed: N, failed: M, remaining: K, done: boolean }`. `done` is `true` when `remaining` is 0 after the call.
+**Response**
 
-**Error responses:** `401 unauthorized` | `403 forbidden` | `403 forbidden_origin` (cross-origin browser POST without Bearer) | `500 "Backfill failed"`.
+| Status | Outcome | Body |
+|---|---|---|
+| `200` | One batch processed | `{ ok: true, processed: N, failed: M, remaining: K, done: boolean }` |
+| `401` | No session | `{ error, code: "unauthorized" }` |
+| `403` | Not admin or cross-origin browser POST without Bearer | `{ error, code: "forbidden" }` or `{ error, code: "forbidden_origin" }` |
+| `500` | Backfill threw | `{ error: "Backfill failed" }` |
 
 **Implements:** [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 5 (for `?reembed=1`), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) (phases 0 and 3)
 
@@ -153,11 +165,17 @@ GET /api/admin/embed-backfill
 **Authentication:** session + admin email
 **Origin check:** n/a (read-only GET)
 
-**Request:** none. `GET` with `?reembed=1` is rejected.
+**Request:** none. `?reembed=1` is rejected.
 
-**Response:** `200 { ok: true, processed: N, failed: M, remaining: K, done: boolean }`.
+**Response**
 
-**Error responses:** `401 unauthorized` | `403 forbidden` | `405 "reembed requires POST"` (when `?reembed=1` is passed) | `500 "Backfill failed"`.
+| Status | Outcome | Body |
+|---|---|---|
+| `200` | One batch processed | `{ ok: true, processed: N, failed: M, remaining: K, done: boolean }` |
+| `401` | No session | `{ error, code: "unauthorized" }` |
+| `403` | Not admin | `{ error, code: "forbidden" }` |
+| `405` | `?reembed=1` on GET | `{ error: "reembed requires POST" }` |
+| `500` | Backfill threw | `{ error: "Backfill failed" }` |
 
 **Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) (phases 0 and 3)
 
@@ -174,24 +192,26 @@ POST /api/admin/historical-dedup
 **Authentication:** session + admin email
 **Origin check:** applies (see [Bearer / Origin bypass](#bearer--origin-bypass) for the scripted-curl exception)
 
-**Request body (JSON, optional):**
+**Request body (JSON, optional)**
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `cursor` | `{ pa: number, id: string }` | none | Composite cursor for the synchronous batch path: `pa` is a `published_at` Unix-second lower bound, `id` is the ULID lower bound for equal-time tie-breaking. |
-| `batch` | number | 25 (cap 500) | Batch size for the synchronous path. |
+| `batch` | number | `25` (cap `500`) | Batch size for the synchronous path. |
 
 Sending no body invokes the kicker path; sending any of the fields above invokes the synchronous batch path.
 
 **Response**
 
-| Path | Status | Body |
+| Status | Outcome | Body |
 |---|---|---|
-| Kicker (empty body) | `202` | `{ ok: true, run_id: string, enqueued: true, started_at: number }` |
-| Synchronous batch | `200` | `{ ok: true, scanned: N, merged: M, remaining: K, next_cursor: { pa, id } \| null, done: boolean, elapsed_ms: T }` |
-| Browser without `Accept: application/json` | `303` | redirect to `/settings?dedup=...` |
-
-**Error responses:** `401 unauthorized` | `403 forbidden` | `403 forbidden_origin` (cross-origin browser POST without Bearer) | `500 historical_dedup_kick_failed` | `500 historical_dedup_failed` (sync path only).
+| `202` | Kicker accepted (empty body) | `{ ok: true, run_id: string, enqueued: true, started_at: number }` |
+| `200` | Synchronous batch complete | `{ ok: true, scanned: N, merged: M, remaining: K, next_cursor: { pa, id } \| null, done: boolean, elapsed_ms: T }` |
+| `303` | Browser without `Accept: application/json` | Redirect to `/settings?dedup=...` |
+| `401` | No session | `{ error, code: "unauthorized" }` |
+| `403` | Not admin or cross-origin browser POST without Bearer | `{ error, code: "forbidden" }` or `{ error, code: "forbidden_origin" }` |
+| `500` | Kicker insert failed | `{ error: "historical_dedup_kick_failed" }` |
+| `500` | Sync batch threw | `{ error: "historical_dedup_failed" }` |
 
 **Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) AC 3, [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1 + AC 4, [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) (phase 4)
 
@@ -214,15 +234,23 @@ GET /api/admin/dedup-status
 **Authentication:** session + admin email
 **Origin check:** n/a (read-only GET)
 
-**Query parameters:**
+**Query parameters**
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `run_id` | string | Yes | ULID returned by the kicker call to `POST /api/admin/historical-dedup`. |
 
-**Response:** `200 { ok: true, run_id: string, status: 'running'|'done'|'failed', scanned: N, merged: M, batch_count: B, remaining: K, last_cursor: { pa, id } | null, done: boolean, failed: boolean, error: string | null, started_at: number, updated_at: number }`.
+**Response**
 
-**Error responses:** `400 missing_run_id` | `401 unauthorized` | `403 forbidden` | `404 run_not_found` | `500 dedup_status_select_failed` | `500 invalid_stored_status`.
+| Status | Outcome | Body |
+|---|---|---|
+| `200` | Snapshot returned | `{ ok: true, run_id, status: 'running'\|'done'\|'failed', scanned, merged, batch_count, remaining, last_cursor: { pa, id } \| null, done, failed, error: string \| null, started_at, updated_at }` |
+| `400` | Missing `run_id` | `{ error: "missing_run_id" }` |
+| `401` | No session | `{ error, code: "unauthorized" }` |
+| `403` | Not admin | `{ error, code: "forbidden" }` |
+| `404` | Run not found | `{ error: "run_not_found" }` |
+| `500` | Select failed | `{ error: "dedup_status_select_failed" }` |
+| `500` | Stored status invalid | `{ error: "invalid_stored_status" }` |
 
 **Implements:** [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1 + AC 2, [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface)
 
@@ -242,18 +270,24 @@ POST /api/admin/pipeline-run
 
 **Authentication:** session + admin email
 **Origin check:** applies
+**Rate limit:** per-operator hourly bucket `admin_pipeline_run`; exhausted returns `429` with `Retry-After`.
 
-**Request body (JSON, optional):**
+**Request body (JSON, optional)**
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `mode` | `"full"` \| `"wipe"` | `"full"` | `"wipe"` invalidates every article's embedding before scraping; `"full"` keeps existing embeddings and starts at the scrape phase. |
 
-**Response:** `202 { ok: true, pipeline_run_id: string, mode: 'full'|'wipe', current_phase: string, started_at: number }`.
+**Response**
 
-**Rate limit:** per-operator hourly bucket (`admin_pipeline_run`); exhausted returns `429` with `Retry-After`.
-
-**Error responses:** `401 unauthorized` | `403 forbidden_origin` (cross-origin browser POST) | `405 Method Not Allowed` (`mode=wipe` via the GET variant) | `429 rate_limit_exceeded` | `500 pipeline_kick_failed`.
+| Status | Outcome | Body |
+|---|---|---|
+| `202` | Run accepted | `{ ok: true, pipeline_run_id: string, mode: 'full'\|'wipe', current_phase: string, started_at: number }` |
+| `401` | No session | `{ error, code: "unauthorized" }` |
+| `403` | Cross-origin browser POST | `{ error, code: "forbidden_origin" }` |
+| `405` | `mode=wipe` via GET | body `Use POST for mode=wipe`, header `Allow: POST` |
+| `429` | Rate limited | `{ error, code: "rate_limit_exceeded" }` |
+| `500` | Kick failed | `{ error: "pipeline_kick_failed" }` |
 
 **Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9g
 
@@ -274,21 +308,20 @@ GET /api/admin/pipeline-run
 **Authentication:** session + admin email
 **Origin check:** n/a (top-level navigation per AD38)
 
-**Query parameters:**
+**Query parameters**
 
 | Parameter | Values | Default | Description |
 |---|---|---|---|
-| `mode` | `full` \| `wipe` | `full` | `wipe` invalidates all embeddings before scraping; `full` keeps them. `wipe` via GET is rejected with `405 Method Not Allowed` to block cross-origin GET vectors from triggering a corpus-wide re-embed. |
+| `mode` | `full` \| `wipe` | `full` | `wipe` invalidates all embeddings before scraping; `full` keeps them. `wipe` via GET is rejected with `405` to block cross-origin GET vectors from triggering a corpus-wide re-embed. |
 
 **Response**
 
-| Outcome | Status | Body |
+| Status | Outcome | Body |
 |---|---|---|
-| Success | `303` | redirect to `/settings?pipeline=enqueued&pipeline_run_id=<ULID>&mode=<mode>` |
-| Auth failure | `303` | redirect to `/settings?pipeline=denied` |
-| `wipe` via `GET` | `405` | body `Use POST for mode=wipe`, header `Allow: POST` |
-
-**Error responses:** `303 /settings?pipeline=denied` (auth failure) | `405 Method Not Allowed` (`mode=wipe` via GET) | `500` (configuration error).
+| `303` | Success | Redirect to `/settings?pipeline=enqueued&pipeline_run_id=<ULID>&mode=<mode>` |
+| `303` | Auth failure | Redirect to `/settings?pipeline=denied` |
+| `405` | `mode=wipe` via GET | body `Use POST for mode=wipe`, header `Allow: POST` |
+| `500` | Configuration error | plain text |
 
 **Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8d
 
@@ -309,15 +342,22 @@ GET /api/admin/pipeline-status
 **Authentication:** session + admin email
 **Origin check:** n/a (read-only GET)
 
-**Query parameters:**
+**Query parameters**
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | No | ULID of the pipeline run. When omitted, the most recent row is returned (so reopening `/settings` after closing the tab restores progress). |
 
-**Response:** `200 { ok: true, pipeline_run_id: string, status: 'running'|'done'|'failed', mode: 'full'|'wipe', current_phase: string, embed_processed: number, embed_remaining: number, error: string | null, started_at: number, updated_at: number, scrape: { id, status, articles_ingested, articles_deduped, finalize_recorded, started_at, finished_at } | null, dedup: { id, status, scanned, merged, remaining, started_at, updated_at } | null, done: boolean, failed: boolean }`.
+**Response**
 
-**Error responses:** `401 unauthorized` | `403 forbidden` | `404 run_not_found` | `500 pipeline_status_select_failed` | `500 invalid_stored_status` | `500 invalid_stored_mode`.
+| Status | Outcome | Body |
+|---|---|---|
+| `200` | Snapshot returned | `{ ok: true, pipeline_run_id, status: 'running'\|'done'\|'failed', mode: 'full'\|'wipe', current_phase, embed_processed, embed_remaining, error: string \| null, started_at, updated_at, scrape: { id, status, articles_ingested, articles_deduped, finalize_recorded, started_at, finished_at } \| null, dedup: { id, status, scanned, merged, remaining, started_at, updated_at } \| null, done, failed }` |
+| `401` | No session | `{ error, code: "unauthorized" }` |
+| `403` | Not admin | `{ error, code: "forbidden" }` |
+| `404` | Run not found | `{ error: "run_not_found" }` |
+| `500` | Select failed | `{ error: "pipeline_status_select_failed" }` |
+| `500` | Stored status or mode invalid | `{ error: "invalid_stored_status" }` or `{ error: "invalid_stored_mode" }` |
 
 **Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface)
 
@@ -338,16 +378,29 @@ GET /api/admin/dedup-diag
 **Authentication:** session + admin email
 **Origin check:** n/a (read-only GET)
 
-**Query parameters:**
+**Query parameters**
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `a` | string | Yes | Article ID of the first article. |
 | `b` | string | Yes | Article ID of the second article. Must differ from `a`. |
 
-**Response (200):**
+**Response**
 
-<!-- doc-allow-element: AD46 dedup-diag response shape — full JSON is the contract -->
+| Status | Outcome | Body |
+|---|---|---|
+| `200` | Diagnostic returned | See full JSON shape below. |
+| `400` | Missing or empty `a` or `b` param | `{ error: "missing_a_or_b" }` |
+| `400` | Identical IDs | `{ error: "identical_ids" }` |
+| `401` | No session | `{ error: "unauthorized" }` |
+| `403` | Not admin | plain text `Forbidden` |
+| `404` | Article not found in D1 | `{ error: "article_not_found" }` |
+| `404` | Vector not found in Vectorize | `{ error: "vector_not_found" }` |
+| `500` | Vectorize lookup threw | `{ error: "vectorize_lookup_failed" }` |
+
+**200 response body shape:**
+
+<!-- doc-allow-element: AD46 dedup-diag response shape, full JSON is the contract -->
 ```json
 {
   "ok": true,
@@ -368,18 +421,6 @@ GET /api/admin/dedup-diag
   "above_threshold": false
 }
 ```
-
-**Error responses:**
-
-| Outcome | Status | `error` field |
-|---|---|---|
-| Missing or empty `a` or `b` param | `400` | `missing_a_or_b` |
-| `a` and `b` are the same ID | `400` | `identical_ids` |
-| Either article not found in D1 | `404` | `article_not_found` |
-| Either vector not found in Vectorize | `404` | `vector_not_found` |
-| Vectorize lookup threw | `500` | `vectorize_lookup_failed` |
-| No valid session | `401` | `unauthorized` |
-| Valid session but not admin email | `403` | (plain text `Forbidden`) |
 
 **Implements:** [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 4
 
