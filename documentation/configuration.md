@@ -71,7 +71,7 @@ The deploy job reads these secrets from GitHub Actions. The first two are Cloudf
 
 ### Setting `CF_ACCESS_AUD` (production, when binding Cloudflare Access)
 
-`CF_ACCESS_AUD` is optional. Per AD29, Cloudflare Access is opt-in additive perimeter: when this var is unset, admin is gated by signed-in session + `ADMIN_EMAIL` alone — appropriate for forks and integration deploys where binding Access in front of the worker is overkill.
+`CF_ACCESS_AUD` is optional. Per AD29, Cloudflare Access is opt-in additive perimeter: when this var is unset, admin is gated by signed-in session + `ADMIN_EMAIL` alone — used by forks and integration deploys, which do not need a perimeter check beyond the session + `ADMIN_EMAIL` gate.
 
 For production deploys that DO bind Access, set this var and follow AD30 — bind Access on every public hostname the worker serves OR disable the unbound hostnames:
 1. **Set `CF_ACCESS_AUD`** — the audience tag of the Access application fronting the custom domain. The Worker enforces Layer 0 (assertion presence + `aud` claim match) before the baseline session + `ADMIN_EMAIL` checks run.
@@ -79,7 +79,7 @@ For production deploys that DO bind Access, set this var and follow AD30 — bin
 
 The deploy job also runs `wrangler secret delete DEV_BYPASS_USER_ID` (idempotent, silenced on not-found) on each deploy so any stray value cannot defeat the synthetic `__e2e__` sandbox. The workflow does not propagate this secret; operators who need it must set it manually via `wrangler secret put`.
 
-CI pushes Worker secrets using the file-redirect form (safer than piping under some CI environments).
+CI pushes Worker secrets using the file-redirect form because `printf '%s' "$SECRET" | wrangler secret put` stores empty values when `$SECRET` is unset or expands to an empty string under GitHub Actions runners.
 
 ## Platform Bindings
 
@@ -116,9 +116,9 @@ Declared in `wrangler.toml` under `[vars]`. Forks may override per-environment v
 
 The 0.88 default is the post-2026-05-08 calibration ([AD39](decisions/README.md#ad39-raise-dedup-auto-merge-threshold-to-088-and-gate-merges-to-a-72h-news-cycle-window)). The prior 0.78 missed the dense-theme failure mode: independent articles on a broad topic routinely cosine-match in the 0.78-0.86 band on topical overlap alone, producing a 13-source false-merge cluster spanning 9 days. 0.88 pushes auto-merge above that band; the 0.70-0.88 stripe goes to LLM rerank.
 
-The 7d time window (bumped 2026-05-11 from 72h) covers valuation-week and long-weekend reverberation clusters while keeping the auto-sweep Vectorize cost bounded; it also governs the auto-sweep lookback cursor so the cursor scope and the per-pair gate always match. The 0.92 high-confidence bar above the threshold catches near-duplicate-headline pairs (wire syndication) deterministically without re-litigating the threshold calibration.
+The 7d time window (bumped 2026-05-11 from 72h) covers valuation-week and long-weekend reverberation clusters while keeping the auto-sweep Vectorize cost bounded; it also governs the auto-sweep lookback cursor so the cursor scope and the per-pair gate always match. The 0.92 high-confidence bar above the threshold catches near-duplicate-headline pairs (wire syndication) deterministically without re-litigating the threshold calibration; 0.92 was picked because wire-syndication near-duplicates dominate the band at or above that cosine, while the 0.88-0.92 stripe still benefits from the LLM rerank pass for borderline cases.
 
-Re-validate all three constants if the embedding model or corpus changes substantially. To tune the rerank band, adjust `DEDUP_RERANK_FLOOR`; setting it equal to `DEDUP_COSINE_THRESHOLD` disables rerank without removing the code path.
+These three constants are calibrated against the bge-base-en-v1.5 cosine distribution on the current corpus. Re-validate them via `src/pages/api/admin/dedup-diag.ts` if the embedding model is swapped or the corpus grows by a factor of 10 or more — either shifts the cosine band and the calibration sweep has to re-run. To tune the rerank band, adjust `DEDUP_RERANK_FLOOR`; setting it equal to `DEDUP_COSINE_THRESHOLD` disables rerank without removing the code path.
 
 ## Cron
 
@@ -165,7 +165,7 @@ The `KV` namespace uses a structured key scheme. All keys are shared across all 
 | `admin_force_refresh` | Per-operator hourly bucket | User | Fail open (surfaced as 429 with Retry-After) |
 | `admin_pipeline_run` | Per-operator hourly bucket | User | Fail open (surfaced as 429 with Retry-After) |
 
-The `auth_refresh_*` buckets are shared between `POST /api/auth/refresh` and the inline middleware refresh path so an attacker cannot pivot to authenticated GET routes to bypass the explicit endpoint's limit.
+The `auth_refresh_*` buckets are shared between `POST /api/auth/refresh` (`src/pages/api/auth/refresh.ts`) and the inline middleware refresh path (`src/middleware/auth.ts`) so an attacker cannot pivot to authenticated GET routes to bypass the explicit endpoint's limit ([REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-and-per-device-logout)).
 
 `set_tz` and `discovery_status` cover authenticated endpoints that legitimate clients poll on a sub-minute cadence. They key by user id and fail open so a KV outage does not degrade the settings UX.
 
@@ -173,7 +173,7 @@ The fail-mode split exists because sign-in must remain reachable during a KV out
 
 ## Compatibility
 
-`compatibility_date = "2026-04-01"` with `compatibility_flags = ["nodejs_compat"]`. The `nodejs_compat` flag is required because some transitive dependencies use Node.js built-ins. The Worker runtime is otherwise web-standard.
+`compatibility_date = "2026-04-01"` with `compatibility_flags = ["nodejs_compat"]`. The `nodejs_compat` flag is required because the OG-image render path (`@resvg/resvg-js`) and the Resend SDK import Node built-ins (`node:buffer`, `node:stream`) at module load. The Worker runtime is otherwise web-standard.
 
 ## Observability
 

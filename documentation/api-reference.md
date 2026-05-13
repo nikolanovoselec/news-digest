@@ -33,7 +33,7 @@ The conventions below apply to every endpoint in this document. They are stated 
   - `session + admin email` — session cookie plus `ADMIN_EMAIL` match required.
   - `dev-bypass token` — Bearer `DEV_BYPASS_TOKEN` required.
 - **Origin check.** The `Origin check` field uses `applies` (Origin header must match `APP_URL`, mismatch returns `403 forbidden_origin`), `exempt` (intentionally not checked, justified per endpoint), or `n/a` (non-mutating GET). See [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints).
-- **Rate limit.** When present, the `Rate limit` field gives `{count}/{window} per {scope}` and a fail mode (`fail-open` or `fail-closed`). Exhausted buckets return `429` with a `Retry-After` header. See [REQ-AUTH-001 AC 9](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) and [`security.md`](security.md#rate-limiting-req-auth-001-ac-9) for the full matrix.
+- **Rate limit.** The `Rate limit` field appears on every endpoint that enforces a limit. It gives `{count}/{window} per {scope}` and a fail mode (`fail-open` or `fail-closed`). Exhausted buckets return `429` with a `Retry-After` header. See [REQ-AUTH-001 AC 9](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) and [`security.md`](security.md#rate-limiting-req-auth-001-ac-9) for the full matrix.
 - **Implements.** Every endpoint cites the REQ that owns its contract.
 - **Curl pattern.** For any `session`-auth endpoint, copy the cookie value from browser DevTools (Application > Cookies > `__Host-session`) and pass it verbatim. Example against `GET /api/digest/today`:
 
@@ -42,7 +42,7 @@ curl -s https://news.graymatter.ch/api/digest/today \
   -H "Cookie: __Host-session=<paste-cookie-value>" | jq '.articles[0]'
 ```
 
-  The response is a JSON object. A `401` with `"code":"unauthorized"` means the cookie is absent, expired, or belongs to a different environment. Session-auth endpoints in this document share this exact invocation shape — only the path changes.
+  The response is a JSON object. A `401` with `"code":"unauthorized"` means the cookie is absent, expired, or was issued by a different deployment (prod cookie sent to integration, or vice versa). Session-auth endpoints in this document share this exact invocation shape — only the path changes.
 
 ---
 
@@ -116,7 +116,7 @@ GET /500
 
 ### POST /api/auth/{provider}/login (Start OAuth flow)
 
-Initiates the OAuth 2.0 / OIDC authorization-code flow. Sets a 10-minute `state` cookie and redirects to the provider's authorize URL. `{provider}` must match the configured registry (`github`, `google`); unknown names return `404`. Both `POST` (preferred, blocks prefetch races) and `GET` (browser fallback) are accepted.
+Initiates the OAuth 2.0 / OIDC authorization-code flow. Sets a 10-minute `state` cookie and redirects to the provider's authorize URL. `{provider}` must match the configured registry (`github`, `google`); unknown names return `404`. Both `POST` (preferred — blocks browser link-prefetch races that would otherwise consume the `state` cookie before the user clicks) and `GET` (browser fallback) are accepted. See [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider).
 
 ```
 POST /api/auth/{provider}/login
@@ -175,7 +175,7 @@ GET /api/auth/{provider}/callback
 
 **Error codes:** `access_denied`, `no_verified_email`, `oauth_error` (3xx redirects), `invalid_state` (403).
 
-**Rate limit:** 20/60s per IP (`auth_callback`), fail-closed.
+**Rate limit:** 20/60s per IP (`auth_callback`), fail-closed. Sized at 2x the `auth_login` bucket because a single sign-in flow issues exactly one `/login` request but may retry `/callback` on provider-side hiccups (3xx error redirects, transient code-exchange failures).
 
 **Implements:** [REQ-AUTH-001 AC 9](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-004](../sdd/authentication.md#req-auth-004-oauth-error-surfacing), [REQ-AUTH-007](../sdd/authentication.md#req-auth-007-cross-provider-account-dedup)
 
@@ -187,7 +187,7 @@ Account resolution follows three paths: (A) existing `(provider, provider_sub)` 
 
 ### POST /api/auth/refresh (Force token rotation)
 
-Force-rotates the refresh-token row and mints a new access JWT. Used by long-running tabs before issuing a state-changing XHR that middleware cannot safely auto-refresh on the same call.
+Force-rotates the refresh-token row and mints a new access JWT. Used by long-running tabs before issuing a state-changing XHR: the middleware's inline refresh path would race with the XHR body read, so callers force-rotate first ([REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-and-per-device-logout)).
 
 ```
 POST /api/auth/refresh
@@ -273,7 +273,7 @@ POST /api/auth/set-tz
 | `403` | Origin mismatch | `{ error, code: "forbidden_origin" }` |
 | `429` | Rate limited | `{ error, code: "rate_limit_exceeded" }` |
 
-**Rate limit:** 30/60s per user (`set_tz`), fail-open. Sized to cover travel/DST edge cases and dev/test loops.
+**Rate limit:** 30/60s per user (`set_tz`), fail-open. Sized at 30/60s so a user crossing timezones (≤6 saves per hour, even with DST edge cases) plus the dev/test loop never trips the limit.
 
 **Implements:** [REQ-SET-007](../sdd/settings.md#req-set-007-timezone-change-detection), [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
 
@@ -312,7 +312,7 @@ DELETE /api/auth/account
 
 ### POST /api/auth/account (Delete account, form path)
 
-Native form-encoded transport for the same deletion. Used by browsers that do not reliably fire JS-issued `DELETE` requests (Samsung Browser, some in-app webviews). Same auth, Origin, and confirmation contract as the DELETE path.
+Native form-encoded transport for the same deletion. Used by browsers that do not fire JS-issued `DELETE` requests (Samsung Browser and some in-app webviews — captured live during account-deletion bug-reports; cf. `tests/auth/delete-initial.test.ts`). Same auth, Origin, and confirmation contract as the DELETE path.
 
 ```
 POST /api/auth/account
@@ -407,7 +407,7 @@ REQ-SET-004 is `Partial`: the model-selection UI is hidden, but the API still va
 
 ### POST /api/settings (Update settings, form path)
 
-Native form-encoded fallback for the same update. Used when the JS fetch handler does not bind.
+Native form-encoded fallback for the same update. Used when the `<form>` submits before the settings-page JS hydrates (no-JS clients, hydration race).
 
 ```
 POST /api/settings

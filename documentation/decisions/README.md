@@ -113,7 +113,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Decision:** When a feed snippet is too thin to ground a useful summary, the chunk consumer fetches the article body directly. Each fetch is SSRF-guarded, time-bounded (8 s), and size-capped (1.5 MB); a failed fetch falls back to the snippet, never blocking a summary.
 
-**Context:** Feed snippets are often too short to summarise faithfully. An SSRF denylist plus strict timeout and size caps reduce server-side fetch risk to negligible. Richer prompt context measurably improved summary quality on short-snippet feeds.
+**Context:** Many RSS sources publish only the headline plus a one-sentence lede in the feed (Reuters, AP, syndicated mirrors), leaving the LLM nothing concrete to summarise. An SSRF denylist plus 8 s timeout and 1.5 MB cap reduce the fetch surface to publisher-hosted article HTML only (no private IPs, no metadata services, no oversized payloads). Fetching the article body and concatenating it into the chunk prompt produced summaries that no longer hallucinated facts not present in the headline; without the body fetch, the chunk consumer's only signal was the lede.
 
 **Alternatives considered:**
 - Keep the no-fetch posture and accept thin summaries on short-snippet feeds.
@@ -303,7 +303,7 @@ KV's eventual consistency made both races effectively undetectable via testing i
 **Consequences:**
 - Both gate sites stay inline. Each is documented in-place with the `meta.changes` semantics and a comment explaining why the WHERE clause carries the gate value.
 - The third gate that would warrant the keyed-table refactor is treated as the trigger; this ADR is the artifact future readers find when they look for "why isn't there an `acquireOnceLock` helper?".
-- New gate sites SHOULD copy the pattern verbatim and document the meta.changes semantics inline; if a fourth or fifth site lands without the trigger refactor, this ADR is the place to revisit.
+- New gate sites MUST copy the pattern verbatim and document the meta.changes semantics inline. When a fourth gate site lands, this ADR is reopened and the trigger refactor proposed in the Alternatives section becomes mandatory rather than deferred.
 
 **Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-PIPE-018](../../sdd/generation.md#req-pipe-018-same-story-collapse-mechanics-survivor-selection-and-data-merge)
 
@@ -675,7 +675,7 @@ PR #185 attempted to compensate with `margin-top: -0.3em`. The user reported thi
 **Consequences:**
 - Brief KV outages may surface as auth-login 429s for end users - preferred over silent removal of brute-force protection.
 - No WAF rules are maintained, so the entire auth-throttle contract depends on the worker reaching KV. If a future incident shows this failure mode is operationally unacceptable, revisit by adding the WAF layer.
-- The fail-closed flag is set per-rate-limiter and is auditable in source - any new rate limit added to the auth path SHOULD inherit `failClosed: true` and reference this ADR.
+- The fail-closed flag is set per-rate-limiter and is auditable in source - any new rate limit added to the auth path MUST inherit `failClosed: true` and reference this ADR. An auth-path limiter without `failClosed: true` is a security regression, not a style preference: a KV outage on a fail-open auth limit silently removes the brute-force gate.
 
 **Related requirements:** [REQ-AUTH-001](../../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-003](../../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
 
@@ -724,7 +724,7 @@ PR #185 attempted to compensate with `margin-top: -0.3em`. The user reported thi
 - Operational deployment checklist must include: `CF_ACCESS_AUD` is set, `workers_dev = false`, and the Access policy is bound to the custom domain.
 - If `*.workers.dev` is ever re-enabled, or `CF_ACCESS_AUD` is unset, an attacker could forge the header and bypass admin auth - making the deployment configuration itself a security boundary.
 - `documentation/deployment.md` (or the equivalent runbook) MUST document the `workers_dev = false` + `CF_ACCESS_AUD` requirement as a hard precondition for production rollout.
-- Future hardening could add JWKS-based verification as defence in depth; revisit if the deployment-configuration boundary proves operationally fragile (e.g., a rollback accidentally re-enables `*.workers.dev`).
+- Future hardening could add JWKS-based verification as defence in depth; revisit if the deployment-configuration boundary fails in practice — concretely, if any post-deploy audit finds `workers_dev = true` on production, or if `CF_ACCESS_AUD` is ever unset in a live `wrangler.toml`.
 
 **Related requirements:** [REQ-OPS-006](../../sdd/observability.md#req-ops-006-integration-deployment-target)
 
@@ -746,7 +746,7 @@ PR #185 attempted to compensate with `margin-top: -0.3em`. The user reported thi
 **Rationale:** Preserve as a historical artefact of the project's original direction. Deletion would lose the snapshot; merging into `sdd/README.md` "Out of Scope" would dilute the spec with content that no longer maps to active REQs. Keeping it at the repo root, out of the active doc graph, gives newcomers a discoverable artefact while preventing it from contaminating the live spec or doc-discipline checks.
 
 **Consequences:**
-- Repo root carries one informational file that newcomers may discover and need context for. The self-deprecating header on the file itself plus this AD provide that context.
+- Repo root carries `REQUIREMENTS.md`. Newcomers cloning the repo see it before any subdirectory README; this ADR plus the file's self-deprecating header explain why it lives at the root rather than under `documentation/`.
 - The file is NOT auto-updated, NOT linked from indexes, and is excluded from doc-discipline budget checks.
 - If a future contributor proposes "cleaning up" the root by deleting `REQUIREMENTS.md`, this ADR is the artefact that records the decision to keep it.
 
@@ -774,7 +774,7 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Consequences:**
 
-- New KV key families with more than one writer MUST add a `src/lib/kv/<family>.ts` helper before the first writer lands. Code review should flag inline `env.KV.put(...)` writes outside `src/lib/kv/` or the pre-existing centralised files.
+- New KV key families with more than one writer MUST add a `src/lib/kv/<family>.ts` helper before the first writer lands. Code review MUST flag inline `env.KV.put(...)` writes outside `src/lib/kv/` or the pre-existing centralised files; PRs introducing such writes are blocked at review.
 - Single-call-site reads (e.g., `scrape-status.ts` reading `chunks_remaining`) may remain inline - the invariant is about multi-site writers, not all KV access.
 - Existing files `src/lib/feed-health.ts`, `src/lib/headline-cache.ts`, `src/lib/sources-cache.ts`, and `src/lib/rate-limit.ts` are already compliant; they predate this ADR and serve the same pattern.
 
@@ -866,7 +866,7 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - **Discovery owns GN, coordinator skips tags already having a GN entry.** Rejected: discovery runs once at settings save; the KV cache drifts as tag needs change. Coordinator ownership recomputes the baseline every tick from the live tag union.
 - **Both paths coexist permanently** - rejected as a stable end-state. The redundant fan-out wastes a small amount of LLM and fetch budget and complicates future debugging when a GN URL turns out to be wrong (which path produced it?).
 
-**Rationale:** The coordinator already owns the per-tick source list; making it the single owner of the GN baseline matches the "coordinator decides which sources fan out" concept. Discovery's job becomes "find first-party feeds for this tag" - a narrower, more useful prompt that should produce better results. Keeping the legacy LLM-emitted GN fallback as a transitional state avoids a same-PR rewrite of the discovery prompt and its tests.
+**Rationale:** The coordinator already owns the per-tick source list; making it the single owner of the GN baseline matches the "coordinator decides which sources fan out" concept. Discovery's job becomes "find first-party feeds for this tag" — a narrower prompt focused on publisher sources. Re-evaluating discovery prompt quality post-narrowing belongs in a future audit, not in this ADR. Keeping the legacy LLM-emitted GN fallback as a transitional state avoids a same-PR rewrite of the discovery prompt and its tests.
 
 **Consequences:**
 
@@ -1315,7 +1315,7 @@ Three reasons the AD41 fix did not collapse this cluster:
 
 - Future contributors editing these four files must take care: the size threshold no longer signals "this file is too big." Use diff scope and function size as the navigation aid instead.
 - Reviewer agents (code-reviewer, spec-reviewer) MUST NOT flag these four files on size alone. A finding citing total line count without a concrete extraction proposal that includes the cost analysis above should be dismissed by referencing this AD.
-- The per-function size rule (`Functions are small (<50 lines)`) is unchanged. Functions inside these files remain subject to it and may be extracted individually when a concrete bug, test gap, or review-velocity win motivates the change.
+- The per-function size rule (`Functions are small (<50 lines)`) is unchanged. Functions inside these files remain subject to it; extraction is welcomed when a concrete bug, test gap, or review-velocity win motivates the change, and required when an individual function exceeds 50 lines.
 - If a future feature naturally splits one of these files (e.g., the coordinator's source-enumeration phase becomes queue-driven per CF-006's eventual fix), the extraction is welcomed. This AD does not block extractions - it blocks size-only refactors.
 
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-coordinated-multi-tag-scrape-pipeline), [REQ-SET-001](../../sdd/settings.md#req-set-001-tag-management-ui)
@@ -1348,10 +1348,10 @@ Three reasons the AD41 fix did not collapse this cluster:
 **Consequences:**
 
 - The four affected markers now reference `AD46` directly (e.g., `doc-allow-large: AD46 deployment-doc colocation`). The `doc-updater` Pass 6 audit accepts them under the ADR-reference rule.
-- Future doc growth in any of the three files should reopen this AD rather than adding new bare hatches.
+- Future doc growth in any of the three files MUST reopen this AD before a new bare hatch lands. A bare `doc-allow-large` marker on these files without an AD46-or-successor reference is a `doc-updater` HIGH finding.
 - If `deployment.md` grows to the point where the operator workflow itself becomes hard to follow, the split should be a deliberate workflow redesign (e.g., a master deploy runbook with linked sub-pages), not a lane-discipline split.
 - Pass 6 (file-level shape consistency) findings against `deployment.md` are accepted under AD46d's hybrid-rendering carve-out. If a future review surfaces a shape-mismatch in a section that does NOT serve a runbook-or-registry purpose, AD46d does not cover it and the standard Pass 6 conversion applies.
-- The ADR ledger's single-file design implicitly limits the ledger's growth ceiling. If the ledger exceeds ~50 ADRs or ~2500 lines, this AD should be revisited in favor of a per-AD layout with an explicit index.
+- The ADR ledger's single-file design implicitly limits the ledger's growth ceiling. If the ledger reaches 50 ADRs or 2500 lines, the next PR-boundary `doc-updater` run MUST escalate this AD for revision before accepting further ADR additions to the single file.
 
 **Related requirements:** none direct — operational/documentation concern.
 
@@ -1363,7 +1363,7 @@ Three reasons the AD41 fix did not collapse this cluster:
 
 **Extends:** AD46
 
-**Decision:** `documentation/api-reference.md` carries a permanent `doc-allow-large: AD46e api-reference completeness` hatch. The file documents approximately 90 HTTP endpoints across 13 named sections. Each endpoint requires at minimum a method/path block, auth field, origin-check field, response table, and Implements field — roughly 8-12 lines of structured content per endpoint at the minimum compliant shape. The resulting floor is approximately 720-1080 lines before any prose explanation. The per-file soft budget of 600 lines reflects a general-purpose file; an API reference for a non-trivial application necessarily exceeds it.
+**Decision:** `documentation/api-reference.md` carries a permanent `doc-allow-large: AD46e api-reference completeness` hatch. The file documents the public HTTP surface across 13 `##` named sections — endpoint count measured via `grep -c '^### ' documentation/api-reference.md` on 2026-05-13. Each endpoint requires at minimum a method/path block, Authentication field, Origin-check field, Response table, and Implements field — 8-12 lines of structured content per endpoint, derived from the binding endpoint template in `documentation-discipline.md` Pass 7. The resulting floor is the endpoint count times the per-endpoint cost before any prose explanation. The per-file soft budget of 600 lines reflects a general-purpose file; an API reference for a non-trivial application necessarily exceeds it.
 
 **Context:** Pass 2 of `documentation-discipline.md` flagged `api-reference.md` at 1.16x the 600-line budget (697 lines) as a LOW finding in the 2026-05-13 clean run. The corresponding Pass 10 cold-read found PARTIAL — session-auth endpoints had no copy-pasteable curl example. Both findings were deferred in that run. The user rejected the deferral on 2026-05-13 and mandated: (a) a formal AD46 sub-decision backlink, and (b) a curl example covering the session-cookie auth shape so a cold reader can test any session-auth endpoint without consulting other documentation. The curl example adds approximately 10 lines to the file, reinforcing that the 600-line budget is structurally unachievable for this file's mandate.
 
@@ -1375,7 +1375,7 @@ Three reasons the AD41 fix did not collapse this cluster:
 
 **Consequences:**
 
-- `api-reference.md` is exempt from Pass 2 LOW findings indefinitely. MEDIUM threshold (1.4x, ~840 lines) remains in force — if the file approaches that level, a genuine split by audience or by stable domain boundary should be evaluated before adding more content.
+- `api-reference.md` is exempt from Pass 2 LOW findings indefinitely. MEDIUM threshold (1.4x, ~840 lines) remains in force — if the file approaches that level, a genuine split by audience or by stable domain boundary should be evaluated before adding more content. 1.4x is the threshold because it sits above the per-endpoint structural floor with ~25% headroom for future endpoint growth before a split becomes mandatory.
 - The `doc-allow-large` hatch marker is updated from the bare `AD46 api-reference single-file design` to `AD46e api-reference completeness` so the hatch points at this specific sub-decision.
 - The `## Conventions` curl example covers the session-cookie shape. Dev-bypass token endpoints are covered separately in `documentation/deployment.md` under the dev-bypass runbook. The two examples together close Pass 10 for this file.
 - Future endpoint additions to `api-reference.md` do not require a new ADR amendment unless the file crosses the MEDIUM threshold.

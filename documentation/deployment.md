@@ -81,7 +81,7 @@ After rollback, verify `GET $APP_URL` returns `200`/`303`. D1 migrations are for
 CI/CD: `.github/workflows/deploy.yml` triggers on a `workflow_run` event — fires only when "PR Checks" on `main` completes with `success`. `workflow_dispatch` is retained for manual re-runs.
 
 The deploy job:
-1. Applies D1 migrations (drift-tolerant). "Duplicate column" / "already exists" errors are handled by stamping the migration into `d1_migrations` and retrying up to 5 attempts. Real SQL errors surface immediately.
+1. Applies D1 migrations (drift-tolerant). "Duplicate column" / "already exists" errors are handled by stamping the migration into `d1_migrations` and retrying up to 5 attempts. Real SQL errors surface immediately. Drift tolerance covers the case where an operator ran `wrangler d1 migrations apply --remote` out-of-band (e.g. during incident response); without it, the next CI deploy would block on a migration the remote already applied.
 2. Runs the same two-step security audit as PR Checks (advisory HIGH+, blocking CRITICAL) as a defence-in-depth gate — catches CVEs introduced between the merge and the deploy (transient transitive bumps, Dependabot lockfile regenerations, etc.).
 3. Pushes Worker secrets via `wrangler secret put` (file-redirect form). Conditional secrets (`ADMIN_EMAIL`, `CF_ACCESS_AUD`, `DEV_BYPASS_USER_ID`) are pushed only when the corresponding GitHub Actions secret is non-empty.
 4. Deploys the Worker.
@@ -304,7 +304,7 @@ curl -s -X PUT \
 # table (lookup: SELECT id FROM users WHERE email = '<your-email>').
 ```
 
-Both writes propagate within ~5-10 seconds. Then mint a session and drive any admin endpoint:
+Both writes propagate at Cloudflare's secret-store cadence — re-run the `/api/dev/login` mint until it returns 200 rather than relying on a fixed wait. Then mint a session and drive any admin endpoint:
 
 <!-- doc-allow-element: AD46 dev-bypass-runbook session-mint and admin-drive block -->
 ```bash
@@ -357,16 +357,16 @@ curl -s "https://news.novoselec.ch/api/admin/pipeline-status?id=$PIPE_ID" \
 | `/api/dev/login` returns 403 with "Cross-site POST forbidden" | Missing `Origin: https://news.novoselec.ch` header | Add it; the route enforces same-origin POST |
 | Session cookie present but admin still 401 | Session expired (5-minute access-token TTL) | Re-mint via `/api/dev/login` |
 
-The token in `/tmp/.bypass_token` is the canonical local source of truth; treat the GitHub Actions `DEV_BYPASS_TOKEN` secret as derivative — re-push it from `/tmp/.bypass_token` whenever they appear out of sync.
+The token in `/tmp/.bypass_token` is the canonical local source of truth; treat the GitHub Actions `DEV_BYPASS_TOKEN` secret as derivative — re-push it from `/tmp/.bypass_token` when `/api/dev/login` returns 404 on integration despite a non-empty GitHub Actions secret (deploy push truncated the worker-side value).
 
 ## Resend domain verification
 
 1. Log in to Resend dashboard.
 2. Add the sending domain under "Domains".
 3. Copy the DNS records (MX, TXT for SPF, DKIM CNAMEs, DMARC TXT) into your DNS provider.
-4. Wait for verification (typically minutes to hours).
+4. Wait for verification — the Resend dashboard shows the domain row's status flip from `Pending` to `Verified` once DNS propagation completes.
 5. Update the `RESEND_FROM` Worker secret to use an address on the verified domain.
-6. Until verified, Resend sends from a sandbox address — useful for local dev, not for users.
+6. Until verified, Resend's sandbox only delivers to the account owner's verified email; non-owner recipients receive nothing.
 
 ---
 
