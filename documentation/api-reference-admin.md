@@ -29,7 +29,7 @@ POST enforces Origin for browser-driven calls. GET enforces a `Sec-Fetch-Site` g
 
 **Error responses:** `401 unauthorized` | `403 forbidden` | `403 "Cross-site request denied"` (GET cross-site initiator) | `429 rate_limit_exceeded` | `500 "Failed to dispatch coordinator"`.
 
-**Implements:** [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phase 1), [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9g
+**Implements:** [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) (phase 1), [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9g
 
 ---
 
@@ -54,7 +54,7 @@ Resumable embedding backfill for articles whose `embedding_status` is `NULL` or 
 
 **Error responses:** `401 unauthorized` | `403 forbidden` | `403 forbidden_origin` (cross-origin browser POST without Bearer) | `405 "reembed requires POST"` (GET with `?reembed=1`) | `500 "Backfill failed"`.
 
-**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 12 for `?reembed=1`), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phases 0 and 3)
+**Implements:** [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 5 (for `?reembed=1`), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) (phases 0 and 3)
 
 ---
 
@@ -84,7 +84,7 @@ A scripted caller may opt into the legacy synchronous path by sending `{ "cursor
 
 **Error responses:** `401 unauthorized` | `403 forbidden` | `403 forbidden_origin` (cross-origin browser POST without Bearer) | `500 historical_dedup_kick_failed` | `500 historical_dedup_failed` (sync path only).
 
-**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 3, AC 9, AC 11, [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (phase 4)
+**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) AC 3, [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1, AC 4, [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) (phase 4)
 
 ---
 
@@ -108,7 +108,7 @@ Polling endpoint for the queue-driven historical-dedup sweep. Returns a snapshot
 
 **Error responses:** `400 missing_run_id` | `401 unauthorized` | `403 forbidden` | `404 run_not_found` | `500 dedup_status_select_failed` | `500 invalid_stored_status`.
 
-**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9, [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)
+**Implements:** [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1, AC 2, [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface)
 
 ---
 
@@ -134,7 +134,7 @@ Kicker for the backend-driven full pipeline run. Creates a `pipeline_runs` audit
 
 **Error responses:** `401 unauthorized` | `403 forbidden_origin` (cross-origin browser POST) | `405 Method Not Allowed` (`mode=wipe` via GET on the browser variant) | `429 rate_limit_exceeded` | `500 pipeline_kick_failed`.
 
-**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9g
+**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9g
 
 ---
 
@@ -158,7 +158,7 @@ Browser-navigation variant of the pipeline kicker. Used by `settings.astro` via 
 
 **Error responses:** `303 -> /settings?pipeline=denied` (auth failure) | `405 Method Not Allowed` (`mode=wipe` via GET) | `500` (configuration error).
 
-**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8d
+**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8d
 
 ---
 
@@ -182,11 +182,11 @@ Polling endpoint for the backend-driven full pipeline run. Returns the named `pi
 
 **Error responses:** `401 unauthorized` | `403 forbidden` | `404 run_not_found` | `500 pipeline_status_select_failed` | `500 invalid_stored_status` | `500 invalid_stored_mode`.
 
-**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)
+**Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface)
 
 ---
 
-### GET /api/admin/dedup-diag (REQ-PIPE-003 AC 10, AC 11)
+### GET /api/admin/dedup-diag (REQ-PIPE-014 AC 4)
 
 **Method:** GET
 **Path:** /api/admin/dedup-diag
@@ -241,7 +241,7 @@ Returns the cosine similarity between two articles' stored Vectorize embeddings,
 | No valid session | `401` | `unauthorized` |
 | Valid session but not admin email | `403` | (plain text `Forbidden`) |
 
-**Implements:** [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 10, AC 11
+**Implements:** [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 4
 
 ---
 
