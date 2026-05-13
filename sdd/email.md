@@ -20,9 +20,13 @@ Resend-backed notification sent after every successful digest — whether genera
 7. The From header reads "News Digest <noreply@graymatter.ch>" (display name "News Digest" plus the configured sender address) so inbox lists show the brand instead of the bare email.
 
 **Constraints:** None
+
 **Priority:** P1
-**Dependencies:** REQ-PIPE-001, REQ-MAIL-003
+
+**Dependencies:** [REQ-PIPE-001](generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-MAIL-003](#req-mail-003-digest-ready-email-send-policy)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -41,9 +45,13 @@ Resend-backed notification sent after every successful digest — whether genera
 5. On send failure, the per-user "last emailed date" marker is NOT advanced, so the next cron tick retries the same user naturally.
 
 **Constraints:** None
+
 **Priority:** P1
-**Dependencies:** REQ-MAIL-001, REQ-MAIL-003
+
+**Dependencies:** [REQ-MAIL-001](#req-mail-001-digest-ready-email-content), [REQ-MAIL-003](#req-mail-003-digest-ready-email-send-policy)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -61,7 +69,11 @@ Resend-backed notification sent after every successful digest — whether genera
 4. When the recipient has zero unread articles for the local day, no email is sent. The per-user "last emailed date" marker is not stamped; the user is naturally retried at their next configured digest time the following local day. An empty email is treated as noise; silence is the contract.
 
 **Constraints:** None
+
 **Priority:** P1
-**Dependencies:** REQ-SET-005
+
+**Dependencies:** [REQ-SET-005](settings.md#req-set-005-email-notification-preference)
+
 **Verification:** Integration test
+
 **Status:** Implemented

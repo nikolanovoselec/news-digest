@@ -17,10 +17,14 @@ Past digests paginated on `/history`, 30 per page. A four-tile stats widget on `
 4. Per-day aggregates are read from the scrape-run aggregation rather than re-derived from article rows.
 5. The history window matches the article retention window (REQ-PIPE-005), both are 14 days. Extending one without the other would either show empty rows beyond the retention boundary or hide ingested data still in the pool.
 
-**Constraints:** CON-DATA-001
+**Constraints:** [CON-DATA-001](constraints.md#con-data-001-strong-consistency-in-d1-edge-cache-in-kv)
+
 **Priority:** P1
-**Dependencies:** REQ-PIPE-006
+
+**Dependencies:** [REQ-PIPE-006](generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -36,10 +40,14 @@ Past digests paginated on `/history`, 30 per page. A four-tile stats widget on `
 2. A tag railing sits between the search input and the day list, mirroring the dashboard's visual component: each chip shows the tag's count across the 14-day window, supports add-tag and remove-tag affordances that persist to the user's hashtag list, and pre-selects chips listed in the URL `tags` parameter. Selecting a tag hides the day-grouped list and renders matching articles in the same flat grid the search uses. Search and tag selections combine with AND logic (both must match), and both states are reflected in the URL so the browser back button from an opened article restores the exact filtered view.
 3. `/history` accepts a deep-link query parameter specifying a single local calendar date; when present and the date matches one of the available days, the page renders only that day's row pre-expanded (the search input and other day rows are suppressed) and shows a "Back to all days" control that returns the user to the full 14-day list without the query parameter. An unknown or malformed date parameter is ignored and the full list is shown.
 
-**Constraints:** CON-DATA-001
+**Constraints:** [CON-DATA-001](constraints.md#con-data-001-strong-consistency-in-d1-edge-cache-in-kv)
+
 **Priority:** P1
-**Dependencies:** REQ-HIST-001
+
+**Dependencies:** [REQ-HIST-001](#req-hist-001-day-grouped-article-history)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -58,8 +66,12 @@ Past digests paginated on `/history`, 30 per page. A four-tile stats widget on `
 5. Cost is displayed in USD with 2-4 significant figures, e.g., `$0.14` or `$2.37`.
 6. The widget refreshes on every page load; no cache layer is involved.
 
-**Constraints:** CON-DATA-001
+**Constraints:** [CON-DATA-001](constraints.md#con-data-001-strong-consistency-in-d1-edge-cache-in-kv)
+
 **Priority:** P2
-**Dependencies:** REQ-HIST-001, REQ-READ-003, REQ-PIPE-006
+
+**Dependencies:** [REQ-HIST-001](#req-hist-001-day-grouped-article-history), [REQ-READ-003](reading.md#req-read-003-read-tracking), [REQ-PIPE-006](generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress)
+
 **Verification:** Integration test
+
 **Status:** Implemented

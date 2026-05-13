@@ -18,10 +18,14 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 5. All interactive elements have a minimum 44 × 44 pixel touch target.
 6. Every page fills the mobile viewport, even when content is shorter than the viewport, so the chrome color never dominates the screen; the top of the content surface stays clear of the header and the bottom stays clear of device safe-area insets.
 
-**Constraints:** CON-A11Y-001
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum)
+
 **Priority:** P0
+
 **Dependencies:** None
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -40,10 +44,14 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 5. The theme system exposes a consistent set of color tokens per theme (background, surface, text, muted text, border, accent) as CSS custom properties.
 6. The mobile system status bar (iOS / Android) matches the app's selected theme, not the operating-system theme — a user in the app's dark theme whose device is in light mode still sees a dark status bar above the dark UI, and vice versa. The status bar repaints immediately when the user toggles theme mid-session, and its colour persists across client-side route navigations without a transient flash to the opposite theme. The document body itself never flashes the opposite theme either — even when the app is launched as an installed PWA and navigated via client-side route swaps, the page background paints the user's chosen theme from the very first frame, never an intermediate white frame between routes.
 
-**Constraints:** CON-A11Y-001, CON-SEC-001
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
-**Dependencies:** REQ-DES-001
+
+**Dependencies:** [REQ-DES-001](#req-des-001-swiss-minimal-visual-language)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -62,8 +70,12 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 5. Hashtag chip selection, button `:active` press, and card hover (desktop) each have a single, short transition (150–200 ms) on the relevant property only.
 6. The site header chrome stays visually solid throughout every route transition — the user never sees stale body content from the outgoing page bleeding through the header band while the page beneath cross-fades. Because the header is identical on every route, it does not animate during the swap; it simply remains in place with the theme background.
 
-**Constraints:** CON-A11Y-001
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum)
+
 **Priority:** P1
-**Dependencies:** REQ-DES-001
+
+**Dependencies:** [REQ-DES-001](#req-des-001-swiss-minimal-visual-language)
+
 **Verification:** Integration test
+
 **Status:** Implemented

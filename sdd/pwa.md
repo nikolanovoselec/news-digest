@@ -18,9 +18,13 @@ The app is installable on iOS, Android, and desktop via a standards web manifest
 5. Android and desktop Chrome users see an "Install app" button in `/settings`; click triggers the `beforeinstallprompt` event's prompt.
 
 **Constraints:** None
+
 **Priority:** P1
-**Dependencies:** REQ-DES-001
+
+**Dependencies:** [REQ-DES-001](design.md#req-des-001-swiss-minimal-visual-language)
+
 **Verification:** Manual check
+
 **Status:** Implemented
 
 ---
@@ -39,8 +43,12 @@ The app is installable on iOS, Android, and desktop via a standards web manifest
 5. Tap highlights are disabled globally; focus and active states are handled by CSS.
 6. Interactive header controls (theme toggle, avatar) meet the 44×44 CSS-pixel minimum tap-target guidance on mobile viewports.
 
-**Constraints:** CON-A11Y-001
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum)
+
 **Priority:** P1
-**Dependencies:** REQ-DES-001
+
+**Dependencies:** [REQ-DES-001](design.md#req-des-001-swiss-minimal-visual-language)
+
 **Verification:** Integration test
+
 **Status:** Implemented

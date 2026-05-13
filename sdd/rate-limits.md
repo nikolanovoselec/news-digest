@@ -21,10 +21,14 @@ Mechanism detail (per-bucket sizes, refresh-middleware/explicit-endpoint shared 
 
 **Notes:** Per-bucket sizes, the refresh middleware/explicit-endpoint shared bucket, and the fail-open/fail-closed asymmetry are documented in [`documentation/security.md`](../documentation/security.md#rate-limiting-req-auth-001-ac-9).
 
-**Constraints:** CON-AUTH-001, CON-SEC-001
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
-**Dependencies:** REQ-AUTH-001
+
+**Dependencies:** [REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)
+
 **Verification:** Automated test
+
 **Status:** Partial
 
 ---

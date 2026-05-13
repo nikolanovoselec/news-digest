@@ -17,10 +17,14 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 4. Each suggested URL is validated: HTTPS-only, passes the SSRF filter (no private ranges, loopback, link-local, Cloudflare internal), HTTP 200, content-type matches the declared kind, parseable, and returns at least one item with a title and URL.
 5. Valid feeds are persisted to `sources:{tag}` as `{ feeds: [{ name, url, kind }], discovered_at }` with no TTL; rows for this tag are deleted from `pending_discoveries` regardless of success.
 
-**Constraints:** CON-SEC-002, CON-LLM-001
+**Constraints:** [CON-SEC-002](constraints.md#con-sec-002-outbound-article-body-fetches-flow-through-the-ssrf-guarded-helper), [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts)
+
 **Priority:** P0
-**Dependencies:** REQ-SET-002
+
+**Dependencies:** [REQ-SET-002](settings.md#req-set-002-hashtag-curation-strip-ux)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -37,9 +41,13 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 3. The banner hides automatically when the returned list becomes empty (no manual refresh required on the user's side).
 
 **Constraints:** None
+
 **Priority:** P1
-**Dependencies:** REQ-DISC-001
+
+**Dependencies:** [REQ-DISC-001](#req-disc-001-llm-assisted-per-tag-feed-discovery)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -57,9 +65,13 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 4. Hard-coded curated feeds (the operator-maintained global registry) participate in the same counter so operators see failing URLs in logs, but they are never mutated at runtime — their replacement is a code change, not a runtime eviction.
 
 **Constraints:** None
+
 **Priority:** P2
-**Dependencies:** REQ-DISC-001
+
+**Dependencies:** [REQ-DISC-001](#req-disc-001-llm-assisted-per-tag-feed-discovery)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -78,9 +90,13 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 5. The routes are additionally gated by Cloudflare Access at the zone level so only the admin account can reach them in production; other authenticated users never see a reachable endpoint even if the settings button were to be forged into their page.
 
 **Constraints:** None
+
 **Priority:** P2
-**Dependencies:** REQ-DISC-001, REQ-DISC-003
+
+**Dependencies:** [REQ-DISC-001](#req-disc-001-llm-assisted-per-tag-feed-discovery), [REQ-DISC-003](#req-disc-003-self-healing-feed-health-tracking)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -97,10 +113,14 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 3. Every suggested URL passes SSRF validation (HTTPS-only, no private IPs) before any network call is made.
 4. URL validation is applied independently of the LLM response — a malicious suggestion cannot bypass it.
 
-**Constraints:** CON-SEC-002, CON-LLM-001
+**Constraints:** [CON-SEC-002](constraints.md#con-sec-002-outbound-article-body-fetches-flow-through-the-ssrf-guarded-helper), [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts)
+
 **Priority:** P0
-**Dependencies:** REQ-DISC-001
+
+**Dependencies:** [REQ-DISC-001](#req-disc-001-llm-assisted-per-tag-feed-discovery)
+
 **Verification:** Automated test
+
 **Status:** Implemented
 
 ---
@@ -118,7 +138,11 @@ Per-tag feed discovery is LLM-assisted and SSRF-filtered. Settings save queues n
 4. The 7-day window resets the moment discovery succeeds: a tag whose feeds come back online before the cutoff stays in the user's interests with no further action.
 
 **Constraints:** None
+
 **Priority:** P2
-**Dependencies:** REQ-DISC-001, REQ-DISC-003, REQ-DISC-004
+
+**Dependencies:** [REQ-DISC-001](#req-disc-001-llm-assisted-per-tag-feed-discovery), [REQ-DISC-003](#req-disc-003-self-healing-feed-health-tracking), [REQ-DISC-004](#req-disc-004-manual-re-discover)
+
 **Verification:** Automated test
+
 **Status:** Implemented

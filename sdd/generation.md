@@ -19,10 +19,14 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 6. Every tag in the union of (default-seed hashtags ∪ curated source tags ∪ discovered KV tags) gets a per-tag Google News query-RSS source added to the tick's source list as a long-tail backstop. Tags already served by a bespoke hand-tuned Google News curated entry are skipped (no double-fetch). The aggregator-vs-direct dedup pass already prefers a direct publisher copy over a Google News copy that lands in the same tick, so wide GN fan-out gives every tag baseline coverage without polluting the article pool with aggregator duplicates when direct sources also surface the story.
 7. A run that has been waiting on its scrape phase to complete for longer than the configured budget exits with a failed status rather than looping silently. The dashboard surfaces the failed state on the next history refresh so the operator sees the stall promptly and can re-kick the pipeline, instead of the run staying in `running` indefinitely until queue retries exhaust.
 
-**Constraints:** CON-LLM-001, CON-PERF-001, CON-SEC-002
+**Constraints:** [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts), [CON-PERF-001](constraints.md#con-perf-001-100-user-thundering-herd-target), [CON-SEC-002](constraints.md#con-sec-002-outbound-article-body-fetches-flow-through-the-ssrf-guarded-helper)
+
 **Priority:** P0
-**Dependencies:** REQ-PIPE-004, REQ-PIPE-010, REQ-PIPE-011
+
+**Dependencies:** [REQ-PIPE-004](#req-pipe-004-curated-source-registry-with-50-feeds-spanning-the-21-system-tags), [REQ-PIPE-010](#req-pipe-010-body-fetch-for-thin-feed-snippets), [REQ-PIPE-011](#req-pipe-011-candidate-filtering-rules)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -39,10 +43,14 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 3. `details` is a plaintext body of 100 to 150 words split into 2 or 3 paragraphs (WHAT happened, HOW it works, and optionally IMPACT for the reader), each 2 to 4 sentences, with no lists, HTML, or Markdown. The 100 to 150 range is the prompt-side contract; the consumer additionally enforces an 80-word backstop server-side, dropping responses below that threshold so a model that ships a single-sentence stub cannot reach the reading surface. The backstop is a true sanity floor (genuinely truncated outputs), not the model's normal operating range.
 4. `tags` values come exclusively from the system-approved allowlist: the union of the default-seed hashtag list shared with new accounts plus every tag for which a discovered-source cache currently exists. Any tag the LLM invents outside that union is discarded server-side before persistence, and an article that ends up with zero valid tags is dropped.
 
-**Constraints:** CON-LLM-001, CON-SEC-003
+**Constraints:** [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts), [CON-SEC-003](constraints.md#con-sec-003-plaintext-only-llm-output)
+
 **Priority:** P0
-**Dependencies:** REQ-PIPE-001
+
+**Dependencies:** [REQ-PIPE-001](#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -58,10 +66,14 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 2. Every article returned by the LLM echoes its input candidate's index; the consumer aligns output back to the input by that echoed value, dropping any article whose index is missing, invalid, or does not match an input candidate so a summary can never be stapled to the wrong canonical URL.
 3. Before a summary is persisted, the consumer verifies the LLM-generated title shares at least one substantive non-stopword token with the source candidate's headline; summaries with zero topical overlap are dropped so a mis-wired LLM response can never appear as a real article.
 
-**Constraints:** CON-LLM-001, CON-SEC-003
+**Constraints:** [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts), [CON-SEC-003](constraints.md#con-sec-003-plaintext-only-llm-output)
+
 **Priority:** P0
-**Dependencies:** REQ-PIPE-002
+
+**Dependencies:** [REQ-PIPE-002](#req-pipe-002-chunked-llm-output-content-contract)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -81,10 +93,14 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 6. Wire-syndicated stories that share a publication time to the second across sources still collapse to a single card; the system applies a deterministic tie-break (matching the rule in AC 3) so same-event pairs with identical publication times are never silently kept apart by timestamp granularity. Near-duplicate articles whose textual similarity is overwhelming likewise collapse deterministically across sources, so wire copies of one press release land as a single primary card with the others as alternative sources regardless of publisher identity.
 7. When a newly-arrived article and an already-stored article describe the same news event, the merge happens regardless of which side was ingested first, which side carries the earlier publication time, or how many calendar days separate them within the same-news-cycle bound (REQ-PIPE-012 AC 3). A duplicate that lands several days after its already-stored match still collapses to a single card without waiting for an operator-triggered sweep; the survivor is always the article with the earlier publication time (per AC 3).
 
-**Constraints:** CON-SEC-002
+**Constraints:** [CON-SEC-002](constraints.md#con-sec-002-outbound-article-body-fetches-flow-through-the-ssrf-guarded-helper)
+
 **Priority:** P0
-**Dependencies:** REQ-PIPE-001, REQ-PIPE-012, REQ-PIPE-013, REQ-PIPE-014
+
+**Dependencies:** [REQ-PIPE-001](#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-012](#req-pipe-012-same-story-matching-policy-variants), [REQ-PIPE-013](#req-pipe-013-same-story-cross-tick-automation-and-retention-coupling), [REQ-PIPE-014](#req-pipe-014-same-story-operator-surfaces)
+
 **Verification:** Automated test
+
 **Status:** Implemented
 
 ---
@@ -102,10 +118,14 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 4. Every feed URL uses HTTPS.
 5. A live-fetch validator can be run on demand to detect dead feeds so operators can swap them out before they pollute the pool.
 
-**Constraints:** CON-SEC-002
+**Constraints:** [CON-SEC-002](constraints.md#con-sec-002-outbound-article-body-fetches-flow-through-the-ssrf-guarded-helper)
+
 **Priority:** P0
+
 **Dependencies:** None
+
 **Verification:** Automated test
+
 **Status:** Implemented
 
 ---
@@ -122,10 +142,14 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 3. Deletion cascades remove the article's alternative sources, tag rows, and read-tracking rows so no orphans remain.
 4. The cleanup run is independent of the global scrape run and never blocks ingestion.
 
-**Constraints:** CON-DATA-001
+**Constraints:** [CON-DATA-001](constraints.md#con-data-001-strong-consistency-in-d1-edge-cache-in-kv)
+
 **Priority:** P1
-**Dependencies:** REQ-PIPE-001, REQ-STAR-001
+
+**Dependencies:** [REQ-PIPE-001](#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-STAR-001](reading.md#req-star-001-star-and-unstar-articles)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -143,10 +167,14 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 4. Status transitions running to ready on success, or running to failed when the run aborts. Once a run leaves running its status is terminal: a late-arriving failed chunk whose retries exhausted after the run already reached ready does not flap the dashboard back to failed, and a late success message after a run was already marked failed does not flip it back to ready.
 5. A lightweight status endpoint reports whether a scrape is currently running; while running it returns the run identifier, start time, chunks completed, total chunks, and articles ingested so far. The reading surface uses this endpoint to replace its "Next update in Xm" countdown with an "Update in progress, X/Y chunks" indicator, and the settings surface shows the same progress alongside its manual-refresh control. Both indicators hide themselves automatically when the run finishes.
 
-**Constraints:** CON-DATA-001
+**Constraints:** [CON-DATA-001](constraints.md#con-data-001-strong-consistency-in-d1-edge-cache-in-kv)
+
 **Priority:** P1
-**Dependencies:** REQ-PIPE-001
+
+**Dependencies:** [REQ-PIPE-001](#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -162,10 +190,14 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 2. The per-tick token, cost, articles-ingested, and articles-deduplicated counters advance exactly once per chunk regardless of how many times the queue redelivers that chunk's message. A redelivered chunk that has already been recorded as completed for the run leaves these counters at their existing values, so the stats widget and history page never show inflated tokens, cost, or article counts attributable to retry traffic rather than real LLM work.
 3. The daily cleanup pass also retires runs whose state machine never reached a terminal status. Any run still tagged as in-progress well after the longest plausible tick duration is force-failed so its row no longer blocks the operator from kicking a fresh pipeline, and the history page surfaces the row as failed rather than indefinitely as running.
 
-**Constraints:** CON-DATA-001
+**Constraints:** [CON-DATA-001](constraints.md#con-data-001-strong-consistency-in-d1-edge-cache-in-kv)
+
 **Priority:** P1
-**Dependencies:** REQ-PIPE-006
+
+**Dependencies:** [REQ-PIPE-006](#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -183,10 +215,14 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 4. The pass logs the number of orphan caches deleted so operators can watch for unexpected churn (a sudden mass deletion would indicate a bad tag-list write rather than legitimate user de-selection).
 5. A failure in the orphan sweep never blocks the article-retention sweep that runs in the same cron, and vice versa — the two halves succeed or fail independently.
 
-**Constraints:** CON-DATA-001
+**Constraints:** [CON-DATA-001](constraints.md#con-data-001-strong-consistency-in-d1-edge-cache-in-kv)
+
 **Priority:** P2
-**Dependencies:** REQ-PIPE-005, REQ-DISC-001
+
+**Dependencies:** [REQ-PIPE-005](#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-DISC-001](discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -205,10 +241,14 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 5. Each invocation is bounded by a wall-clock budget rather than a fixed count of borderline judgments, so an operator-triggered sweep over a large corpus still converges without dropping borderline pairs silently. When a single newly-arrived article has multiple borderline candidates rather than one, the same-event judgment is invoked on the candidates in best-first order until a same-event verdict accepts or a small per-article cap is reached, so a genuine same-event sibling that happens not to be the top-scoring nearest neighbour is not silently dropped. Per-invocation rerank counts are recorded in operator-visible logs so an operator can see how much rerank work each batch performed.
 6. The borderline floor is operator-tunable at runtime through the same configuration mechanism as the auto-merge threshold, so an operator can widen or narrow the LLM-judgment band without a code change.
 
-**Constraints:** CON-LLM-001
+**Constraints:** [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts)
+
 **Priority:** P1
-**Dependencies:** REQ-PIPE-003
+
+**Dependencies:** [REQ-PIPE-003](#req-pipe-003-same-story-dedupe-core-matching-contract)
+
 **Verification:** Automated test
+
 **Status:** Implemented
 
 ---
@@ -238,12 +278,18 @@ Superseded by REQ-PIPE-003's same-story dedupe across the entire article history
 10. Operator-visible log statuses distinguish the three redelivery outcomes so per-attempt counters are not misread as merges that just happened: a redelivery that the upfront idempotency check skips before the LLM call is logged separately from a redelivery whose post-LLM atomic gate loses a genuine race, and both are logged separately from a successful first-pass finalize that actually performed the merges. A "skipped" log entry never carries the per-row counters from the winning attempt.
 11. Two studies, audits, or benchmarks on the same topic that cite different numbers, methodologies, or authors are treated as distinct stories and never merged — even when they discuss identical subject matter — so conflicting findings on the same topic remain visible as separate cards on the dashboard. This rule overrides the same-content clustering described in AC 1 for the specific case of research outputs whose numerical specificity is the load-bearing signal.
 
-**Constraints:** CON-LLM-001
+**Constraints:** [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts)
+
 **Priority:** P1
-**Dependencies:** REQ-PIPE-002, REQ-PIPE-003
+
+**Dependencies:** [REQ-PIPE-002](#req-pipe-002-chunked-llm-output-content-contract), [REQ-PIPE-003](#req-pipe-003-same-story-dedupe-core-matching-contract)
+
 **Verification:** Integration test
+
 **Status:** Deprecated
+
 **Replaced By:** REQ-PIPE-003
+
 **Removed In:** 2026-05-06
 
 ---
@@ -262,10 +308,14 @@ Superseded by REQ-PIPE-003's same-story dedupe across the entire article history
 5. When body-fetch extraction yields too little text, the candidate falls back to whatever the feed itself provided.
 6. A failed body-fetch never blocks a summary.
 
-**Constraints:** CON-SEC-002
+**Constraints:** [CON-SEC-002](constraints.md#con-sec-002-outbound-article-body-fetches-flow-through-the-ssrf-guarded-helper)
+
 **Priority:** P0
-**Dependencies:** REQ-PIPE-001
+
+**Dependencies:** [REQ-PIPE-001](#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -281,10 +331,14 @@ Superseded by REQ-PIPE-003's same-story dedupe across the entire article history
 2. Candidates whose parsed publish date is older than 48 hours before the current tick are dropped before LLM summarisation so stale backlog items do not consume LLM budget or clutter the dashboard. Candidates with no parsable publish date (which fall back to the ingestion time) are kept — a missing date is not treated the same as a stale date.
 3. Headlines from publishers that an AI tech news product would never surface — primarily financial / stock-pump aggregators that Google News routes into tech tags when a vendor's ticker matches — are dropped at the coordinator before clustering, embedding, or LLM summarisation. The blocklist is matched against both the article URL's host and the per-item publisher name reported by the feed entry, so an aggregator-wrapped item (whose URL points at a redirect envelope rather than the publisher's site) is still recognised by the publisher name the feed exposes. The blocklist applies uniformly across every tag and every user — a user with a tag that matches a tech vendor's ticker never sees those stock-pump articles in their digest. The blocklist is operator-maintained at the source level rather than configurable per user, so the contract is a single project-wide list, not a personal mute list.
 
-**Constraints:** CON-PERF-001
+**Constraints:** [CON-PERF-001](constraints.md#con-perf-001-100-user-thundering-herd-target)
+
 **Priority:** P0
-**Dependencies:** REQ-PIPE-001
+
+**Dependencies:** [REQ-PIPE-001](#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -300,10 +354,14 @@ Superseded by REQ-PIPE-003's same-story dedupe across the entire article history
 2. Two articles published by the same publisher must clear a stricter same-story bar than two articles from different publishers, so a publisher's recurring writing style does not push unrelated stories from the same outlet over the same-story threshold. "Same publisher" means both articles' direct URLs identify the same real publisher; pairs whose URLs route through an aggregator-wrapper host (which carries no publisher identity of its own) are treated as cross-publisher for this purpose so two aggregator-wrapped copies of the same story are not blocked from folding by the same-publisher penalty. The diagnostic surface from [REQ-PIPE-014](#req-pipe-014-same-story-operator-surfaces) AC 2 reports both the raw cosine and the stricter score actually used by the merge decision so an operator can see why a same-publisher pair was kept apart.
 3. Articles describing the same event are merged across sources only when their publishing dates fall within roughly the same news cycle; pairs whose publication times are far apart on calendar terms are kept as distinct cards even when their topics overlap. Dense theme clusters (e.g., a topic where many independent stories appear over a multi-day stretch) therefore stay separated by event rather than collapsing on topical similarity alone.
 
-**Constraints:** CON-LLM-001
+**Constraints:** [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts)
+
 **Priority:** P0
-**Dependencies:** REQ-PIPE-003
+
+**Dependencies:** [REQ-PIPE-003](#req-pipe-003-same-story-dedupe-core-matching-contract)
+
 **Verification:** Automated test
+
 **Status:** Implemented
 
 ---
@@ -320,10 +378,14 @@ Superseded by REQ-PIPE-003's same-story dedupe across the entire article history
 3. Cross-tick same-story matching keeps running automatically after every scrape tick. The window between an article becoming visible and its absorption as an alternative source onto an existing duplicate is bounded by the cadence of the automatic post-tick matching, not by the operator-triggered sweep on the operator surface. The operator surface still exists for sweeping the entire historical pool when matching across older stories is needed; routine cross-tick collapse no longer requires the operator to take any action.
 4. The reach of the automatic post-tick matching covers the same span as the same-news-cycle window from REQ-PIPE-012 AC 3, so any pair the dedup logic would accept as same-event by publication-time proximity is reachable by the automatic path. Cross-day clusters that span up to the full same-news-cycle window collapse via the automatic matching alone, without an operator-triggered full-corpus sweep, regardless of the order in which the cluster's siblings arrived.
 
-**Constraints:** CON-PERF-001
+**Constraints:** [CON-PERF-001](constraints.md#con-perf-001-100-user-thundering-herd-target)
+
 **Priority:** P0
-**Dependencies:** REQ-PIPE-003, REQ-PIPE-005, REQ-PIPE-012
+
+**Dependencies:** [REQ-PIPE-003](#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-PIPE-005](#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-PIPE-012](#req-pipe-012-same-story-matching-policy-variants)
+
 **Verification:** Automated test
+
 **Status:** Implemented
 
 ---
@@ -340,10 +402,14 @@ Superseded by REQ-PIPE-003's same-story dedupe across the entire article history
 3. An operator can re-run embedding generation across the entire historical article pool on demand (admin-gated), so the corpus can be rebuilt against an improved embedding input without waiting for natural churn or re-scraping.
 4. When the similarity index is fully unreachable for a batch of the operator-triggered historical sweep (every per-article lookup against it fails), the sweep pauses on that batch with its cursor preserved and the batch is redelivered until the index is reachable again. Cross-tick duplicates that landed during an outage therefore still collapse on a later attempt instead of being silently skipped past forever. A partial-outage batch where at least one lookup succeeded still advances the cursor; only the all-failed case halts.
 
-**Constraints:** CON-SEC-002
+**Constraints:** [CON-SEC-002](constraints.md#con-sec-002-outbound-article-body-fetches-flow-through-the-ssrf-guarded-helper)
+
 **Priority:** P0
-**Dependencies:** REQ-PIPE-003
+
+**Dependencies:** [REQ-PIPE-003](#req-pipe-003-same-story-dedupe-core-matching-contract)
+
 **Verification:** Automated test
+
 **Status:** Implemented
 
 ---
@@ -369,12 +435,18 @@ Superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework.
 4. Cron does not generate inline; the scheduling pass returns in under 1 second regardless of user count.
 5. The Queue consumer processes messages with Cloudflare Queues' default concurrency (10), giving natural backpressure under thundering-herd load.
 
-**Constraints:** CON-PERF-001
+**Constraints:** [CON-PERF-001](constraints.md#con-perf-001-100-user-thundering-herd-target)
+
 **Priority:** P0
-**Dependencies:** REQ-SET-003
+
+**Dependencies:** [REQ-SET-003](settings.md#req-set-003-scheduled-digest-time-with-timezone)
+
 **Verification:** Integration test
+
 **Status:** Deprecated
+
 **Replaced By:** REQ-PIPE-001
+
 **Removed In:** 2026-04-23
 
 ---
@@ -393,12 +465,18 @@ Superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework.
 3. On success, a conditional `INSERT INTO digests` creates a row with `status='in_progress'` only if no other in-progress digest exists for this user and today's `local_date`; zero rows inserted returns HTTP 409 with code `already_in_progress`.
 4. The endpoint enqueues `{ trigger: 'manual', user_id, local_date, digest_id }` to `digest-jobs` and returns HTTP 202 with `{ digest_id, status: 'in_progress' }`.
 
-**Constraints:** CON-PERF-001
+**Constraints:** [CON-PERF-001](constraints.md#con-perf-001-100-user-thundering-herd-target)
+
 **Priority:** P0
-**Dependencies:** REQ-GEN-001
+
+**Dependencies:** [REQ-GEN-001](#req-gen-001-scheduled-generation-via-cron-dispatcher)
+
 **Verification:** Integration test
+
 **Status:** Deprecated
+
 **Replaced By:** REQ-PIPE-001
+
 **Removed In:** 2026-04-23
 
 ---
@@ -418,12 +496,18 @@ Superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework.
 4. Fetches have a 5-second timeout, a 1 MB response-body cap, and a global concurrency cap of 10 across all hashtags and sources.
 5. Per-source errors are logged but do not fail the digest; only all sources failing across all hashtags produces `status='failed'` with `error_code='all_sources_failed'`.
 
-**Constraints:** CON-SEC-002
+**Constraints:** [CON-SEC-002](constraints.md#con-sec-002-outbound-article-body-fetches-flow-through-the-ssrf-guarded-helper)
+
 **Priority:** P0
-**Dependencies:** REQ-GEN-001, REQ-DISC-001
+
+**Dependencies:** [REQ-GEN-001](#req-gen-001-scheduled-generation-via-cron-dispatcher), [REQ-DISC-001](discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery)
+
 **Verification:** Integration test
+
 **Status:** Deprecated
+
 **Replaced By:** REQ-PIPE-001
+
 **Removed In:** 2026-04-23
 
 ---
@@ -443,12 +527,18 @@ Superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework.
 4. The canonical URL string is the dedupe key; articles sharing a canonical URL collapse to one entry.
 5. No server-side redirect resolution is performed.
 
-**Constraints:** CON-SEC-002
+**Constraints:** [CON-SEC-002](constraints.md#con-sec-002-outbound-article-body-fetches-flow-through-the-ssrf-guarded-helper)
+
 **Priority:** P0
-**Dependencies:** REQ-GEN-003
+
+**Dependencies:** [REQ-GEN-003](#req-gen-003-source-fan-out-with-caching)
+
 **Verification:** Automated test
+
 **Status:** Deprecated
+
 **Replaced By:** REQ-PIPE-003
+
 **Removed In:** 2026-04-23
 
 ---
@@ -470,12 +560,18 @@ Superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework.
 6. Each candidate headline sent to the model carries the authoritative list of user hashtags that matched it during fan-out, and the model is instructed to echo the relevant subset back as each returned article's `tags` field. The returned tags are validated server-side to be a subset of the user's current hashtag list; any hallucinated tag is discarded, and if the model omits the field the fan-out's own source-tag union is used as a fallback.
 7. `title` is a punchy, glance-ready headline rewrite (roughly 45–80 characters, active voice, no clickbait) rather than a verbatim copy of the source feed's title, so the reading surface presents stories in a consistent editorial voice.
 
-**Constraints:** CON-LLM-001, CON-SEC-003
+**Constraints:** [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts), [CON-SEC-003](constraints.md#con-sec-003-plaintext-only-llm-output)
+
 **Priority:** P0
-**Dependencies:** REQ-GEN-003
+
+**Dependencies:** [REQ-GEN-003](#req-gen-003-source-fan-out-with-caching)
+
 **Verification:** Integration test
+
 **Status:** Deprecated
+
 **Replaced By:** REQ-PIPE-002
+
 **Removed In:** 2026-04-23
 
 ---
@@ -495,12 +591,18 @@ Superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework.
 4. Article plaintext (title, one_liner, each bullet in details) is sanitized by stripping HTML tags, stripping control characters, and collapsing whitespace before the insert.
 5. Each article row persists its validated tag list alongside the article so the reading surface can filter by tag without consulting the digest generator. Rows written before tags were captured are treated as an empty list.
 
-**Constraints:** CON-DATA-001, CON-SEC-003
+**Constraints:** [CON-DATA-001](constraints.md#con-data-001-strong-consistency-in-d1-edge-cache-in-kv), [CON-SEC-003](constraints.md#con-sec-003-plaintext-only-llm-output)
+
 **Priority:** P0
-**Dependencies:** REQ-GEN-005
+
+**Dependencies:** [REQ-GEN-005](#req-gen-005-single-call-llm-summarization)
+
 **Verification:** Integration test
+
 **Status:** Deprecated
+
 **Replaced By:** REQ-PIPE-002
+
 **Removed In:** 2026-04-23
 
 ---
@@ -519,11 +621,17 @@ Superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework.
 3. The sweeper runs unconditionally; any other cron work is skipped if the sweeper fails.
 
 **Constraints:** None
+
 **Priority:** P1
-**Dependencies:** REQ-GEN-001
+
+**Dependencies:** [REQ-GEN-001](#req-gen-001-scheduled-generation-via-cron-dispatcher)
+
 **Verification:** Integration test
+
 **Status:** Deprecated
+
 **Replaced By:** REQ-PIPE-001
+
 **Removed In:** 2026-04-23
 
 ---
@@ -542,10 +650,16 @@ Superseded by REQ-PIPE-* in the 2026-04-23 global-feed rework.
 3. When Workers AI does not return token counts, the numeric fields display with a `~` prefix to indicate estimate.
 4. The history view shows these same metrics per past digest.
 
-**Constraints:** CON-LLM-001
+**Constraints:** [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts)
+
 **Priority:** P1
-**Dependencies:** REQ-GEN-006
+
+**Dependencies:** [REQ-GEN-006](#req-gen-006-atomic-final-write)
+
 **Verification:** Integration test
+
 **Status:** Deprecated
+
 **Replaced By:** REQ-HIST-002
+
 **Removed In:** 2026-04-23

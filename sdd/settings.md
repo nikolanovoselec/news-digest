@@ -18,9 +18,13 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 5. The save endpoint accepts both a JSON API request (used when the in-page submit handler is bound) and a native HTML form submission (used as a fallback in mobile in-app webviews or during a client-router swap), so clicking the primary button always persists regardless of whether client-side JavaScript has initialised. The native-form path returns a redirect back to the settings page on both success and failure. Success surfaces a confirmation inline next to the Save button. Any validation or server error surfaces an inline message next to the Save button naming what went wrong, so the user never sees a raw JSON error body. Query parameters carrying the outcome are stripped from the URL after display so a refresh does not re-show stale text. Unauthenticated native-form POSTs redirect to the site root. Both paths apply identical server-side validation and the same `Origin` check from REQ-AUTH-003.
 
 **Constraints:** None
+
 **Priority:** P0
-**Dependencies:** REQ-AUTH-001
+
+**Dependencies:** [REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -38,9 +42,13 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 4. While one or more tags are selected, the reading surface filters its visible articles to those whose stored tag list intersects the selection. When every article is filtered out, the reading surface shows a short message naming the selected tags and inviting the user to deselect.
 
 **Constraints:** None
+
 **Priority:** P0
-**Dependencies:** REQ-SET-001, REQ-SET-008
+
+**Dependencies:** [REQ-SET-001](#req-set-001-unified-first-run-and-edit-flow), [REQ-SET-008](#req-set-008-hashtag-persistence-validation-and-defaults)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -58,9 +66,13 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 4. Brand-new accounts are seeded with a curated default hashtag list so the first digest has meaningful input before the user touches the strip. The settings page exposes two paired actions side-by-side: "Restore initial tags" replaces the current list with the full default seed, and "Delete all tags" clears the user's tag list entirely so they can build a completely custom set without removing default chips one-by-one. Each action is only visible when it would do something useful: Restore when at least one default is missing from the user's list, Delete whenever the user has at least one tag, so an empty list hides Delete and a list identical to the initials hides Restore.
 
 **Constraints:** None
+
 **Priority:** P0
-**Dependencies:** REQ-SET-001
+
+**Dependencies:** [REQ-SET-001](#req-set-001-unified-first-run-and-edit-flow)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -79,9 +91,13 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 5. Changing the scheduled time never creates a duplicate digest for a day that has already generated.
 
 **Constraints:** None
+
 **Priority:** P0
-**Dependencies:** REQ-SET-002
+
+**Dependencies:** [REQ-SET-002](#req-set-002-hashtag-curation-strip-ux)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -99,11 +115,16 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 4. On save, the server rejects any model identifier not in the accepted list with HTTP 400 and error code `invalid_model_id`.
 5. The model dropdown lives inside an "Advanced" collapsible section, collapsed by default.
 
-**Constraints:** CON-LLM-001
+**Constraints:** [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts)
+
 **Priority:** P1
-**Dependencies:** REQ-SET-003
+
+**Dependencies:** [REQ-SET-003](#req-set-003-scheduled-digest-time-with-timezone)
+
 **Verification:** Integration test
+
 **Status:** Partial
+
 **Notes:** The model-selection UI is hidden from the settings form, but the settings API still accepts and persists a `model_id` field. True removal requires retiring `model_id` from the persistence contract first.
 
 ---
@@ -121,9 +142,13 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 4. Manual refresh never sends email, regardless of toggle state.
 
 **Constraints:** None
+
 **Priority:** P1
-**Dependencies:** REQ-SET-001
+
+**Dependencies:** [REQ-SET-001](#req-set-001-unified-first-run-and-edit-flow)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -142,9 +167,13 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 5. The discovery-progress endpoint that the settings page polls while pending discoveries drain is rate-limited per authenticated user, sized to leave a few-seconds polling cadence untouched while bounding pathological client loops, per REQ-AUTH-001 AC 9a. An exhausted limit returns HTTP 429 with `Retry-After`; the settings page surfaces the polling pause without blocking the rest of the form.
 
 **Constraints:** None
+
 **Priority:** P0
-**Dependencies:** REQ-SET-001, REQ-AUTH-002
+
+**Dependencies:** [REQ-SET-001](#req-set-001-unified-first-run-and-edit-flow), [REQ-AUTH-002](authentication.md#req-auth-002-access-token-refresh-token-instant-revocation)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -165,7 +194,11 @@ A single `/settings` route handles both first-run onboarding and steady-state co
 7. The timezone-update endpoint that the silent path and the settings picker both call is rate-limited per authenticated user, per REQ-AUTH-001 AC 9a. The limit is generous enough to leave legitimate updates untouched (travel, DST edges, and dev/test loops) while bounding runaway-client patterns that would otherwise hammer the endpoint on every page load. An exhausted limit returns HTTP 429 with `Retry-After`; a failed update remains non-fatal per AC 4.
 
 **Constraints:** None
+
 **Priority:** P2
-**Dependencies:** REQ-SET-003
+
+**Dependencies:** [REQ-SET-003](#req-set-003-scheduled-digest-time-with-timezone)
+
 **Verification:** Integration test
+
 **Status:** Implemented

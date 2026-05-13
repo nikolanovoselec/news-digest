@@ -21,10 +21,14 @@ Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, J
 5. A brand-new account is seeded with a curated default hashtag list (covering cloud platforms, AI/LLM, security, identity, and infrastructure) where every default tag has at least one curated source, so the first digest has meaningful input before the user touches the strip.
 6. A brand-new account is also seeded with a default scheduled-digest time of 08:00, a default UTC timezone (overwritten by the browser's IANA zone on first load), and email-notification enabled. Successful first sign-in lands the user directly on the reading surface with real articles visible — no forced onboarding detour.
 
-**Constraints:** CON-AUTH-001
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt)
+
 **Priority:** P0
+
 **Dependencies:** None
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -45,10 +49,14 @@ Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, J
 
 **Notes:** Cookie attribute set (`__Host-` prefix, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`) and the signing algorithm are documented in [`documentation/security.md`](../documentation/security.md#auth-cookie-policy-req-auth-002--req-auth-008).
 
-**Constraints:** CON-AUTH-001, CON-SEC-001
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
-**Dependencies:** REQ-AUTH-001, REQ-AUTH-008
+
+**Dependencies:** [REQ-AUTH-001](#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-008](#req-auth-008-refresh-token-rotation-device-binding-reuse-detection)
+
 **Verification:** Automated test
+
 **Status:** Implemented
 
 ---
@@ -65,10 +73,14 @@ Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, J
 2. Non-admin `GET` endpoints are exempt from the Origin check because the browser will not attach the session cookie to a cross-site GET. Admin `GET` endpoints narrow this exemption per [REQ-AUTH-006](#req-auth-006-admin-surface-gating). Cookie attribute mechanism that delivers this guarantee is documented in [`documentation/security.md`](../documentation/security.md#auth-cookie-policy-req-auth-002-req-auth-008).
 3. OAuth-flow entry points that only initiate a redirect to the identity provider are exempt — their only effect is setting a short-lived state cookie and redirecting, and actual authentication requires consent at the provider.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
-**Dependencies:** REQ-AUTH-001
+
+**Dependencies:** [REQ-AUTH-001](#req-auth-001-sign-in-with-a-federated-identity-provider)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -86,10 +98,14 @@ Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, J
 3. CSRF state mismatch returns `HTTP 403` with `?error=invalid_state`.
 4. Any other provider error returns `?error=oauth_error`; full detail is logged server-side but never surfaced to the browser.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
-**Dependencies:** REQ-AUTH-001
+
+**Dependencies:** [REQ-AUTH-001](#req-auth-001-sign-in-with-a-federated-identity-provider)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -108,10 +124,14 @@ Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, J
 4. Both session cookies are cleared and the user is redirected to the landing page with a one-time confirmation banner.
 5. Any KV entries keyed by the user's id are deleted in the same handler.
 
-**Constraints:** CON-AUTH-001
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt)
+
 **Priority:** P1
-**Dependencies:** REQ-AUTH-001
+
+**Dependencies:** [REQ-AUTH-001](#req-auth-001-sign-in-with-a-federated-identity-provider)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -130,10 +150,14 @@ Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, J
 
 **Notes:** Layered-defense mechanism is documented in [`documentation/security.md`](../documentation/security.md#admin-gate-and-jwt-exp-validation-req-auth-001-ac-8-ac-8a--ad44).
 
-**Constraints:** CON-AUTH-001, CON-SEC-001
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
-**Dependencies:** REQ-AUTH-001, REQ-AUTH-003
+
+**Dependencies:** [REQ-AUTH-001](#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-003](#req-auth-003-csrf-defense-for-state-changing-endpoints)
+
 **Verification:** Integration test
+
 **Status:** Partial
 
 ---
@@ -151,10 +175,14 @@ Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, J
 3. The daily digest is sent once per real person. Duplicate-email accounts that pre-date this requirement are merged in a one-time pass; their stars, read marks, and pending discoveries re-point to the surviving account so no user-visible state is lost.
 4. Removing one sign-in path at the OAuth provider does not delete the account or other linked sign-in paths — the account remains reachable via the other provider.
 
-**Constraints:** CON-AUTH-001
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt)
+
 **Priority:** P1
-**Dependencies:** REQ-AUTH-001
+
+**Dependencies:** [REQ-AUTH-001](#req-auth-001-sign-in-with-a-federated-identity-provider)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -176,10 +204,14 @@ Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, J
 
 **Notes:** Grace-window length, retention floor, and the parent-link pointer are documented in [`documentation/security.md`](../documentation/security.md#auth-cookie-policy-req-auth-002--req-auth-008).
 
-**Constraints:** CON-AUTH-001, CON-SEC-001
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
-**Dependencies:** REQ-AUTH-002
+
+**Dependencies:** [REQ-AUTH-002](#req-auth-002-access-token-refresh-token-instant-revocation)
+
 **Verification:** Automated test
+
 **Status:** Implemented
 
 ---
@@ -196,8 +228,12 @@ Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, J
 
 **Notes:** `IS_PRODUCTION` semantics and the integration runbook are documented in [`documentation/security.md`](../documentation/security.md#dev-bypass-prod-guard-req-auth-001-ac-10) and [`documentation/deployment.md`](../documentation/deployment.md).
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
-**Dependencies:** REQ-AUTH-001
+
+**Dependencies:** [REQ-AUTH-001](#req-auth-001-sign-in-with-a-federated-identity-provider)
+
 **Verification:** Integration test
+
 **Status:** Partial

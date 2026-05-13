@@ -16,10 +16,14 @@ Structured JSON logging as the single operational surface — no external observ
 3. Each event carries a fixed set of fields documented in the observability implementation notes; new events are added by extending this enum.
 4. Raw exception messages and external API response bodies are logged at `level: 'error'` but never stored in D1 and never returned to clients.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P1
+
 **Dependencies:** None
+
 **Verification:** Manual check
+
 **Status:** Implemented
 
 ---
@@ -36,10 +40,14 @@ Structured JSON logging as the single operational surface — no external observ
 3. The failure page on `/digest` displays the `error_code` in a muted monospace footer, never prose from the original error.
 4. OAuth error codes follow a parallel allowlist (`access_denied`, `no_verified_email`, `invalid_state`, `oauth_error`) and any value not on the list is normalized to `oauth_error` before being put in a URL.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
-**Dependencies:** REQ-OPS-001
+
+**Dependencies:** [REQ-OPS-001](#req-ops-001-structured-json-logging)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -58,10 +66,14 @@ Structured JSON logging as the single operational surface — no external observ
 5. Every response includes `X-Frame-Options: DENY` as defense-in-depth alongside `frame-ancestors 'none'`.
 6. No inline script tags exist anywhere in the app; the CSP `script-src` is `'self'` only.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
+
 **Dependencies:** None
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -79,10 +91,14 @@ Structured JSON logging as the single operational surface — no external observ
 4. The response is content-negotiated. Browsers and direct URL visits get a `303 See Other` redirect to `/settings?force_refresh=ok&run_id=...`. Operator scripts that send `Accept: application/json` get `200 OK` with `{ ok: true, scrape_run_id, reused }`.
 5. The endpoint is gated by all three admin layers per REQ-AUTH-001 AC 8: Cloudflare Access at the zone level (optionally audience-pinned via `CF_ACCESS_AUD`), a valid worker session, and the session email matching the configured operator email. Failure at any layer returns the layer's native deny response (Access challenge, 401 unauthorized, or 403 forbidden).
 
-**Constraints:** CON-AUTH-001, CON-SEC-001
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P2
-**Dependencies:** REQ-PIPE-001, REQ-AUTH-001
+
+**Dependencies:** [REQ-PIPE-001](generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -101,10 +117,14 @@ Structured JSON logging as the single operational surface — no external observ
 5. Error pages served for not-found and server-error conditions are flagged no-index so crawler spaces stay clean.
 6. Structured-data (JSON-LD) blocks emitted into the page head are serialized through a defensive helper that rewrites every `<`, `>`, and `&` byte to its `\uNNNN` JSON form, defeating every HTML state-transition vector that could escape the script block (`</script>`, `<!--`, `]]>`, `<script` re-entry). Today every JSON-LD value is server-controlled; the defence is preventive insurance for a future refactor that interpolates a user-controlled value (e.g., article title) into the graph.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P2
+
 **Dependencies:** None
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -124,11 +144,16 @@ Structured JSON logging as the single operational surface — no external observ
 6. Worker secrets are sourced from the same repo-level GitHub Actions secrets the production deploy uses, with GitHub-Environment-scoped overrides taking precedence when defined. The environment variable that anchors the public hostname (APP_URL) lives in the deployment manifest, not in secrets, so swapping environments doesn't require swapping secrets.
 7. Promotion path is one-way: develop → integration smoke (manual) → develop merged to main → production auto-deploy. There is no path that pushes integration changes back to develop.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P2
-**Dependencies:** REQ-OPS-005
+
+**Dependencies:** [REQ-OPS-005](#req-ops-005-admin-force-refresh-endpoint)
+
 **Verification:** Manual check
+
 **Status:** Implemented
+
 **Notes:** Verification is the manual promotion checklist (develop -> integration smoke -> main). The deployment topology is exercised by [`.github/workflows/deploy-integration.yml`](../.github/workflows/deploy-integration.yml); the workflow's header comment carries the REQ-OPS-006 backlink for traceability.
 
 ---
@@ -148,9 +173,13 @@ Structured JSON logging as the single operational surface — no external observ
 6. The sitemap origin follows the request hostname, not a hardcoded one — a fork or staging deploy emits its own URLs, never the production origin.
 
 **Constraints:** —
+
 **Priority:** P3
+
 **Dependencies:** —
+
 **Verification:** Unit test
+
 **Status:** Implemented
 
 ---
@@ -170,8 +199,12 @@ Structured JSON logging as the single operational surface — no external observ
 6. When a run reaches a terminal status (completed, denied by the auth gate, or kick-time error), the surface paints the terminal message and keeps it visible across reloads within the freshness window so the operator can see the outcome on return. The persisted terminal state is replaced by the next kick or aged out by the freshness window in AC 5; it is not auto-cleared the moment it is rendered.
 7. Every phase is gated by the same admin authentication used elsewhere in the admin surface (REQ-AUTH-001). An unauthenticated tab where the admin gate has lapsed surfaces the auth failure as a user-readable failed-status line rather than silently no-op'ing.
 
-**Constraints:** CON-AUTH-001, CON-SEC-001
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P2
-**Dependencies:** REQ-OPS-005, REQ-PIPE-003, REQ-AUTH-001
+
+**Dependencies:** [REQ-OPS-005](#req-ops-005-admin-force-refresh-endpoint), [REQ-PIPE-003](generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)
+
 **Verification:** Integration test
+
 **Status:** Implemented

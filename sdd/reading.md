@@ -19,10 +19,14 @@ The heart of the product. Overview grid of the freshest articles read from the s
 6. The grid's final slot (slot 30) is a "see all of today's articles in Search & History" tile containing a centred list-style icon; activating it navigates the user to the Search & History page scoped to today's local date. Per-tag filtering that reaches beyond the newest-29 window lives on Search & History, not on the dashboard.
 7. When the same story has been reported by more than one source, the source label at the bottom of the card shows the primary publisher name with a `+N` suffix (e.g. `MASHABLE +1`, `TECHCRUNCH +3`) where N is the count of additional sources beyond the primary; single-source articles show the publisher name with no suffix. The same `+N` treatment applies to cards rendered on Search & History and the starred-articles surface so attribution reads identically across all card grids.
 
-**Constraints:** CON-A11Y-001
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum)
+
 **Priority:** P0
-**Dependencies:** REQ-PIPE-001, REQ-SET-002
+
+**Dependencies:** [REQ-PIPE-001](generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-SET-002](settings.md#req-set-002-hashtag-curation-strip-ux)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -41,10 +45,14 @@ The heart of the product. Overview grid of the freshest articles read from the s
 5. When the article has at least one alternative source, activating "Read at source" opens a modal listing every known source (primary + alternatives) with each source's name and per-source timestamp; when the article has only one source, the affordance links directly to that source in a new tab with `rel="noopener noreferrer"`.
 6. The modal closes on Escape and on backdrop click.
 
-**Constraints:** CON-SEC-003, CON-A11Y-001
+**Constraints:** [CON-SEC-003](constraints.md#con-sec-003-plaintext-only-llm-output), [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum)
+
 **Priority:** P0
-**Dependencies:** REQ-READ-001
+
+**Dependencies:** [REQ-READ-001](#req-read-001-overview-grid-of-todays-digest)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -61,10 +69,14 @@ The heart of the product. Overview grid of the freshest articles read from the s
 3. Clicking the source link does not record a read; only opening the detail view counts.
 4. Re-visiting an already-read detail page is idempotent — the original read timestamp is preserved and no duplicate read is recorded.
 
-**Constraints:** CON-DATA-001
+**Constraints:** [CON-DATA-001](constraints.md#con-data-001-strong-consistency-in-d1-edge-cache-in-kv)
+
 **Priority:** P1
-**Dependencies:** REQ-READ-002
+
+**Dependencies:** [REQ-READ-002](#req-read-002-article-detail-view)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -82,12 +94,18 @@ The heart of the product. Overview grid of the freshest articles read from the s
 4. On completion, the real cards faded in with the staggered entrance from REQ-READ-001.
 5. On failure, the failure page for the error code was rendered (see REQ-READ-006).
 
-**Constraints:** CON-A11Y-001
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum)
+
 **Priority:** P0
-**Dependencies:** REQ-READ-001
+
+**Dependencies:** [REQ-READ-001](#req-read-001-overview-grid-of-todays-digest)
+
 **Verification:** Integration test
+
 **Status:** Deprecated
+
 **Replaced By:** REQ-PIPE-001
+
 **Removed In:** 2026-04-23
 
 ---
@@ -104,9 +122,13 @@ The heart of the product. Overview grid of the freshest articles read from the s
 3. The countdown header continues to render above the empty-state copy so users still see when the pool will next refresh.
 
 **Constraints:** None
+
 **Priority:** P1
-**Dependencies:** REQ-READ-001
+
+**Dependencies:** [REQ-READ-001](#req-read-001-overview-grid-of-todays-digest)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -124,10 +146,14 @@ The heart of the product. Overview grid of the freshest articles read from the s
 4. When `navigator.onLine` is false, a top-of-page banner reads "You're offline — showing the last digest you viewed"; the Refresh button is disabled with a tooltip.
 5. 404 and 500 responses have dedicated pages with a calm headline and at least one clear action.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P1
-**Dependencies:** REQ-READ-001
+
+**Dependencies:** [REQ-READ-001](#req-read-001-overview-grid-of-todays-digest)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -146,10 +172,14 @@ The heart of the product. Overview grid of the freshest articles read from the s
 5. While the pop, hold, or cascade is in flight, additional taps on any chip are ignored until the motion settles, so a rapid double-tap never desynchronises the data order from the visual order.
 6. When the tapped chip is already at its destination slot (e.g., the leftmost chip is tapped to select), only the pop plays; there is no hold, no cascade, and no trailing motion. The railing settles immediately after the pop completes so the chip never appears to "pulse twice".
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P2
-**Dependencies:** REQ-READ-001, REQ-HIST-001
+
+**Dependencies:** [REQ-READ-001](#req-read-001-overview-grid-of-todays-digest), [REQ-HIST-001](history.md#req-hist-001-day-grouped-article-history)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -165,10 +195,14 @@ The heart of the product. Overview grid of the freshest articles read from the s
 2. On a viewport that wraps the railing into multiple rows, the railing does not scroll at all; the user sees the entire cascade play out across whatever rows the chips occupy.
 3. When the runtime does not support the animation primitives, the reorder still happens (the tapped chip ends up at its correct sort position, slot 0 on select or natural sort position on unselect, and the data order is correct); only the pop, hold, and cascade motion are skipped.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P2
-**Dependencies:** REQ-READ-007
+
+**Dependencies:** [REQ-READ-007](#req-read-007-tag-railing-reorder-animation)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -187,10 +221,14 @@ The heart of the product. Overview grid of the freshest articles read from the s
 5. A successful star/unstar response confirms the new state and the UI reconciles with the server value if the optimistic flip disagreed.
 6. On every page that lists articles, each card renders its initial starred / unstarred state on first paint — articles the user has already starred appear filled and `aria-pressed` from the server-rendered HTML, without needing a hard refresh after a toggle on another page.
 
-**Constraints:** CON-SEC-001, CON-DATA-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy), [CON-DATA-001](constraints.md#con-data-001-strong-consistency-in-d1-edge-cache-in-kv)
+
 **Priority:** P1
-**Dependencies:** REQ-AUTH-002, REQ-AUTH-003
+
+**Dependencies:** [REQ-AUTH-002](authentication.md#req-auth-002-access-token-refresh-token-instant-revocation), [REQ-AUTH-003](authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -207,10 +245,14 @@ The heart of the product. Overview grid of the freshest articles read from the s
 3. When the user has starred no articles, the page shows exactly the copy "No starred articles yet." with no countdown header.
 4. The countdown header from `/digest` does not appear on `/starred`.
 
-**Constraints:** CON-A11Y-001
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum)
+
 **Priority:** P1
-**Dependencies:** REQ-STAR-001
+
+**Dependencies:** [REQ-STAR-001](#req-star-001-star-and-unstar-articles)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -226,8 +268,12 @@ The heart of the product. Overview grid of the freshest articles read from the s
 2. The entry shows a star-outline glyph aligned to the right side of the row.
 3. The entry is placed between the existing History and Settings entries in the menu order.
 
-**Constraints:** CON-A11Y-001
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum)
+
 **Priority:** P2
-**Dependencies:** REQ-STAR-002
+
+**Dependencies:** [REQ-STAR-002](#req-star-002-starred-articles-page)
+
 **Verification:** Integration test
+
 **Status:** Implemented
