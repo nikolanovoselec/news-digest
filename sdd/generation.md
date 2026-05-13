@@ -62,8 +62,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 **Priority:** P0
 **Dependencies:** REQ-PIPE-002
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** No test file literally names this REQ ID; coverage exists in `tests/queue/chunk-consumer.test.ts` and `tests/pipeline/` under parent REQ-PIPE-002 names.
+**Status:** Implemented
 
 ---
 
@@ -167,8 +166,7 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 **Priority:** P1
 **Dependencies:** REQ-PIPE-006
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** No test file literally names this REQ ID; coverage exists in `tests/queue/pipeline-consumer.test.ts` under parent REQ-PIPE-006 names.
+**Status:** Implemented
 
 ---
 
@@ -268,8 +266,7 @@ Superseded by REQ-PIPE-003's same-story dedupe across the entire article history
 **Priority:** P0
 **Dependencies:** REQ-PIPE-001
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** No test file literally names this REQ ID; coverage exists in `tests/scraping/` under parent REQ-PIPE-001 names after the AC split from PIPE-001.
+**Status:** Implemented
 
 ---
 
@@ -288,8 +285,7 @@ Superseded by REQ-PIPE-003's same-story dedupe across the entire article history
 **Priority:** P0
 **Dependencies:** REQ-PIPE-001
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** No test file literally names this REQ ID; coverage exists in `tests/scraping/` and `tests/pipeline/` under parent REQ-PIPE-001 names after the AC split from PIPE-001.
+**Status:** Implemented
 
 ---
 
@@ -308,8 +304,7 @@ Superseded by REQ-PIPE-003's same-story dedupe across the entire article history
 **Priority:** P0
 **Dependencies:** REQ-PIPE-003
 **Verification:** Automated test
-**Status:** Partial
-**Notes:** No test file literally names this REQ ID; coverage exists in `tests/pipeline/finalize-vectorize.test.ts` and `tests/pipeline/bidirectional-dedup.test.ts` under parent REQ-PIPE-003 names after the AC split.
+**Status:** Implemented
 
 ---
 
@@ -329,8 +324,7 @@ Superseded by REQ-PIPE-003's same-story dedupe across the entire article history
 **Priority:** P0
 **Dependencies:** REQ-PIPE-003, REQ-PIPE-005, REQ-PIPE-012
 **Verification:** Automated test
-**Status:** Partial
-**Notes:** No test file literally names this REQ ID; coverage exists in `tests/pipeline/historical-dedup.test.ts` and `tests/queue/pipeline-consumer.test.ts` under parent REQ-PIPE-003 names after the AC split.
+**Status:** Implemented
 
 ---
 
@@ -350,8 +344,7 @@ Superseded by REQ-PIPE-003's same-story dedupe across the entire article history
 **Priority:** P0
 **Dependencies:** REQ-PIPE-003
 **Verification:** Automated test
-**Status:** Partial
-**Notes:** No test file literally names this REQ ID; coverage exists in `tests/admin/historical-dedup.test.ts`, `tests/admin/dedup-diag.test.ts`, and `tests/admin/embed-backfill.test.ts` under parent REQ-PIPE-003 names after the AC split.
+**Status:** Implemented
 
 ---
 

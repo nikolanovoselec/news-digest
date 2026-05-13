@@ -125,7 +125,7 @@ async function postRequest(cookie: string | null): Promise<Request> {
   });
 }
 
-describe('POST /api/tags/delete-initial — REQ-SET-002 AC 8', () => {
+describe('POST /api/tags/delete-initial - REQ-SET-002 AC 8 / REQ-SET-008 (delete-all tags action)', () => {
   it('REQ-SET-002: rejects a request with missing or mismatched Origin header (REQ-AUTH-003)', async () => {
     const db = makeDb(userWith(JSON.stringify(['ai', 'cloudflare'])));
     const req = new Request(`${APP_URL}/api/tags/delete-initial`, {
@@ -226,7 +226,7 @@ describe('POST /api/tags/delete-initial — REQ-SET-002 AC 8', () => {
   });
 });
 
-describe('settings.astro — Restore + Delete-all visibility (REQ-SET-002 AC 8)', () => {
+describe('settings.astro - Restore + Delete-all visibility (REQ-SET-002 AC 8 / REQ-SET-008)', () => {
   it('REQ-SET-002: settings.astro imports DELETE_ALL_TAGS_LABEL and uses it as the button label', () => {
     expect(settingsPage).toContain('DELETE_ALL_TAGS_LABEL');
     expect(DELETE_ALL_TAGS_LABEL).toBe('Delete all tags');

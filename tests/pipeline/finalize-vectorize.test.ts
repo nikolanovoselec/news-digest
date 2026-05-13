@@ -197,7 +197,7 @@ function makeEnv(
   return base as unknown as Env;
 }
 
-describe('processOneFinalize — REQ-PIPE-003', () => {
+describe('processOneFinalize — REQ-PIPE-003 / REQ-PIPE-012 (policy variants) / REQ-PIPE-013 (cross-tick automation)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });

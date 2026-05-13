@@ -21,7 +21,7 @@ async function readStatus(): Promise<string | null> {
   return row?.status ?? null;
 }
 
-describe('finishRun — REQ-PIPE-006 status-flap guard', () => {
+describe('finishRun — REQ-PIPE-006 / REQ-PIPE-016 (stuck-run cleanup) status-flap guard', () => {
   beforeAll(async () => {
     await applyD1Migrations(env.DB, env.DB_MIGRATIONS ?? []);
   });

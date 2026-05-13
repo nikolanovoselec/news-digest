@@ -40,8 +40,7 @@ Past digests paginated on `/history`, 30 per page. A four-tile stats widget on `
 **Priority:** P1
 **Dependencies:** REQ-HIST-001
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** No test file literally names this REQ ID; coverage exists in `tests/history/api.test.ts` and `tests/history/page.test.ts` under parent REQ-HIST-001 names.
+**Status:** Implemented
 
 ---
 

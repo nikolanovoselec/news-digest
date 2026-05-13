@@ -168,7 +168,7 @@ async function callRoute(opts: CallOpts) {
   return { res, calls, sends };
 }
 
-describe('POST /api/admin/historical-dedup — kicker', () => {
+describe('POST /api/admin/historical-dedup — REQ-PIPE-014 operator sweep kicker', () => {
   it('REQ-PIPE-003 AC 9: empty JSON body enqueues a sweep and returns 202 with run_id', async () => {
     const { res, calls, sends } = await callRoute({ acceptJson: true });
     expect(res.status).toBe(202);

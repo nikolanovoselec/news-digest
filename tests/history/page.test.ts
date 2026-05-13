@@ -27,7 +27,7 @@ import userMenuSource from '../../src/components/UserMenu.astro?raw';
 // so existing `?raw` substring matches keep finding their targets.
 const historyPageSource = `${historyPageAstro}\n${historyBundled}`;
 
-describe('history.astro — REQ-HIST-001', () => {
+describe('history.astro - REQ-HIST-001 / REQ-HIST-003 (read-history page)', () => {
   // CF-033: REQ-ID presence theater removed — CI gate covers annotations.
 
   it('REQ-HIST-001: renders a day-grouped list (not a flat per-digest list)', () => {

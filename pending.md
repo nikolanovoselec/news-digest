@@ -19,30 +19,6 @@ and REQ-RATE-001 (rate-limit policy). Rename the relevant
 `describe`/`it` blocks so spec-reviewer's literal-match coverage rule
 attributes the tests to the new REQ IDs.
 
-### Test-name migration for 2026-05-13 Partial demotes
-Eleven REQs were demoted Implemented → Partial by `/sdd clean --all`
-on 2026-05-13 because no test file literally names the new REQ ID
-(test name still cites the parent REQ from before the split). Rename
-`describe`/`it` blocks so spec-reviewer's CQ-1 truth-check attributes
-existing coverage to each REQ. Affected REQ IDs and current test
-files:
-
-- REQ-MAIL-003 → `tests/email/`, `tests/generate/cron.test.ts`
-- REQ-PIPE-010, REQ-PIPE-011 → `tests/scraping/` (parent REQ-PIPE-001)
-- REQ-PIPE-012, REQ-PIPE-013 → `tests/pipeline/finalize-vectorize.test.ts`,
-  `tests/pipeline/bidirectional-dedup.test.ts` (parent REQ-PIPE-003)
-- REQ-PIPE-014 → `tests/admin/historical-dedup.test.ts`,
-  `tests/admin/dedup-diag.test.ts`, `tests/admin/embed-backfill.test.ts`
-  (parent REQ-PIPE-003)
-- REQ-PIPE-015 → `tests/queue/chunk-consumer.test.ts` (parent REQ-PIPE-002)
-- REQ-PIPE-016 → `tests/queue/pipeline-consumer.test.ts` (parent REQ-PIPE-006)
-- REQ-HIST-003 → `tests/history/api.test.ts`, `tests/history/page.test.ts`
-  (parent REQ-HIST-001)
-- REQ-READ-008 → `tests/reading/tag-railing-flip.test.ts`
-  (parent REQ-READ-007)
-- REQ-SET-008 → no current test (REQ ID found only in source); add a
-  unit test alongside `tests/settings/api.test.ts`
-
 ## Operational TODOs
 
 ### 12 curated source URLs currently 4xx

@@ -19,7 +19,7 @@ async function seedScrapeRun(id: string): Promise<void> {
     .run();
 }
 
-describe('recordChunkCompletion — REQ-PIPE-002 / CF-003', () => {
+describe('recordChunkCompletion — REQ-PIPE-002 / REQ-PIPE-015 / REQ-PIPE-016 (idempotent counter advance) / CF-003', () => {
   beforeAll(async () => {
     await applyD1Migrations(env.DB, env.DB_MIGRATIONS ?? []);
   });

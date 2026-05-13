@@ -169,8 +169,7 @@ The heart of the product. Overview grid of the freshest articles read from the s
 **Priority:** P2
 **Dependencies:** REQ-READ-007
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** No test file literally names this REQ ID; coverage exists in `tests/reading/tag-railing-flip.test.ts` and related front-end tests under parent REQ-READ-007 names.
+**Status:** Implemented
 
 ---
 

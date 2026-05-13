@@ -185,7 +185,7 @@ async function buildContextAndCall(opts: BuildContextOpts): Promise<{
   return { res, fixture, ai, vectorize };
 }
 
-describe('POST /api/admin/embed-backfill — REQ-PIPE-003', () => {
+describe('POST /api/admin/embed-backfill - REQ-PIPE-003 / REQ-PIPE-014 (embedding regeneration)', () => {
   it('REQ-PIPE-003: empty corpus returns done:true and processed:0', async () => {
     const { res } = await buildContextAndCall({
       pending: [],

@@ -246,7 +246,7 @@ function makeChunk(
   };
 }
 
-describe('scrape-chunk-consumer - REQ-PIPE-002', () => {
+describe('scrape-chunk-consumer - REQ-PIPE-002 / REQ-PIPE-015 (chunk robustness)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });

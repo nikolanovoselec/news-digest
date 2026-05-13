@@ -64,5 +64,4 @@ Resend-backed notification sent after every successful digest — whether genera
 **Priority:** P1
 **Dependencies:** REQ-SET-005
 **Verification:** Integration test
-**Status:** Partial
-**Notes:** No test file literally names this REQ ID; coverage exists in `tests/email/` and `tests/generate/cron.test.ts` under sibling-REQ names.
+**Status:** Implemented

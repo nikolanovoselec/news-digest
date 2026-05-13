@@ -170,7 +170,7 @@ function stubFetchEmpty(): void {
   );
 }
 
-describe('scrape-coordinator - REQ-PIPE-001', () => {
+describe('scrape-coordinator - REQ-PIPE-001 / REQ-PIPE-010 (body-fetch) / REQ-PIPE-011 (filtering)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
