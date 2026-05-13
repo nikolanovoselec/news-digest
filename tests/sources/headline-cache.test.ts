@@ -1,4 +1,4 @@
-// Tests for src/lib/headline-cache.ts — REQ-GEN-003 (Source fan-out with
+// Tests for src/lib/headline-cache.ts — REQ-PIPE-001 (Source fan-out with
 // caching). The cache is a thin KV wrapper; we mock the KVNamespace and
 // assert key format, TTL, and miss/hit semantics.
 
@@ -23,7 +23,7 @@ function makeKv(): {
 
 describe('headline-cache', () => {
   describe('readCachedHeadlines', () => {
-    it('REQ-GEN-003: returns null on cache miss', async () => {
+    it('REQ-PIPE-001: returns null on cache miss', async () => {
       const { kv, get } = makeKv();
       get.mockResolvedValue(null);
       const result = await readCachedHeadlines(kv, 'hackernews', 'cloudflare');
@@ -31,7 +31,7 @@ describe('headline-cache', () => {
       expect(get).toHaveBeenCalledWith('headlines:hackernews:cloudflare', 'text');
     });
 
-    it('REQ-GEN-003: returns parsed headline array on cache hit', async () => {
+    it('REQ-PIPE-001: returns parsed headline array on cache hit', async () => {
       const stored: Headline[] = [
         {
           title: 'Workers AI now free',
@@ -50,21 +50,21 @@ describe('headline-cache', () => {
       expect(result).toEqual(stored);
     });
 
-    it('REQ-GEN-003: returns null on corrupt JSON', async () => {
+    it('REQ-PIPE-001: returns null on corrupt JSON', async () => {
       const { kv, get } = makeKv();
       get.mockResolvedValue('{{not valid json');
       const result = await readCachedHeadlines(kv, 'googlenews', 'ai');
       expect(result).toBeNull();
     });
 
-    it('REQ-GEN-003: returns null when stored JSON is not an array', async () => {
+    it('REQ-PIPE-001: returns null when stored JSON is not an array', async () => {
       const { kv, get } = makeKv();
       get.mockResolvedValue(JSON.stringify({ oops: true }));
       const result = await readCachedHeadlines(kv, 'reddit', 'typescript');
       expect(result).toBeNull();
     });
 
-    it('REQ-GEN-003: key format is headlines:{source}:{tag}', async () => {
+    it('REQ-PIPE-001: key format is headlines:{source}:{tag}', async () => {
       const { kv, get } = makeKv();
       get.mockResolvedValue(null);
       await readCachedHeadlines(kv, 'reddit', 'aws');
@@ -73,7 +73,7 @@ describe('headline-cache', () => {
   });
 
   describe('writeCachedHeadlines', () => {
-    it('REQ-GEN-003: writes JSON-serialised array with expirationTtl: 600', async () => {
+    it('REQ-PIPE-001: writes JSON-serialised array with expirationTtl: 600', async () => {
       const { kv, put } = makeKv();
       const headlines: Headline[] = [
         {
@@ -90,7 +90,7 @@ describe('headline-cache', () => {
       expect(opts).toEqual({ expirationTtl: 600 });
     });
 
-    it('REQ-GEN-003: writes an empty array without error', async () => {
+    it('REQ-PIPE-001: writes an empty array without error', async () => {
       const { kv, put } = makeKv();
       await writeCachedHeadlines(kv, 'reddit', 'mcp', []);
       expect(put).toHaveBeenCalledTimes(1);
@@ -100,7 +100,7 @@ describe('headline-cache', () => {
       expect(opts).toEqual({ expirationTtl: 600 });
     });
 
-    it('REQ-GEN-003: swallows KV put errors (cache is best-effort)', async () => {
+    it('REQ-PIPE-001: swallows KV put errors (cache is best-effort)', async () => {
       const { kv, put } = makeKv();
       put.mockRejectedValue(new Error('kv unavailable'));
       await expect(

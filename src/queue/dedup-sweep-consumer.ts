@@ -17,7 +17,7 @@
 //     standard queue retry envelope (`handleBatch` + max_retries from
 //     wrangler.toml).
 //   - Self-chaining over queues is the same pattern the chunk → finalize
-//     handoff already uses (REQ-PIPE-008), so operators have one mental
+//     handoff already uses (REQ-PIPE-003), so operators have one mental
 //     model for "background pipeline work continues without a tab".
 //
 // On terminal queue retry exhaustion the consumer flips the

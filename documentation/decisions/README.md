@@ -218,7 +218,7 @@ KV's eventual consistency made both races effectively undetectable via testing i
 - Durable Object for serialized counter updates - correct, but adds a DO dependency to a pipeline that runs without one today.
 - KV with Compare-And-Swap (`getWithMetadata` + `put` with `expirationTtl` as a CAS surrogate) - fragile; KV has no native CAS and the surrogate is not atomic.
 
-**Rationale:** AD5's own principle applies directly: completion counting needs transactional semantics. `INSERT OR IGNORE` into a table keyed by `(scrape_run_id, chunk_index)` is idempotent under redelivery and gives an exact count via `SELECT COUNT(*)` - no race. The finalize-enqueue gate is collapsed into a single atomic `UPDATE … WHERE finalize_enqueued = 0`; D1 returns `meta.changes` for exactly one consumer. The KV counter (`scrape_run:{id}:chunks_remaining`) is retained as a derived mirror for the `/api/scrape-status` progress display but is no longer authoritative. Implements [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract) and the same-story finalize gate now in [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) (originally REQ-PIPE-008, deleted 2026-05-13 in the same-story matching consolidation).
+**Rationale:** AD5's own principle applies directly: completion counting needs transactional semantics. `INSERT OR IGNORE` into a table keyed by `(scrape_run_id, chunk_index)` is idempotent under redelivery and gives an exact count via `SELECT COUNT(*)` - no race. The finalize-enqueue gate is collapsed into a single atomic `UPDATE … WHERE finalize_enqueued = 0`; D1 returns `meta.changes` for exactly one consumer. The KV counter (`scrape_run:{id}:chunks_remaining`) is retained as a derived mirror for the `/api/scrape-status` progress display but is no longer authoritative. Implements [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract) and the same-story finalize gate now in [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) (the prior LLM-finalize-dedup REQ that owned this gate was retired in the 2026-05-13 same-story matching consolidation).
 
 **Consequences:** The `scrape_chunk_completions` table grows one row per chunk per run; the retention cron (03:00 UTC) must cover this table or it will grow unbounded. The KV mirror is best-effort and may lag behind D1 by up to one propagation window - consumers must not rely on it for correctness, only for display.
 
@@ -289,7 +289,7 @@ KV's eventual consistency made both races effectively undetectable via testing i
 
 **Decision:** Idempotency for once-per-scrape-run side effects (queue-finalize enqueue, finalize stats fold) is enforced by a single conditional `UPDATE` against a dedicated `scrape_runs` column with a `WHERE col = 0` clause. The caller inspects `meta.changes` to decide whether to proceed (`changes === 1` → won the race) or short-circuit (`changes === 0` → another isolate already won). No separate `acquireOnceLock(...)` helper is introduced.
 
-**Context:** Two existing call sites use this shape today: (a) `scrape-chunk-consumer.ts` flips `finalize_enqueued` 0→1 to gate the `SCRAPE_FINALIZE.send` (originally REQ-PIPE-008 AC 3, now the same-story finalize gate in REQ-PIPE-003); (b) `scrape-finalize-consumer.ts` flips `finalize_recorded` 0→1 inside the same UPDATE that also folds tokens + cost into the run's totals (originally REQ-PIPE-008 AC 5/AC 7, now in REQ-PIPE-003 + REQ-PIPE-018). Code-review on 2026-04-29 (CF-026) flagged the duplicated shape and proposed a generic `acquireOnceLock(db, table, id, column)` helper.
+**Context:** Two existing call sites use this shape today: (a) `scrape-chunk-consumer.ts` flips `finalize_enqueued` 0→1 to gate the `SCRAPE_FINALIZE.send` (now the same-story finalize gate in REQ-PIPE-003 AC 2); (b) `scrape-finalize-consumer.ts` flips `finalize_recorded` 0→1 inside the same UPDATE that also folds tokens + cost into the run's totals (now governed by REQ-PIPE-003 + REQ-PIPE-018; the prior LLM-finalize-dedup REQ that defined this gate was retired in the 2026-05-13 consolidation). Code-review on 2026-04-29 (CF-026) flagged the duplicated shape and proposed a generic `acquireOnceLock(db, table, id, column)` helper.
 
 **Alternatives considered:**
 - **`acquireOnceLock` helper:** fits the chunk-consumer cleanly, but breaks the finalize-consumer. See rationale for why the fused atomic UPDATE cannot be split.
@@ -305,7 +305,7 @@ KV's eventual consistency made both races effectively undetectable via testing i
 - The third gate that would warrant the keyed-table refactor is treated as the trigger; this ADR is the artifact future readers find when they look for "why isn't there an `acquireOnceLock` helper?".
 - New gate sites SHOULD copy the pattern verbatim and document the meta.changes semantics inline; if a fourth or fifth site lands without the trigger refactor, this ADR is the place to revisit.
 
-**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-PIPE-018](../../sdd/generation.md#req-pipe-018-same-story-collapse-mechanics-survivor-selection-and-data-merge) (originally REQ-PIPE-008, deleted 2026-05-13)
+**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-PIPE-018](../../sdd/generation.md#req-pipe-018-same-story-collapse-mechanics-survivor-selection-and-data-merge)
 
 ---
 
@@ -499,7 +499,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - The chunk consumer's `normaliseDedupGroups` stays as-is, slightly looser than the finalize variant. This is documented in the chunk consumer's source comment.
 - If future canonical-URL dedup is loosened (e.g., a feature lets two canonical URLs survive within one cluster), revisit this decision and land the extraction.
 
-**Related requirements:** [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract), [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) (originally REQ-PIPE-008, deleted 2026-05-13)
+**Related requirements:** [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract), [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract)
 
 ---
 

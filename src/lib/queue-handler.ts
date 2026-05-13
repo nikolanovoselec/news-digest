@@ -1,7 +1,7 @@
-// Implements REQ-PIPE-008
+// Implements REQ-PIPE-003
 //
 // Shared queue-batch handler. The retry envelope here is the load-bearing
-// piece of REQ-PIPE-008 AC 8 (finalize-consumer intentional asymmetry on
+// piece of REQ-PIPE-003 AC 8 (finalize-consumer intentional asymmetry on
 // terminal failure) - owning it in one module is what keeps that AC honest
 // across all three consumers (coordinator, chunk, finalize), each of which
 // previously hand-rolled the same retry loop with the magic number 3
@@ -12,7 +12,7 @@
 // wrangler.toml that doesn't update every consumer would leave them
 // silently using the old threshold.
 //
-// Finalize's intentional asymmetry - REQ-PIPE-008 AC 8 says the
+// Finalize's intentional asymmetry - REQ-PIPE-003 AC 8 says the
 // finalize consumer must NOT call `finishRun('failed')` on terminal
 // retry, because the merge work is best-effort and the run was
 // already marked `ready` by the chunk consumer - is expressed as
@@ -65,7 +65,7 @@ interface BatchHandlerOptions<TBody> {
   /** Optional terminal-retry hook. Coordinator + chunk-consumer use it
    *  to mark the parent scrape_run as `failed` so the UI doesn't see
    *  an orphan stuck at `running`. Finalize deliberately omits it
-   *  (REQ-PIPE-008 AC 8). */
+   *  (REQ-PIPE-003 AC 8). */
   onTerminalFailure?: (env: Env, body: TBody) => Promise<void>;
   /** Stable log status emitted when `onTerminalFailure` itself throws.
    *  Required iff `onTerminalFailure` is provided. */

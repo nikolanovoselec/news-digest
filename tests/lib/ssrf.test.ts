@@ -1,5 +1,5 @@
 // Tests for src/lib/ssrf.ts — REQ-DISC-005 (discovery prompt injection protection
-// via SSRF filter) and REQ-GEN-003 (source fan-out, HTTPS-only, no private ranges).
+// via SSRF filter) and REQ-PIPE-001 (source fan-out, HTTPS-only, no private ranges).
 import { describe, it, expect } from 'vitest';
 import { isUrlSafe } from '~/lib/ssrf';
 

@@ -1,4 +1,4 @@
-// Tests for src/lib/llm-json.ts — REQ-PIPE-002 + REQ-PIPE-008 (CF-009).
+// Tests for src/lib/llm-json.ts — REQ-PIPE-002 + REQ-PIPE-003 (CF-009).
 //
 // Single-model architecture (2026-05-06): the helper runs ONE model
 // per call. Earlier primary→fallback semantics were removed when the
@@ -20,7 +20,7 @@ function makeAi(responses: Array<{ response: string; usage?: { input_tokens?: nu
   };
 }
 
-describe('runJson — REQ-PIPE-002 / REQ-PIPE-008', () => {
+describe('runJson — REQ-PIPE-002 / REQ-PIPE-003', () => {
   it('REQ-PIPE-002: success path returns ok=true with token counts', async () => {
     const ai = makeAi([
       { response: '{"articles": [{"title": "ok"}]}', usage: { input_tokens: 10, output_tokens: 20 } },

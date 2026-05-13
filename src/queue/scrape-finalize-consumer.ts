@@ -1,6 +1,6 @@
 // Implements REQ-PIPE-003
 // Implements REQ-PIPE-003 AC 17
-// Implements REQ-PIPE-008
+// Implements REQ-PIPE-003
 // Implements REQ-PIPE-009
 //
 // Cross-tick semantic dedup pass for the global-feed pipeline. Runs
@@ -146,7 +146,7 @@ function isBetterBorderCandidate(
   return cand.matchPublishedAt < best.matchPublishedAt;
 }
 
-/** Handle one batch of `scrape-finalize` messages. Per REQ-PIPE-008
+/** Handle one batch of `scrape-finalize` messages. Per REQ-PIPE-003
  *  AC 8 we deliberately do NOT pass `onTerminalFailure` — the run is
  *  already `ready` from the chunk consumer's last-chunk write, the
  *  articles are visible, and only the cross-tick dedup is missing.
@@ -159,7 +159,7 @@ export async function handleFinalizeBatch(
     process: processOneFinalize,
     throwLogStatus: 'finalize_failed',
     extraLogFields: (body) => ({ scrape_run_id: body.scrape_run_id }),
-    // No onTerminalFailure — REQ-PIPE-008 AC 8.
+    // No onTerminalFailure — REQ-PIPE-003 AC 8.
   });
 }
 

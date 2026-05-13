@@ -7,7 +7,7 @@
 //   - NonRetryableError → ack immediately, onTerminalFailure still fires
 //   - env-driven attempt-cap parsing (QUEUE_MAX_RETRIES + maxAttempts override)
 //
-// Implements REQ-PIPE-008.
+// Implements REQ-PIPE-003.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
