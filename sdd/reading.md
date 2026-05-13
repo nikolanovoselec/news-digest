@@ -31,25 +31,49 @@ The heart of the product. Overview grid of the freshest articles read from the s
 
 ---
 
-### REQ-READ-002: Article detail view
+### REQ-READ-002: Article detail view rendering
 
-**Intent:** Each article gets a focused detail page with the long-form summary and a prominent link to the original source; multi-source articles expose every known source behind the same affordance.
+**Intent:** Each article gets a focused detail page that renders the long-form summary, a small-caps metadata line in the user's local time, and a prominent link to the original source. The page is laid out as long-form reading prose with a drop-cap first paragraph, a hyphenated 62-character column, and every text node rendered via `textContent` so untrusted LLM output cannot execute or inject markup.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. `/digest/:id/:slug` renders the article title, the detail paragraphs as long-form reading prose, a small-caps metadata line (source · publish date · ingestion time), and a prominent "Read at source" affordance. The ingestion time is wall-clock only (hour:minute, no date) rendered in the user's IANA timezone — the publish date is right beside it in the line, so a duplicate ingestion date would read as redundant noise. The first paragraph carries a drop-cap initial and the reading column is capped around 62 characters with hyphenation.
-2. All text is rendered with `textContent` — no markdown parsing, no HTML sanitizer, no `innerHTML`.
-3. The slug is derived from the title and enforced unique per article.
-4. A back control returns the user to the page they navigated FROM (the dashboard, search results, starred page, history day view, etc.) when they arrived via in-app navigation — whether the origin page was loaded as a fresh document or reached as a same-app client-side navigation; direct-link visitors (no prior in-app page in this tab's session) land on `/digest`. The View Transitions shared-element morph plays in reverse when returning to a page that renders the same card, including when that card sits below the fold of the origin page (e.g. a card inside an expanded day deep in `/history`) — the source page's scroll position is restored before the morph snapshot is captured so the reverse morph lands on the originating card rather than silently degrading to a root cross-fade.
-5. When the article has at least one alternative source, activating "Read at source" opens a modal listing every known source (primary + alternatives) with each source's name and per-source timestamp; when the article has only one source, the affordance links directly to that source in a new tab with `rel="noopener noreferrer"`.
-6. The modal closes on Escape and on backdrop click.
+1. `/digest/:id/:slug` renders the article title, the detail paragraphs as long-form reading prose, a small-caps metadata line (source · publish date · ingestion time), and a prominent "Read at source" affordance.
+2. The ingestion time in the metadata line is wall-clock only (hour:minute, no date) rendered in the user's IANA timezone, with the publish date right beside it in the same line so a duplicate ingestion date would read as redundant noise.
+3. The first paragraph carries a drop-cap initial and the reading column is capped around 62 characters with hyphenation.
+4. All text is rendered with `textContent` — no markdown parsing, no HTML sanitizer, no `innerHTML`.
+5. The slug is derived from the title and enforced unique per article.
 
 **Constraints:** [CON-SEC-003](constraints.md#con-sec-003-plaintext-only-llm-output), [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum)
 
 **Priority:** P0
 
 **Dependencies:** [REQ-READ-001](#req-read-001-overview-grid-of-todays-digest)
+
+**Verification:** Integration test
+
+**Status:** Implemented
+
+---
+
+### REQ-READ-009: Article detail return navigation and source affordance
+
+**Intent:** From the article detail view, the user can return to the page they came from (with the shared-element morph playing in reverse), and the "Read at source" affordance either links directly to a single source or opens a modal listing every known source for multi-source articles. Direct-link visitors land on `/digest` when there is no prior in-app page to return to.
+
+**Applies To:** User
+
+**Acceptance Criteria:**
+1. A back control returns the user to the page they navigated FROM (the dashboard, search results, starred page, history day view, etc.) when they arrived via in-app navigation, whether the origin page was loaded as a fresh document or reached as a same-app client-side navigation; direct-link visitors (no prior in-app page in this tab's session) land on `/digest`.
+2. The View Transitions shared-element morph plays in reverse when returning to a page that renders the same card, including when that card sits below the fold of the origin page (e.g. a card inside an expanded day deep in `/history`). The source page's scroll position is restored before the morph snapshot is captured so the reverse morph lands on the originating card rather than silently degrading to a root cross-fade.
+3. When the article has at least one alternative source, activating "Read at source" opens a modal listing every known source (primary + alternatives) with each source's name and per-source timestamp.
+4. When the article has only one source, "Read at source" links directly to that source in a new tab with `rel="noopener noreferrer"` rather than opening the modal.
+5. The source-list modal closes on Escape and on backdrop click.
+
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum)
+
+**Priority:** P0
+
+**Dependencies:** [REQ-READ-002](#req-read-002-article-detail-view-rendering)
 
 **Verification:** Integration test
 
@@ -161,9 +185,11 @@ The heart of the product. Overview grid of the freshest articles read from the s
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. The railing horizontal scroll position is preserved across the cascade and the system does not auto-scroll on tap. On a viewport that scrolls the railing horizontally, the tapped chip slides toward its destination and may exit off either edge of the visible area, and the user navigates the railing manually to see chips that have moved off-screen. The railing never jumps to a different scroll position as a side effect of the tap. As a convenience, after a SELECT cascade that lands at slot 0, the next time the user starts to scroll the surrounding page downward the railing smoothly scrolls back to its leftmost position so the just-selected chip is revealed at the start. This convenience scroll fires once per tap and is cancelled if the user manually swipes the railing during it. Unselect cascades do not arm it because the chip lands mid-railing.
-2. On a viewport that wraps the railing into multiple rows, the railing does not scroll at all; the user sees the entire cascade play out across whatever rows the chips occupy.
-3. When the runtime does not support the animation primitives, the reorder still happens (the tapped chip ends up at its correct sort position, slot 0 on select or natural sort position on unselect, and the data order is correct); only the pop, hold, and cascade motion are skipped.
+1. On a viewport that scrolls the railing horizontally, the railing's scroll position is preserved across the cascade and the tap never produces an auto-scroll. The tapped chip slides toward its destination and may exit off either edge of the visible area; the user navigates the railing manually to see chips that have moved off-screen.
+2. After a SELECT cascade that lands at slot 0, the next time the user starts to scroll the surrounding page downward the railing smoothly scrolls back to its leftmost position so the just-selected chip is revealed at the start. This convenience scroll fires at most once per tap and is cancelled if the user manually swipes the railing during it.
+3. Unselect cascades do not arm the convenience scroll, because the chip lands mid-railing rather than at slot 0.
+4. On a viewport that wraps the railing into multiple rows, the railing does not scroll at all; the user sees the entire cascade play out across whatever rows the chips occupy.
+5. When the runtime does not support the animation primitives, the reorder still happens (the tapped chip ends up at its correct sort position, slot 0 on select or natural sort position on unselect, and the data order is correct); only the pop, hold, and cascade motion are skipped.
 
 **Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
 

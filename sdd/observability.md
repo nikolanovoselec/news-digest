@@ -184,26 +184,47 @@ Structured JSON logging as the single operational surface — no external observ
 
 ---
 
-### REQ-OPS-008: Unified admin pipeline run from the settings surface
+### REQ-OPS-008: Unified admin pipeline run trigger from the settings surface
 
-**Intent:** An operator can run the complete cron-equivalent pipeline (scrape, embed any leftovers, then collapse cross-article duplicates) or just the scrape step in isolation from the settings surface, instead of clicking separate admin actions in sequence and having to remember the right order. An optional pre-phase wipes and re-embeds the entire surviving article pool so a change to the embedding model or input recipe can be rolled out across the whole corpus on demand. Live progress is visible while the run is in flight, and progress survives navigation away from the surface so the operator can return mid-run and see where the pipeline currently is rather than a blank surface.
+**Intent:** An operator can run the complete cron-equivalent pipeline (scrape, embed any leftovers, then collapse cross-article duplicates) or just the scrape step in isolation from the settings surface, instead of clicking separate admin actions in sequence and having to remember the right order. An optional pre-phase wipes and re-embeds the entire surviving article pool so a change to the embedding model or input recipe can be rolled out across the whole corpus on demand.
 
 **Applies To:** Admin
 
 **Acceptance Criteria:**
-1. The settings surface exposes two adjacent admin actions inside an Administration section: a primary action labelled to the effect of "Full pipeline run" that, when activated, sequentially executes an optional wipe-and-re-embed of the entire surviving article pool, a fresh scrape tick equivalent to the every-four-hours cron, a backfill of any embeddings the scrape did not land, and an oldest-first cross-article same-story sweep across the surviving pool; and a sibling action labelled to the effect of "Refresh feeds" that runs only the scrape tick (the same work a single 4-hourly cron tick does) and reports completion when the scrape itself finishes, leaving the queue-driven embed and dedup work to proceed in the background. Each phase of the full run only begins after the previous phase reports done.
-2. A toggle adjacent to the actions lets the operator opt into the wipe-and-re-embed pre-phase for the full run. The toggle has no effect on the refresh-feeds action. With the toggle off, the full run skips the pre-phase and starts at the scrape tick. With the toggle on, the full run first wipes and re-embeds every surviving article, then proceeds to the scrape tick.
-3. While either run is in flight both actions are disabled and a status line reports the current phase in user-readable prose. The status line updates as each phase advances; both actions re-enable when the run finishes or errors.
-4. The full pipeline run continues to completion irrespective of the operator's browser tab state. Once the operator activates the run, every subsequent phase advance is driven server-side; closing the tab, navigating away, or losing network mid-run does not interrupt the pipeline. When the operator returns to the settings surface, live progress is restored from the run's audit state.
-5. If the operator navigates away from the surface while a run is in flight and returns within the last-thirty-minutes freshness window, the surface restores the most recent phase line. When the underlying run has completed in the meantime, the restored status is annotated to indicate the run finished while the operator was away. State older than the freshness window is forgotten and the surface paints fresh on return.
-6. When a run reaches a terminal status (completed, denied by the auth gate, or kick-time error), the surface paints the terminal message and keeps it visible across reloads within the freshness window so the operator can see the outcome on return. The persisted terminal state is replaced by the next kick or aged out by the freshness window in AC 5; it is not auto-cleared the moment it is rendered.
-7. Every phase is gated by the same admin authentication used elsewhere in the admin surface (REQ-AUTH-001). An unauthenticated tab where the admin gate has lapsed surfaces the auth failure as a user-readable failed-status line rather than silently no-op'ing.
+1. The settings surface exposes two adjacent admin actions inside an Administration section. A primary action labelled to the effect of "Full pipeline run" sequentially executes an optional wipe-and-re-embed of the entire surviving article pool, a fresh scrape tick equivalent to the every-four-hours cron, a backfill of any embeddings the scrape did not land, and an oldest-first cross-article same-story sweep across the surviving pool. A sibling action labelled to the effect of "Refresh feeds" runs only the scrape tick (the same work a single 4-hourly cron tick does) and reports completion when the scrape itself finishes, leaving the queue-driven embed and dedup work to proceed in the background.
+2. Each phase of the full pipeline run only begins after the previous phase reports done; no phase fires speculatively or in parallel with its predecessor.
+3. A toggle adjacent to the actions lets the operator opt into the wipe-and-re-embed pre-phase for the full run. The toggle has no effect on the refresh-feeds action. With the toggle off, the full run skips the pre-phase and starts at the scrape tick. With the toggle on, the full run first wipes and re-embeds every surviving article, then proceeds to the scrape tick.
+4. Every phase is gated by the same admin authentication used elsewhere in the admin surface ([REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)). An unauthenticated tab where the admin gate has lapsed surfaces the auth failure as a user-readable failed-status line rather than silently no-op'ing.
 
 **Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
 
 **Priority:** P2
 
 **Dependencies:** [REQ-OPS-005](#req-ops-005-admin-force-refresh-endpoint), [REQ-PIPE-003](generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)
+
+**Verification:** Integration test
+
+**Status:** Implemented
+
+---
+
+### REQ-OPS-009: Admin pipeline run progress surface
+
+**Intent:** Live progress of an in-flight admin pipeline run is visible while the run is in flight, survives navigation away from the surface so the operator can return mid-run, and persists terminal status across a freshness window so the outcome is still visible on the next visit rather than disappearing the moment it is rendered.
+
+**Applies To:** Admin
+
+**Acceptance Criteria:**
+1. While either run kicked from [REQ-OPS-008](#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) is in flight, both admin actions are disabled and a status line reports the current phase in user-readable prose. The status line updates as each phase advances; both actions re-enable when the run finishes or errors.
+2. The full pipeline run continues to completion irrespective of the operator's browser tab state. Once the operator activates the run, every subsequent phase advance is driven server-side; closing the tab, navigating away, or losing network mid-run does not interrupt the pipeline. When the operator returns to the settings surface, live progress is restored from the run's audit state.
+3. If the operator navigates away from the surface while a run is in flight and returns within the last-thirty-minutes freshness window, the surface restores the most recent phase line. When the underlying run has completed in the meantime, the restored status is annotated to indicate the run finished while the operator was away. State older than the freshness window is forgotten and the surface paints fresh on return.
+4. When a run reaches a terminal status (completed, denied by the auth gate, or kick-time error), the surface paints the terminal message and keeps it visible across reloads within the freshness window so the operator can see the outcome on return. The persisted terminal state is replaced by the next kick or aged out by the freshness window in AC 3; it is not auto-cleared the moment it is rendered.
+
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
+**Priority:** P2
+
+**Dependencies:** [REQ-OPS-008](#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface)
 
 **Verification:** Integration test
 

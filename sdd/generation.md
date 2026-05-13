@@ -14,8 +14,8 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 1. A Cron Trigger fires every 4 hours on the hour (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC) and kicks off a single coordinator run for all users.
 2. The coordinator partitions candidates across one or more chunk jobs whose size is capped to fit the model's context window so LLM calls stay within budget and partial failures only lose one chunk.
 3. Each run is tracked by a `scrape_runs` row that transitions `running` → `ready` on success (or `failed` on abort), with a chunk counter that drops to zero when the last chunk finishes.
-4. Candidates whose canonical URL is already present in the article pool are skipped on subsequent ticks so the same story is never re-summarised. When a re-discovered URL arrives from a source that wasn't already on the article's source list, the new source is appended (multi-source aggregation); the article's first-ingestion timestamp is preserved across every subsequent re-discovery so the dashboard ordering reflects when each story first entered the pool, not how recently a feed re-emitted it. When a feed entry identifies a per-item publisher distinct from the feed itself (for example a Google News item that names the underlying outlet), the per-item publisher is used as the source name in the article's source list; absent or empty per-item publishers fall back to the feed-level name.
-5. Body-fetch behaviour for candidates with thin feed snippets is governed by REQ-PIPE-010.
+4. Article-pool ingestion (URL deduplication, source-list aggregation, first-ingestion timestamp preservation, and per-item publisher resolution) is governed by [REQ-PIPE-017](#req-pipe-017-article-pool-ingestion-contract).
+5. Body-fetch behaviour for candidates with thin feed snippets is governed by [REQ-PIPE-010](#req-pipe-010-body-fetch-for-thin-feed-snippets).
 6. Every tag in the union of (default-seed hashtags ∪ curated source tags ∪ discovered KV tags) gets a per-tag Google News query-RSS source added to the tick's source list as a long-tail backstop. Tags already served by a bespoke hand-tuned Google News curated entry are skipped (no double-fetch). The aggregator-vs-direct dedup pass already prefers a direct publisher copy over a Google News copy that lands in the same tick, so wide GN fan-out gives every tag baseline coverage without polluting the article pool with aggregator duplicates when direct sources also surface the story.
 7. A run that has been waiting on its scrape phase to complete for longer than the configured budget exits with a failed status rather than looping silently. The dashboard surfaces the failed state on the next history refresh so the operator sees the stall promptly and can re-kick the pipeline, instead of the run staying in `running` indefinitely until queue retries exhaust.
 
@@ -23,7 +23,31 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 
 **Priority:** P0
 
-**Dependencies:** [REQ-PIPE-004](#req-pipe-004-curated-source-registry-with-50-feeds-spanning-the-21-system-tags), [REQ-PIPE-010](#req-pipe-010-body-fetch-for-thin-feed-snippets), [REQ-PIPE-011](#req-pipe-011-candidate-filtering-rules)
+**Dependencies:** [REQ-PIPE-004](#req-pipe-004-curated-source-registry-with-50-feeds-spanning-the-21-system-tags), [REQ-PIPE-010](#req-pipe-010-body-fetch-for-thin-feed-snippets), [REQ-PIPE-011](#req-pipe-011-candidate-filtering-rules), [REQ-PIPE-017](#req-pipe-017-article-pool-ingestion-contract)
+
+**Verification:** Integration test
+
+**Status:** Implemented
+
+---
+
+### REQ-PIPE-017: Article-pool ingestion contract
+
+**Intent:** When candidate URLs land in the global pipeline, the pool deduplicates on canonical URL, aggregates source lists across re-discoveries, preserves first-ingestion timestamps so dashboard ordering reflects when stories first entered, and resolves per-item publisher attribution when a feed entry names an outlet distinct from the feed itself.
+
+**Applies To:** Admin
+
+**Acceptance Criteria:**
+1. Candidates whose canonical URL is already present in the article pool are skipped on subsequent ticks so the same story is never re-summarised.
+2. When a re-discovered URL arrives from a source that wasn't already on the article's source list, the new source is appended to the article's source list (multi-source aggregation).
+3. An article's first-ingestion timestamp is preserved across every subsequent re-discovery so the dashboard ordering reflects when each story first entered the pool, not how recently a feed re-emitted it.
+4. When a feed entry identifies a per-item publisher distinct from the feed itself (for example a Google News item that names the underlying outlet), the per-item publisher is used as the source name in the article's source list; absent or empty per-item publishers fall back to the feed-level name.
+
+**Constraints:** [CON-PERF-001](constraints.md#con-perf-001-100-user-thundering-herd-target)
+
+**Priority:** P0
+
+**Dependencies:** [REQ-PIPE-001](#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
 
 **Verification:** Integration test
 
@@ -40,8 +64,9 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 **Acceptance Criteria:**
 1. Each chunk yields a JSON payload shaped `{articles: [{title, details[], tags[]}]}` and no other top-level keys. Every input candidate gets its own entry.
 2. Titles are NYT-style headlines, 45 to 80 characters, active voice, rewritten rather than copied from the source feed. The 45 to 80 range is the prompt-side target; the consumer additionally enforces a hard sanity range of 5 to 500 characters server-side, dropping titles outside that range so genuinely broken cases (single-character labels, paragraph-as-title) never reach the reading surface.
-3. `details` is a plaintext body of 100 to 150 words split into 2 or 3 paragraphs (WHAT happened, HOW it works, and optionally IMPACT for the reader), each 2 to 4 sentences, with no lists, HTML, or Markdown. The 100 to 150 range is the prompt-side contract; the consumer additionally enforces an 80-word backstop server-side, dropping responses below that threshold so a model that ships a single-sentence stub cannot reach the reading surface. The backstop is a true sanity floor (genuinely truncated outputs), not the model's normal operating range.
-4. `tags` values come exclusively from the system-approved allowlist: the union of the default-seed hashtag list shared with new accounts plus every tag for which a discovered-source cache currently exists. Any tag the LLM invents outside that union is discarded server-side before persistence, and an article that ends up with zero valid tags is dropped.
+3. `details` is a plaintext body of 100 to 150 words split into 2 or 3 paragraphs (WHAT happened, HOW it works, and optionally IMPACT for the reader), each 2 to 4 sentences, with no lists, HTML, or Markdown.
+4. The 100 to 150 word range is the prompt-side contract; the consumer additionally enforces an 80-word backstop server-side, dropping responses below that threshold so a model that ships a single-sentence stub cannot reach the reading surface. The backstop is a true sanity floor (genuinely truncated outputs), not the model's normal operating range.
+5. `tags` values come exclusively from the system-approved allowlist: the union of the default-seed hashtag list shared with new accounts plus every tag for which a discovered-source cache currently exists. Any tag the LLM invents outside that union is discarded server-side before persistence, and an article that ends up with zero valid tags is dropped.
 
 **Constraints:** [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts), [CON-SEC-003](constraints.md#con-sec-003-plaintext-only-llm-output)
 
@@ -87,17 +112,39 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 **Acceptance Criteria:**
 1. URLs are canonicalised by stripping `utm_*` and `fbclid` tracking parameters, trimming trailing slashes, and removing default ports before any comparison. A canonical URL already present in the article pool is skipped on subsequent ticks so re-ingestion never produces a duplicate primary card.
 2. Articles describing the same news event are collapsed to a single primary card regardless of whether their headlines share vocabulary. Same-event detection runs across the entire surviving article pool (not only the current scrape tick), so a story already in the pool absorbs a newly-arrived duplicate as an alternative source even when the duplicate landed in a later scrape run.
-3. When two articles are recognised as the same story, the article with the earlier publication time survives as the primary card and the later one is recorded as an alternative source on it. Two same-story articles that share an identical publication time still collapse to a single card (a deterministic tie-break picks the survivor) rather than being silently kept apart. Source links, tag union, stars, and read marks from the later article are preserved on the surviving primary card so a user never loses a star or a read by virtue of dedup.
-4. A single-source article (no same-story matches) is persisted with zero alternative-source rows.
-5. When the same story appears under both a direct publisher / community link and an aggregator-wrapper link whose canonical form differs from the publisher's (e.g., a Google News URL), the aggregator-wrapper copy is dropped in favour of the direct copy and any tag-of-discovery state from the dropped copy is merged onto the surviving direct article. When no direct copy is present, the aggregator-wrapper copy is kept so coverage of stories no direct source surfaced is preserved.
-6. Wire-syndicated stories that share a publication time to the second across sources still collapse to a single card; the system applies a deterministic tie-break (matching the rule in AC 3) so same-event pairs with identical publication times are never silently kept apart by timestamp granularity. Near-duplicate articles whose textual similarity is overwhelming likewise collapse deterministically across sources, so wire copies of one press release land as a single primary card with the others as alternative sources regardless of publisher identity.
-7. When a newly-arrived article and an already-stored article describe the same news event, the merge happens regardless of which side was ingested first, which side carries the earlier publication time, or how many calendar days separate them within the same-news-cycle bound (REQ-PIPE-012 AC 3). A duplicate that lands several days after its already-stored match still collapses to a single card without waiting for an operator-triggered sweep; the survivor is always the article with the earlier publication time (per AC 3).
+3. Near-duplicate articles whose textual similarity is overwhelming collapse deterministically across sources, so wire copies of one press release land as a single primary card with the others as alternative sources regardless of publisher identity.
+4. When a newly-arrived article and an already-stored article describe the same news event, the merge happens regardless of which side was ingested first, which side carries the earlier publication time, or how many calendar days separate them within the same-news-cycle bound ([REQ-PIPE-012](#req-pipe-012-same-story-matching-policy-variants) AC 3). A duplicate that lands several days after its already-stored match still collapses to a single card without waiting for an operator-triggered sweep; the survivor is always the article with the earlier publication time (per [REQ-PIPE-018](#req-pipe-018-same-story-collapse-mechanics-survivor-selection-and-data-merge) AC 1).
 
 **Constraints:** [CON-SEC-002](constraints.md#con-sec-002-outbound-article-body-fetches-flow-through-the-ssrf-guarded-helper)
 
 **Priority:** P0
 
-**Dependencies:** [REQ-PIPE-001](#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-012](#req-pipe-012-same-story-matching-policy-variants), [REQ-PIPE-013](#req-pipe-013-same-story-cross-tick-automation-and-retention-coupling), [REQ-PIPE-014](#req-pipe-014-same-story-operator-surfaces)
+**Dependencies:** [REQ-PIPE-001](#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-012](#req-pipe-012-same-story-matching-policy-variants), [REQ-PIPE-013](#req-pipe-013-same-story-cross-tick-automation-and-retention-coupling), [REQ-PIPE-014](#req-pipe-014-same-story-operator-surfaces), [REQ-PIPE-018](#req-pipe-018-same-story-collapse-mechanics-survivor-selection-and-data-merge)
+
+**Verification:** Automated test
+
+**Status:** Implemented
+
+---
+
+### REQ-PIPE-018: Same-story collapse mechanics — survivor selection and data merge
+
+**Intent:** Once two articles are recognised as the same story, deterministic rules pick the surviving primary card, fold the loser's per-user data and source attribution onto the survivor, prefer direct publisher copies over aggregator wrappers, and persist single-source articles with no alternative-source rows so the data shape is always consistent.
+
+**Applies To:** Admin
+
+**Acceptance Criteria:**
+1. When two articles are recognised as the same story, the article with the earlier publication time survives as the primary card and the later one is recorded as an alternative source on it.
+2. Two same-story articles that share an identical publication time (including wire-syndicated stories whose publication times match to the second) still collapse to a single card via a deterministic tie-break that picks the survivor, rather than being silently kept apart by timestamp granularity.
+3. When the same story appears under both a direct publisher / community link and an aggregator-wrapper link whose canonical form differs from the publisher's (for example a Google News URL), the aggregator-wrapper copy is dropped in favour of the direct copy and any tag-of-discovery state from the dropped copy is merged onto the surviving direct article. When no direct copy is present, the aggregator-wrapper copy is kept so coverage of stories no direct source surfaced is preserved.
+4. Source links, tag union, stars, and read marks from the later article are preserved on the surviving primary card so a user never loses a star or a read by virtue of dedup.
+5. A single-source article (no same-story matches) is persisted with zero alternative-source rows.
+
+**Constraints:** [CON-SEC-002](constraints.md#con-sec-002-outbound-article-body-fetches-flow-through-the-ssrf-guarded-helper)
+
+**Priority:** P0
+
+**Dependencies:** [REQ-PIPE-003](#req-pipe-003-same-story-dedupe-core-matching-contract)
 
 **Verification:** Automated test
 
@@ -165,7 +212,8 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 2. The stats widget reads global token and cost totals as sums over the scrape-run aggregation.
 3. The history page reads its per-day aggregates and per-tick expansions from the same aggregation, not from article rows.
 4. Status transitions running to ready on success, or running to failed when the run aborts. Once a run leaves running its status is terminal: a late-arriving failed chunk whose retries exhausted after the run already reached ready does not flap the dashboard back to failed, and a late success message after a run was already marked failed does not flip it back to ready.
-5. A lightweight status endpoint reports whether a scrape is currently running; while running it returns the run identifier, start time, chunks completed, total chunks, and articles ingested so far. The reading surface uses this endpoint to replace its "Next update in Xm" countdown with an "Update in progress, X/Y chunks" indicator, and the settings surface shows the same progress alongside its manual-refresh control. Both indicators hide themselves automatically when the run finishes.
+5. A lightweight status endpoint reports whether a scrape is currently running; while running it returns the run identifier, start time, chunks completed, total chunks, and articles ingested so far.
+6. The reading surface uses the status endpoint to replace its "Next update in Xm" countdown with an "Update in progress, X/Y chunks" indicator, and the settings surface shows the same progress alongside its manual-refresh control. Both indicators hide themselves automatically when the run finishes.
 
 **Constraints:** [CON-DATA-001](constraints.md#con-data-001-strong-consistency-in-d1-edge-cache-in-kv)
 
@@ -238,8 +286,9 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 2. The same-event judgment receives only the two articles' titles and short body excerpts. The judgment is binary and conservative: an unparseable, ambiguous, or failed response is treated as "different events" so a borderline pair never collapses on the strength of an unreliable model answer.
 3. A pair the model marks as the same event is merged using the same first-source-wins rule as REQ-PIPE-003: the earlier-published article survives as the primary card and the later one becomes an alternative source on it.
 4. The same borderline gate runs on both the per-tick cross-tick pass and the operator-initiated historical re-run sweep, so re-running the sweep after a threshold change picks up borderline pairs the original ingest missed.
-5. Each invocation is bounded by a wall-clock budget rather than a fixed count of borderline judgments, so an operator-triggered sweep over a large corpus still converges without dropping borderline pairs silently. When a single newly-arrived article has multiple borderline candidates rather than one, the same-event judgment is invoked on the candidates in best-first order until a same-event verdict accepts or a small per-article cap is reached, so a genuine same-event sibling that happens not to be the top-scoring nearest neighbour is not silently dropped. Per-invocation rerank counts are recorded in operator-visible logs so an operator can see how much rerank work each batch performed.
-6. The borderline floor is operator-tunable at runtime through the same configuration mechanism as the auto-merge threshold, so an operator can widen or narrow the LLM-judgment band without a code change.
+5. Each invocation is bounded by a wall-clock budget rather than a fixed count of borderline judgments, so an operator-triggered sweep over a large corpus still converges without dropping borderline pairs silently. Per-invocation rerank counts are recorded in operator-visible logs so an operator can see how much rerank work each batch performed.
+6. When a single newly-arrived article has multiple borderline candidates rather than one, the same-event judgment is invoked on the candidates in best-first order until a same-event verdict accepts or a small per-article cap is reached, so a genuine same-event sibling that happens not to be the top-scoring nearest neighbour is not silently dropped.
+7. The borderline floor is operator-tunable at runtime through the same configuration mechanism as the auto-merge threshold, so an operator can widen or narrow the LLM-judgment band without a code change.
 
 **Constraints:** [CON-LLM-001](constraints.md#con-llm-001-centralized-deterministic-prompts)
 
@@ -355,10 +404,12 @@ A global scrape-and-summarise pipeline that runs every 4 hours: one cron-trigger
 **Applies To:** Admin
 
 **Acceptance Criteria:**
-1. An operator can re-run same-story matching across the entire historical article pool on demand (admin-gated). The sweep runs to completion in the background after the operator triggers it; closing or navigating away from the operator surface does not interrupt the sweep, and progress (articles scanned, duplicates merged, articles remaining) is observable while the sweep is in flight and on the next visit to the operator surface. The articles-scanned, duplicates-merged, and remaining counters advance exactly once per batch regardless of how many times the queue redelivers that batch's message, so a redelivered batch that has already been folded into the run leaves these counters at their existing values and the operator never sees inflated scanned or merged totals attributable to retry traffic rather than real matching work.
-2. An operator can inspect the cosine similarity between any two articles' stored embeddings on demand (admin-gated) alongside the currently-effective same-story threshold and a flag for whether the two articles come from the same publisher, so a threshold change can be evaluated against known true-positive and false-positive pairs before it is committed. The diagnostic reports an explicit not-found when either article or either embedding is missing rather than silently returning a misleading similarity.
-3. An operator can re-run embedding generation across the entire historical article pool on demand (admin-gated), so the corpus can be rebuilt against an improved embedding input without waiting for natural churn or re-scraping.
-4. When the similarity index is fully unreachable for a batch of the operator-triggered historical sweep (every per-article lookup against it fails), the sweep pauses on that batch with its cursor preserved and the batch is redelivered until the index is reachable again. Cross-tick duplicates that landed during an outage therefore still collapse on a later attempt instead of being silently skipped past forever. A partial-outage batch where at least one lookup succeeded still advances the cursor; only the all-failed case halts.
+1. An operator can re-run same-story matching across the entire historical article pool on demand (admin-gated). The sweep runs to completion in the background after the operator triggers it, and closing or navigating away from the operator surface does not interrupt the sweep.
+2. While a historical sweep is in flight, progress (articles scanned, duplicates merged, articles remaining) is observable both during the sweep and on the next visit to the operator surface.
+3. The articles-scanned, duplicates-merged, and remaining counters advance exactly once per batch regardless of how many times the queue redelivers that batch's message, so a redelivered batch that has already been folded into the run leaves these counters at their existing values and the operator never sees inflated scanned or merged totals attributable to retry traffic rather than real matching work.
+4. An operator can inspect the cosine similarity between any two articles' stored embeddings on demand (admin-gated) alongside the currently-effective same-story threshold and a flag for whether the two articles come from the same publisher, so a threshold change can be evaluated against known true-positive and false-positive pairs before it is committed. The diagnostic reports an explicit not-found when either article or either embedding is missing rather than silently returning a misleading similarity.
+5. An operator can re-run embedding generation across the entire historical article pool on demand (admin-gated), so the corpus can be rebuilt against an improved embedding input without waiting for natural churn or re-scraping.
+6. When the similarity index is fully unreachable for a batch of the operator-triggered historical sweep (every per-article lookup against it fails), the sweep pauses on that batch with its cursor preserved and the batch is redelivered until the index is reachable again. Cross-tick duplicates that landed during an outage therefore still collapse on a later attempt instead of being silently skipped past forever. A partial-outage batch where at least one lookup succeeded still advances the cursor; only the all-failed case halts.
 
 **Constraints:** [CON-SEC-002](constraints.md#con-sec-002-outbound-article-body-fetches-flow-through-the-ssrf-guarded-helper)
 
