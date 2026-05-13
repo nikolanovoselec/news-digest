@@ -59,7 +59,8 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | AD43 | Shared per-match dedup classifier; outer control flow stays per-consumer | Architecture | 2026-05-12 |
 | AD44 | Cloudflare Access JWT `exp` validation; signature still trusted from the perimeter | Security | 2026-05-12 |
 | AD45 | Accepted orchestration-file sizes (coordinator, chunk-consumer, settings.astro) exceed 800-line cap | Architecture | 2026-05-11 |
-| AD46 | Documentation file-size hatches and hybrid renderings (deployment colocation, architecture diagrams, ADR index, deployment hybrid shape) | Documentation | 2026-05-12 |
+| AD46 | Documentation file-size hatches and hybrid renderings (deployment colocation, architecture diagrams, ADR index, deployment hybrid shape, api-reference completeness) | Documentation | 2026-05-12 |
+| AD46e | `api-reference.md` completeness exemption — ~90 endpoint sections cannot decompose without fragmenting the reader's lookup path | Documentation | 2026-05-13 |
 | AD47 | Storage-shape allowlist promoted to spec-discipline; AD9 superseded | Storage | 2026-05-13 |
 
 ---
@@ -1353,6 +1354,33 @@ Three reasons the AD41 fix did not collapse this cluster:
 - The ADR ledger's single-file design implicitly limits the ledger's growth ceiling. If the ledger exceeds ~50 ADRs or ~2500 lines, this AD should be revisited in favor of a per-AD layout with an explicit index.
 
 **Related requirements:** none direct — operational/documentation concern.
+
+---
+
+### AD46e: `api-reference.md` completeness exemption
+
+**Status:** Accepted (2026-05-13)
+
+**Extends:** AD46
+
+**Decision:** `documentation/api-reference.md` carries a permanent `doc-allow-large: AD46e api-reference completeness` hatch. The file documents approximately 90 HTTP endpoints across 13 named sections. Each endpoint requires at minimum a method/path block, auth field, origin-check field, response table, and Implements field — roughly 8-12 lines of structured content per endpoint at the minimum compliant shape. The resulting floor is approximately 720-1080 lines before any prose explanation. The per-file soft budget of 600 lines reflects a general-purpose file; an API reference for a non-trivial application necessarily exceeds it.
+
+**Context:** Pass 2 of `documentation-discipline.md` flagged `api-reference.md` at 1.16x the 600-line budget (697 lines) as a LOW finding in the 2026-05-13 clean run. The corresponding Pass 10 cold-read found PARTIAL — session-auth endpoints had no copy-pasteable curl example. Both findings were deferred in that run. The user rejected the deferral on 2026-05-13 and mandated: (a) a formal AD46 sub-decision backlink, and (b) a curl example covering the session-cookie auth shape so a cold reader can test any session-auth endpoint without consulting other documentation. The curl example adds approximately 10 lines to the file, reinforcing that the 600-line budget is structurally unachievable for this file's mandate.
+
+**Rationale:**
+
+- Splitting `api-reference.md` into domain-scoped files (e.g., `api-reference-auth.md`, `api-reference-digest.md`) would fragment the single-lookup guarantee: a developer searching for an endpoint must know which sub-file it lives in before they can find it. The admin split (`api-reference-admin.md`) was made on the audience boundary (developer vs. operator), not on section count.
+- The existing `api-reference-admin.md` split demonstrates the correct split criterion: separate audience, separate file. Splitting by section count alone does not serve a distinct reader.
+- A curl example in the `## Conventions` section is the minimal fix for the Pass 10 partial: one canonical block shows the cookie-injection pattern; all ~60 session-auth endpoints can be tested by substituting the path. Duplicating the block per-endpoint would triple the file size without adding information.
+
+**Consequences:**
+
+- `api-reference.md` is exempt from Pass 2 LOW findings indefinitely. MEDIUM threshold (1.4x, ~840 lines) remains in force — if the file approaches that level, a genuine split by audience or by stable domain boundary should be evaluated before adding more content.
+- The `doc-allow-large` hatch marker is updated from the bare `AD46 api-reference single-file design` to `AD46e api-reference completeness` so the hatch points at this specific sub-decision.
+- The `## Conventions` curl example covers the session-cookie shape. Dev-bypass token endpoints are covered separately in `documentation/deployment.md` under the dev-bypass runbook. The two examples together close Pass 10 for this file.
+- Future endpoint additions to `api-reference.md` do not require a new ADR amendment unless the file crosses the MEDIUM threshold.
+
+**Related requirements:** none direct — documentation structure concern.
 
 ---
 

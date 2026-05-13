@@ -1,6 +1,6 @@
 # API Reference
 
-<!-- doc-allow-large: AD46 api-reference single-file design -->
+<!-- doc-allow-large: AD46e api-reference completeness -->
 
 All public and authenticated HTTP endpoints. Operator and admin endpoints live in [api-reference-admin.md](api-reference-admin.md).
 
@@ -38,6 +38,14 @@ The conventions below apply to every endpoint in this document. They are stated 
 - **Origin check.** The `Origin check` field uses `applies` (Origin header must match `APP_URL`, mismatch returns `403 forbidden_origin`), `exempt` (intentionally not checked, justified per endpoint), or `n/a` (non-mutating GET). See [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints).
 - **Rate limit.** When present, the `Rate limit` field gives `{count}/{window} per {scope}` and a fail mode (`fail-open` or `fail-closed`). Exhausted buckets return `429` with a `Retry-After` header. See [REQ-AUTH-001 AC 9](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) and [`security.md`](security.md#rate-limiting-req-auth-001-ac-9) for the full matrix.
 - **Implements.** Every endpoint cites the REQ that owns its contract.
+- **Curl pattern.** For any `session`-auth endpoint, copy the cookie value from browser DevTools (Application > Cookies > `__Host-session`) and pass it verbatim. Example against `GET /api/digest/today`:
+
+```bash
+curl -s https://news.graymatter.ch/api/digest/today \
+  -H "Cookie: __Host-session=<paste-cookie-value>" | jq '.articles[0]'
+```
+
+  The response is a JSON object. A `401` with `"code":"unauthorized"` means the cookie is absent, expired, or belongs to a different environment. Session-auth endpoints in this document share this exact invocation shape — only the path changes.
 
 ---
 
