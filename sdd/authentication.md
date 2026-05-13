@@ -46,7 +46,7 @@ Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, J
 2. Every authenticated request first verifies the access cookie against a per-user session-version stamp. Mismatched or expired access cookies fall through to the refresh-token flow.
 3. Logout immediately invalidates every access cookie previously issued to the user and revokes the active refresh-token row. Both cookies are cleared on the response.
 4. When the access cookie is missing or expired but the refresh cookie is valid, middleware mints a new access cookie and rotates the refresh-token row inline on the same request. Both API routes and page navigations attach the re-issued cookies, so plain navigation extends the session — the user never sees a login prompt from access-token expiry alone.
-5. An explicit refresh endpoint force-rotates the refresh-token row regardless of remaining access-cookie lifetime, tolerates a concurrent-rotation race per [REQ-AUTH-008](#req-auth-008-refresh-token-rotation-device-binding-reuse-detection), and clears both cookies on any failure path so a half-cleared session cannot persist.
+5. An explicit refresh endpoint force-rotates the refresh-token row regardless of remaining access-cookie lifetime, tolerates a concurrent-rotation race per [REQ-AUTH-008](#req-auth-008-refresh-token-rotation-and-per-device-logout), and clears both cookies on any failure path so a half-cleared session cannot persist.
 
 **Notes:** Cookie attribute set (`__Host-` prefix, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`) and the signing algorithm are documented in [`documentation/security.md`](../documentation/security.md#auth-cookie-policy-req-auth-002--req-auth-008).
 
@@ -54,7 +54,7 @@ Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, J
 
 **Priority:** P0
 
-**Dependencies:** [REQ-AUTH-001](#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-008](#req-auth-008-refresh-token-rotation-device-binding-reuse-detection)
+**Dependencies:** [REQ-AUTH-001](#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-008](#req-auth-008-refresh-token-rotation-and-per-device-logout)
 
 **Verification:** Automated test
 
@@ -192,30 +192,72 @@ Mechanism detail (cookie attributes, rate-limit matrix, admin layered defense, J
 
 ---
 
-### REQ-AUTH-008: Refresh-token rotation, device binding, reuse detection
+### REQ-AUTH-008: Refresh-token rotation and per-device logout
 
-**Intent:** The long-lived refresh cookie is a high-value secret — anyone holding it can mint access tokens for the user. Rotate it on every refresh so a stolen value is single-use, detect reuse so a stolen-then-rotated token surfaces as theft rather than continuing to work alongside the legitimate session, and tolerate concurrent-rotation races so legitimate parallel clients are not falsely flagged.
+**Intent:** Every refresh of the long-lived cookie produces a fresh single-use value so a stolen-then-replayed cookie cannot continue to mint access tokens alongside the legitimate session, and logout sign-out is scoped to the active device so signing out of one browser does not interrupt other devices the user is still using.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
 
-1. Every successful refresh rotates the refresh-token row: the existing row is revoked, a new row is issued, and the old cookie value is single-use. The persisted row identifier is independent of the cookie secret, so a leaked database dump cannot be replayed against the live system.
-2. Logout revokes only the active refresh-token row, not every row for the user. Logging out on one device does not sign the user out of other devices.
-3. Presenting an already-revoked refresh cookie within a brief concurrent-rotation grace window is treated as a benign race: a fresh access token is served off the surviving rotated row without rotating again, and the client's stale cookie remains valid for the rest of the window.
-4. Presenting an already-revoked refresh cookie outside the grace window is treated as theft: every refresh-token row for the user is revoked and the per-user session-version is incremented, forcing the user through OAuth on every device.
-5. Each refresh-token row records the User-Agent and country at issuance as forensic metadata.
-6. The steady-state refresh path logs but does not block on a fingerprint change between issuance and refresh, because legitimate UA strings drift on browser auto-updates.
-7. A fingerprint mismatch within the concurrent-rotation grace window IS enforced as theft, because the only legitimate cause of a grace-window replay is the same client racing itself.
-6. Expired and old-revoked rows are pruned by the daily retention sweep, with a retention floor long enough for the reuse-detection branch to still see `revoked_at` on a stolen-then-rotated cookie.
+1. Every successful refresh rotates the refresh-token row: the existing row is revoked, a new row is issued, and the old cookie value is single-use; the persisted row identifier is independent of the cookie secret so a leaked database dump cannot be replayed against the live system.
+2. Logout revokes only the active refresh-token row and not every row for the user, so logging out on one device does not sign the user out of other devices.
 
-**Notes:** Grace-window length, retention floor, and the parent-link pointer are documented in [`documentation/security.md`](../documentation/security.md#auth-cookie-policy-req-auth-002--req-auth-008).
+**Notes:** Grace-window length and the parent-link pointer are documented at [`documentation/security.md`](../documentation/security.md#auth-cookie-policy-req-auth-002--req-auth-008).
 
 **Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
 
 **Priority:** P0
 
 **Dependencies:** [REQ-AUTH-002](#req-auth-002-access-token-refresh-token-instant-revocation)
+
+**Verification:** Automated test
+
+**Status:** Implemented
+
+---
+
+### REQ-AUTH-011: Refresh-token reuse detection and device fingerprint policy
+
+**Intent:** A stolen refresh cookie that has already been rotated against the legitimate session must be detected as theft rather than continuing to work, and multi-tab clients racing themselves at refresh time must be tolerated as a benign concurrent rotation rather than falsely accused of replay.
+
+**Applies To:** User
+
+**Acceptance Criteria:**
+
+1. Presenting an already-revoked refresh cookie within the concurrent-rotation grace window is treated as a benign race: a fresh access token is served off the surviving rotated row without rotating again, and the client's stale cookie remains valid for the rest of the window.
+2. Presenting an already-revoked refresh cookie outside the grace window is treated as theft: every refresh-token row for the user is revoked and the per-user session-version is incremented, forcing the user through OAuth on every device.
+3. Each refresh-token row records the User-Agent and country at issuance as forensic metadata.
+4. The steady-state refresh path logs but does not block on a fingerprint change between issuance and refresh, because legitimate UA strings drift on browser auto-updates.
+5. A fingerprint mismatch within the concurrent-rotation grace window IS enforced as theft, because the only legitimate cause of a grace-window replay is the same client racing itself.
+
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
+**Priority:** P0
+
+**Dependencies:** [REQ-AUTH-008](#req-auth-008-refresh-token-rotation-and-per-device-logout)
+
+**Verification:** Automated test
+
+**Status:** Implemented
+
+---
+
+### REQ-AUTH-012: Refresh-token retention floor for reuse detection
+
+**Intent:** Old refresh-token rows must remain readable long enough for the reuse-detection branch to see `revoked_at` on a stolen-then-rotated cookie, so the daily retention sweep does not prune away the audit trail the theft-detection logic depends on.
+
+**Applies To:** User
+
+**Acceptance Criteria:**
+
+1. Expired and old-revoked refresh-token rows are pruned by the daily retention sweep with a retention floor long enough that the reuse-detection branch can still observe `revoked_at` on a stolen-then-rotated cookie.
+
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt)
+
+**Priority:** P1
+
+**Dependencies:** [REQ-AUTH-008](#req-auth-008-refresh-token-rotation-and-per-device-logout), [REQ-AUTH-011](#req-auth-011-refresh-token-reuse-detection-and-device-fingerprint-policy)
 
 **Verification:** Automated test
 

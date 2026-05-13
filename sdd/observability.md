@@ -52,9 +52,9 @@ Structured JSON logging as the single operational surface — no external observ
 
 ---
 
-### REQ-OPS-003: Security headers on every response
+### REQ-OPS-003: Content-Security-Policy on every response
 
-**Intent:** Baseline browser protections apply uniformly, locked down to exactly what this app needs.
+**Intent:** The browser-enforced same-origin policy is tightened beyond the default so injected references, embedded frames, or third-party form submissions cannot escape the app's origin even if a future bug introduces user-controlled markup.
 
 **Applies To:** User
 
@@ -62,13 +62,34 @@ Structured JSON logging as the single operational surface — no external observ
 1. Every authenticated response carries a Content-Security-Policy header that restricts script execution to same-origin and blocks inline event handlers.
 2. The Content-Security-Policy limits external image origins to those the app explicitly loads (Gravatar avatars) so an injected reference to an arbitrary third-party host cannot fetch images.
 3. The Content-Security-Policy prevents the page from being embedded in an iframe and prevents forms from submitting to third-party origins.
-4. Every response includes `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`.
-5. Every response includes `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`.
-6. Every response includes `Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), clipboard-read=()`.
-7. Every response includes `X-Frame-Options: DENY` as defense-in-depth alongside `frame-ancestors 'none'`.
-8. No inline script tags exist anywhere in the app; the CSP `script-src` is `'self'` only.
+4. Every response includes `X-Frame-Options: DENY` as defense-in-depth alongside `frame-ancestors 'none'`.
+5. No inline script tags exist anywhere in the app; the CSP `script-src` is `'self'` only.
 
 **Notes:** Exact CSP directive value is documented at [`documentation/security.md`](../documentation/security.md).
+
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
+**Priority:** P0
+
+**Dependencies:** None
+
+**Verification:** Integration test
+
+**Status:** Implemented
+
+---
+
+### REQ-OPS-011: Transport and feature-policy headers on every response
+
+**Intent:** Browser-enforced transport security and feature-permission policies travel on every response so the app's surface area for downgrade attacks, MIME-confusion attacks, referrer leakage, and unsolicited platform-feature access stays uniformly tight across pages and API responses.
+
+**Applies To:** User
+
+**Acceptance Criteria:**
+1. Every response includes `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`.
+2. Every response includes `X-Content-Type-Options: nosniff`.
+3. Every response includes `Referrer-Policy: strict-origin-when-cross-origin`.
+4. Every response includes `Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), clipboard-read=()`.
 
 **Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
 
@@ -92,9 +113,8 @@ Structured JSON logging as the single operational surface — no external observ
 1. The endpoint accepts both POST and GET. Both methods do the same work, so callers can pick whichever fits their context (form submissions, JSON fetches, and direct URL visits all reach the same coordinator dispatch).
 2. Triggering the endpoint starts a fresh scrape run with status running and sends one coordinator message — the same work the every-four-hours cron does.
 3. If a run started by an earlier cron tick or a previous manual trigger is still running and started within the last two minutes, the endpoint reuses that run rather than starting a new one. This protects against accidental double-clicks and tab-restore replays.
-4. Browser callers and direct URL visits receive a `303 See Other` redirect to `/settings?force_refresh=ok&run_id=...` so the operator lands back on the settings surface with the run id visible.
-5. Scripted callers presenting `Accept: application/json` receive `200 OK` with `{ ok: true, scrape_run_id, reused }` so automation can read the run id and reuse flag programmatically.
-6. The endpoint is gated by all three admin layers per [REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8: Cloudflare Access at the zone level (optionally audience-pinned), a valid worker session, and the session email matching the configured operator email; failure at any layer returns that layer's native deny response.
+4. The response is content-negotiated so browser callers land back on the settings surface with the run id visible and scripted callers can read the run id and reuse flag programmatically.
+5. The endpoint is gated by all three admin layers per [REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8: Cloudflare Access at the zone level (optionally audience-pinned), a valid worker session, and the session email matching the configured operator email; failure at any layer returns that layer's native deny response.
 
 **Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
 
