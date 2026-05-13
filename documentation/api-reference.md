@@ -508,24 +508,16 @@ The `alt_source_count` field drives the `+N` suffix on source labels across all 
 
 ---
 
-### GET /api/digest/:id (Retired)
+### GET /api/digest/:id (Tombstoned)
 
-```
-GET /api/digest/:id
-```
-
-**Status:** Removed when the `digests` table was dropped in migration 0003. Returns `410 Gone`.
+**Status:** Tombstoned (returns `410 Gone`; removed when the `digests` table was dropped in migration 0003).
 **Replacement:** Per-user digests no longer exist; see [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) for the global pipeline.
 
 ---
 
-### POST /api/digest/refresh (Retired)
+### POST /api/digest/refresh (Tombstoned)
 
-```
-POST /api/digest/refresh
-```
-
-**Status:** Replaced by the every-4-hours global scrape pipeline. Returns `410 Gone`.
+**Status:** Tombstoned (returns `410 Gone`; replaced by the every-4-hours global scrape pipeline).
 **Replacement:** Operators that want to force a refresh use `POST /api/admin/force-refresh` (see [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint)) instead.
 
 ---

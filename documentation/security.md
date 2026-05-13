@@ -91,7 +91,7 @@ Admin side-effecting endpoints (force-refresh, pipeline-run) carry their own per
 
 **Threat:** Brute-force credential stuffing on `/api/auth/*`, runaway loops by a compromised admin session, or refresh-token replay flooding.
 **Mitigation:** Per-bucket sliding-window counter in KV; unauthenticated buckets keyed by IP, mutation buckets by user id, admin buckets by operator id; exhaustion returns 429 with `Retry-After`. Auth-login fails open on KV outage (so a backing-store hiccup never locks legitimate users out); refresh-token rules fail closed (so a stolen refresh cookie cannot exploit the outage). See [AD23](decisions/README.md#ad23-rate-limit-fail-policy-asymmetry).
-**Verification:** `tests/admin/rate-limit.test.ts`, `tests/admin/rate-limited-format.test.ts`, plus the `tests/auth/*` suite that exercises each bucket boundary.
+**Verification:** `tests/lib/rate-limit.test.ts`, `tests/auth/rate-limited-format.test.ts`, plus the `tests/auth/*` suite that exercises each bucket boundary.
 **Implements:** [REQ-AUTH-001 AC 9](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)
 
 ---
@@ -129,7 +129,7 @@ The gate is fail-closed in production: if KV is unbound or the JWKS endpoint is 
 
 **Threat:** Forged `id_token` from a man-in-the-middle on the token-endpoint TLS path, or a Google JWKS-rotation lag that lets an attacker re-use a retired key signature.
 **Mitigation:** RS256 signature verified against the live JWKS for every callback; KV cache TTL kept short (1 hour) so a real rotation self-heals; production fails closed to the userinfo fallback rather than trusting unverified claims.
-**Verification:** `tests/admin/callback-google.test.ts` (signature-pass and signature-fail paths), `tests/auth/callback.test.ts` (full callback flow with stubbed JWKS).
+**Verification:** `tests/auth/callback-google.test.ts` (signature-pass and signature-fail paths), `tests/auth/callback.test.ts` (full callback flow with stubbed JWKS).
 **Implements:** [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)
 
 ---

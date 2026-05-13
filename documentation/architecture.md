@@ -25,7 +25,7 @@ This document describes **what** the system is and **how requests flow through i
 
 `news-digest` is a single Cloudflare Worker serving an Astro-rendered web app. A 4-hour scrape run scrapes a curated set of RSS/Atom/JSON feeds, summarises new candidates with Workers AI, and writes them to the shared **article pool**. Per-user dashboards filter the pool by the user's hashtags - there are no per-user LLM calls. A 5-minute cron drains pending feed-discovery jobs and dispatches daily digest emails. A 03:00 UTC cron purges articles older than 14 days (starred articles exempt).
 
-<!-- doc-allow-large: AD46 diagram-section exemption (component map) -->
+<!-- doc-allow-element: AD46 diagram-section exemption (component map) -->
 ```
 ┌────────────────────────────────────────────────────────────────────┐
 │                     Cloudflare Worker (Astro)                      │
@@ -236,7 +236,7 @@ After the `finalize_recorded` gate flips, enqueues exactly one `dedup-sweep` con
 
 ### 5.1 Global-feed pipeline (every 4 hours)
 
-<!-- doc-allow-large: AD46 diagram-section exemption (pipeline flow) -->
+<!-- doc-allow-element: AD46 diagram-section exemption (pipeline flow) -->
 ```
 Cron (00/04/08/12/16/20 UTC)
   └─► SCRAPE_COORDINATOR queued
@@ -313,7 +313,7 @@ Cron daily 03:00 UTC
 
 Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9. The sweep is operator-triggered from `/settings`, runs server-side independent of the operator's browser tab, and is observable via a status endpoint.
 
-<!-- doc-allow-large: AD46 diagram-section exemption (historical-dedup flow) -->
+<!-- doc-allow-element: AD46 diagram-section exemption (historical-dedup flow) -->
 ```
 Operator clicks "Run historical-dedup sweep" on /settings
   └─► POST /api/admin/historical-dedup (empty body - kicker mode)

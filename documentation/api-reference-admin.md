@@ -205,7 +205,7 @@ Returns the cosine similarity between two articles' stored Vectorize embeddings,
 
 **Success (200):**
 
-<!-- doc-allow-large: AD46 dedup-diag response shape — full JSON is the contract -->
+<!-- doc-allow-element: AD46 dedup-diag response shape — full JSON is the contract -->
 ```json
 {
   "ok": true,
