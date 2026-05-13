@@ -69,7 +69,6 @@ POST /api/admin/force-refresh
 
 **Authentication:** session + admin email
 **Origin check:** applies
-**Rate limit:** per-operator hourly bucket `admin_force_refresh`; exhausted returns `429` with `Retry-After`.
 
 **Request:** none.
 
@@ -82,6 +81,8 @@ POST /api/admin/force-refresh
 | `403` | Origin mismatch or not admin | `{ error, code: "forbidden" }` or `{ error, code: "forbidden_origin" }` |
 | `429` | Rate limited | `{ error, code: "rate_limit_exceeded" }` |
 | `500` | Dispatch failed | `{ error: "Failed to dispatch coordinator" }` |
+
+**Rate limit:** per-operator hourly bucket `admin_force_refresh`; exhausted returns `429` with `Retry-After`.
 
 **Implements:** [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) (phase 1), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9g
 
@@ -101,7 +102,6 @@ GET /api/admin/force-refresh
 
 **Authentication:** session + admin email
 **Origin check:** n/a (read-only GET; see [Sec-Fetch-Site guard](#sec-fetch-site-guard-on-admin-get-callbacks))
-**Rate limit:** per-operator hourly bucket `admin_force_refresh`; exhausted returns `429` with `Retry-After`.
 
 **Request:** none.
 
@@ -116,6 +116,8 @@ GET /api/admin/force-refresh
 | `403` | Cross-site initiator | `{ error: "Cross-site request denied" }` |
 | `429` | Rate limited | `{ error, code: "rate_limit_exceeded" }` |
 | `500` | Dispatch failed | `{ error: "Failed to dispatch coordinator" }` |
+
+**Rate limit:** per-operator hourly bucket `admin_force_refresh`; exhausted returns `429` with `Retry-After`.
 
 **Implements:** [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) (phase 1), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9g
 
@@ -369,7 +371,6 @@ POST /api/admin/pipeline-run
 
 **Authentication:** session + admin email
 **Origin check:** applies
-**Rate limit:** per-operator hourly bucket `admin_pipeline_run`; exhausted returns `429` with `Retry-After`.
 
 **Request body (JSON, optional)**
 
@@ -387,6 +388,8 @@ POST /api/admin/pipeline-run
 | `405` | `mode=wipe` via GET | body `Use POST for mode=wipe`, header `Allow: POST` |
 | `429` | Rate limited | `{ error, code: "rate_limit_exceeded" }` |
 | `500` | Kick failed | `{ error: "pipeline_kick_failed" }` |
+
+**Rate limit:** per-operator hourly bucket `admin_pipeline_run`; exhausted returns `429` with `Retry-After`.
 
 **Implements:** [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface), [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9g
 
