@@ -145,7 +145,7 @@ const TILTED_VEC: number[] = (() => {
   return v.map((x) => x / mag);
 })();
 
-describe('GET /api/admin/dedup-diag — REQ-PIPE-003 diagnostic', () => {
+describe('GET /api/admin/dedup-diag — REQ-PIPE-003 / REQ-PIPE-014 (pair similarity diagnostic)', () => {
   it('400 when a or b is missing', async () => {
     const res = await callGet({
       a: null,

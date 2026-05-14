@@ -135,11 +135,26 @@ interface BuildContextOpts {
   reembed?: boolean;
 }
 
+function makeKv() {
+  const store = new Map<string, string>();
+  return {
+    get: vi.fn().mockImplementation(async (key: string) => store.get(key) ?? null),
+    put: vi.fn().mockImplementation(async (key: string, value: string) => {
+      store.set(key, value);
+    }),
+    delete: vi.fn().mockImplementation(async (key: string) => {
+      store.delete(key);
+    }),
+    store,
+  };
+}
+
 async function buildContextAndCall(opts: BuildContextOpts): Promise<{
   res: Response;
   fixture: DbFixture;
   ai: Ai;
   vectorize: Vectorize;
+  kv: ReturnType<typeof makeKv>;
 }> {
   const fixture: DbFixture = {
     pending: opts.pending,
@@ -151,6 +166,7 @@ async function buildContextAndCall(opts: BuildContextOpts): Promise<{
   const db = makeDb(fixture);
   const ai = makeAi(opts.aiFails === true ? { fail: true } : {});
   const vectorize = makeVectorize(opts.vectorizeFails === true ? { fail: true } : {});
+  const kv = makeKv();
   const cookie = await adminCookieJwt();
   const url = `${APP_URL}/api/admin/embed-backfill${
     opts.reembed === true ? '?reembed=1' : ''
@@ -171,6 +187,7 @@ async function buildContextAndCall(opts: BuildContextOpts): Promise<{
     DB: db,
     AI: ai,
     VECTORIZE: vectorize,
+    KV: kv,
     OAUTH_JWT_SECRET: SECRET,
     ADMIN_EMAIL,
     APP_URL,
@@ -182,10 +199,10 @@ async function buildContextAndCall(opts: BuildContextOpts): Promise<{
     params: {},
   } as never;
   const res = await POST(context);
-  return { res, fixture, ai, vectorize };
+  return { res, fixture, ai, vectorize, kv };
 }
 
-describe('POST /api/admin/embed-backfill — REQ-PIPE-003', () => {
+describe('POST /api/admin/embed-backfill - REQ-PIPE-003 / REQ-PIPE-014 (embedding regeneration)', () => {
   it('REQ-PIPE-003: empty corpus returns done:true and processed:0', async () => {
     const { res } = await buildContextAndCall({
       pending: [],
@@ -315,6 +332,34 @@ describe('POST /api/admin/embed-backfill — REQ-PIPE-003', () => {
         !c.sql.includes('WHERE'),
     );
     expect(reembedFlip).toBeDefined();
+  });
+
+  it('REQ-PIPE-009 AD48: ?reembed=1 clears the auto-sweep watermark', async () => {
+    // Re-embedding changes cosine geometry, so all prior same-event
+    // verdicts are suspect. The reembed path must clear the watermark
+    // so the next auto-sweep re-judges every borderline pair against
+    // the new vectors instead of skipping pairs whose articles both
+    // predate the now-stale watermark.
+    const { res, kv } = await buildContextAndCall({
+      reembed: true,
+      pending: [],
+      remainingAfter: 0,
+    });
+    expect(res.status).toBe(200);
+    expect(kv.delete).toHaveBeenCalledTimes(1);
+    expect(kv.delete.mock.calls[0]?.[0]).toBe('dedup:auto_sweep_watermark');
+  });
+
+  it('REQ-PIPE-009 AD48: non-reembed run does NOT clear the watermark', async () => {
+    // A normal embed-backfill run (no ?reembed=1) embeds only pending
+    // rows and leaves the watermark intact — prior verdicts are still
+    // valid against unchanged vectors.
+    const { res, kv } = await buildContextAndCall({
+      pending: [],
+      remainingAfter: 0,
+    });
+    expect(res.status).toBe(200);
+    expect(kv.delete).not.toHaveBeenCalled();
   });
 
   it('REQ-PIPE-003: Vectorize upsert failure marks rows as failed', async () => {

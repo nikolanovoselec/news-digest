@@ -125,7 +125,7 @@ async function discoveryStatusRequest(
   });
 }
 
-describe('GET /api/discovery/status', () => {
+describe('GET /api/discovery/status - REQ-SET-006 / REQ-DISC-002 (discovery progress visibility)', () => {
   it('REQ-SET-006: returns 401 when no session is present', async () => {
     const { db } = makeDb(null, []);
     const req = await discoveryStatusRequest(null);
@@ -133,7 +133,7 @@ describe('GET /api/discovery/status', () => {
     expect(res.status).toBe(401);
   });
 
-  it('REQ-SET-006: returns empty pending list when no rows exist', async () => {
+  it('REQ-SET-006 / REQ-DISC-002: returns empty pending list when no rows exist', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       JWT_SECRET,
@@ -159,7 +159,7 @@ describe('GET /api/discovery/status', () => {
     expect(body.pending).toEqual(['llm', 'mcp']);
   });
 
-  it('REQ-SET-006: query is scoped to the session user id', async () => {
+  it('REQ-SET-006 / REQ-DISC-002: query is scoped to the session user id', async () => {
     const token = await signSession(
       { sub: '12345', email: 'a@b.c', ghl: 'a', sv: 1 },
       JWT_SECRET,

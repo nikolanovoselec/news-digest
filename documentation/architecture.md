@@ -6,13 +6,26 @@ System overview, component map, and request lifecycles for `news-digest`.
 
 This document describes **what** the system is and **how requests flow through it**. Implementation rationale ("why this code looks the way it does") lives in source comments. Endpoint contracts live in [`api-reference.md`](api-reference.md). Environment and bindings live in [`configuration.md`](configuration.md). Architectural decisions live in [`decisions/README.md`](decisions/README.md). Product intent lives in [`sdd/`](../sdd/).
 
+## Contents
+
+- [1. Overview](#1-overview)
+- [2. Components](#2-components)
+- [3. Repository Layout](#3-repository-layout)
+- [4. Source Module Map](#4-source-module-map)
+- [5. Request Lifecycles](#5-request-lifecycles)
+- [6. Data Flow](#6-data-flow)
+- [7. Cross-cutting Concerns](#7-cross-cutting-concerns)
+- [8. Build and Deploy](#8-build-and-deploy)
+- [Design System Tokens](#design-system-tokens)
+- [Related Documentation](#related-documentation)
+
 ---
 
 ## 1. Overview
 
 `news-digest` is a single Cloudflare Worker serving an Astro-rendered web app. A 4-hour scrape run scrapes a curated set of RSS/Atom/JSON feeds, summarises new candidates with Workers AI, and writes them to the shared **article pool**. Per-user dashboards filter the pool by the user's hashtags - there are no per-user LLM calls. A 5-minute cron drains pending feed-discovery jobs and dispatches daily digest emails. A 03:00 UTC cron purges articles older than 14 days (starred articles exempt).
 
-<!-- doc-allow-large: AD46 diagram-section exemption (component map) -->
+<!-- doc-allow-element: AD46 diagram-section exemption (component map) -->
 ```
 ┌────────────────────────────────────────────────────────────────────┐
 │                     Cloudflare Worker (Astro)                      │
@@ -37,7 +50,7 @@ This document describes **what** the system is and **how requests flow through i
            (federated OAuth)                       (digest emails)
 ```
 
-Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history).
+Implements [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract).
 
 ## 2. Components
 
@@ -79,52 +92,53 @@ Every source file annotates the REQ-IDs it implements via `// Implements REQ-X-N
 
 | Path | Role | Implements |
 |---|---|---|
-| `src/middleware/index.ts` | Astro middleware entry; chains the security-headers handler | [REQ-OPS-003](../sdd/observability.md#req-ops-003-security-headers-on-every-response) |
-| `src/middleware/auth.ts` | `loadSession` - access JWT verify and refresh-token rotation; cookie helpers | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection) |
+| `src/middleware/index.ts` | Astro middleware entry; chains the security-headers handler | [REQ-OPS-003](../sdd/observability.md#req-ops-003-content-security-policy-on-every-response) |
+| `src/middleware/auth.ts` | `loadSession` - access JWT verify and refresh-token rotation; cookie helpers | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-and-per-device-logout) |
 | `src/middleware/origin-check.ts` | Rejects state-changing requests whose `Origin` does not match `APP_URL` | [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints) |
-| `src/middleware/security-headers.ts` | Stamps CSP, HSTS, and related headers on every response | [REQ-OPS-003](../sdd/observability.md#req-ops-003-security-headers-on-every-response) |
+| `src/middleware/security-headers.ts` | Stamps CSP, HSTS, and related headers on every response | [REQ-OPS-003](../sdd/observability.md#req-ops-003-content-security-policy-on-every-response) |
 | `src/middleware/admin-auth.ts` | Admin gate for `/api/admin/*`. Baseline: valid session cookie + `ADMIN_EMAIL` match (case-insensitive). Optional Layer 0 (AD29): when `CF_ACCESS_AUD` is set, the request must additionally carry a Cloudflare Access assertion whose `aud` claim matches the configured value; the `exp` claim is validated server-side as defence-in-depth ([AD44](decisions/README.md#ad44-cloudflare-access-jwt-exp-validation-signature-still-trusted-from-the-perimeter)). | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8, AC 8a |
 
 ### 4.2 Libraries (`src/lib/`)
 
 | Path | Role | Implements |
 |---|---|---|
-| `canonical-url.ts` | URL canonicalization for cross-source dedup | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
-| `etld.ts` | Naive eTLD+1 helper (`etldPlusOne`, `sameVendor`): extracts the registrable domain for same-publisher detection. Aggregator hosts (`news.google.com`) always return `false` from `sameVendor` - they carry no publisher identity. Covers dominant TLDs; does not use the full Public Suffix List. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 11 |
+| `canonical-url.ts` | URL canonicalization for cross-source dedup | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) |
+| `etld.ts` | Naive eTLD+1 helper (`etldPlusOne`, `sameVendor`): extracts the registrable domain for same-publisher detection. Aggregator hosts (`news.google.com`) always return `false` from `sameVendor` - they carry no publisher identity. Covers dominant TLDs; does not use the full Public Suffix List. | [REQ-PIPE-012](../sdd/generation.md#req-pipe-012-same-story-matching-policy-variants) AC 2 |
 | `crypto.ts` | base64url codec, constant-time HMAC compare, cookie reader | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation) |
 | `db.ts` | D1 wrapper with FK pragma | (shared) |
-| `email.ts` | Resend renderer and transport | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email), [REQ-MAIL-002](../sdd/email.md#req-mail-002-non-blocking-email-failure) |
-| `email-html.ts` | Typed HTML builders for the digest email renderer - centralises `escapeHtml` and `headlineRow` so every interpolated value is escaped by default | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email) |
-| `email-data.ts` | Per-user D1 read helpers for the email dispatcher | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email) |
-| `email-dispatch.ts` | 5-minute cron hook; per-tz two-phase D1 strategy with bucket isolation | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email), [REQ-MAIL-002](../sdd/email.md#req-mail-002-non-blocking-email-failure) |
-| `hashtags.ts` | Parse user hashtag list from JSON-encoded D1 column | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email) |
+| `email.ts` | Resend renderer and transport | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email-content), [REQ-MAIL-002](../sdd/email.md#req-mail-002-non-blocking-email-failure), [REQ-MAIL-003](../sdd/email.md#req-mail-003-digest-ready-email-send-policy) |
+| `email-html.ts` | Typed HTML builders for the digest email renderer - centralises `escapeHtml` and `headlineRow` so every interpolated value is escaped by default | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email-content) |
+| `email-data.ts` | Per-user D1 read helpers for the email dispatcher | [REQ-MAIL-003](../sdd/email.md#req-mail-003-digest-ready-email-send-policy) |
+| `email-dispatch.ts` | 5-minute cron hook; per-tz two-phase D1 strategy with bucket isolation | [REQ-MAIL-002](../sdd/email.md#req-mail-002-non-blocking-email-failure), [REQ-MAIL-003](../sdd/email.md#req-mail-003-digest-ready-email-send-policy) |
+| `hashtags.ts` | Parse user hashtag list from JSON-encoded D1 column | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email-content) |
 | `jwt-secret.ts` | Runtime guard rejecting `OAUTH_JWT_SECRET` shorter than 32 bytes | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation) |
 | `errors.ts` | Closed `ErrorCode` enum and sanitized response builder | [REQ-OPS-002](../sdd/observability.md#req-ops-002-sanitized-error-surfaces) |
-| `generate.ts` | LLM response payload extraction and JSON parsing | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) |
-| `llm-json.ts` | Single LLM-call entrypoint (single-model architecture, 2026-05-06 - fallback path removed); runs `DEFAULT_MODEL_ID` once per call; centralises token-cost accounting | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) |
+| `generate.ts` | LLM response payload extraction and JSON parsing | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract) |
+| `llm-json.ts` | Single LLM-call entrypoint (single-model architecture, 2026-05-06 - fallback path removed); runs `DEFAULT_MODEL_ID` once per call; centralises token-cost accounting | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract) |
 | `headline-cache.ts` | KV-backed shared headline cache | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) |
 | `log.ts` | Structured JSON log emitter with closed `LogEvent` enum | [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-logging) |
-| `default-hashtags.ts` | Seed hashtag list for new accounts | [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation) |
-| `models.ts` | `MODELS` catalog, `DEFAULT_MODEL_ID` (`@cf/openai/gpt-oss-120b`), cost estimator (cost accounting still live for chunk + discovery LLM calls; per-user model selection *Deprecated 2026-04-23 with REQ-SET-004*) | [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress) |
+| `default-hashtags.ts` | Seed hashtag list for new accounts | [REQ-SET-008](../sdd/settings.md#req-set-008-hashtag-persistence-validation-and-defaults) |
+| `models.ts` | `MODELS` catalog, `DEFAULT_MODEL_ID` (`@cf/openai/gpt-oss-20b`, swapped from gpt-oss-120b on 2026-05-14 per [AD48](decisions/README.md#ad48-dedup-cost-reduction-borderline-rerank-watermark-batched-rerank-call-pipeline-wide-gpt-oss-20b)), cost estimator (cost accounting still live for chunk + discovery LLM calls; per-user model selection *Deprecated 2026-04-23 with REQ-SET-004*) | [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress), [REQ-SET-004](../sdd/settings.md#req-set-004-server-side-model-catalog-and-default) |
 | `google-jwks.ts` | RS256 signature verification for Google `id_token`s via JWKS (`https://www.googleapis.com/oauth2/v3/certs`); caches the key set for 1 hour in KV (`oidc:jwks:google`) to bound isolate-level fetch cost (CF-013) | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) |
 | `oauth-providers.ts` | GitHub + Google adapters with id_token validation | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) |
 | `oauth-errors.ts` | OAuth error code allowlist and sanitizer | [REQ-AUTH-004](../sdd/authentication.md#req-auth-004-oauth-error-surfacing) |
-| `prompts.ts` | LLM system prompts for chunk processing and source discovery (the finalize-pass dedup prompt was removed when REQ-PIPE-003 replaced LLM dedup with embedding-based same-story matching) | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery) |
+| `prompts.ts` | LLM system prompts for chunk processing and source discovery (the finalize-pass dedup prompt was removed when REQ-PIPE-003 replaced LLM dedup with embedding-based same-story matching) | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract), [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery) |
 | `rate-limit.ts` | KV window-counter rate limiter for auth routes, mutation routes, and authenticated polling endpoints | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9 |
 | `session-jwt.ts` | HMAC-SHA256 sign/verify for the access-token JWT | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation) |
-| `refresh-tokens.ts` | 30-day opaque refresh-token storage in D1 with rotation and reuse detection | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection) |
+| `refresh-tokens.ts` | 30-day opaque refresh-token storage in D1 with rotation and reuse detection | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-and-per-device-logout) |
 | `digest-today.ts` | Dashboard payload loader (`loadTodayPayload`) and next-cron-tick calculator (`computeNextScrapeAt`); factored out of the API route so server-rendered pages call it directly without cross-module route imports | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) |
 | `slug.ts` | Deterministic ASCII slug generation | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) |
 | `sources.ts` | Source adapters (RSS/Atom/JSON) and fan-out coordinator; `itemToHeadline` applies a per-item `<source>` element override so Google News items carry the underlying publisher name (e.g. "Help Net Security") rather than the feed-level adapter label | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) |
-| `prefer-direct-source.ts` | Resolve aggregator URLs (e.g., Google News) to underlying publisher and merge tag-of-discovery state | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
-| `blocked-publishers.ts` | Hard publisher blocklist. Drops off-topic headlines (financial / stock-pump aggregators surfaced by ticker-matching tags) at the coordinator before clustering, embedding, or LLM processing. Two signals: host suffix match (`BLOCKED_HOSTS`) and RSS source-name token match (`BLOCKED_NAME_TOKENS`), the latter needed because Google News redirect envelopes hide the real host. | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) AC 11 |
-| `paragraph-split.ts` | Normalise LLM-produced prose into a paragraph array for the article-detail view | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view) |
-| `curated-sources.ts` | Static registry of curated feeds; exports `googleNewsSourceForTag` (per-tag GN query-RSS synthesis) and `hasCuratedGoogleNews` (skip-guard for the coordinator baseline pass) | [REQ-PIPE-004](../sdd/generation.md#req-pipe-004-curated-source-registry-with-50-feeds-spanning-the-21-system-tags), [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) AC 9 |
-| `dedupe.ts` | Canonical-URL clustering (first pass over a chunk's candidates) | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
-| `bidirectional-dedup.ts` | Shared per-match dedup classifier (`classifyMatchPair`). Encapsulates same-vendor penalty, high-confidence band, time-window gate, equal-time ULID tie-break, and direction flag. Per-consumer outer control flow stays at each call site. See [AD43](decisions/README.md#ad43-shared-per-match-dedup-classifier-outer-control-flow-stays-per-consumer). | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history), [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) |
-| `embeddings.ts` | bge-base-en-v1.5 embedding helpers: input builder (`source_snippet` preferred, falls back to `details_json`; length-capped), cosine similarity, threshold parser, time-window parser, same-vendor penalty parser, batch caller for the AI binding | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
-| `dedup-rerank.ts` | LLM same-event judgment for borderline cosine pairs: rerank-floor parser, prompt builder + narrow-JSON parser, single-call helper that returns a binary same-event verdict (conservative on parse failure / network error). Used by both the per-tick finalize pass and the historical re-run sweep. | [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) |
-| `finalize-merge.ts` | `pickWinner`, `buildMergeStatements`, and `mergeAsAltSource` (existing-article-wins variant used by the semantic-dedup pass and the historical re-run sweep) | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
+| `prefer-direct-source.ts` | Resolve aggregator URLs (e.g., Google News) to underlying publisher and merge tag-of-discovery state | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) |
+| `blocked-publishers.ts` | Hard publisher blocklist. Drops off-topic headlines (financial / stock-pump aggregators surfaced by ticker-matching tags) at the coordinator before clustering, embedding, or LLM processing. Two signals: host suffix match (`BLOCKED_HOSTS`) and RSS source-name token match (`BLOCKED_NAME_TOKENS`), the latter needed because Google News redirect envelopes hide the real host. | [REQ-PIPE-011](../sdd/generation.md#req-pipe-011-candidate-filtering-rules) AC 3 |
+| `paragraph-split.ts` | Normalise LLM-produced prose into a paragraph array for the article-detail view | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view-rendering) |
+| `curated-sources.ts` | Static registry of curated feeds; exports `googleNewsSourceForTag` (per-tag GN query-RSS synthesis) and `hasCuratedGoogleNews` (skip-guard for the coordinator baseline pass) | [REQ-PIPE-004](../sdd/generation.md#req-pipe-004-curated-source-registry-with-50-feeds-spanning-the-21-system-tags), [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) AC 6 |
+| `dedupe.ts` | Canonical-URL clustering (first pass over a chunk's candidates) | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) |
+| `bidirectional-dedup.ts` | Shared per-match dedup classifier (`classifyMatchPair`). Encapsulates same-vendor penalty, high-confidence band, time-window gate, equal-time ULID tie-break, and direction flag. Per-consumer outer control flow stays at each call site. See [AD43](decisions/README.md#ad43-shared-per-match-dedup-classifier-outer-control-flow-stays-per-consumer). | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) |
+| `embeddings.ts` | bge-base-en-v1.5 embedding helpers: input builder (`source_snippet` preferred, falls back to `details_json`; length-capped), cosine similarity, threshold parser, time-window parser, same-vendor penalty parser, batch caller for the AI binding | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) |
+| `dedup-rerank.ts` | LLM same-event judgment for borderline cosine pairs: rerank-floor parser, prompt builder + narrow-JSON parser, batched multi-pair call (cap 15 per round-trip, AD48) that returns per-pair same-event verdicts (conservative all-false on parse failure). Used by both the per-tick finalize pass and the historical re-run sweep. | [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) |
+| `dedup-watermark.ts` | KV-backed auto-sweep watermark (`dedup:auto_sweep_watermark`). `writeWatermark` is called when the sweep's terminal batch flips to `done`; `clearWatermark` is called by `embed-backfill?reembed=1` because re-embedding changes cosine geometry and invalidates prior verdicts. A missing key reads as 0 (cold start / post-invalidation), which disables skipping and falls back to the pre-watermark always-rerank path. | [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) |
+| `finalize-merge.ts` | `pickWinner`, `buildMergeStatements`, and `mergeAsAltSource` (existing-article-wins variant used by the semantic-dedup pass and the historical re-run sweep) | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) |
 | `scrape-run.ts` | `scrape_runs` lifecycle helpers (`running` → `ready` / `failed`) | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress) |
 | `ssrf.ts` | SSRF denylist filter - rejects non-HTTPS, private, loopback, link-local, CGNAT, and metadata-host destinations; used by both discovery URL validation and article body fetching | [REQ-DISC-005](../sdd/discovery.md#req-disc-005-discovery-prompt-injection-protection), [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) |
 | `safe-href.ts` | Render-time https-scheme guard for `href` attributes; returns `'#'` for any non-https or unparseable URL from D1 (CF-021 render-time defense-in-depth) | [REQ-DISC-005](../sdd/discovery.md#req-disc-005-discovery-prompt-injection-protection) |
@@ -132,19 +146,19 @@ Every source file annotates the REQ-IDs it implements via `// Implements REQ-X-N
 | `articles-repo.ts` | Repository layer for the `articles` table: batched `canonical_url` IN-clause lookups, write helpers for `articles` + `article_sources` + `article_tags`, and `updateChunkCount` for `scrape_runs` progress | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) |
 | `concurrency.ts` | Bounded-concurrency `mapConcurrent` helper | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) |
 | `queue-handler.ts` | Shared queue-batch envelope: per-message try/ack/retry loop driven by `env.QUEUE_MAX_RETRIES` (set in `wrangler.toml [vars]`), optional terminal-failure hook (CF-007) | (shared infrastructure) |
-| `json-string-array.ts` | Defensive parser for D1 columns storing `string[]` as JSON | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email), [REQ-SET-002](../sdd/settings.md#req-set-002-hashtag-curation) |
+| `json-string-array.ts` | Defensive parser for D1 columns storing `string[]` as JSON | [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email-content), [REQ-SET-008](../sdd/settings.md#req-set-008-hashtag-persistence-validation-and-defaults) |
 | `html-text.ts` | HTML entity decode and tag-stripping for LLM prompts | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) |
 | `fetch-policy.ts` | Centralised feed and article fetch timeouts and size caps | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) |
 | `types.ts` | Shared cross-module TypeScript types | (shared) |
-| `tz.ts` | IANA timezone helpers (local-date / local-midnight conversions) | [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone), [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email) |
+| `tz.ts` | IANA timezone helpers (local-date / local-midnight conversions) | [REQ-SET-003](../sdd/settings.md#req-set-003-scheduled-digest-time-with-timezone), [REQ-MAIL-003](../sdd/email.md#req-mail-003-digest-ready-email-send-policy) |
 | `optional-prop.ts` | Conditional-property spread helper for `exactOptionalPropertyTypes` | (shared) |
 | `ulid.ts` | 26-char Crockford base32 ULID generator | [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress) |
 | `system-user.ts` | Sentinel user-id constants (`__system__`, `__e2e__`) | [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking) |
-| `title-overlap.ts` | Token-overlap alignment guard for the chunk consumer | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) |
+| `title-overlap.ts` | Token-overlap alignment guard for the chunk consumer | [REQ-PIPE-015](../sdd/generation.md#req-pipe-015-chunk-processing-robustness) |
 | `feed-health.ts` | Per-URL fetch-health counter for the self-healing discovery loop | [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking) |
 | `kv/chunks-remaining.ts` | KV writer for the `scrape_run:{id}:chunks_remaining` display mirror - wraps `KV.put`/`delete` so the coordinator hot path doesn't inline raw KV calls (per [AD27](decisions/README.md#ad27-all-kv-writers-route-through-srclibkvfamilyts-helpers)) | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) |
 | `kv/discovery-failures.ts` | KV writer for the discovery failure-counter family (per [AD27](decisions/README.md#ad27-all-kv-writers-route-through-srclibkvfamilyts-helpers)) | [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery) |
-| `discovery.ts` | LLM discovery pipeline and pending-discovery cron drain. Tags in the curated registry short-circuit both paths. The LLM's legacy Google News fallback is transitionally redundant while the coordinator owns per-tag GN synthesis (AD31); both paths coexist until the discovery prompt is retrained. | [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery), [REQ-DISC-005](../sdd/discovery.md#req-disc-005-discovery-prompt-injection-protection) |
+| `discovery.ts` | LLM discovery pipeline and pending-discovery cron drain. Tags in the curated registry short-circuit both paths. The LLM's legacy Google News fallback is transitionally redundant while the coordinator owns per-tag GN synthesis (AD31); both paths coexist until the discovery prompt is retrained, which is deferred until the AD31 coordinator path proves stable across one full 14-day retention window — until then, keeping both paths avoids regressing tag coverage if coordinator synthesis ever fails. | [REQ-DISC-001](../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery), [REQ-DISC-005](../sdd/discovery.md#req-disc-005-discovery-prompt-injection-protection) |
 | `tag-railing-flip.ts` | Shared FLIP animation helper for the tag railing | [REQ-READ-007](../sdd/reading.md#req-read-007-tag-railing-reorder-animation) |
 | `json-ld.ts` | Safe JSON-LD serializer for `<script type="application/ld+json">` blocks - rewrites every `<`, `>`, and `&` byte to its `\uNNNN` JSON form, defeating all HTML state-transition vectors that could escape the script block | [REQ-OPS-004](../sdd/observability.md#req-ops-004-crawler-policy-and-public-surface-discoverability) AC 6 |
 
@@ -156,7 +170,7 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) -
 |---|---|---|
 | `index.astro` | Public landing page; redirects authenticated users to `/digest` | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) |
 | `digest.astro` | `/digest` overview grid filtered by user hashtags; empty-state when no matching articles | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-READ-005](../sdd/reading.md#req-read-005-empty-dashboard-state) |
-| `digest/[id]/[slug].astro` | Article detail view with shared-element morph and read tracking | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view), [REQ-READ-003](../sdd/reading.md#req-read-003-read-tracking) |
+| `digest/[id]/[slug].astro` | Article detail view with shared-element morph and read tracking | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view-rendering), [REQ-READ-003](../sdd/reading.md#req-read-003-read-tracking) |
 | `history.astro` | `/history` - day-grouped paginated history with tag filtering | [REQ-HIST-001](../sdd/history.md#req-hist-001-day-grouped-article-history) |
 | `starred.astro` | `/starred` - user's starred articles | [REQ-STAR-002](../sdd/reading.md#req-star-002-starred-articles-page) |
 | `settings.astro` | `/settings` - hashtags, schedule, timezone, model, email toggle, account deletion, stuck-tag rediscovery | [REQ-SET-001](../sdd/settings.md#req-set-001-unified-first-run-and-edit-flow), [REQ-SET-005](../sdd/settings.md#req-set-005-email-notification-preference), [REQ-SET-006](../sdd/settings.md#req-set-006-settings-incomplete-gate), [REQ-SET-007](../sdd/settings.md#req-set-007-timezone-change-detection), [REQ-AUTH-005](../sdd/authentication.md#req-auth-005-account-deletion), [REQ-DISC-004](../sdd/discovery.md#req-disc-004-manual-re-discover) |
@@ -171,13 +185,13 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) -
 | `src/components/ThemeToggle.astro` | Sun/moon toggle - `variant="default"` for anonymous pages, `variant="header"` for the authenticated header. CF-021 merged HeaderThemeToggle in. | [REQ-DES-002](../sdd/design.md#req-des-002-light-and-dark-mode-with-no-flash) |
 | `src/components/UserMenu.astro` | Avatar dropdown - theme, history, settings, starred, log out | [REQ-PWA-003](../sdd/pwa.md#req-pwa-003-mobile-first-responsive-layout), [REQ-STAR-003](../sdd/reading.md#req-star-003-starred-entry-in-the-user-menu) |
 | `src/components/InstallPrompt.astro` | PWA install prompt (Android `beforeinstallprompt`, iOS share-icon note) | [REQ-PWA-001](../sdd/pwa.md#req-pwa-001-installable-pwa-manifest) |
-| `src/components/TagStrip.astro` | Shared tag-railing component | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-READ-007](../sdd/reading.md#req-read-007-tag-railing-reorder-animation) |
+| `src/components/TagStrip.astro` | Shared tag-railing component | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-READ-007](../sdd/reading.md#req-read-007-tag-railing-reorder-animation), [REQ-READ-008](../sdd/reading.md#req-read-008-tag-railing-scroll-wrap-and-fallback) |
 | `src/components/DigestCard.astro` | Article card for the digest grid | [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest), [REQ-STAR-001](../sdd/reading.md#req-star-001-star-and-unstar-articles) |
-| `src/components/AltSourcesModal.astro` | Modal listing alternative sources for an article | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view) |
+| `src/components/AltSourcesModal.astro` | Modal listing alternative sources for an article | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view-rendering) |
 | `src/components/StatsWidget.astro` | Four-tile stats widget | [REQ-HIST-002](../sdd/history.md#req-hist-002-user-stats-widget) |
-| `src/scripts/page-effects.ts` | Layout-level client behaviour (tz sync, scroll restore, brand-link, view transitions, single-named-group card promotion). Mirrored to `public/scripts/page-effects.js` (CSP requires external bundles) | [REQ-DES-002](../sdd/design.md#req-des-002-light-and-dark-mode-with-no-flash), [REQ-DES-003](../sdd/design.md#req-des-003-deliberate-motion-system), [REQ-PWA-003](../sdd/pwa.md#req-pwa-003-mobile-first-responsive-layout), [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view), [REQ-SET-007](../sdd/settings.md#req-set-007-timezone-change-detection) |
-| `src/scripts/article-detail.ts` | History-aware back arrow on the article page (star toggle moved to `card-interactions.ts` delegation) | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view) |
-| `src/scripts/alt-sources-modal.ts` | Alt-source picker open/close and responsive desktop anchor (positions below trigger on ≥768 px viewports, centred on mobile). Mirrored to `public/scripts/alt-sources-modal.js` (CSP requires external bundles) | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view) |
+| `src/scripts/page-effects.ts` | Layout-level client behaviour (tz sync, scroll restore, brand-link, view transitions, single-named-group card promotion). Mirrored to `public/scripts/page-effects.js` (CSP requires external bundles) | [REQ-DES-002](../sdd/design.md#req-des-002-light-and-dark-mode-with-no-flash), [REQ-DES-003](../sdd/design.md#req-des-003-deliberate-motion-system), [REQ-PWA-003](../sdd/pwa.md#req-pwa-003-mobile-first-responsive-layout), [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view-rendering), [REQ-SET-007](../sdd/settings.md#req-set-007-timezone-change-detection) |
+| `src/scripts/article-detail.ts` | History-aware back arrow on the article page (star toggle moved to `card-interactions.ts` delegation) | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view-rendering) |
+| `src/scripts/alt-sources-modal.ts` | Alt-source picker open/close and responsive desktop anchor (positions below trigger on ≥768 px viewports, centred on mobile). Mirrored to `public/scripts/alt-sources-modal.js` (CSP requires external bundles) | [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view-rendering) |
 | `src/scripts/card-interactions.ts` | Document-level star-toggle delegation (covers `/digest`, `/starred`, `/history`, and article-detail header) plus tag-disclosure popover bindings. Mirrored to `public/scripts/card-interactions.js` and loaded layout-wide via `Base.astro` (CSP blocks the inline Astro bundle that would otherwise be emitted per-page) | [REQ-STAR-001](../sdd/reading.md#req-star-001-star-and-unstar-articles), [REQ-READ-001](../sdd/reading.md#req-read-001-overview-grid-of-todays-digest) |
 | `src/scripts/install-prompt.ts` | PWA install-prompt bindings | [REQ-PWA-001](../sdd/pwa.md#req-pwa-001-installable-pwa-manifest) |
 | `src/scripts/theme-toggle.ts` | Theme toggle and meta-tag updates | [REQ-DES-002](../sdd/design.md#req-des-002-light-and-dark-mode-with-no-flash) |
@@ -187,43 +201,43 @@ Page components (`src/pages/*.astro`) and API handlers (`src/pages/api/**.ts`) -
 
 | Path | Role | Implements |
 |---|---|---|
-| `src/worker.ts` | Cron + queue dispatch entry - three cron branches, five queue message types. The queue dispatcher normalises `batch.queue` by stripping a recognised env suffix (`-integration` / `-staging`) before the switch, so the same handler routes both production and integration queue messages. | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-MAIL-001](../sdd/email.md#req-mail-001-digest-ready-email) |
-| `src/queue/scrape-coordinator.ts` | Fan-out, freshness filter, eviction pass, multi-source aggregation on re-discovery, per-tag Google News baseline synthesis (REQ-PIPE-001 AC 9), publisher blocklist filter before chunk dispatch (REQ-PIPE-001 AC 11), chunk dispatch | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking) |
-| `src/queue/scrape-chunk-consumer.ts` | Per-chunk LLM call (summarisation only), canonical-URL dedup within chunk, embedding generation via `embeddings.ts`, D1 batch insert (writes `embedding_status='embedded'`, `embedded_at`, and `source_snippet`), Vectorize upsert post-batch, atomic completion gate, finalize handoff | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
-| `src/queue/scrape-finalize-consumer.ts` | Same-story dedupe pass: bidirectional merge (AD41), two-tier cosine band, LLM rerank, auto-sweep enqueue on gate flip. See note below. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history), [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) |
-| `src/queue/dedup-sweep-consumer.ts` | Queue-driven historical-dedup sweep. Each message runs one batch, re-enqueues a continuation, and CAS-guards `dedup_runs` counters against redelivery. Flips status to `'done'`/`'failed'` at the terminal step. Full Vectorize outage stalls rather than advances the cursor — see AC 18. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9, AC 18 |
-| `src/lib/historical-dedup.ts` | Shared batch primitive (`runHistoricalDedupBatch`). Composite-cursor keyset pagination; bidirectional merge (AD42 — PASS 1 folds `self` into older anchor, PASS 2 absorbs newer matches into `self`); threshold + same-vendor penalty + aggregator-host exemption. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9 |
-| `src/queue/cleanup.ts` | Daily 3-pass cleanup: retention, stuck-tag prune, orphan-tag KV sweep, orphan-run retirement (force-fails runs still marked `running` well past the longest plausible tick duration so stalled rows surface as failed rather than staying `running` indefinitely) | [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-DISC-006](../sdd/discovery.md#req-disc-006-stuck-tag-retention), [REQ-PIPE-007](../sdd/generation.md#req-pipe-007-orphan-tag-source-cleanup), [REQ-PIPE-006](../sdd/generation.md#req-pipe-006-scrape_runs-aggregation-surfaces-stats-history-and-in-flight-progress) AC 8 |
+| `src/worker.ts` | Cron + queue dispatch entry - three cron branches, five queue message types. The queue dispatcher normalises `batch.queue` by stripping a recognised env suffix (`-integration` / `-staging`) before the switch, so the same handler routes both production and integration queue messages. | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-MAIL-003](../sdd/email.md#req-mail-003-digest-ready-email-send-policy) |
+| `src/queue/scrape-coordinator.ts` | Fan-out, freshness filter, eviction pass, multi-source aggregation on re-discovery, per-tag Google News baseline synthesis (REQ-PIPE-001 AC 6), publisher blocklist filter before chunk dispatch (REQ-PIPE-011 AC 3), chunk dispatch | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-010](../sdd/generation.md#req-pipe-010-body-fetch-for-thin-feed-snippets), [REQ-PIPE-011](../sdd/generation.md#req-pipe-011-candidate-filtering-rules), [REQ-DISC-003](../sdd/discovery.md#req-disc-003-self-healing-feed-health-tracking) |
+| `src/queue/scrape-chunk-consumer.ts` | Per-chunk LLM call (summarisation only), canonical-URL dedup within chunk, embedding generation via `embeddings.ts`, D1 batch insert (writes `embedding_status='embedded'`, `embedded_at`, and `source_snippet`), Vectorize upsert post-batch, atomic completion gate, finalize handoff | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract), [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) |
+| `src/queue/scrape-finalize-consumer.ts` | Same-story dedupe pass: bidirectional merge (AD41), two-tier cosine band, LLM rerank, auto-sweep enqueue on gate flip. See note below. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates), [REQ-PIPE-012](../sdd/generation.md#req-pipe-012-same-story-matching-policy-variants), [REQ-PIPE-013](../sdd/generation.md#req-pipe-013-same-story-cross-tick-automation-and-retention-coupling) |
+| `src/queue/dedup-sweep-consumer.ts` | Queue-driven historical-dedup sweep. Each message runs one batch, re-enqueues a continuation, and CAS-guards `dedup_runs` counters against redelivery. Flips status to `'done'`/`'failed'` at the terminal step. Full Vectorize outage stalls rather than advances the cursor - see AC 6. | [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1, AC 6 |
+| `src/lib/historical-dedup.ts` | Shared batch primitive (`runHistoricalDedupBatch`). Composite-cursor keyset pagination; bidirectional merge (AD42 - PASS 1 folds `self` into older anchor, PASS 2 absorbs newer matches into `self`); threshold + same-vendor penalty + aggregator-host exemption. | [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1 |
+| `src/queue/cleanup.ts` | Daily 3-pass cleanup: retention, stuck-tag prune, orphan-tag KV sweep, orphan-run retirement (force-fails any `scrape_runs` row stuck at `chunk_count = -1` for more than 6 hours so dispatch-crash sentinels surface as failed rather than blocking future force-refresh attempts) | [REQ-PIPE-005](../sdd/generation.md#req-pipe-005-fourteen-day-retention-with-starred-exempt-cleanup), [REQ-DISC-006](../sdd/discovery.md#req-disc-006-stuck-tag-retention), [REQ-PIPE-007](../sdd/generation.md#req-pipe-007-orphan-tag-source-cleanup), [REQ-PIPE-016 AC 3](../sdd/generation.md#req-pipe-016-scrape_runs-idempotency-and-stuck-run-cleanup) |
 | `migrations/0001_initial.sql` | Pre-launch initial schema. Creates `users`, which 0003's article_stars / article_reads tables reference via FK; replaying 0003 against an empty schema fails at FK declaration without it | (FK base) |
 | `migrations/0002_article_tags.sql` | Pre-launch `ALTER TABLE articles ADD COLUMN tags_json`; depends on 0001's `articles` table existing first | (FK base) |
 | `migrations/0003_global_feed.sql` | Global-feed rework - DROPs pre-launch tables and recreates the canonical schema: articles, tags, sources, stars, reads, scrape_runs (gains `chunk_count`, `finalize_enqueued` via 0008, `finalize_recorded` via 0010 in later migrations) | (foundational) |
 | `migrations/0004_system_user.sql` | `__system__` sentinel user | (schema) |
 | `migrations/0005_auth_links.sql` | Cross-provider account dedup table | [REQ-AUTH-007](../sdd/authentication.md#req-auth-007-cross-provider-account-dedup) |
 | `migrations/0006_e2e_user.sql` | `__e2e__` sentinel user | (schema) |
-| `migrations/0007_scrape_chunk_completions.sql` | Atomic chunk-completion tracking table | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) |
-| `migrations/0008_scrape_runs_finalize_lock.sql` | Atomic finalize-enqueue gate column - the closing chunk consumer wins this gate to enqueue exactly one finalize message per run | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
-| `migrations/0009_refresh_tokens.sql` | `refresh_tokens` table for the access/refresh-token split (30-day opaque token with rotation chain and reuse-detection) | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection) |
-| `migrations/0010_scrape_runs_finalize_recorded.sql` | `finalize_recorded` gate column - atomic idempotency for finalize-pass run-once invariant; the column is now load-bearing for the semantic-dedup pass instead of LLM-cost recording (the LLM call is gone). | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
-| `migrations/0011_article_embeddings.sql` | `embedding_status` (NULL / `'embedded'` / `'failed'`) and `embedded_at` columns on `articles`. NULL = never attempted; chunk consumer stamps `'embedded'` after Vectorize upsert or `'failed'` on upsert error. The admin embed-backfill route retries NULL and `'failed'` rows. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
-| `migrations/0012_article_source_snippet.sql` | `source_snippet` TEXT column on `articles`. Stores the raw scraped body excerpt used as the embedding input so re-embeds run without re-scraping. NULL on historical rows (`buildEmbeddingInput` falls back to `details_json`). | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) |
-| `migrations/0013_dedup_runs.sql` | `dedup_runs` audit table for the queue-driven historical-dedup sweep: ULID primary key, status (`'running'` / `'done'` / `'failed'`), running counters (scanned, merged, batch_count, remaining), composite cursor (`last_cursor_pa`, `last_cursor_id`), error message, started_at + updated_at. Indexed on `started_at DESC` for the operator surface to surface the latest run. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9 |
-| `src/queue/pipeline-consumer.ts` | Backend-driven full pipeline orchestrator. Walks seven phases (`reembed_flip → reembed_drain → scrape_kick → scrape_wait → embed_drain → dedup_kick → dedup_wait`) by self-chaining `pipeline-jobs` messages. Each phase CAS-guards its `current_phase` UPDATE so redeliveries do not re-advance. | [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface), [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) AC 10 |
-| `src/lib/kick-coordinator.ts` | Shared atomic-claim coordinator kicker used by both the operator-driven force-refresh route and the pipeline-consumer's `scrape_kick` phase. Inserts a `scrape_runs` row + sends one `SCRAPE_COORDINATOR` message under a `WHERE NOT EXISTS` guard to coalesce concurrent kicks. | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) |
-| `migrations/0014_pipeline_runs.sql` | `pipeline_runs` audit table for the backend-driven full pipeline orchestrator: ULID primary key, status (`'running'` / `'done'` / `'failed'`), mode (`'full'` / `'wipe'`), `current_phase`, scrape_run_id + dedup_run_id references, embed counters, error, started_at + updated_at. Indexed on `started_at DESC` for the polling endpoint. | [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) |
+| `migrations/0007_scrape_chunk_completions.sql` | Atomic chunk-completion tracking table | [REQ-PIPE-002](../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract) |
+| `migrations/0008_scrape_runs_finalize_lock.sql` | Atomic finalize-enqueue gate column - the closing chunk consumer wins this gate to enqueue exactly one finalize message per run | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) |
+| `migrations/0009_refresh_tokens.sql` | `refresh_tokens` table for the access/refresh-token split (30-day opaque token with rotation chain and reuse-detection) | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-and-per-device-logout) |
+| `migrations/0010_scrape_runs_finalize_recorded.sql` | `finalize_recorded` gate column - atomic idempotency for finalize-pass run-once invariant; the column is now load-bearing for the semantic-dedup pass instead of LLM-cost recording (the LLM call is gone). | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) |
+| `migrations/0011_article_embeddings.sql` | `embedding_status` (NULL / `'embedded'` / `'failed'`) and `embedded_at` columns on `articles`. NULL = never attempted; chunk consumer stamps `'embedded'` after Vectorize upsert or `'failed'` on upsert error. The admin embed-backfill route retries NULL and `'failed'` rows. | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) |
+| `migrations/0012_article_source_snippet.sql` | `source_snippet` TEXT column on `articles`. Stores the raw scraped body excerpt used as the embedding input so re-embeds run without re-scraping. NULL on historical rows (`buildEmbeddingInput` falls back to `details_json`). | [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) |
+| `migrations/0013_dedup_runs.sql` | `dedup_runs` audit table for the queue-driven historical-dedup sweep: ULID primary key, status (`'running'` / `'done'` / `'failed'`), running counters (scanned, merged, batch_count, remaining), composite cursor (`last_cursor_pa`, `last_cursor_id`), error message, started_at + updated_at. Indexed on `started_at DESC` for the operator surface to surface the latest run. | [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1 |
+| `src/queue/pipeline-consumer.ts` | Backend-driven full pipeline orchestrator. Walks seven phases (`reembed_flip → reembed_drain → scrape_kick → scrape_wait → embed_drain → dedup_kick → dedup_wait`) by self-chaining `pipeline-jobs` messages. Each phase CAS-guards its `current_phase` UPDATE so redeliveries do not re-advance. | [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface), [REQ-OPS-009](../sdd/observability.md#req-ops-009-admin-pipeline-run-progress-surface) |
+| `src/lib/kick-coordinator.ts` | Shared atomic-claim coordinator kicker used by both the operator-driven force-refresh route and the pipeline-consumer's `scrape_kick` phase. Inserts a `scrape_runs` row + sends one `SCRAPE_COORDINATOR` message under a `WHERE NOT EXISTS` guard to coalesce concurrent kicks. | [REQ-PIPE-001](../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) |
+| `migrations/0014_pipeline_runs.sql` | `pipeline_runs` audit table for the backend-driven full pipeline orchestrator: ULID primary key, status (`'running'` / `'done'` / `'failed'`), mode (`'full'` / `'wipe'`), `current_phase`, scrape_run_id + dedup_run_id references, embed counters, error, started_at + updated_at. Indexed on `started_at DESC` for the polling endpoint. | [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) |
 
-**`scrape-finalize-consumer.ts` detail ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 2, 3, 14, 15, 16, [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) AC 5):**
+**`scrape-finalize-consumer.ts` detail ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) AC 2, AC 3, [REQ-PIPE-012](../sdd/generation.md#req-pipe-012-same-story-matching-policy-variants), [REQ-PIPE-009](../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates)):**
 
 Per-article Vectorize top-K query (topK=20, AD40), time-window pre-filter (`DEDUP_TIME_WINDOW_SECONDS`), same-vendor cosine penalty, two-tier merge logic with auto-merge band (>= `DEDUP_COSINE_THRESHOLD`) and borderline band (>= `DEDUP_RERANK_FLOOR`) where `dedup-rerank.ts` decides via LLM judgment.
 
 Bidirectional merge (AD41) - winner is always the older article in the pair regardless of which side was just ingested. Multi-rerank (AD42) - all borderline candidates sorted by direction-preference + cosine; walks up to `RERANK_CANDIDATE_CAP=5` in order, taking the first same-event=true verdict instead of stopping at the top candidate.
 
-After the `finalize_recorded` gate flips, enqueues exactly one `dedup-sweep` continuation scoped to the last 7d (AD42 - derived from `DEDUP_TIME_WINDOW_SECONDS` at runtime via `autoSweepLookbackSeconds` so the cursor scope and the per-pair gate always match under any env override; REQ-PIPE-003 AC 17) so cross-tick pairs the per-tick pass cannot see merge automatically without operator action. Atomic `finalize_recorded` gate prevents double-counting on redelivery.
+After the `finalize_recorded` gate flips, enqueues exactly one `dedup-sweep` continuation scoped to the last 7d (AD42 - derived from `DEDUP_TIME_WINDOW_SECONDS` at runtime via `autoSweepLookbackSeconds` so the cursor scope and the per-pair gate always match under any env override; [REQ-PIPE-013](../sdd/generation.md#req-pipe-013-same-story-cross-tick-automation-and-retention-coupling) AC 3) so cross-tick pairs the per-tick pass cannot see merge automatically without operator action. Atomic `finalize_recorded` gate prevents double-counting on redelivery.
 
 ## 5. Request Lifecycles
 
 ### 5.1 Global-feed pipeline (every 4 hours)
 
-<!-- doc-allow-large: AD46 diagram-section exemption (pipeline flow) -->
+<!-- doc-allow-element: AD46 diagram-section exemption (pipeline flow) -->
 ```
 Cron (00/04/08/12/16/20 UTC)
   └─► SCRAPE_COORDINATOR queued
@@ -232,7 +246,7 @@ Cron (00/04/08/12/16/20 UTC)
 Coordinator
   ├─ Synthesise per-tag Google News query-RSS source for every tag in
   │  (default-seed ∪ curated ∪ discovered KV); skip tags with a bespoke
-  │  hand-tuned GN curated entry (REQ-PIPE-001 AC 9)
+  │  hand-tuned GN curated entry (REQ-PIPE-001 AC 6)
   ├─ Fan out {tag × source} pairs (concurrency 10)
   ├─ Record per-URL fetch outcome → KV source_health:{url}
   ├─ Evict URLs at 30 consecutive failures; re-queue discovery if feed list empties
@@ -271,7 +285,7 @@ Finalize consumer (semantic same-story dedupe - REQ-PIPE-003, REQ-PIPE-009)
   ├─ D1.batch the accumulated merge statements
   ├─ VECTORIZE.deleteByIds(merged-away ids)
   ├─ Atomic gate: UPDATE scrape_runs SET finalize_recorded=1 … WHERE finalize_recorded=0
-  └─ Enqueue one DEDUP_SWEEP message scoped to last 7d (derived from DEDUP_TIME_WINDOW_SECONDS at runtime - REQ-PIPE-003 AC 17)
+  └─ Enqueue one DEDUP_SWEEP message scoped to last 7d (derived from DEDUP_TIME_WINDOW_SECONDS at runtime - REQ-PIPE-013 AC 3)
 ```
 
 ### 5.2 Operator force-refresh
@@ -290,17 +304,17 @@ Cron daily 03:00 UTC
   │   remove that tag from every user's hashtags_json
   ├─ Pass 3 - Orphan-tag KV sweep
   │   DELETE sources:{tag} and discovery_failures:{tag} for tags no user owns
-  └─ Pass 4 - Orphan-run retirement (REQ-PIPE-006 AC 8)
-      Force-fail scrape_runs rows still status='running' well past the
-      longest plausible tick duration so stalled rows surface as failed
-      rather than staying running indefinitely
+  └─ Pass 4 - Orphan-run retirement (REQ-PIPE-016 AC 3)
+      Force-fail any scrape_runs row at chunk_count=-1 (coordinator
+      dispatch sentinel) with created_at < now-6h. 6h is past every
+      legitimate in-flight dispatch; chunk consumers exhaust in minutes.
 ```
 
 ### 5.4 Operator-triggered historical-dedup sweep
 
-Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9. The sweep is operator-triggered from `/settings`, runs server-side independent of the operator's browser tab, and is observable via a status endpoint.
+Implements [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1, AC 2. The sweep is operator-triggered from `/settings`, runs server-side independent of the operator's browser tab, and is observable via a status endpoint.
 
-<!-- doc-allow-large: AD46 diagram-section exemption (historical-dedup flow) -->
+<!-- doc-allow-element: AD46 diagram-section exemption (historical-dedup flow) -->
 ```
 Operator clicks "Run historical-dedup sweep" on /settings
   └─► POST /api/admin/historical-dedup (empty body - kicker mode)
@@ -346,16 +360,16 @@ Cron every 5 minutes
 
 Articles are the central entity in the article pool. Each article belongs to a `scrape_runs` row (one row per scrape run), not to a user. Users read from the pool by filtering on their active hashtags. Foreign keys cascade on delete. Starred articles are user-scoped and exempt from the 14-day retention cleanup.
 
-`pending_discoveries` rows are per-user, but the discovery results themselves (`sources:{tag}` in KV) are globally shared so multiple users benefit from a single discovery run. The coordinator may insert system-owned rows (`user_id = '__system__'`) when a feed eviction empties a tag's source list - real-user queries scoped `WHERE user_id = ?` naturally exclude these.
+`pending_discoveries` rows are per-user, but the discovery results themselves (`sources:{tag}` in KV) are globally shared so multiple users benefit from a single discovery run. The coordinator may insert system-owned rows (`user_id = '__system__'`) when a feed eviction empties a tag's source list - real-user queries scoped `WHERE user_id = ?` naturally exclude these. The sentinel row keeps the tag entry alive so the next discovery cycle has a target; deleting it would cascade-drop downstream `article_tags` references and lose the tag from every user's headline view.
 
 ## 7. Cross-cutting Concerns
 
 | Concern | Mechanism | Detail |
 |---|---|---|
-| Authentication | 5-minute access JWT + 30-day rotating refresh token | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-device-binding-reuse-detection) |
+| Authentication | 5-minute access JWT + 30-day rotating refresh token | [REQ-AUTH-002](../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-008](../sdd/authentication.md#req-auth-008-refresh-token-rotation-and-per-device-logout) |
 | CSRF defence | `Origin` header check on every state-changing request | [REQ-AUTH-003](../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints) |
 | Rate limiting | KV window-counter, applied to auth routes, mutation routes, and authenticated polling endpoints | `src/lib/rate-limit.ts`, [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 9 |
-| Security headers | CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options` | [REQ-OPS-003](../sdd/observability.md#req-ops-003-security-headers-on-every-response) |
+| Security headers | CSP, HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options` | [REQ-OPS-003](../sdd/observability.md#req-ops-003-content-security-policy-on-every-response) |
 | Observability | Structured JSON logs via closed `LogEvent` enum | [REQ-OPS-001](../sdd/observability.md#req-ops-001-structured-json-logging) |
 | Error surfaces | Closed `ErrorCode` enum, sanitised user-facing messages | [REQ-OPS-002](../sdd/observability.md#req-ops-002-sanitized-error-surfaces) |
 | Admin gate | Worker-side baseline: signed-in session + `ADMIN_EMAIL` match. Optional perimeter when `CF_ACCESS_AUD` is set: Cloudflare Access assertion + `aud` claim match (AD29 + AD30); `exp` claim validated server-side (AD44). | [REQ-AUTH-001](../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8, AC 8a |
@@ -390,9 +404,11 @@ Replaces the prior hand-maintained `SKIP` set in `build-client-scripts.mjs` (CF-
 
 ---
 
-## Design System Tokens (REQ-DES-001, REQ-DES-003)
+## Design System Tokens
 
 CSS custom properties declared in `src/styles/global.css` and consumed throughout the component tree.
+
+**Implements:** [REQ-DES-001](../sdd/design.md#req-des-001-swiss-minimal-visual-language), [REQ-DES-003](../sdd/design.md#req-des-003-deliberate-motion-system)
 
 ### Type scale
 

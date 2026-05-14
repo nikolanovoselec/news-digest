@@ -57,7 +57,7 @@ describe('digest grid filter contract — REQ-SET-002 AC 7', () => {
   });
 });
 
-describe('Restore initial tags action — REQ-SET-002 AC 8', () => {
+describe('Restore initial tags action - REQ-SET-002 AC 8 / REQ-SET-008 (restore-defaults action)', () => {
   it('REQ-SET-002: settings exposes a button labelled via RESTORE_DEFAULTS_LABEL', () => {
     // The label renders from the RESTORE_DEFAULTS_LABEL constant, so
     // the raw source either shows the literal string or the JSX

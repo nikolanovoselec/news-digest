@@ -27,6 +27,7 @@ import { requireAdminSession } from '~/middleware/admin-auth';
 import { applyRefreshCookie } from '~/middleware/auth';
 import { checkOrigin, hasBearerAuth, originOf } from '~/middleware/origin-check';
 import { runOneBackfillBatch } from '~/lib/embed-backfill';
+import { clearWatermark } from '~/lib/dedup-watermark';
 
 interface CumulativeResult {
   ok: true;
@@ -95,6 +96,22 @@ async function handle(context: APIContext): Promise<Response> {
     await env.DB
       .prepare(`UPDATE articles SET embedding_status = 'failed'`)
       .run();
+    // AD48 — re-embedding changes cosine geometry, so every prior
+    // same-event verdict is suspect. Clear the auto-sweep watermark
+    // so the next sweep re-judges every borderline pair against the
+    // new vectors. Best-effort: a KV delete failure is logged but
+    // does not block the re-embed; the worst case is the next sweep
+    // skips some pairs it should have re-checked, which the operator
+    // can force by clicking the historical-dedup button (which sets
+    // bypassWatermark=true regardless).
+    try {
+      await clearWatermark(env);
+    } catch (err) {
+      log('warn', 'digest.generation', {
+        status: 'dedup_watermark_clear_failed',
+        detail: String(err).slice(0, 500),
+      });
+    }
     log('info', 'digest.generation', {
       status: 'embed_backfill_reembed_requested',
     });

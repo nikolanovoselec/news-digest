@@ -17,7 +17,7 @@
 //     standard queue retry envelope (`handleBatch` + max_retries from
 //     wrangler.toml).
 //   - Self-chaining over queues is the same pattern the chunk → finalize
-//     handoff already uses (REQ-PIPE-008), so operators have one mental
+//     handoff already uses (REQ-PIPE-003), so operators have one mental
 //     model for "background pipeline work continues without a tab".
 //
 // On terminal queue retry exhaustion the consumer flips the
@@ -34,6 +34,7 @@ import {
   DEFAULT_BATCH,
 } from '~/lib/historical-dedup';
 import type { DedupCursor } from '~/lib/historical-dedup';
+import { writeWatermark } from '~/lib/dedup-watermark';
 
 /** Queue message envelope. `cursor: null` on the first message in a
  *  run — the sweep starts at the corpus head. Subsequent messages
@@ -45,6 +46,15 @@ export interface DedupSweepMessage {
    *  unset so the kicker doesn't have to reach into the dedup helper
    *  to pick a sensible default. Capped server-side at MAX_BATCH. */
   batch?: number;
+  /** When true, the rerank pass ignores the auto-sweep watermark and
+   *  re-judges every borderline pair. Set on operator-triggered runs
+   *  (the operator explicitly wants a full re-check, e.g. after a
+   *  threshold change). Auto-sweep enqueues from
+   *  `scrape-finalize-consumer.ts` leave this unset → defaults to
+   *  false → watermark skip applies. Propagated unchanged through
+   *  continuation messages so the entire chain shares one
+   *  bypass-or-not decision. */
+  bypassWatermark?: boolean;
 }
 
 /** Handle one batch of `dedup-sweep` messages. We do NOT pass an
@@ -134,7 +144,9 @@ export async function processOneDedupSweep(
 
   let result: Awaited<ReturnType<typeof runHistoricalDedupBatch>>;
   try {
-    result = await runHistoricalDedupBatch(env, body.cursor, batchSize);
+    result = await runHistoricalDedupBatch(env, body.cursor, batchSize, {
+      bypassWatermark: body.bypassWatermark === true,
+    });
   } catch (err) {
     const detail = String(err).slice(0, 500);
     // Best-effort: stamp the error onto the audit row so the polling
@@ -227,6 +239,33 @@ export async function processOneDedupSweep(
     cas_applied: applied,
   });
 
+  // AD48 — On terminal completion (CAS-applied flip to 'done'), record
+  // the watermark so the next auto-sweep can skip the LLM rerank on
+  // pairs whose articles both predate `now`. The CAS guard above
+  // guarantees this branch runs exactly once per run regardless of
+  // queue redelivery. Best-effort: a KV write failure is logged but
+  // does not roll back the merge state (worst case the next sweep
+  // re-judges some pairs it would have skipped — exactly the pre-AD48
+  // behaviour). Operator-triggered runs that complete also write the
+  // watermark — they covered the full corpus end-to-end, so the
+  // resulting watermark is at least as well-founded as an auto-sweep's.
+  if (applied && result.done) {
+    try {
+      await writeWatermark(env, now);
+      log('info', 'digest.generation', {
+        status: 'dedup_watermark_written',
+        dedup_run_id: body.run_id,
+        watermark_seconds: now,
+      });
+    } catch (err) {
+      log('warn', 'digest.generation', {
+        status: 'dedup_watermark_write_failed',
+        dedup_run_id: body.run_id,
+        detail: String(err).slice(0, 500),
+      });
+    }
+  }
+
   // Step 2 — chain the next batch when the sweep is not yet complete.
   // The send is best-effort fire-and-forget; if the queue producer
   // throws, the per-message handler will rethrow and the queue retry
@@ -240,6 +279,9 @@ export async function processOneDedupSweep(
     };
     if (body.batch !== undefined) {
       next.batch = body.batch;
+    }
+    if (body.bypassWatermark !== undefined) {
+      next.bypassWatermark = body.bypassWatermark;
     }
     await env.DEDUP_SWEEP.send(next);
   }

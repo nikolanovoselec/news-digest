@@ -1,5 +1,5 @@
 // Tests for the LLM-response parsers in src/lib/generate.ts —
-// REQ-PIPE-002 / REQ-PIPE-008 (CF-016).
+// REQ-PIPE-002 / REQ-PIPE-003 (CF-016).
 //
 // The chunk consumer and the cross-chunk finalize consumer both feed
 // raw `env.AI.run()` output through these parsers before consuming
@@ -73,40 +73,40 @@ describe('parseLLMPayload — REQ-PIPE-002', () => {
   });
 });
 
-describe('parseLLMJson — REQ-PIPE-008', () => {
-  it('REQ-PIPE-008: accepts an already-parsed object', () => {
+describe('parseLLMJson — REQ-PIPE-003', () => {
+  it('REQ-PIPE-003: accepts an already-parsed object', () => {
     const out = parseLLMJson({ dedup_groups: [[1, 2]] });
     expect(out?.['dedup_groups']).toEqual([[1, 2]]);
   });
 
-  it('REQ-PIPE-008: parses a fenced ```json finalize response', () => {
+  it('REQ-PIPE-003: parses a fenced ```json finalize response', () => {
     const raw = '```json\n{"dedup_groups":[[0,3,7]]}\n```';
     const out = parseLLMJson(raw);
     expect(out?.['dedup_groups']).toEqual([[0, 3, 7]]);
   });
 
-  it('REQ-PIPE-008: balanced-brace recovery on prose-wrapped finalize', () => {
+  it('REQ-PIPE-003: balanced-brace recovery on prose-wrapped finalize', () => {
     const raw = 'I found two pairs: {"dedup_groups":[[1,4]]} thank you!';
     const out = parseLLMJson(raw);
     expect(out?.['dedup_groups']).toEqual([[1, 4]]);
   });
 
-  it('REQ-PIPE-008: rejects strings that contain no balanced object', () => {
+  it('REQ-PIPE-003: rejects strings that contain no balanced object', () => {
     expect(parseLLMJson('plain prose, no json')).toBeNull();
     expect(parseLLMJson('{ unterminated')).toBeNull();
   });
 
-  it('REQ-PIPE-008: rejects null / number / boolean', () => {
+  it('REQ-PIPE-003: rejects null / number / boolean', () => {
     expect(parseLLMJson(null)).toBeNull();
     expect(parseLLMJson(42)).toBeNull();
     expect(parseLLMJson(true)).toBeNull();
   });
 
-  it('REQ-PIPE-008: rejects an empty string', () => {
+  it('REQ-PIPE-003: rejects an empty string', () => {
     expect(parseLLMJson('')).toBeNull();
   });
 
-  it('REQ-PIPE-008: returns the parsed object even when it has no dedup_groups (caller validates fields)', () => {
+  it('REQ-PIPE-003: returns the parsed object even when it has no dedup_groups (caller validates fields)', () => {
     // Per the helper's contract, parseLLMJson is the loose parser —
     // it only enforces "must parse to a non-null object", and leaves
     // field validation to the caller. The finalize consumer does its

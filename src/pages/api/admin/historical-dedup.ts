@@ -138,7 +138,13 @@ async function handleSyncBatch(
   const startedAt = Date.now();
   let result;
   try {
-    result = await runHistoricalDedupBatch(env, parsed.cursor, parsed.batch);
+    // AD48 — operator-triggered runs always re-judge every borderline
+    // pair regardless of the prior auto-sweep watermark. The operator
+    // explicitly wants a full re-check (typical trigger: threshold or
+    // prompt change, or to verify a recent migration).
+    result = await runHistoricalDedupBatch(env, parsed.cursor, parsed.batch, {
+      bypassWatermark: true,
+    });
   } catch (err) {
     log('error', 'digest.generation', {
       status: 'historical_dedup_sync_failed',
@@ -228,10 +234,14 @@ async function handleEnqueue(
       .bind(runId, now)
       .run();
 
+    // AD48 — operator-triggered runs propagate `bypassWatermark: true`
+    // through the queue chain so every continuation batch also
+    // re-judges from scratch.
     await env.DEDUP_SWEEP.send({
       run_id: runId,
       cursor: null,
       batch,
+      bypassWatermark: true,
     });
   } catch (err) {
     log('error', 'digest.generation', {

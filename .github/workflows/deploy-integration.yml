@@ -1,5 +1,9 @@
 name: Deploy Integration
 
+# Implements REQ-OPS-006 (Integration deployment target). This workflow IS
+# the verification artifact for the REQ; the manual promotion checklist runs
+# against the deploy this file produces.
+#
 # Manual trigger ONLY. Operator workflow: land changes on develop
 # normally; when ready to smoke-test on the live edge, hit
 # Actions → Deploy Integration → Run workflow. The deploy always

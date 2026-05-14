@@ -4,29 +4,29 @@ Resend-backed notification sent after every successful digest — whether genera
 
 ---
 
-### REQ-MAIL-001: Digest-ready email
+### REQ-MAIL-001: Digest-ready email content
 
-**Intent:** Users who have opted in receive a single high-signal notification per day at their configured local time, surfacing what's new in topics they care about and nudging them back to the dashboard — the dashboard remains authoritative for long-form article content.
+**Intent:** When a digest-ready email is sent, its subject, body, headers, and footer present a single high-signal view of what's new in topics the user cares about and nudge them back to the dashboard, which remains authoritative for long-form article content.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. At most one email per user is sent per day, gated so the same user never receives a second notification on the same local date.
-2. The email fires at the user's configured local digest time, independent of the global scrape cadence.
-3. The subject reads "{N} new articles · {top tags}" — N is the headline count and {top tags} is the top three tag slugs by descending article count, comma-joined. (N is always ≥ 1 for any email that reaches an inbox, because AC 11 skips the send when N = 0.)
-4. The body lists up to five unread articles (excluding articles the recipient has previously opened), each as a clickable title that links to the article detail page on the dashboard. No adjacent source-name label is rendered next to the headline — the article-detail page surfaces alternate sources instead.
-5. The body shows a tally of articles ingested since the recipient's local midnight, listing each tag with its article count; the line is omitted entirely when no articles have been ingested in that window.
-6. The body shows the current send time and tomorrow's send time, both formatted in the recipient's timezone.
-7. The body contains a "Manage notifications" link to the settings page above the brand footer.
-8. The brand footer reads "Built with Codeflare © 2026 Gray Matter GmbH" and matches the in-app site footer (uppercase, tracked, muted), with both "Codeflare" and "Gray Matter GmbH" rendered as hyperlinks.
-9. The From header reads "News Digest <noreply@graymatter.ch>" (display name "News Digest" plus the configured sender address) so inbox lists show the brand instead of the bare email.
-10. Users who turn off `email_enabled` in settings receive no email.
-11. When the recipient has zero unread articles for the local day, no email is sent. The per-user "last emailed date" marker is not stamped; the user is naturally retried at their next configured digest time the following local day. An empty email is treated as noise; silence is the contract.
+1. The subject reads "{N} new articles · {top tags}", where N is the headline count and {top tags} is the top three tag slugs by descending article count, comma-joined. (N is always at least 1 for any email that reaches an inbox, per the send-policy contract in REQ-MAIL-003.)
+2. The body lists up to five unread articles (excluding articles the recipient has previously opened), each as a clickable title that links to the article detail page on the dashboard. No adjacent source-name label is rendered next to the headline; the article-detail page surfaces alternate sources instead.
+3. The body shows a tally of articles ingested since the recipient's local midnight, listing each tag with its article count; the line is omitted entirely when no articles have been ingested in that window.
+4. The body shows the current send time and tomorrow's send time, both formatted in the recipient's timezone.
+5. The body contains a "Manage notifications" link to the settings page above the brand footer.
+6. The brand footer reads "Built with Codeflare © 2026 Gray Matter GmbH" and matches the in-app site footer (uppercase, tracked, muted), with both "Codeflare" and "Gray Matter GmbH" rendered as hyperlinks.
+7. The From header reads "News Digest <noreply@graymatter.ch>" (display name "News Digest" plus the configured sender address) so inbox lists show the brand instead of the bare email.
 
 **Constraints:** None
+
 **Priority:** P1
-**Dependencies:** REQ-PIPE-001, REQ-SET-005
+
+**Dependencies:** [REQ-PIPE-001](generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-MAIL-003](#req-mail-003-digest-ready-email-send-policy)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -45,7 +45,36 @@ Resend-backed notification sent after every successful digest — whether genera
 5. On send failure, the per-user "last emailed date" marker is NOT advanced, so the next cron tick retries the same user naturally.
 
 **Constraints:** None
+
 **Priority:** P1
-**Dependencies:** REQ-MAIL-001
+
+**Dependencies:** [REQ-MAIL-001](#req-mail-001-digest-ready-email-content), [REQ-MAIL-003](#req-mail-003-digest-ready-email-send-policy)
+
 **Verification:** Integration test
+
+**Status:** Implemented
+
+---
+
+### REQ-MAIL-003: Digest-ready email send policy
+
+**Intent:** Users who have opted in receive at most one digest-ready email per day at their configured local time, and an empty inbox produces silence rather than a noisy zero-article notification.
+
+**Applies To:** User
+
+**Acceptance Criteria:**
+1. At most one email per user is sent per day, gated so the same user never receives a second notification on the same local date.
+2. The email fires at the user's configured local digest time, independent of the global scrape cadence.
+3. Users who turn off `email_enabled` in settings receive no email.
+4. When the recipient has zero unread articles for the local day, no email is sent so an empty inbox produces silence rather than a noisy zero-article notification.
+5. The per-user "last emailed date" marker is not stamped on a zero-article day, so the user is naturally retried at their next configured digest time the following local day.
+
+**Constraints:** None
+
+**Priority:** P1
+
+**Dependencies:** [REQ-SET-005](settings.md#req-set-005-email-notification-preference)
+
+**Verification:** Integration test
+
 **Status:** Implemented

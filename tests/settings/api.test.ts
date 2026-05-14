@@ -203,7 +203,7 @@ async function authedRequest(
   return new Request(`${APP_URL}/api/settings`, init);
 }
 
-describe('GET /api/settings', () => {
+describe('GET /api/settings - REQ-SET-001 / REQ-SET-005 (settings + email-toggle round-trip)', () => {
   it('REQ-SET-001: returns 401 when there is no session', async () => {
     const { db } = makeDb(null);
     const { kv } = makeKv();
@@ -212,7 +212,7 @@ describe('GET /api/settings', () => {
     expect(res.status).toBe(401);
   });
 
-  it('REQ-SET-001: returns the settings shape for an authenticated user', async () => {
+  it('REQ-SET-001 / REQ-SET-005 AC 2: returns the settings shape for an authenticated user (email_enabled round-trips via users column)', async () => {
     const { db } = makeDb(baseRow());
     const { kv } = makeKv();
     const req = await authedRequest('GET');
@@ -246,7 +246,7 @@ describe('GET /api/settings', () => {
   });
 });
 
-describe('PUT /api/settings', () => {
+describe('PUT /api/settings - REQ-SET-001 / REQ-SET-005 (settings write + email-toggle persistence)', () => {
   it('REQ-SET-001: returns 403 when Origin is missing', async () => {
     const { db } = makeDb(baseRow());
     const { kv } = makeKv();

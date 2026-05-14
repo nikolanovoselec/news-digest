@@ -1,8 +1,8 @@
 // Implements REQ-PIPE-003
-// Implements REQ-PIPE-008
+// Implements REQ-PIPE-003
 //
 // Pure helpers for cross-chunk + cross-tick semantic dedup: winner
-// selection (REQ-PIPE-008 AC 2 — earliest published_at wins, with id
+// selection (REQ-PIPE-003 AC 2 — earliest published_at wins, with id
 // tiebreak for determinism), the six-statement loser-into-winner merge
 // (AC 3 — re-points user state before deleting the loser row, so a
 // starred article never quietly disappears), and the existing-wins

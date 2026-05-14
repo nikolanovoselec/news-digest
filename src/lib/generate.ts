@@ -1,4 +1,4 @@
-// Implements REQ-PIPE-002, REQ-PIPE-008
+// Implements REQ-PIPE-002, REQ-PIPE-003
 //
 // Reusable LLM response helpers consumed by the global-feed pipeline
 // (src/queue/scrape-chunk-consumer.ts).
@@ -107,7 +107,7 @@ export function parseLLMPayload(response: unknown): LLMPayload | null {
 
 /** Loose JSON parser shared by callers whose response shape doesn't carry
  *  an `articles` array — notably the cross-chunk dedup finalize prompt
- *  (REQ-PIPE-008) which returns `{dedup_groups: number[][]}` only. Same
+ *  (REQ-PIPE-003) which returns `{dedup_groups: number[][]}` only. Same
  *  fence/preamble/brace-walking tolerance as `parseLLMPayload` above; the
  *  caller validates whichever fields it actually needs. */
 export function parseLLMJson(response: unknown): Record<string, unknown> | null {

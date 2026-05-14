@@ -33,7 +33,7 @@ import historyBundled from '../../src/scripts/bundled/history-page.ts?raw';
 const digestPage = `${digestPageAstro}\n${digestBundled}`;
 const historyPage = `${historyPageAstro}\n${historyBundled}`;
 
-describe('tag-railing FLIP reorder — REQ-READ-007', () => {
+describe('tag-railing FLIP reorder - REQ-READ-007 / REQ-READ-008 (tag-strip interactions)', () => {
   it('REQ-READ-007: helper exports flipChipToFront and isFlipLocked', () => {
     expect(flipHelper).toMatch(/export\s+(async\s+)?function\s+flipChipToFront/);
     expect(flipHelper).toMatch(/export\s+function\s+isFlipLocked/);

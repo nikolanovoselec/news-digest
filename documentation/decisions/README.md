@@ -14,51 +14,55 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 | ID | Decision | Category | Date |
 |----|----------|----------|------|
-| AD1 | Custom federated OAuth/OIDC (GitHub, Google) + HMAC-SHA256 JWT, no third-party auth library | Security | 2026-04-22 |
-| AD2 | Cloudflare Queues for digest generation under thundering herd | Architecture | 2026-04-22 |
-| AD3 | Server-side article-body fetching with SSRF guard | Security | 2026-04-27 |
-| AD4 | Plaintext-only LLM output; no markdown parser or HTML sanitizer | Security | 2026-04-22 |
-| AD5 | KV for caches, D1 for consistent state | Storage | 2026-04-22 |
-| AD6 | Polling instead of SSE or WebSockets for scrape-run progress | UI | 2026-04-22 |
-| AD7 | D1 for chunk completion tracking, replacing KV read-modify-write (CF-002) | Storage | 2026-04-27 |
-| AD8 | Cookie attributes are the security contract - kept inline in REQ-AUTH-002/003 | Security | 2026-05-03 |
-| AD9 | Storage-shape names (D1 columns, KV keys) are the persistence contract - kept inline in REQ-DISC/AUTH/SET | Storage | 2026-05-03 |
-| AD10 | Atomic conditional UPDATE as the once-per-run idempotency gate - no `acquireOnceLock` helper | Architecture | 2026-05-03 |
-| AD11 | Keep `style-src 'unsafe-inline'`; runtime `.style.X` writes for FLIP + view-transitions are intentional | Security | 2026-05-04 |
-| AD12 | Integration env: separate Cloudflare resources, manual trigger from develop, crons disabled | Operations | 2026-05-04 |
-| AD13 | No non-essential cookies (analytics gate) | Privacy | 2026-05-04 |
-| AD14 | History-page perf-comparability test permanently skipped | Testing | 2026-05-04 |
-| AD15 | Test pool exercises worker.ts directly; production runs through Astro-merged entry | Architecture | 2026-05-04 |
-| AD16 | Single-writer invariant for KV `sources:{tag}` enforced via centralized helper | Storage | 2026-05-04 |
-| AD17 | Reject `dedupe-groups.ts` extraction; finalize within-group dedup is downstream-gated | Architecture | 2026-05-04 |
-| AD18 | Reject `deferred-candidates.ts`; chunk-overflow drop path stays log-only until volume justifies persistence | Architecture | 2026-05-04 |
-| AD19 | Reject `tag-railing-flip-core.ts`; FLIP measurements are not separable from DOM and are tested via Playwright | Testing | 2026-05-04 |
-| AD20 | Window-scoped idempotency token for star-delegation listener (dual-bundle Pattern B) | Architecture | 2026-05-04 |
-| AD21 | Drop-cap per-platform fine-tuning deferred; system font metrics are the cross-platform constraint | UI | 2026-05-04 |
-| AD22 | SSRF defence relies on Workers network sandbox; static IP allowlist is best-effort only | Security | 2026-05-05 |
-| AD23 | Auth-rate-limit fail-closed without WAF backstop | Security | 2026-05-05 |
-| AD24 | Single OAUTH_JWT_SECRET for both session signing and CSRF state | Security | 2026-05-05 |
-| AD25 | Cloudflare Access JWT signature unverified server-side; trust Access edge *(Superseded by AD29)* | Security | 2026-05-05 |
-| AD26 | REQUIREMENTS.md preserved as historical artefact | Documentation | 2026-05-05 |
-| AD27 | All KV writers route through `src/lib/kv/<family>.ts` helpers | Storage | 2026-05-05 |
-| AD28 | npm audit gating: HIGH advisory, CRITICAL blocking | Operations | 2026-05-05 |
-| AD29 | Cloudflare Access is opt-in additive perimeter; ADMIN_EMAIL gates admin alone | Security | 2026-05-05 |
-| AD30 | Cloudflare Access (when bound) MUST cover `*.workers.dev` too; not enforced in worker code | Security | 2026-05-05 |
-| AD31 | Google News baseline ownership: coordinator owns per-tag GN fan-out; discovery LLM no longer emits GN fallback | Architecture | 2026-05-06 |
-| AD32 | Same-story dedup uses Workers AI embeddings + Vectorize (replaces LLM finalize dedup) | Architecture | 2026-05-06 |
-| AD33 | Embed source-text (not LLM rewrite) and apply a same-vendor cosine penalty for dedup | Architecture | 2026-05-06 |
-| AD34 | LLM same-event rerank for borderline cosine pairs (between auto-merge and distinct bands) | Architecture | 2026-05-07 |
-| AD35 | Operator historical-dedup sweep self-chains via Cloudflare Queue, not the operator's browser tab | Architecture | 2026-05-07 |
-| AD36 | Lower dedup auto-merge threshold to 0.78 and remove the per-batch rerank cap | Architecture | 2026-05-07 |
-| AD37 | Full pipeline run is backend-orchestrated; browser tab is display-only | Architecture | 2026-05-08 |
-| AD38 | CF Access-protected admin endpoints must be invoked via top-level navigation, not fetch() | Security | 2026-05-08 |
-| AD39 | Raise dedup auto-merge threshold to 0.88 and gate merges to a 72h news-cycle window | Architecture | 2026-05-08 |
-| AD40 | Add equal-time ULID tie-break, high-confidence cosine band, topK bump, and per-article diagnostic logs to dedup | Architecture | 2026-05-09 |
-| AD41 | Bidirectional finalize merge + automatic post-tick dedup sweep | Architecture | 2026-05-09 |
-| AD42 | Bidirectional historical-dedup + sweep cursor aligned with time window + multi-rerank | Architecture | 2026-05-10 |
-| AD43 | Shared per-match dedup classifier; outer control flow stays per-consumer | Architecture | 2026-05-12 |
-| AD44 | Cloudflare Access JWT `exp` validation; signature still trusted from the perimeter | Security | 2026-05-12 |
-| AD45 | Accepted orchestration-file sizes (coordinator, chunk-consumer, settings.astro) exceed 800-line cap | Architecture | 2026-05-11 |
+| [AD1](#ad1-custom-federated-oauthoidc-github-google-hmac-sha256-jwt) | Custom federated OAuth/OIDC (GitHub, Google) + HMAC-SHA256 JWT, no third-party auth library | Security | 2026-04-22 |
+| [AD2](#ad2-cloudflare-queues-for-digest-generation) | Cloudflare Queues for digest generation under thundering herd | Architecture | 2026-04-22 |
+| [AD3](#ad3-server-side-article-body-fetching-with-ssrf-guard) | Server-side article-body fetching with SSRF guard | Security | 2026-04-27 |
+| [AD4](#ad4-plaintext-only-llm-output) | Plaintext-only LLM output; no markdown parser or HTML sanitizer | Security | 2026-04-22 |
+| [AD5](#ad5-kv-for-caches-d1-for-consistent-state) | KV for caches, D1 for consistent state | Storage | 2026-04-22 |
+| [AD6](#ad6-polling-for-scrape-run-progress-not-sse-or-websockets) | Polling instead of SSE or WebSockets for scrape-run progress | UI | 2026-04-22 |
+| [AD7](#ad7-d1-for-chunk-completion-tracking-replacing-kv-read-modify-write) | D1 for chunk completion tracking, replacing KV read-modify-write (CF-002) | Storage | 2026-04-27 |
+| [AD8](#ad8-cookie-attributes-are-the-security-contract) | Cookie attributes are the security contract - kept inline in REQ-AUTH-002/003 | Security | 2026-05-03 |
+| [AD9](#ad9-storage-shape-names-are-the-persistence-contract) | Storage-shape names (D1 columns, KV keys) are the persistence contract - kept inline in REQ-DISC/AUTH/SET *(Superseded by AD47)* | Storage | 2026-05-03 |
+| [AD10](#ad10-atomic-conditional-update-as-the-once-per-run-idempotency-gate) | Atomic conditional UPDATE as the once-per-run idempotency gate - no `acquireOnceLock` helper | Architecture | 2026-05-03 |
+| [AD11](#ad11-keep-style-src-unsafe-inline-runtime-stylex-writes-are-intentional) | Keep `style-src 'unsafe-inline'`; runtime `.style.X` writes for FLIP + view-transitions are intentional | Security | 2026-05-04 |
+| [AD12](#ad12-integration-env-separate-cloudflare-resources-manual-trigger-from-develop-crons-disabled) | Integration env: separate Cloudflare resources, manual trigger from develop, crons disabled | Operations | 2026-05-04 |
+| [AD13](#ad13-no-non-essential-cookies-analytics-gate) | No non-essential cookies (analytics gate) | Privacy | 2026-05-04 |
+| [AD14](#ad14-history-page-perf-comparability-test-permanently-skipped) | History-page perf-comparability test permanently skipped | Testing | 2026-05-04 |
+| [AD15](#ad15-test-pool-exercises-workerts-directly-production-runs-through-the-astro-merged-entry) | Test pool exercises worker.ts directly; production runs through Astro-merged entry | Architecture | 2026-05-04 |
+| [AD16](#ad16-single-writer-invariant-for-kv-sourcestag-enforced-via-centralised-helper) | Single-writer invariant for KV `sources:{tag}` enforced via centralized helper | Storage | 2026-05-04 |
+| [AD17](#ad17-reject-dedupe-groupsts-extraction) | Reject `dedupe-groups.ts` extraction; finalize within-group dedup is downstream-gated | Architecture | 2026-05-04 |
+| [AD18](#ad18-reject-deferred-candidatests-chunk-overflow-path-stays-log-only) | Reject `deferred-candidates.ts`; chunk-overflow drop path stays log-only until volume justifies persistence | Architecture | 2026-05-04 |
+| [AD19](#ad19-reject-tag-railing-flip-corets-flip-measurements-are-not-separable-from-dom) | Reject `tag-railing-flip-core.ts`; FLIP measurements are not separable from DOM and are tested via Playwright | Testing | 2026-05-04 |
+| [AD20](#ad20-idempotency-tokens-for-client-scripts-loaded-both-as-pattern-b-iife-and-via-page-level-import-must-live-on-window) | Window-scoped idempotency token for star-delegation listener (dual-bundle Pattern B) | Architecture | 2026-05-04 |
+| [AD21](#ad21-drop-cap-vertical-alignment-is-not-portable-across-non-charter-serif-fallbacks) | Drop-cap per-platform fine-tuning deferred; system font metrics are the cross-platform constraint | UI | 2026-05-04 |
+| [AD22](#ad22-ssrf-defence-relies-on-workers-network-sandbox-static-ip-allowlist-is-best-effort-only) | SSRF defence relies on Workers network sandbox; static IP allowlist is best-effort only | Security | 2026-05-05 |
+| [AD23](#ad23-auth-rate-limit-fail-closed-without-waf-backstop) | Auth-rate-limit fail-closed without WAF backstop | Security | 2026-05-05 |
+| [AD24](#ad24-single-oauthjwtsecret-for-both-session-signing-and-csrf-state) | Single OAUTH_JWT_SECRET for both session signing and CSRF state | Security | 2026-05-05 |
+| [AD25](#ad25-cloudflare-access-jwt-signature-unverified-server-side-trust-access-edge) | Cloudflare Access JWT signature unverified server-side; trust Access edge *(Superseded by AD29)* | Security | 2026-05-05 |
+| [AD26](#ad26-requirementsmd-preserved-as-historical-artefact) | REQUIREMENTS.md preserved as historical artefact | Documentation | 2026-05-05 |
+| [AD27](#ad27-all-kv-writers-route-through-srclibkvfamilyts-helpers) | All KV writers route through `src/lib/kv/<family>.ts` helpers | Storage | 2026-05-05 |
+| [AD28](#ad28-npm-audit-gating-split---high-advisory-critical-blocking) | npm audit gating: HIGH advisory, CRITICAL blocking | Operations | 2026-05-05 |
+| [AD29](#ad29-cloudflare-access-is-opt-in-additive-perimeter-adminemail-gates-admin-alone) | Cloudflare Access is opt-in additive perimeter; ADMIN_EMAIL gates admin alone | Security | 2026-05-05 |
+| [AD30](#ad30-workersdev-perimeter-coverage-is-the-operators-responsibility---accepted-risk) | Cloudflare Access (when bound) MUST cover `*.workers.dev` too; not enforced in worker code | Security | 2026-05-05 |
+| [AD31](#ad31-google-news-baseline-ownership-lives-at-the-coordinator-not-in-discovery) | Google News baseline ownership: coordinator owns per-tag GN fan-out; discovery LLM no longer emits GN fallback | Architecture | 2026-05-06 |
+| [AD32](#ad32-same-story-dedup-uses-workers-ai-embeddings-vectorize-not-llm-finalize-call) | Same-story dedup uses Workers AI embeddings + Vectorize (replaces LLM finalize dedup) | Architecture | 2026-05-06 |
+| [AD33](#ad33-embed-source-text-and-apply-a-same-vendor-cosine-penalty) | Embed source-text (not LLM rewrite) and apply a same-vendor cosine penalty for dedup | Architecture | 2026-05-06 |
+| [AD34](#ad34-llm-same-event-rerank-for-borderline-cosine-pairs) | LLM same-event rerank for borderline cosine pairs (between auto-merge and distinct bands) | Architecture | 2026-05-07 |
+| [AD35](#ad35-operator-historical-dedup-sweep-self-chains-via-cloudflare-queue) | Operator historical-dedup sweep self-chains via Cloudflare Queue, not the operator's browser tab | Architecture | 2026-05-07 |
+| [AD36](#ad36-lower-dedup-auto-merge-threshold-to-078-and-remove-the-per-batch-rerank-cap) | Lower dedup auto-merge threshold to 0.78 and remove the per-batch rerank cap *(Superseded by AD39)* | Architecture | 2026-05-07 |
+| [AD37](#ad37-full-pipeline-run-is-backend-orchestrated-browser-tab-is-display-only) | Full pipeline run is backend-orchestrated; browser tab is display-only | Architecture | 2026-05-08 |
+| [AD38](#ad38-cf-access-protected-admin-endpoints-must-be-invoked-via-top-level-navigation-not-fetch) | CF Access-protected admin endpoints must be invoked via top-level navigation, not fetch() | Security | 2026-05-08 |
+| [AD39](#ad39-raise-dedup-auto-merge-threshold-to-088-and-gate-merges-to-a-72h-news-cycle-window) | Raise dedup auto-merge threshold to 0.88 and gate merges to a 72h news-cycle window | Architecture | 2026-05-08 |
+| [AD40](#ad40-equal-time-ulid-tie-break-high-confidence-cosine-band-topk-bump-and-per-article-diagnostic-logs) | Add equal-time ULID tie-break, high-confidence cosine band, topK bump, and per-article diagnostic logs to dedup | Architecture | 2026-05-09 |
+| [AD41](#ad41-bidirectional-finalize-merge-automatic-post-tick-dedup-sweep) | Bidirectional finalize merge + automatic post-tick dedup sweep | Architecture | 2026-05-09 |
+| [AD42](#ad42-bidirectional-historical-dedup-sweep-cursor-aligned-with-time-window-multi-rerank) | Bidirectional historical-dedup + sweep cursor aligned with time window + multi-rerank | Architecture | 2026-05-10 |
+| [AD43](#ad43-shared-per-match-dedup-classifier-outer-control-flow-stays-per-consumer) | Shared per-match dedup classifier; outer control flow stays per-consumer | Architecture | 2026-05-12 |
+| [AD44](#ad44-cloudflare-access-jwt-exp-validation-signature-still-trusted-from-the-perimeter) | Cloudflare Access JWT `exp` validation; signature still trusted from the perimeter | Security | 2026-05-12 |
+| [AD45](#ad45-accepted-orchestration-file-sizes-coordinator-chunk-consumer-settingsastro) | Accepted orchestration-file sizes (coordinator, chunk-consumer, settings.astro) exceed 800-line cap | Architecture | 2026-05-11 |
+| [AD46](#ad46-documentation-file-size-hatches-and-hybrid-renderings-deployment-colocation-architecture-diagrams-adr-index-deployment-hybrid-shape) | Documentation file-size hatches and hybrid renderings (deployment colocation, architecture diagrams, ADR index, deployment hybrid shape, api-reference completeness) | Documentation | 2026-05-12 |
+| [AD46e](#ad46e-api-referencemd-completeness-exemption) | `api-reference.md` completeness exemption — ~90 endpoint sections cannot decompose without fragmenting the reader's lookup path | Documentation | 2026-05-13 |
+| [AD47](#ad47-storage-shape-allowlist-promoted-to-spec-discipline-ad9-superseded) | Storage-shape allowlist promoted to spec-discipline; AD9 superseded | Storage | 2026-05-13 |
+| [AD48](#ad48-dedup-cost-reduction-borderline-rerank-watermark-batched-rerank-call-pipeline-wide-gpt-oss-20b) | Dedup cost reduction: borderline-rerank watermark + batched rerank call + pipeline-wide gpt-oss-20b | Architecture | 2026-05-14 |
 
 ---
 
@@ -100,7 +104,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Consequences:** At-least-once delivery requires all queue consumers to be idempotent. The scrape pipeline carries explicit dedup gates (AD7, AD10) specifically because queue redelivery is normal. Changing queue bindings or retry counts requires coordinated `wrangler.toml` and consumer-code updates.
 
-**Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence). Original framing was for the per-user generation pipeline (REQ-GEN-001, REQ-GEN-002, both Deprecated 2026-04-23 in the global-feed rework); the queue mechanism survived the rework intact.
+**Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence). Original framing was for a per-user generation pipeline that was retired in the 2026-04-23 global-feed rework; the queue mechanism survived the rework intact.
 
 ---
 
@@ -110,7 +114,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Decision:** When a feed snippet is too thin to ground a useful summary, the chunk consumer fetches the article body directly. Each fetch is SSRF-guarded, time-bounded (8 s), and size-capped (1.5 MB); a failed fetch falls back to the snippet, never blocking a summary.
 
-**Context:** Feed snippets are often too short to summarise faithfully. An SSRF denylist plus strict timeout and size caps reduce server-side fetch risk to negligible. Richer prompt context measurably improved summary quality on short-snippet feeds.
+**Context:** Many RSS sources publish only the headline plus a one-sentence lede in the feed (Reuters, AP, syndicated mirrors), leaving the LLM nothing concrete to summarise. An SSRF denylist plus 8 s timeout and 1.5 MB cap reduce the fetch surface to publisher-hosted article HTML only (no private IPs, no metadata services, no oversized payloads). Fetching the article body and concatenating it into the chunk prompt produced summaries that no longer hallucinated facts not present in the headline; without the body fetch, the chunk consumer's only signal was the lede.
 
 **Alternatives considered:**
 - Keep the no-fetch posture and accept thin summaries on short-snippet feeds.
@@ -150,11 +154,11 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 - Store markdown, render client-side with `marked` + DOMPurify.
 - Store markdown, render server-side with sanitize-html.
 
-**Rationale:** Plaintext + `textContent` makes XSS impossible by construction. One less dependency, one less configuration surface, zero sanitizer updates to track. Detail paragraphs are stored as a `string[]` and rendered via `textContent`, so the same invariant holds regardless of how many paragraphs the LLM returns. The constraint survived the 2026-04-23 global-feed rework (which retired the per-user generation REQs REQ-GEN-002/006) and now applies via REQ-PIPE-002.
+**Rationale:** Plaintext + `textContent` makes XSS impossible by construction. One less dependency, one less configuration surface, zero sanitizer updates to track. Detail paragraphs are stored as a `string[]` and rendered via `textContent`, so the same invariant holds regardless of how many paragraphs the LLM returns. The constraint survived the 2026-04-23 global-feed rework (which retired the per-user generation REQs) and now applies via REQ-PIPE-002.
 
 **Consequences:** LLM prompts must explicitly forbid markdown and HTML in output. Any future feature that needs rich article rendering (bold headings, links) requires revisiting this decision and introducing a sanitizer. Template authors must use `set:text` (or `textContent`) - never `set:html` or `innerHTML` - when rendering article titles or summaries.
 
-**Related requirements:** [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-READ-002](../../sdd/reading.md#req-read-002-article-detail-view) (original decision applied to REQ-GEN-005, Deprecated 2026-04-23, Replaced By REQ-PIPE-002)
+**Related requirements:** [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract), [REQ-READ-002](../../sdd/reading.md#req-read-002-article-detail-view-rendering)
 
 ---
 
@@ -174,7 +178,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Consequences:** KV writers are centralised through `src/lib/kv/` helpers (AD27) to keep the byte-equal invariant load-bearing. Any new strongly-consistent state (counters requiring transactions, per-user locking) must go into D1, not KV. AD7 applied this directly to chunk-completion tracking.
 
-**Related requirements:** [REQ-DISC-001](../../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery), [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence) (original decision applied to REQ-GEN-003, Deprecated 2026-04-23, Replaced By REQ-PIPE-001)
+**Related requirements:** [REQ-DISC-001](../../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery), [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence)
 
 ---
 
@@ -184,7 +188,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 
 **Decision:** While a scrape run is in progress, the client polls `GET /api/scrape-status` every 5 seconds to drive the "Update in progress" indicator and the Force Refresh progress display on `/settings`.
 
-**Context:** Scrape runs take ~60 s end-to-end. Users mostly see finished articles on their next visit; real-time progress is a quality-of-life indicator for operators watching `/settings` after triggering a force-refresh. The per-user live-generation polling pattern (REQ-READ-004, deprecated 2026-04-23) is no longer applicable - the dashboard always renders from the article pool.
+**Context:** Scrape runs take ~60 s end-to-end. Users mostly see finished articles on their next visit; real-time progress is a quality-of-life indicator for operators watching `/settings` after triggering a force-refresh. The per-user live-generation polling pattern from the pre-2026-04-23 design is no longer applicable - the dashboard always renders from the article pool.
 
 **Alternatives considered:**
 - Server-Sent Events streaming phase updates - no clean transport between the Queue consumer and the SSE HTTP handler without adding Durable Objects.
@@ -215,11 +219,11 @@ KV's eventual consistency made both races effectively undetectable via testing i
 - Durable Object for serialized counter updates - correct, but adds a DO dependency to a pipeline that runs without one today.
 - KV with Compare-And-Swap (`getWithMetadata` + `put` with `expirationTtl` as a CAS surrogate) - fragile; KV has no native CAS and the surrogate is not atomic.
 
-**Rationale:** AD5's own principle applies directly: completion counting needs transactional semantics. `INSERT OR IGNORE` into a table keyed by `(scrape_run_id, chunk_index)` is idempotent under redelivery and gives an exact count via `SELECT COUNT(*)` - no race. The finalize-enqueue gate is collapsed into a single atomic `UPDATE … WHERE finalize_enqueued = 0`; D1 returns `meta.changes` for exactly one consumer. The KV counter (`scrape_run:{id}:chunks_remaining`) is retained as a derived mirror for the `/api/scrape-status` progress display but is no longer authoritative. Implements [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract) and [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass) AC 1 and AC 9.
+**Rationale:** AD5's own principle applies directly: completion counting needs transactional semantics. `INSERT OR IGNORE` into a table keyed by `(scrape_run_id, chunk_index)` is idempotent under redelivery and gives an exact count via `SELECT COUNT(*)` - no race. The finalize-enqueue gate is collapsed into a single atomic `UPDATE … WHERE finalize_enqueued = 0`; D1 returns `meta.changes` for exactly one consumer. The KV counter (`scrape_run:{id}:chunks_remaining`) is retained as a derived mirror for the `/api/scrape-status` progress display but is no longer authoritative. Implements [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract) and the same-story finalize gate now in [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) (the prior LLM-finalize-dedup REQ that owned this gate was retired in the 2026-05-13 same-story matching consolidation).
 
 **Consequences:** The `scrape_chunk_completions` table grows one row per chunk per run; the retention cron (03:00 UTC) must cover this table or it will grow unbounded. The KV mirror is best-effort and may lag behind D1 by up to one propagation window - consumers must not rely on it for correctness, only for display.
 
-**Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)
+**Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract), [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract)
 
 ---
 
@@ -253,13 +257,13 @@ KV's eventual consistency made both races effectively undetectable via testing i
 
 ### AD9: Storage-shape names are the persistence contract
 
-**Status:** Accepted (2026-05-03)
+**Status:** Superseded by AD47 (2026-05-13)
 
-**Overrides:** `mechanism-leakage:REQ-DISC-001`, `mechanism-leakage:REQ-DISC-002`, `mechanism-leakage:REQ-AUTH-002`, `mechanism-leakage:REQ-SET-001`, `mechanism-leakage:REQ-SET-005`, `forbidden-content-column-name:REQ-MAIL-001`
+**Overrides:** `mechanism-leakage:REQ-DISC-001`, `mechanism-leakage:REQ-DISC-002`, `mechanism-leakage:REQ-AUTH-002`, `mechanism-leakage:REQ-AUTH-008`, `mechanism-leakage:REQ-SET-001`, `mechanism-leakage:REQ-SET-005`, `forbidden-content-column-name:REQ-MAIL-001`, `forbidden-content-column-name:REQ-MAIL-003`
 
-**Decision:** Keep D1 column names (`session_version`, `hashtags_json`, `digest_hour`, `email_enabled`, `pending_discoveries`) and KV key shapes (`sources:{tag}`) inline in their respective REQs' acceptance criteria. Treat them as part of the persistence contract surface, not implementation detail. The same reasoning applies to `email_enabled` in REQ-MAIL-001 AC 9 and the domain header on `sdd/email.md` line 3 - the column name IS the contract noun shared between the settings UI toggle, the `users` column, and the dispatcher's SQL predicate, equivalent to the env-var-as-contract pattern allowed by `spec-discipline.md`.
+**Decision:** Keep D1 column names (`session_version`, `hashtags_json`, `digest_hour`, `email_enabled`, `pending_discoveries`) and KV key shapes (`sources:{tag}`) inline in their respective REQs' acceptance criteria. Treat them as part of the persistence contract surface, not implementation detail. The same reasoning applies to `email_enabled` in REQ-MAIL-003 AC 3 and the domain header on `sdd/email.md` line 3 - the column name IS the contract noun shared between the settings UI toggle, the `users` column, and the dispatcher's SQL predicate, equivalent to the env-var-as-contract pattern allowed by `spec-discipline.md`.
 
-**Context:** `spec-discipline.md`'s mechanism-leakage rule lists "database column names" and "internal storage shapes" as belonging in `documentation/architecture.md` schema sections. A `/sdd clean` run on 2026-05-03 escalated this as a MEDIUM JUDGMENT against five REQs across the Discovery, Authentication, and Settings domains.
+**Context:** `spec-discipline.md`'s mechanism-leakage rule lists "database column names" and "internal storage shapes" as belonging in `documentation/architecture.md` schema sections. A `/sdd clean` run on 2026-05-03 escalated this as a MEDIUM JUDGMENT against five REQs across the Discovery, Authentication, and Settings domains. The cycle-4 spec-reviewer pass on 2026-05-13 surfaced REQ-AUTH-008 (the symmetric refresh-token REQ) as a sixth case fitting the same pattern (`parent_id`, `revoked_at`, `session_version`, `users.session_version` column references); it was added to the Overrides list under the same rationale. The same 2026-05-13 cycle split REQ-MAIL-001 by sub-feature into a content REQ and a send-policy REQ (REQ-MAIL-003); the `email_enabled` column reference moved with the send-policy split, so `forbidden-content-column-name:REQ-MAIL-003` was added alongside the existing MAIL-001 override.
 
 **Alternatives considered:**
 - Rewrite each AC to describe the user-visible behavior abstractly, with a doc-backlink to a schema section in `documentation/architecture.md`.
@@ -272,7 +276,7 @@ KV's eventual consistency made both races effectively undetectable via testing i
 - The mechanism-leakage rule targets ORM-abstracted projects. This project uses raw SQL and hand-built KV keys; storage names are the developer-facing contract, not hidden implementation detail. Same principle as the env-var-as-contract allowlist.
 
 **Consequences:**
-- spec-reviewer skips these five REQs via the `Overrides:` header above.
+- spec-reviewer skips these six REQs via the `Overrides:` header above.
 - Schema changes update both the affected REQ AC and this ADR (and the corresponding migration files) in lockstep.
 - `documentation/architecture.md` references the storage shapes in §4.2 (libraries) and §4.5 (Worker, queue, and migrations); `documentation/configuration.md` documents the KV bindings and naming conventions. This ADR explains why those high-level references coexist with the inline persistence names in the REQs.
 
@@ -286,7 +290,7 @@ KV's eventual consistency made both races effectively undetectable via testing i
 
 **Decision:** Idempotency for once-per-scrape-run side effects (queue-finalize enqueue, finalize stats fold) is enforced by a single conditional `UPDATE` against a dedicated `scrape_runs` column with a `WHERE col = 0` clause. The caller inspects `meta.changes` to decide whether to proceed (`changes === 1` → won the race) or short-circuit (`changes === 0` → another isolate already won). No separate `acquireOnceLock(...)` helper is introduced.
 
-**Context:** Two existing call sites use this shape today: (a) `scrape-chunk-consumer.ts` flips `finalize_enqueued` 0→1 to gate the `SCRAPE_FINALIZE.send` (REQ-PIPE-008 AC 3); (b) `scrape-finalize-consumer.ts` flips `finalize_recorded` 0→1 inside the same UPDATE that also folds tokens + cost into the run's totals (REQ-PIPE-008 AC 5/AC 7). Code-review on 2026-04-29 (CF-026) flagged the duplicated shape and proposed a generic `acquireOnceLock(db, table, id, column)` helper.
+**Context:** Two existing call sites use this shape today: (a) `scrape-chunk-consumer.ts` flips `finalize_enqueued` 0→1 to gate the `SCRAPE_FINALIZE.send` (now the same-story finalize gate in REQ-PIPE-003 AC 2); (b) `scrape-finalize-consumer.ts` flips `finalize_recorded` 0→1 inside the same UPDATE that also folds tokens + cost into the run's totals (now governed by REQ-PIPE-003 + REQ-PIPE-018; the prior LLM-finalize-dedup REQ that defined this gate was retired in the 2026-05-13 consolidation). Code-review on 2026-04-29 (CF-026) flagged the duplicated shape and proposed a generic `acquireOnceLock(db, table, id, column)` helper.
 
 **Alternatives considered:**
 - **`acquireOnceLock` helper:** fits the chunk-consumer cleanly, but breaks the finalize-consumer. See rationale for why the fused atomic UPDATE cannot be split.
@@ -300,9 +304,9 @@ KV's eventual consistency made both races effectively undetectable via testing i
 **Consequences:**
 - Both gate sites stay inline. Each is documented in-place with the `meta.changes` semantics and a comment explaining why the WHERE clause carries the gate value.
 - The third gate that would warrant the keyed-table refactor is treated as the trigger; this ADR is the artifact future readers find when they look for "why isn't there an `acquireOnceLock` helper?".
-- New gate sites SHOULD copy the pattern verbatim and document the meta.changes semantics inline; if a fourth or fifth site lands without the trigger refactor, this ADR is the place to revisit.
+- New gate sites MUST copy the pattern verbatim and document the meta.changes semantics inline. When a fourth gate site lands, this ADR is reopened and the trigger refactor proposed in the Alternatives section becomes mandatory rather than deferred.
 
-**Related requirements:** [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)
+**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-PIPE-018](../../sdd/generation.md#req-pipe-018-same-story-collapse-mechanics-survivor-selection-and-data-merge)
 
 ---
 
@@ -348,7 +352,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - If Astro ever ships native CSP support that handles runtime style mutations (e.g., via per-element nonces resolved at runtime), revisit this decision.
 - `tests/e2e/csp-violation.spec.ts` continues to act as the merge gate for any CSP tightening - it subscribes to `securitypolicyviolation` events on a live `/digest` navigation and fails the build if any fire.
 
-**Related requirements:** [REQ-OPS-003](../../sdd/observability.md#req-ops-003-security-headers-on-every-response), [CON-SEC-001](../../sdd/constraints.md#con-sec-001-strict-content-security-policy)
+**Related requirements:** [REQ-OPS-003](../../sdd/observability.md#req-ops-003-content-security-policy-on-every-response), [CON-SEC-001](../../sdd/constraints.md#con-sec-001-strict-content-security-policy)
 
 ---
 
@@ -418,7 +422,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - If a future refactor intentionally narrows the perf gap, restore the test and update or remove this ADR.
 - The skip line in `tests/e2e/view-transition.spec.ts` references this ADR rather than `sdd/.user-overrides.md` (which is being phased out per codeflare#266).
 
-**Related requirements:** [REQ-READ-002](../../sdd/reading.md#req-read-002-article-detail-view), [REQ-HIST-001](../../sdd/history.md#req-hist-001-day-grouped-article-history)
+**Related requirements:** [REQ-READ-002](../../sdd/reading.md#req-read-002-article-detail-view-rendering), [REQ-HIST-001](../../sdd/history.md#req-hist-001-day-grouped-article-history)
 
 ---
 
@@ -444,7 +448,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - The `src/worker.ts` `fetch` branch that exists for the test pool is dead code in production. Mark it with a comment so a future cleanup doesn't delete it on dead-code analysis grounds.
 - Astro upgrades that change the wrapper's middleware composition (Astro 6's session-driver factory is the active example) require a Playwright run before merge to confirm middleware still fires.
 
-**Related requirements:** [REQ-OPS-003](../../sdd/observability.md#req-ops-003-security-headers-on-every-response)
+**Related requirements:** [REQ-OPS-003](../../sdd/observability.md#req-ops-003-content-security-policy-on-every-response)
 
 ---
 
@@ -496,7 +500,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - The chunk consumer's `normaliseDedupGroups` stays as-is, slightly looser than the finalize variant. This is documented in the chunk consumer's source comment.
 - If future canonical-URL dedup is loosened (e.g., a feature lets two canonical URLs survive within one cluster), revisit this decision and land the extraction.
 
-**Related requirements:** [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract), [REQ-PIPE-008](../../sdd/generation.md#req-pipe-008-cross-chunk-semantic-dedup-pass)
+**Related requirements:** [REQ-PIPE-002](../../sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract), [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract)
 
 ---
 
@@ -545,7 +549,7 @@ Strict `script-src 'self'` is doing 95% of the XSS-prevention work. The marginal
 - `src/lib/tag-railing-flip.ts` stays as-is; the `?raw`-source-grep tests it spawned are deleted in Phase F (CF-011) and replaced by the Playwright spec.
 - This ADR documents WHY a `tag-railing-flip-core.ts` module does not exist.
 
-**Related requirements:** [REQ-READ-007](../../sdd/reading.md#req-read-007-tag-railing-cascade-on-toggle-and-add)
+**Related requirements:** [REQ-READ-007](../../sdd/reading.md#req-read-007-tag-railing-reorder-animation), [REQ-READ-008](../../sdd/reading.md#req-read-008-tag-railing-scroll-wrap-and-fallback)
 
 ---
 
@@ -672,7 +676,7 @@ PR #185 attempted to compensate with `margin-top: -0.3em`. The user reported thi
 **Consequences:**
 - Brief KV outages may surface as auth-login 429s for end users - preferred over silent removal of brute-force protection.
 - No WAF rules are maintained, so the entire auth-throttle contract depends on the worker reaching KV. If a future incident shows this failure mode is operationally unacceptable, revisit by adding the WAF layer.
-- The fail-closed flag is set per-rate-limiter and is auditable in source - any new rate limit added to the auth path SHOULD inherit `failClosed: true` and reference this ADR.
+- The fail-closed flag is set per-rate-limiter and is auditable in source - any new rate limit added to the auth path MUST inherit `failClosed: true` and reference this ADR. An auth-path limiter without `failClosed: true` is a security regression, not a style preference: a KV outage on a fail-open auth limit silently removes the brute-force gate.
 
 **Related requirements:** [REQ-AUTH-001](../../sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-AUTH-003](../../sdd/authentication.md#req-auth-003-csrf-defense-for-state-changing-endpoints)
 
@@ -721,7 +725,7 @@ PR #185 attempted to compensate with `margin-top: -0.3em`. The user reported thi
 - Operational deployment checklist must include: `CF_ACCESS_AUD` is set, `workers_dev = false`, and the Access policy is bound to the custom domain.
 - If `*.workers.dev` is ever re-enabled, or `CF_ACCESS_AUD` is unset, an attacker could forge the header and bypass admin auth - making the deployment configuration itself a security boundary.
 - `documentation/deployment.md` (or the equivalent runbook) MUST document the `workers_dev = false` + `CF_ACCESS_AUD` requirement as a hard precondition for production rollout.
-- Future hardening could add JWKS-based verification as defence in depth; revisit if the deployment-configuration boundary proves operationally fragile (e.g., a rollback accidentally re-enables `*.workers.dev`).
+- Future hardening could add JWKS-based verification as defence in depth; revisit if the deployment-configuration boundary fails in practice — concretely, if any post-deploy audit finds `workers_dev = true` on production, or if `CF_ACCESS_AUD` is ever unset in a live `wrangler.toml`.
 
 **Related requirements:** [REQ-OPS-006](../../sdd/observability.md#req-ops-006-integration-deployment-target)
 
@@ -743,7 +747,7 @@ PR #185 attempted to compensate with `margin-top: -0.3em`. The user reported thi
 **Rationale:** Preserve as a historical artefact of the project's original direction. Deletion would lose the snapshot; merging into `sdd/README.md` "Out of Scope" would dilute the spec with content that no longer maps to active REQs. Keeping it at the repo root, out of the active doc graph, gives newcomers a discoverable artefact while preventing it from contaminating the live spec or doc-discipline checks.
 
 **Consequences:**
-- Repo root carries one informational file that newcomers may discover and need context for. The self-deprecating header on the file itself plus this AD provide that context.
+- Repo root carries `REQUIREMENTS.md`. Newcomers cloning the repo see it before any subdirectory README; this ADR plus the file's self-deprecating header explain why it lives at the root rather than under `documentation/`.
 - The file is NOT auto-updated, NOT linked from indexes, and is excluded from doc-discipline budget checks.
 - If a future contributor proposes "cleaning up" the root by deleting `REQUIREMENTS.md`, this ADR is the artefact that records the decision to keep it.
 
@@ -771,7 +775,7 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Consequences:**
 
-- New KV key families with more than one writer MUST add a `src/lib/kv/<family>.ts` helper before the first writer lands. Code review should flag inline `env.KV.put(...)` writes outside `src/lib/kv/` or the pre-existing centralised files.
+- New KV key families with more than one writer MUST add a `src/lib/kv/<family>.ts` helper before the first writer lands. Code review MUST flag inline `env.KV.put(...)` writes outside `src/lib/kv/` or the pre-existing centralised files; PRs introducing such writes are blocked at review.
 - Single-call-site reads (e.g., `scrape-status.ts` reading `chunks_remaining`) may remain inline - the invariant is about multi-site writers, not all KV access.
 - Existing files `src/lib/feed-health.ts`, `src/lib/headline-cache.ts`, `src/lib/sources-cache.ts`, and `src/lib/rate-limit.ts` are already compliant; they predate this ADR and serve the same pattern.
 
@@ -854,7 +858,7 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Status:** Accepted (2026-05-06)
 
-**Decision:** The per-tag Google News query-RSS baseline is owned by the coordinator (REQ-PIPE-001 AC 9), which synthesises a GN source for every tag in the union of (defaults ∪ curated ∪ discovered KV) on every tick. The discovery LLM (REQ-DISC-001 AC 3) is the legacy producer of the same kind of URL, written once into KV `sources:{tag}` for tags without a first-party feed; its prompt instruction to emit a Google News fallback is now redundant. Discovery LLM should be retrained on first-party sources only in a follow-up pass; until then both paths coexist and the prefer-direct-source pass absorbs any minor overlap.
+**Decision:** The per-tag Google News query-RSS baseline is owned by the coordinator (REQ-PIPE-001 AC 6), which synthesises a GN source for every tag in the union of (defaults ∪ curated ∪ discovered KV) on every tick. The discovery LLM (REQ-DISC-001 AC 3) is the legacy producer of the same kind of URL, written once into KV `sources:{tag}` for tags without a first-party feed; its prompt instruction to emit a Google News fallback is now redundant. Discovery LLM should be retrained on first-party sources only in a follow-up pass; until then both paths coexist and the prefer-direct-source pass absorbs any minor overlap.
 
 **Context:** Two independent code paths produce a Google News query-RSS source for the same tag. The discovery-LLM path persists per-tag once at first discovery. The coordinator-baseline path synthesises every tick. A discovered non-curated tag without a first-party feed therefore fans out a GN query twice - once via the KV-cached discovery URL, once via coordinator synthesis. The query strings differ slightly (LLM-crafted phrasing vs. tag-with-dashes-as-spaces), so canonical-URL dedup may miss the overlap; the prefer-direct-source pass cleans up downstream when a direct copy lands in the same tick. This was flagged as an unresolved architectural question in the PR #201 review.
 
@@ -863,15 +867,15 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - **Discovery owns GN, coordinator skips tags already having a GN entry.** Rejected: discovery runs once at settings save; the KV cache drifts as tag needs change. Coordinator ownership recomputes the baseline every tick from the live tag union.
 - **Both paths coexist permanently** - rejected as a stable end-state. The redundant fan-out wastes a small amount of LLM and fetch budget and complicates future debugging when a GN URL turns out to be wrong (which path produced it?).
 
-**Rationale:** The coordinator already owns the per-tick source list; making it the single owner of the GN baseline matches the "coordinator decides which sources fan out" concept. Discovery's job becomes "find first-party feeds for this tag" - a narrower, more useful prompt that should produce better results. Keeping the legacy LLM-emitted GN fallback as a transitional state avoids a same-PR rewrite of the discovery prompt and its tests.
+**Rationale:** The coordinator already owns the per-tick source list; making it the single owner of the GN baseline matches the "coordinator decides which sources fan out" concept. Discovery's job becomes "find first-party feeds for this tag" — a narrower prompt focused on publisher sources. Re-evaluating discovery prompt quality post-narrowing belongs in a future audit, not in this ADR. Keeping the legacy LLM-emitted GN fallback as a transitional state avoids a same-PR rewrite of the discovery prompt and its tests.
 
 **Consequences:**
 
-- REQ-PIPE-001 AC 9 is the canonical home of GN baseline behaviour; reviewers MUST NOT flag the discovery LLM's GN fallback as a missing capability - it is intentionally redundant during the transition.
+- REQ-PIPE-001 AC 6 is the canonical home of GN baseline behaviour; reviewers MUST NOT flag the discovery LLM's GN fallback as a missing capability - it is intentionally redundant during the transition.
 - A follow-up issue should retrain the discovery LLM prompt on first-party sources only and remove the GN fallback instruction. Until then, the existing KV entries continue to fan out and the coordinator-baseline pass absorbs the duplicate.
 - The aggregator-vs-direct dedup pass continues to absorb GN-vs-direct overlap as it does today; no new behaviour is required of it.
 
-**Related requirements:** REQ-PIPE-001 AC 9, REQ-DISC-001 AC 3.
+**Related requirements:** REQ-PIPE-001 AC 6, REQ-DISC-001 AC 3.
 
 ---
 
@@ -893,14 +897,14 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Consequences:**
 
-- REQ-PIPE-008 (LLM finalize dedup) is deprecated as of 2026-05-06; the finalize prompt and its parameters are removed from `src/lib/prompts.ts`.
+- The prior LLM finalize dedup contract was retired on 2026-05-06 and the REQ removed on 2026-05-13 under the no-tombstone rule; the finalize prompt and its parameters are removed from `src/lib/prompts.ts`. The same-story contract now lives in [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) + [REQ-PIPE-018](../../sdd/generation.md#req-pipe-018-same-story-collapse-mechanics-survivor-selection-and-data-merge).
 - The retention sweep (REQ-PIPE-005) MUST dual-delete: D1 row drop plus `VECTORIZE.deleteByIds`. Single-side deletes leak vectors that future articles will match against, producing phantom merges into rows that no longer exist.
 - Forks must provision their own Vectorize index (`ai-news-embeddings` for production, `ai-news-embeddings-integration` for the integration env). Index creation is wired into both deploy workflows via `wrangler vectorize create`, idempotent on subsequent deploys.
 - The 0.85 threshold is validated against the current corpus and model. Re-validate before relying on it after a model bump or major corpus shift. Operators tune via `DEDUP_COSINE_THRESHOLD` without a code change.
 - Vectorize cold-start lag on the first query of a new index (≈30 s) means the first scrape tick after a fresh deploy may produce duplicates; the historical-dedup admin route resolves them on demand.
 - Embedding-model drift: bge-base-en-v1.5 is pinned by id in `src/lib/embeddings.ts`. A future Cloudflare catalogue upgrade does not silently change the vector space.
 
-**Related requirements:** REQ-PIPE-003, REQ-PIPE-005, REQ-PIPE-008 (deprecated).
+**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-PIPE-005](../../sdd/generation.md#req-pipe-005-article-pool-retention-sweep)
 
 ---
 
@@ -930,7 +934,7 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - The dedup-diag diagnostic now also reports `adjusted_score` (cosine minus penalty when same-vendor) and `same_vendor_penalty`, so an operator inspecting a pair sees the value the merge decision actually compares.
 - The eTLD+1 helper (`src/lib/etld.ts`) is the same-publisher decision; it intentionally avoids the Public Suffix List dependency. If the corpus ingests UK / AU / NZ regional press, swap to PSL.
 
-**Related requirements:** REQ-PIPE-003 (AC 11, AC 12).
+**Related requirements:** [REQ-PIPE-012](../../sdd/generation.md#req-pipe-012-same-story-matching-policy-variants) AC 2 (same-vendor penalty), [REQ-PIPE-014](../../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 5 (re-embed backfill).
 
 ---
 
@@ -969,7 +973,7 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 **Decision:** The operator-triggered historical-dedup sweep is driven by a self-chaining Cloudflare Queue (`DEDUP_SWEEP`) plus a `dedup_runs` audit table. The admin route is a kicker: it inserts the audit row, enqueues one starter message, and returns immediately with a `run_id`. The consumer processes one batch via `runHistoricalDedupBatch`, updates the audit row, and re-enqueues a continuation message until the corpus tail is reached. The operator surface polls `/api/admin/dedup-status?run_id=…` for progress; closing the browser tab does not interrupt the sweep.
 
-**Context:** REQ-PIPE-003 AC 9 requires the operator to re-run same-story matching across the entire historical pool on demand. The previous shape ran a `while(true) fetch(/api/admin/historical-dedup, {cursor})` loop in the browser. On 2026-05-06 a production run produced 4 visible duplicates of one story (BTIG/Palo Alto, Anthropic financial-services AI agents) that subsequent dedup runs did not collapse. Even before root-causing the BTIG miss specifically, the architectural fragility was clear: the entire sweep depended on the operator's browser tab staying open for as long as the corpus took to scan. Tab close, network blip, or accidental navigation aborted the sweep mid-corpus and there was no audit trail of how far it got.
+**Context:** [REQ-PIPE-014](../../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1 requires the operator to re-run same-story matching across the entire historical pool on demand. The previous shape ran a `while(true) fetch(/api/admin/historical-dedup, {cursor})` loop in the browser. On 2026-05-06 a production run produced 4 visible duplicates of one story (BTIG/Palo Alto, Anthropic financial-services AI agents) that subsequent dedup runs did not collapse. Even before root-causing the BTIG miss specifically, the architectural fragility was clear: the entire sweep depended on the operator's browser tab staying open for as long as the corpus took to scan. Tab close, network blip, or accidental navigation aborted the sweep mid-corpus and there was no audit trail of how far it got.
 
 **Alternatives considered:**
 
@@ -988,13 +992,15 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 - The browser-driven `while(true)` loop on `/settings` is replaced by a 5-second poll on `/api/admin/dedup-status`; the page can resume mid-sweep on tab reload by reading the persisted `runId` from pipeline state.
 - Future sweeps (e.g., re-embed + dedup) can be modelled the same way without re-litigating the shape.
 
-**Related requirements:** REQ-PIPE-003 AC 9, REQ-OPS-008.
+**Related requirements:** [REQ-PIPE-014](../../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1, [REQ-OPS-008](../../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface), [REQ-OPS-009](../../sdd/observability.md#req-ops-009-admin-pipeline-run-progress-surface)
 
 ---
 
 ### AD36: Lower dedup auto-merge threshold to 0.78 and remove the per-batch rerank cap
 
-**Status:** Accepted (2026-05-07)
+**Status:** Superseded by AD39 (2026-05-08); rerank-cap removal further refined by AD48 (2026-05-14)
+
+**Supersession note:** The threshold change (0.85 -> 0.78) was reversed by AD39 when the 13-source false-merge cluster on 2026-05-08 showed that dense-theme topics produce independent-event pairs at 0.78-0.86. The current threshold is 0.88 with a 7-day time-window gate. The rerank-cap removal was reintroduced in a different shape: AD42's multi-rerank put a per-self cap of 5 candidates back in the in-tick finalize path, and AD48's batched-call ceiling (RERANK_BATCH_SIZE=15) now bounds the sweep path. AD36's prompt loosening ("same news cycle for the same subject") remains current.
 
 **Decision:** `DEDUP_COSINE_THRESHOLD` drops from `"0.85"` to `"0.78"` and `DEDUP_RERANK_FLOOR` drops from `"0.72"` to `"0.70"` on both production and integration. The per-batch rerank cap (`MAX_RERANKS_PER_BATCH = 4`) is removed from `runHistoricalDedupBatch`; the queue consumer's wall-clock budget bounds the work per message instead. The rerank prompt is loosened from "SAME news event" to "SAME news cycle for the SAME subject" with explicit examples of close follow-on coverage (multiple analyst takes published the same week, multiple security outlets covering the same vulnerability) so genuine same-cycle pairs that are not literally the same announcement still merge.
 
@@ -1019,7 +1025,7 @@ Both clusters were entirely below the 0.85 auto-merge bar; the larger valuation 
 - If false-merges surface in the new band, the lever is the `DEDUP_COSINE_THRESHOLD` env var (no code change). The dedup-diag diagnostic and per-run rerank counters are the observation surfaces.
 - The rerank prompt loosening is the smaller knob: a future tightening (back toward "exact same announcement only") is a drop-in env-or-prompt change without revisiting the threshold.
 
-**Related requirements:** REQ-PIPE-003 (AC 1, AC 2, AC 11), REQ-PIPE-009.
+**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) AC 1, AC 2, [REQ-PIPE-012](../../sdd/generation.md#req-pipe-012-same-story-matching-policy-variants) AC 2 (same-vendor penalty), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates).
 
 ---
 
@@ -1047,7 +1053,7 @@ Both clusters were entirely below the 0.85 auto-merge bar; the larger valuation 
 - The `settings.astro` "Full pipeline run" button collapses from ~200 lines of phase-loop JavaScript to a single POST + a poll loop.
 - "Refresh feeds" (the scrape-only sibling) is unchanged - it still uses `/api/admin/force-refresh` directly because it explicitly wants only the scrape phase.
 
-**Related requirements:** REQ-OPS-008 (AC 4 reworded to "the run continues irrespective of the operator's tab state"), REQ-PIPE-003 AC 9 (the dedup phase consumer is unchanged; pipeline-consumer just kicks it).
+**Related requirements:** [REQ-OPS-009](../../sdd/observability.md#req-ops-009-admin-pipeline-run-progress-surface) AC 2 (the run continues irrespective of the operator's tab state), [REQ-PIPE-014](../../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1 (the dedup phase consumer is unchanged; pipeline-consumer just kicks it).
 
 ---
 
@@ -1075,7 +1081,7 @@ Both clusters were entirely below the 0.85 auto-merge bar; the larger valuation 
 - `Sec-Fetch-Site` headers are unreliable as a defense-in-depth signal for any endpoint reachable via a CF Access redirect chain. Use the Worker admin-auth gate (`CF_ACCESS_AUD` + `ADMIN_EMAIL`) as the authoritative security boundary instead.
 - The settings page must handle the `?pipeline=` URL parameter on load and convert it to localStorage state before any polling logic runs.
 
-**Related requirements:** [REQ-OPS-008](../../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface) (AC 6 - terminal state persistence survives reload), [REQ-OPS-005](../../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint)
+**Related requirements:** [REQ-OPS-009](../../sdd/observability.md#req-ops-009-admin-pipeline-run-progress-surface) AC 4 (terminal status persistence survives reload), [REQ-OPS-005](../../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint)
 
 ---
 
@@ -1104,9 +1110,9 @@ The 0.78 threshold from AD36 was tuned against tightly-bounded news-cycle cluste
 - This fix is forward-only; existing false-merge clusters stay merged. To un-merge manually: list `article_sources` rows for the surviving article id, drop false-positive rows, re-scrape the dropped source URLs so the next ingestion embeds them as standalone articles.
 - `DEDUP_TIME_WINDOW_SECONDS` is the env-var lever for tuning the window; the `DEDUP_COSINE_THRESHOLD` lever is unchanged in shape (only the value moved). Both are runtime-tunable without redeploy.
 - Two new structured log lines: `finalize_match_skipped_time_window` and `historical_dedup_match_skipped_time_window`, each carrying `delta_seconds`, `self_id`, `match_id`. These let operators measure how often the time-window gate fires versus how often the cosine gate fires - useful for future calibration.
-- The `dedup-diag` admin endpoint already surfaces cosine + threshold + same-publisher flag (REQ-PIPE-003 AC 10); time-delta is observable from the diag's published_at fields without an explicit additional surface.
+- The `dedup-diag` admin endpoint already surfaces cosine + threshold + same-publisher flag ([REQ-PIPE-014](../../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 4); time-delta is observable from the diag's published_at fields without an explicit additional surface.
 
-**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 13 added), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs)
+**Related requirements:** [REQ-PIPE-012](../../sdd/generation.md#req-pipe-012-same-story-matching-policy-variants) (same-news-cycle window), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates)
 
 ---
 
@@ -1151,7 +1157,7 @@ The AD39 threshold raise widened the rerank band from 8 cosine points (0.70-0.78
 - The rerank prompt lists four positive-example shapes (earnings calls, CVE advisories, workplace incidents, market follow-ons) without changing the conservative default. LLM behavior shifts slightly toward `true` on textbook same-event pairs while preserving dense-theme calibration.
 - This fix is forward-only; it does NOT un-merge the existing 13-source false-merge cluster from before AD39 (separate operation per AD39 consequences).
 
-**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 14 added), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs)
+**Related requirements:** [REQ-PIPE-012](../../sdd/generation.md#req-pipe-012-same-story-matching-policy-variants) AC 2 (same-publisher stricter bar), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates)
 
 ---
 
@@ -1192,7 +1198,7 @@ The bidirectional merge is a 1-direction-to-2-direction generalisation of code a
 - Per-article diagnostic log volume in `wrangler tail` doubles for ticks where the sweep also matches a window-overlapping article - the same finalize_dedup_diag shape now appears for the sweep walk too.
 - Forward-only fix. The next auto-sweep after deploy catches existing visible duplicates from the 2026-05-09 corpus, which fall within the 48h lookback at deploy time.
 
-**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 15 + AC 16 added), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs)
+**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) (threshold raise + rerank cap removal)
 
 ---
 
@@ -1239,7 +1245,7 @@ Three reasons the AD41 fix did not collapse this cluster:
 - The auto-sweep's per-tick scan size grows from ~50-100 articles to ~80-150 articles (50% increase, matching cursor-width increase). Sub-minute wall-clock budget unchanged.
 - This fix is forward-only. The 2026-05-10 fragmented Cloudflare-layoffs cluster is collapsed by the operator-triggered full-corpus historical-dedup sweep that runs alongside this commit; future clusters of similar shape collapse on first finalize tick after the latest sibling lands.
 
-**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) (AC 15 reworded; AC 17 added), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs) (AC 5 reworded for multi-rerank cap)
+**Related requirements:** [REQ-PIPE-012](../../sdd/generation.md#req-pipe-012-same-story-matching-policy-variants), [REQ-PIPE-013](../../sdd/generation.md#req-pipe-013-same-story-cross-tick-automation-and-retention-coupling) AC 3 (cross-tick automatic sweep), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates) (multi-rerank cap)
 
 ---
 
@@ -1264,7 +1270,7 @@ Three reasons the AD41 fix did not collapse this cluster:
 - Future tuning of the scoring rules (e.g., adding a tertiary penalty) happens in one place.
 - CF-029 (cache the comparator secondary key) is satisfied naturally - each match is classified exactly once and reuses the result.
 
-**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-rerank-for-borderline-cosine-pairs)
+**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates)
 
 ---
 
@@ -1312,14 +1318,14 @@ Three reasons the AD41 fix did not collapse this cluster:
 
 - Future contributors editing these four files must take care: the size threshold no longer signals "this file is too big." Use diff scope and function size as the navigation aid instead.
 - Reviewer agents (code-reviewer, spec-reviewer) MUST NOT flag these four files on size alone. A finding citing total line count without a concrete extraction proposal that includes the cost analysis above should be dismissed by referencing this AD.
-- The per-function size rule (`Functions are small (<50 lines)`) is unchanged. Functions inside these files remain subject to it and may be extracted individually when a concrete bug, test gap, or review-velocity win motivates the change.
+- The per-function size rule (`Functions are small (<50 lines)`) is unchanged. Functions inside these files remain subject to it; extraction is welcomed when a concrete bug, test gap, or review-velocity win motivates the change, and required when an individual function exceeds 50 lines.
 - If a future feature naturally splits one of these files (e.g., the coordinator's source-enumeration phase becomes queue-driven per CF-006's eventual fix), the extraction is welcomed. This AD does not block extractions - it blocks size-only refactors.
 
 **Related requirements:** [REQ-PIPE-001](../../sdd/generation.md#req-pipe-001-coordinated-multi-tag-scrape-pipeline), [REQ-SET-001](../../sdd/settings.md#req-set-001-tag-management-ui)
 
 ---
 
-### AD46: Documentation file-size hatches (deployment colocation, architecture diagrams, ADR index)
+### AD46: Documentation file-size hatches and hybrid renderings (deployment colocation, architecture diagrams, ADR index, deployment hybrid shape)
 
 **Status:** Accepted (2026-05-12)
 
@@ -1334,19 +1340,107 @@ Three reasons the AD41 fix did not collapse this cluster:
 - **AD46c — `decisions/README.md` single-file design.** All ADRs colocate here rather than one-file-per-ADR. Per-file ADR storage fragments cross-references: ADR-A frequently cites ADR-B via section anchor; separate files make anchor stability fragile.
 
   The chronological reading path (`AD1 → AD46`) works as a single document. The file IS the index.
+- **AD46d — `deployment.md` hybrid runbook-and-registry rendering.** `deployment.md` legitimately mixes per-item runbook sections (`## Local Development`, `## Production Deployment`, `## Integration deployment` — each with `**When:** / **Command:** / **Verifies:** / **Rollback:**`) with grouped-table registry sections (`### Environment-specific configuration`, `## Cloudflare Resources`, `### PR Checks - CI gates`, `## Admin-only routes` layer table). The two shapes serve two different reader tasks: the runbook shape walks the operator through a sequenced procedure; the registry shape lets the operator look up a resource, env, or gate at a glance.
 
-**Context:** `documentation-discipline.md` Pass 6 (hatch audit) flags bare `doc-allow-large` markers as MEDIUM and prose-justification-without-ADR markers as the same shape the rule was written to prevent. Cycle 3 review (CF-006) flagged four markers across `deployment.md`, `architecture.md` (×2), and `decisions/README.md` that all carried the same root justification but no ADR backlink.
+  `documentation-discipline.md` Pass 6 (file-level shape consistency) treats hybrid files as a soft signal because the first-section-wins tiebreak would force one shape across the entire file. For `deployment.md`, that conversion would either bloat the registry tables into per-item sections (15+ rows × 4 fields each) or strip the runbook scaffolding from the deploy procedures. AD46d formalizes the hybrid rendering: Pass 6 findings against `deployment.md` are accepted under this ADR and not re-flagged on subsequent runs.
+
+**Context:** `documentation-discipline.md` Pass 6 (hatch audit) flags bare `doc-allow-large` markers as MEDIUM and prose-justification-without-ADR markers as the same shape the rule was written to prevent. Cycle 3 review (CF-006) flagged four markers across `deployment.md`, `architecture.md` (×2), and `decisions/README.md` that all carried the same root justification but no ADR backlink. The cycle 5 follow-up surfaced AD46d as a co-occurring concern: Pass 6 shape consistency fires against `deployment.md` in the same way Pass 2 file-size budgets fire against the AD46a-c targets — a structural rule firing on a section the discipline's content-preservation guarantees would refuse to mechanically convert.
 
 **Rationale:** The hatch was designed to surface design tradeoffs as ADRs — a decision the reader can discover, revisit, and supersede. A bare or prose-only marker hides the decision in the marker itself. This AD pulls the decisions into the discoverable ADR ledger; the markers become referential, not load-bearing.
 
 **Consequences:**
 
 - The four affected markers now reference `AD46` directly (e.g., `doc-allow-large: AD46 deployment-doc colocation`). The `doc-updater` Pass 6 audit accepts them under the ADR-reference rule.
-- Future doc growth in any of the three files should reopen this AD rather than adding new bare hatches.
+- Future doc growth in any of the three files MUST reopen this AD before a new bare hatch lands. A bare `doc-allow-large` marker on these files without an AD46-or-successor reference is a `doc-updater` HIGH finding.
 - If `deployment.md` grows to the point where the operator workflow itself becomes hard to follow, the split should be a deliberate workflow redesign (e.g., a master deploy runbook with linked sub-pages), not a lane-discipline split.
-- The ADR ledger's single-file design implicitly limits the ledger's growth ceiling. If the ledger exceeds ~50 ADRs or ~2500 lines, this AD should be revisited in favor of a per-AD layout with an explicit index.
+- Pass 6 (file-level shape consistency) findings against `deployment.md` are accepted under AD46d's hybrid-rendering carve-out. If a future review surfaces a shape-mismatch in a section that does NOT serve a runbook-or-registry purpose, AD46d does not cover it and the standard Pass 6 conversion applies.
+- The ADR ledger's single-file design implicitly limits the ledger's growth ceiling. If the ledger reaches 50 ADRs or 2500 lines, the next PR-boundary `doc-updater` run MUST escalate this AD for revision before accepting further ADR additions to the single file.
 
 **Related requirements:** none direct — operational/documentation concern.
+
+---
+
+### AD46e: `api-reference.md` completeness exemption
+
+**Status:** Accepted (2026-05-13)
+
+**Extends:** AD46
+
+**Decision:** `documentation/api-reference.md` carries a permanent `doc-allow-large: AD46e api-reference completeness` hatch. The file documents the public HTTP surface across 13 `##` named sections — endpoint count measured via `grep -c '^### ' documentation/api-reference.md` on 2026-05-13. Each endpoint requires at minimum a method/path block, Authentication field, Origin-check field, Response table, and Implements field — 8-12 lines of structured content per endpoint, derived from the binding endpoint template in `documentation-discipline.md` Pass 7. The resulting floor is the endpoint count times the per-endpoint cost before any prose explanation. The per-file soft budget of 600 lines reflects a general-purpose file; an API reference for a non-trivial application necessarily exceeds it.
+
+**Context:** Pass 2 of `documentation-discipline.md` flagged `api-reference.md` at 1.16x the 600-line budget (697 lines) as a LOW finding in the 2026-05-13 clean run. The corresponding Pass 10 cold-read found PARTIAL — session-auth endpoints had no copy-pasteable curl example. Both findings were deferred in that run. The user rejected the deferral on 2026-05-13 and mandated: (a) a formal AD46 sub-decision backlink, and (b) a curl example covering the session-cookie auth shape so a cold reader can test any session-auth endpoint without consulting other documentation. The curl example adds approximately 10 lines to the file, reinforcing that the 600-line budget is structurally unachievable for this file's mandate.
+
+**Rationale:**
+
+- Splitting `api-reference.md` into domain-scoped files (e.g., `api-reference-auth.md`, `api-reference-digest.md`) would fragment the single-lookup guarantee: a developer searching for an endpoint must know which sub-file it lives in before they can find it. The admin split (`api-reference-admin.md`) was made on the audience boundary (developer vs. operator), not on section count.
+- The existing `api-reference-admin.md` split demonstrates the correct split criterion: separate audience, separate file. Splitting by section count alone does not serve a distinct reader.
+- A curl example in the `## Conventions` section is the minimal fix for the Pass 10 partial: one canonical block shows the cookie-injection pattern; all ~60 session-auth endpoints can be tested by substituting the path. Duplicating the block per-endpoint would triple the file size without adding information.
+
+**Consequences:**
+
+- `api-reference.md` is exempt from Pass 2 LOW findings indefinitely. MEDIUM threshold (1.4x, ~840 lines) remains in force — if the file approaches that level, a genuine split by audience or by stable domain boundary should be evaluated before adding more content. 1.4x is the threshold because it sits above the per-endpoint structural floor with ~25% headroom for future endpoint growth before a split becomes mandatory.
+- The `doc-allow-large` hatch marker is updated from the bare `AD46 api-reference single-file design` to `AD46e api-reference completeness` so the hatch points at this specific sub-decision.
+- The `## Conventions` curl example covers the session-cookie shape. Dev-bypass token endpoints are covered separately in `documentation/deployment.md` under the dev-bypass runbook. The two examples together close Pass 10 for this file.
+- Future endpoint additions to `api-reference.md` do not require a new ADR amendment unless the file crosses the MEDIUM threshold.
+
+**Related requirements:** none direct — documentation structure concern.
+
+---
+
+### AD47: Storage-shape allowlist promoted to spec-discipline; AD9 superseded
+
+**Status:** Accepted (2026-05-13)
+
+**Supersedes:** AD9
+
+**Decision:** Retire AD9 as a load-bearing override. `spec-discipline.md`'s forbidden-content allowlist now contains a first-class carveout for "Database column / KV key names when the storage shape IS the persistence contract" — the same rationale AD9 was created to apply on a per-REQ basis. The eight REQs listed in AD9's `Overrides:` line (`REQ-DISC-001`, `REQ-DISC-002`, `REQ-AUTH-002`, `REQ-AUTH-008`, `REQ-SET-001`, `REQ-SET-005`, `REQ-MAIL-001`, `REQ-MAIL-003`) pass the allowlist by default and no longer need an ADR-anchored override.
+
+**Context:** AD9 was added on 2026-05-03 to override the mechanism-leakage rule for storage-shape names that are the contract noun shared between UI controls, persisted rows, and dispatcher predicates. As the same pattern recurred across eight REQs in three domains, the override mechanism was promoted to a first-class allowlist rule on 2026-05-13. `sdd/config.yml`'s `forbidden_content_overrides:` field was already empty (`[]`); AD9's `Overrides:` line was documentation-only and not driving enforcement. With the allowlist in place, the override mechanism is fully redundant.
+
+**Rationale:**
+
+- One global allowlist rule is easier to reason about than an ADR-anchored per-REQ override list. A new storage-shape REQ no longer needs an ADR amendment to pass spec-reviewer.
+- The contract-noun framing from AD9 carries over verbatim to the allowlist rule, so no behavioral change occurs — the same REQs that AD9 covered are the ones the allowlist covers.
+- AD9's body is preserved as historical artifact under `Status: Superseded by AD47`. Readers tracing the lineage of the storage-shape carveout land on AD9 first and follow the supersession pointer to AD47 and the allowlist rule itself.
+
+**Consequences:**
+
+- AD9 is marked `Status: Superseded by AD47 (2026-05-13)`. AD9's decision/consequences sections stay untouched per ADR immutability.
+- The eight REQs listed in AD9's `Overrides:` line continue to render verbatim. No spec edits are needed.
+- Future storage-shape REQs (D1 columns, KV key shapes) pass automatically; no new ADR required for the same pattern.
+- If a future audit ever wants to tighten the carveout — e.g., to only cover column names appearing in user-facing settings UIs — the allowlist is the place to scope, not a new ADR.
+
+**Related requirements:** [REQ-DISC-001](../../sdd/discovery.md#req-disc-001-llm-assisted-per-tag-feed-discovery), [REQ-DISC-002](../../sdd/discovery.md#req-disc-002-discovery-progress-visibility), [REQ-AUTH-002](../../sdd/authentication.md#req-auth-002-access-token--refresh-token-instant-revocation), [REQ-AUTH-008](../../sdd/authentication.md#req-auth-008-refresh-token-rotation-and-replay-detection), [REQ-SET-001](../../sdd/settings.md#req-set-001-unified-first-run-and-edit-flow), [REQ-SET-005](../../sdd/settings.md#req-set-005-email-notification-preference), [REQ-MAIL-001](../../sdd/email.md#req-mail-001-digest-ready-email-content), [REQ-MAIL-003](../../sdd/email.md#req-mail-003-scheduled-send-policy-and-opt-out)
+
+---
+
+### AD48: Dedup cost reduction: borderline-rerank watermark + batched rerank call + pipeline-wide gpt-oss-20b
+
+**Status:** Accepted (2026-05-14)
+
+**Decision:** Stack three independent cost reductions on the dedup pipeline:
+
+1. **Watermark skip on the recurring sweep.** Persist the timestamp of the last successful auto-sweep in KV (`dedup:auto_sweep_watermark`). At the start of the borderline rerank pass, skip the LLM call for any pair whose two articles were both already in the corpus at that prior watermark; their same-event verdict was recorded by the previous sweep and the model is deterministic at temperature 0.
+2. **Batched rerank call.** Replace the per-pair `rerankBorderlinePair(a, b)` API with `rerankBorderlinePairsBatch(pairs[])` (cap 15 pairs per call). Both rerank callers (in-tick finalize, sweep PASS 2) accumulate borderline candidates and issue one LLM round-trip per self instead of one per pair. Parse failure on a batched response is treated as `same_event: false` for every pair in that batch (matches the pre-AD48 single-pair conservative default).
+3. **Pipeline-wide model swap.** Flip `DEFAULT_MODEL_ID` in `src/lib/models.ts` from `@cf/openai/gpt-oss-120b` to `@cf/openai/gpt-oss-20b`. The constant is the single source of truth for every pipeline LLM call (chunk summarisation, rerank, discovery); changing it routes the whole pipeline through the cheaper sibling. Same OpenAI family, same 128K context, same native JSON mode at $0.20 / $0.30 per Mtok versus $0.35 / $0.75.
+
+**Context:** The auto-sweep walks the last 7 days every 4 hours (REQ-PIPE-003 + AD41). Borderline cosine pairs in `[0.70, 0.78)` were sent to the LLM one-pair-at-a-time. With a 7-day window and 6 sweeps per day, each unresolved pair was reranked up to ~42 times before it aged out, every time paying ~300-token system prompt + ~400-token payload at temperature 0 — deterministic re-asking of a verdict already on record. The 7-day window and 4-hour cadence are non-negotiable (the window is the per-pair time-distance gate validated by PANW-cluster spans of ~100h; cadence catches Vectorize eventual-consistency same-tick misses and late-arriving older articles per AD42 history).
+
+**Alternatives considered:**
+- *Sweep throttle (cadence cut).* Rejected per project direction: cadence is the only protection against eventual-consistency same-tick misses and late-arriving feed items.
+- *7-day window shrink.* Rejected: PANW cluster spans ~100 hours; a 1-day window misses the cluster's far edges (AD39 history).
+- *D1 verdict cache table.* Considered. Rejected as heavier than KV watermark for the dominant case ("the same auto-sweep is re-judging pairs it already judged last sweep"). A per-pair cache adds a migration, a row per borderline pair, and write-path complexity for marginal recall on top of the watermark.
+- *All pairs in one global LLM call.* Rejected: attention dilution and JSON-parse blast radius scale with pair count. 15 per call keeps each round-trip well below 1K output tokens and limits parse-failure loss.
+- *Rerank-only model swap (chunk stays 120b).* Rejected per project direction favouring single-model simplicity over per-call-site model splitting. `DEFAULT_MODEL_ID` stays the one knob.
+
+**Consequences:**
+- Auto-sweep LLM cost drops roughly an order of magnitude on the recurring case (watermark skip eliminates re-judgment of pre-watermark pairs; batched call amortises system prompt + round-trip across pairs from the same self).
+- Chunk summarisation cost drops ~60% from the model swap independently of dedup.
+- Operator-triggered `/api/admin/historical-dedup` and `?reembed=1` invalidate the watermark (the latter via `clearWatermark`, the former via a `bypassWatermark: true` flag propagated through every continuation queue message) so a manual sweep after a threshold or prompt change re-judges everything.
+- Rollback is a single constant flip in `src/lib/models.ts` back to `@cf/openai/gpt-oss-120b` if 20b regresses on chunk-sized prompts (the Gemma 4 26B prompt-timeout failure mode from 2026-05 is the comparison shape to watch on integration).
+- Test fixtures that previously mocked single-pair `{"same_event": ...}` responses now mock the batched `{"verdicts":[{"i":N,"same_event":...}]}` shape; a no-verdicts response degrades to "all false" per pair, preserving the conservative default.
+
+**Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates), [REQ-SET-004](../../sdd/settings.md#req-set-004-server-side-model-catalog-and-default)
 
 ---
 

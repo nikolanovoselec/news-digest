@@ -1,4 +1,4 @@
-// Tests for src/lib/ulid.ts — REQ-GEN-006 (ULID for digest + article IDs).
+// Tests for src/lib/ulid.ts — REQ-PIPE-002 (ULID for digest + article IDs).
 import { describe, it, expect } from 'vitest';
 import { generateUlid } from '../../src/lib/ulid';
 
@@ -6,19 +6,19 @@ import { generateUlid } from '../../src/lib/ulid';
 const CROCKFORD_CHARSET = /^[0-9A-HJKMNP-TV-Z]+$/;
 
 describe('generateUlid', () => {
-  it('REQ-GEN-006: ULID is 26 characters', () => {
+  it('REQ-PIPE-002: ULID is 26 characters', () => {
     const ulid = generateUlid();
     expect(ulid).toHaveLength(26);
   });
 
-  it('REQ-GEN-006: ULID uses only Crockford base32 characters', () => {
+  it('REQ-PIPE-002: ULID uses only Crockford base32 characters', () => {
     for (let i = 0; i < 100; i++) {
       const ulid = generateUlid();
       expect(ulid).toMatch(CROCKFORD_CHARSET);
     }
   });
 
-  it('REQ-GEN-006: ULIDs are unique across many generations', () => {
+  it('REQ-PIPE-002: ULIDs are unique across many generations', () => {
     const count = 10_000;
     const set = new Set<string>();
     for (let i = 0; i < count; i++) {
@@ -27,7 +27,7 @@ describe('generateUlid', () => {
     expect(set.size).toBe(count);
   });
 
-  it('REQ-GEN-006: ULIDs are lexicographically sortable by creation time', async () => {
+  it('REQ-PIPE-002: ULIDs are lexicographically sortable by creation time', async () => {
     const first = generateUlid();
     // Wait long enough that the 48-bit ms timestamp prefix advances.
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -38,7 +38,7 @@ describe('generateUlid', () => {
     expect(sorted).toEqual([first, second, third]);
   });
 
-  it('REQ-GEN-006: ULID timestamp prefix encodes current time in ms', () => {
+  it('REQ-PIPE-002: ULID timestamp prefix encodes current time in ms', () => {
     const before = Date.now();
     const ulid = generateUlid();
     const after = Date.now();
@@ -48,7 +48,7 @@ describe('generateUlid', () => {
     expect(decoded).toBeLessThanOrEqual(after);
   });
 
-  it('REQ-GEN-006: ULIDs generated in the same ms have different random suffixes', () => {
+  it('REQ-PIPE-002: ULIDs generated in the same ms have different random suffixes', () => {
     // Generate many in a tight loop — some will collide on timestamp.
     const ulids = Array.from({ length: 1000 }, () => generateUlid());
     const randomParts = ulids.map((u) => u.slice(10));

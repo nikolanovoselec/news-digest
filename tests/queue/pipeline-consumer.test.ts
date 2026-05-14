@@ -114,7 +114,7 @@ beforeEach(() => {
   vi.mocked(runOneBackfillBatch).mockReset();
 });
 
-describe('processOnePipelineMessage - REQ-OPS-008', () => {
+describe('processOnePipelineMessage - REQ-OPS-008 / REQ-PIPE-016 (queue-driven pipeline orchestration)', () => {
   it('short-circuits without throwing when audit row is missing', async () => {
     const { db, calls } = makeDb({ pipelineRow: null });
     const { queue: pq, sends } = makeQueue();

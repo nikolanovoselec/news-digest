@@ -34,14 +34,20 @@ export interface ModelOption {
   category: 'featured' | 'budget';
 }
 
-// Default model: @cf/openai/gpt-oss-120b. 128K context, native JSON
-// mode, $0.35/$0.75 per Mtok. Picked 2026-05-06 after Gemma 4 26B
-// timed out (AiError 3046) on chunk-sized prompts in production —
-// timeouts collapsed yield to ~4% even though Gemma's 256K context
-// looked attractive on paper. gpt-oss-120b's published-pricing native
-// JSON mode + reliable wall-clock gives consistent yield at the cost
-// of higher per-token spend. Single-model run; no fallback.
-export const DEFAULT_MODEL_ID = '@cf/openai/gpt-oss-120b';
+// Default model: @cf/openai/gpt-oss-20b. 128K context, native JSON
+// mode, $0.20/$0.30 per Mtok. Swapped from gpt-oss-120b on 2026-05-14
+// (AD48) — same OpenAI family, same context size, same native JSON
+// mode, ~57% cheaper input + 60% cheaper output. The earlier
+// gpt-oss-120b pick (2026-05-06) was driven by Gemma 4 26B's
+// chunk-prompt timeouts (AiError 3046, ~4% yield); gpt-oss-20b shares
+// gpt-oss-120b's reliable wall-clock at a fraction of the cost,
+// which is the headline lever in the AD48 cost-reduction package
+// alongside the borderline-rerank watermark + batched rerank prompt.
+// Rollback contract: this constant is the single source-of-truth for
+// the pipeline's model id (chunk summarisation, rerank, discovery
+// all flow through DEFAULT_MODEL_ID). A regression on 20b is reverted
+// by flipping the literal back to '@cf/openai/gpt-oss-120b'.
+export const DEFAULT_MODEL_ID = '@cf/openai/gpt-oss-20b';
 
 export const MODELS: ModelOption[] = [
   // Featured — the four headline choices users see at the top of the dropdown.
@@ -49,7 +55,7 @@ export const MODELS: ModelOption[] = [
     id: '@cf/openai/gpt-oss-120b',
     name: 'GPT OSS 120B',
     description:
-      'Default. OpenAI 120B MoE with native JSON mode, 128K context. Reliable wall-clock for chunk-sized prompts.',
+      'OpenAI 120B MoE with native JSON mode, 128K context. Reliable wall-clock for chunk-sized prompts.',
     inputPricePerMtok: 0.35,
     outputPricePerMtok: 0.75,
     contextTokens: 128_000,
@@ -69,7 +75,7 @@ export const MODELS: ModelOption[] = [
     id: '@cf/openai/gpt-oss-20b',
     name: 'GPT OSS 20B',
     description:
-      'Native JSON mode, 128K context. Cheaper sibling of 120B.',
+      'Default. Native JSON mode, 128K context. Cheaper sibling of 120B at $0.20/$0.30 per Mtok.',
     inputPricePerMtok: 0.20,
     outputPricePerMtok: 0.30,
     contextTokens: 128_000,

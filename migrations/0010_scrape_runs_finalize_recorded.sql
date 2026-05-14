@@ -1,4 +1,4 @@
--- Implements REQ-PIPE-008
+-- Implements REQ-PIPE-003
 --
 -- Per-run idempotency gate for finalize-cost recording.
 --

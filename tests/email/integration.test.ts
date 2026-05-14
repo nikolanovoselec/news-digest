@@ -304,7 +304,7 @@ function makeDispatchDb(users: DispatchUserRow[]): {
   return { db, runCalls };
 }
 
-describe('dispatchDailyEmails — REQ-MAIL-001 once-per-day gating', () => {
+describe('dispatchDailyEmails — REQ-MAIL-001 / REQ-MAIL-003 once-per-day gating', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {

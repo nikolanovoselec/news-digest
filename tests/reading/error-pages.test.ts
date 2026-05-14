@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest';
 import notFoundSource from '../../src/pages/404.astro?raw';
 import serverErrorSource from '../../src/pages/500.astro?raw';
 
-describe('src/pages/404.astro — REQ-READ-006 AC 5', () => {
+describe('src/pages/404.astro - REQ-READ-006 AC 5 / REQ-DES-001 (editorial-aesthetic error page)', () => {
   it('REQ-READ-006: renders the literal 404 code in an aria-labelled heading', () => {
     // Users need to know what kind of error they hit at a glance —
     // "404" must appear as the oversized numeral, not buried in body
@@ -50,7 +50,7 @@ describe('src/pages/404.astro — REQ-READ-006 AC 5', () => {
   });
 });
 
-describe('src/pages/500.astro — REQ-READ-006 AC 5', () => {
+describe('src/pages/500.astro - REQ-READ-006 AC 5 / REQ-DES-001 (editorial-aesthetic error page)', () => {
   it('REQ-READ-006: renders the literal 500 code with aria-label', () => {
     expect(serverErrorSource).toMatch(/<h1[^>]*aria-label="500 Server Error"[^>]*>\s*500\s*<\/h1>/);
   });

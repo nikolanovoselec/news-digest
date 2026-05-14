@@ -157,6 +157,26 @@ function makeVectorize(opts: {
   } as unknown as Vectorize;
 }
 
+interface KvStore {
+  get: ReturnType<typeof vi.fn>;
+  put: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
+}
+
+function makeKv(watermarkSeconds: number | null): KvStore {
+  const get = vi.fn().mockImplementation(async (key: string) => {
+    if (key === 'dedup:auto_sweep_watermark') {
+      return watermarkSeconds === null ? null : String(watermarkSeconds);
+    }
+    return null;
+  });
+  return {
+    get,
+    put: vi.fn().mockResolvedValue(undefined),
+    delete: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 interface CallOpts {
   articles: ArticleRow[];
   existenceGuardResults?: Record<string, ExistenceGuardEntry | null>;
@@ -171,6 +191,13 @@ interface CallOpts {
   cosineThreshold?: string;
   highConfidenceCosine?: string;
   paginatedRemaining?: boolean;
+  /** When set (seconds-since-epoch), the KV mock returns this value for
+   *  the watermark key so the sweep can apply its skip-if-both-predate
+   *  rule. Null/undefined → KV.get returns null (cold start, default). */
+  kvWatermarkSeconds?: number | null;
+  /** When true, runHistoricalDedupBatch is called with
+   *  `{bypassWatermark: true}` so the watermark is ignored. */
+  bypassWatermark?: boolean;
 }
 
 async function callBatch(opts: CallOpts) {
@@ -193,21 +220,26 @@ async function callBatch(opts: CallOpts) {
   const aiRun =
     opts.aiRun ??
     vi.fn().mockResolvedValue({ response: '{"same_event":false}' });
+  const kv = makeKv(opts.kvWatermarkSeconds ?? null);
   const env = {
     DB: db,
     VECTORIZE: vectorize,
     AI: { run: aiRun },
+    KV: kv,
     DEDUP_RERANK_FLOOR: opts.rerankFloor,
     DEDUP_COSINE_THRESHOLD: opts.cosineThreshold,
     DEDUP_HIGH_CONFIDENCE_COSINE: opts.highConfidenceCosine,
   } as unknown as Env;
 
+  const options =
+    opts.bypassWatermark === true ? { bypassWatermark: true } : undefined;
   const result = await runHistoricalDedupBatch(
     env,
     opts.cursor ?? null,
     opts.batch ?? 100,
+    options,
   );
-  return { result, fixture, vectorize, aiRun };
+  return { result, fixture, vectorize, aiRun, kv };
 }
 
 function singleMatch(opts: {
@@ -674,7 +706,11 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
   it('REQ-PIPE-009: borderline cosine with LLM yes merges newer article', async () => {
     const SELF_ID = 'older';
     const MATCH_ID = 'newer';
-    const aiRun = vi.fn().mockResolvedValue({ response: '{"same_event":true}' });
+    // AD48: batched call returns `{verdicts:[{i, same_event}]}`. One
+    // borderline pair → one verdict at index 0.
+    const aiRun = vi.fn().mockResolvedValue({
+      response: '{"verdicts":[{"i":0,"same_event":true}]}',
+    });
     // score=0.74 sits in the [DEFAULT_RERANK_FLOOR=0.70,
     // DEFAULT_COSINE_THRESHOLD=0.78) borderline band so the LLM is
     // invoked. Above 0.78 the auto-merge path runs without rerank.
@@ -838,6 +874,7 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
       DB: db,
       VECTORIZE: vectorize,
       AI: { run: vi.fn() },
+      KV: makeKv(null),
       DEDUP_TIME_WINDOW_SECONDS: '60',
     } as unknown as Env;
     const result = await runHistoricalDedupBatch(env, null, 100);
@@ -929,6 +966,7 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
       DB: db,
       VECTORIZE: vectorize,
       AI: { run: vi.fn().mockResolvedValue({ response: '{"same_event":false}' }) },
+      KV: makeKv(null),
     } as unknown as Env;
     const result = await runHistoricalDedupBatch(env, null, 100);
     // Cursor advanced past both rows (last row is SELF_FAIL).
@@ -938,6 +976,120 @@ describe('runHistoricalDedupBatch — REQ-PIPE-003', () => {
       id: SELF_FAIL,
     });
     expect(queryByIdMock).toHaveBeenCalledTimes(2);
+  });
+
+  // ---------------------------------------------------------------
+  // REQ-PIPE-009 AD48 — watermark skip on the borderline rerank path.
+  // Both pair members predate the prior auto-sweep watermark ⇒ skip the
+  // LLM. Either is newer ⇒ call the LLM as usual. `bypassWatermark: true`
+  // ⇒ always call regardless of timestamps.
+  //
+  // The OLD/NEW ULIDs below encode ms timestamps via Crockford base32 in
+  // their first 10 chars. ulidTime() decodes those chars to ms.
+  //   OLD prefix `01BMZFF600` ⇒ ms=1_500_000_000_000 (before watermark)
+  //   NEW prefix `01Q9GD6E00` ⇒ ms=1_900_000_000_000 (after watermark)
+  // Watermark = 1_700_000_000 seconds = 1_700_000_000_000 ms.
+  // ---------------------------------------------------------------
+  const OLD_ULID_A = '01BMZFF600AAAAAAAAAAAAAAAA';
+  const OLD_ULID_B = '01BMZFF600BBBBBBBBBBBBBBBB';
+  const NEW_ULID_A = '01Q9GD6E00AAAAAAAAAAAAAAAA';
+  const WATERMARK_SECONDS = 1_700_000_000;
+
+  it('REQ-PIPE-009 AD48: both pair members predate watermark — LLM skipped', async () => {
+    const aiRun = vi.fn();
+    const { result } = await callBatch({
+      kvWatermarkSeconds: WATERMARK_SECONDS,
+      articles: [
+        {
+          id: OLD_ULID_A,
+          title: 'Old self',
+          source_snippet: 'a',
+          published_at: 1_700_000_500,
+          primary_source_url: 'https://oldsite.example/x',
+        },
+      ],
+      existenceGuardResults: {
+        [OLD_ULID_B]: { present: 1, title: 'Old match', source_snippet: 'b' },
+      },
+      queryByIdResults: {
+        [OLD_ULID_A]: singleMatch({
+          id: OLD_ULID_B,
+          score: 0.74,
+          published_at: 1_700_001_000,
+          primary_source_url: 'https://newsite.example/y',
+        }),
+      },
+      aiRun,
+    });
+    expect(aiRun).not.toHaveBeenCalled();
+    expect(result.merged).toBe(0);
+  });
+
+  it('REQ-PIPE-009 AD48: one pair member newer than watermark — LLM called', async () => {
+    // Self is OLD, match is NEW → not both predate → must rerank.
+    const aiRun = vi.fn().mockResolvedValue({
+      response: '{"verdicts":[{"i":0,"same_event":false}]}',
+    });
+    const { result } = await callBatch({
+      kvWatermarkSeconds: WATERMARK_SECONDS,
+      articles: [
+        {
+          id: OLD_ULID_A,
+          title: 'Old self',
+          source_snippet: 'a',
+          published_at: 1_700_000_500,
+          primary_source_url: 'https://oldsite.example/x',
+        },
+      ],
+      existenceGuardResults: {
+        [NEW_ULID_A]: { present: 1, title: 'New match', source_snippet: 'b' },
+      },
+      queryByIdResults: {
+        [OLD_ULID_A]: singleMatch({
+          id: NEW_ULID_A,
+          score: 0.74,
+          published_at: 1_700_001_000,
+          primary_source_url: 'https://newsite.example/y',
+        }),
+      },
+      aiRun,
+    });
+    expect(aiRun).toHaveBeenCalledTimes(1);
+    expect(result.merged).toBe(0);
+  });
+
+  it('REQ-PIPE-009 AD48: bypassWatermark=true always calls LLM regardless of timestamps', async () => {
+    const aiRun = vi.fn().mockResolvedValue({
+      response: '{"verdicts":[{"i":0,"same_event":true}]}',
+    });
+    const { result, fixture } = await callBatch({
+      kvWatermarkSeconds: WATERMARK_SECONDS,
+      bypassWatermark: true,
+      articles: [
+        {
+          id: OLD_ULID_A,
+          title: 'Old self',
+          source_snippet: 'a',
+          published_at: 1_700_000_500,
+          primary_source_url: 'https://oldsite.example/x',
+        },
+      ],
+      existenceGuardResults: {
+        [OLD_ULID_B]: { present: 1, title: 'Old match', source_snippet: 'b' },
+      },
+      queryByIdResults: {
+        [OLD_ULID_A]: singleMatch({
+          id: OLD_ULID_B,
+          score: 0.74,
+          published_at: 1_700_001_000,
+          primary_source_url: 'https://newsite.example/y',
+        }),
+      },
+      aiRun,
+    });
+    expect(aiRun).toHaveBeenCalledTimes(1);
+    expect(result.merged).toBe(1);
+    expect(fixture.batchCalls.length).toBeGreaterThan(0);
   });
 
   it('REQ-PIPE-009: cosine below floor does not invoke LLM', async () => {

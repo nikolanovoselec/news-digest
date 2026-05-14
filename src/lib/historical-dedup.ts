@@ -18,6 +18,16 @@
 // re-visited across batches AND so the strict-greater filter inside
 // the loop can apply a deterministic tie-break (lower ULID = older =
 // wins) instead of silently dropping equal-time same-story pairs.
+//
+// Watermark + batched rerank (AD48, 2026-05-14). The borderline-pair
+// LLM call is now batched (one call per self instead of one call per
+// pair) AND, when the caller did not opt into `bypassWatermark`,
+// pairs whose articles BOTH predate the prior successful auto-sweep
+// watermark are skipped entirely — the LLM at temperature=0 produces
+// the same verdict on identical inputs, so re-asking is wasted spend.
+// Operator-triggered runs pass `bypassWatermark=true` because the
+// operator explicitly wants a full re-check (e.g. after a threshold
+// or prompt change).
 
 import { log } from '~/lib/log';
 import { mergeAsAltSource } from '~/lib/finalize-merge';
@@ -28,13 +38,19 @@ import {
   readTimeWindowSeconds,
   deleteVectorsBatched,
 } from '~/lib/embeddings';
-import { readRerankFloor, rerankBorderlinePair } from '~/lib/dedup-rerank';
+import {
+  readRerankFloor,
+  rerankBorderlinePairsBatch,
+  type RerankPair,
+} from '~/lib/dedup-rerank';
 import { classifyMatchPair } from '~/lib/bidirectional-dedup';
+import { readWatermark } from '~/lib/dedup-watermark';
+import { ulidTime } from '~/lib/ulid';
 
 /** Default articles scanned per call when the caller omits `batch`.
  *  Sized so a single batch's worst-case (25 × Vectorize.queryById +
- *  up to 25 × topK LLM reranks at p99 ~1.5s each) stays well within
- *  the queue consumer's 15-minute wall-clock budget. The queue-driven
+ *  a small handful of batched LLM reranks) stays well within the
+ *  queue consumer's 15-minute wall-clock budget. The queue-driven
  *  sweep drives many short batches via continuation messages. */
 export const DEFAULT_BATCH = 25;
 
@@ -80,6 +96,15 @@ export interface DedupBatchResult {
   done: boolean;
 }
 
+/** Options accepted by {@link runHistoricalDedupBatch}. `bypassWatermark`
+ *  is the only knob — operator-triggered admin paths set it to `true`
+ *  so the run re-judges every borderline pair regardless of the prior
+ *  auto-sweep watermark. The queue-driven auto-sweep leaves it false
+ *  (or unset) to inherit the cost-saving skip behaviour. */
+export interface RunHistoricalDedupBatchOptions {
+  bypassWatermark?: boolean;
+}
+
 /** Run exactly one bounded batch of the sweep. Caller threads
  *  `cursor` from the previous result. Returns `done: true` and
  *  `next_cursor: null` when the cursor is past the corpus tail. */
@@ -87,12 +112,20 @@ export async function runHistoricalDedupBatch(
   env: Env,
   cursor: DedupCursor | null,
   batch: number,
+  options: RunHistoricalDedupBatchOptions = {},
 ): Promise<DedupBatchResult> {
   const threshold = readCosineThreshold(env);
   const sameVendorPenalty = readSameVendorPenalty(env);
   const rerankFloor = readRerankFloor(env);
   const timeWindowSeconds = readTimeWindowSeconds(env);
   const highConfidenceCosine = readHighConfidenceCosine(env);
+
+  // Watermark in seconds-since-epoch. 0 = absent / cleared / cold start.
+  // We compare against ULID timestamps (milliseconds), so multiply by
+  // 1000 once here rather than divide in the hot loop.
+  const watermarkMs = options.bypassWatermark
+    ? 0
+    : (await readWatermark(env)) * 1000;
 
   // Walk articles by ascending (published_at, id), starting strictly
   // after the supplied composite cursor (or from the beginning when
@@ -133,7 +166,8 @@ export async function runHistoricalDedupBatch(
 
   const removedIds = new Set<string>();
   let merged = 0;
-  let rerankCallsThisBatch = 0;
+  let rerankPairsSent = 0;
+  let rerankPairsWatermarkSkipped = 0;
   let rerankAccepts = 0;
   // CF-004: align with scrape-finalize-consumer total-outage behavior.
   // finalize throws when `queriesFailed === queriesAttempted > 0` so the
@@ -250,10 +284,29 @@ export async function runHistoricalDedupBatch(
       }
     }
 
-    // PASS 2: existing behaviour — self absorbs each NEWER match
-    // sequentially. Self is a confirmed cluster anchor (no older
-    // auto-merge match exists), so accumulating absorptions is correct
-    // and efficient: one Vectorize query per anchor, many merges.
+    // PASS 2: existing behaviour — self absorbs each NEWER match.
+    // Restructured for batched rerank (AD48): we first scan all matches
+    // and split them into (a) auto-merge candidates we can absorb
+    // immediately and (b) borderline candidates that need a same-event
+    // LLM verdict. Borderline candidates are batched into ONE LLM call
+    // per self (was: one call per pair pre-AD48). Pairs where BOTH the
+    // self AND the match predate the auto-sweep watermark are dropped
+    // before the LLM call — their verdict was recorded by a prior sweep
+    // and re-asking at temperature=0 yields the same answer.
+    interface BorderlineCandidate {
+      match_id: string;
+      match_title: string;
+      match_snippet: string | null;
+      cosine: number;
+    }
+    interface AutoMergeCandidate {
+      match_id: string;
+    }
+    const autoMergeQueue: AutoMergeCandidate[] = [];
+    const borderlineQueue: BorderlineCandidate[] = [];
+
+    const selfTimeMs = ulidTime(self.id);
+
     for (const match of matches) {
       if (match.id === self.id) continue;
       if (removedIds.has(match.id)) continue;
@@ -276,7 +329,6 @@ export async function runHistoricalDedupBatch(
       // matches were the responsibility of PASS 1 above. selfIsOlder
       // already encodes the equal-time ULID tie-break (lower id = older).
       if (!c.selfIsOlder) continue;
-      const adjustedScore = c.adjustedScore;
       if (!c.isAutoMerge && !c.isBorderline) continue;
 
       // Confirm the newer article still exists in D1; Vectorize may
@@ -292,50 +344,75 @@ export async function runHistoricalDedupBatch(
         .first<{ id: string; title: string; source_snippet: string | null }>();
       if (stillThere === null) continue;
 
-      if (c.isBorderline) {
-        // No per-batch rerank cap — the queue consumer has a 15-min
-        // wall-clock budget per message; the prior 4-rerank cap was
-        // a leftover from the synchronous browser-loop era and was
-        // silently dropping merges (2026-05-07 prod audit: PANW
-        // valuation cluster, 6 borderline pairs in one batch, 2 of 6
-        // reached rerank, the rest were dropped).
-        rerankCallsThisBatch += 1;
-        const sameEvent = await rerankBorderlinePair(
-          env,
-          {
-            id: self.id,
-            title: self.title,
-            snippet: self.source_snippet,
-          },
-          {
-            id: stillThere.id,
-            title: stillThere.title,
-            snippet: stillThere.source_snippet,
-          },
-        );
+      if (c.isAutoMerge) {
+        autoMergeQueue.push({ match_id: stillThere.id });
+        continue;
+      }
+
+      // isBorderline path — apply the watermark skip.
+      if (watermarkMs > 0 && selfTimeMs > 0) {
+        const matchTimeMs = ulidTime(stillThere.id);
+        if (matchTimeMs > 0
+            && selfTimeMs < watermarkMs
+            && matchTimeMs < watermarkMs) {
+          rerankPairsWatermarkSkipped += 1;
+          log('info', 'digest.generation', {
+            status: 'dedup_rerank_watermark_skip',
+            self_id: self.id,
+            match_id: stillThere.id,
+            cosine: c.adjustedScore,
+          });
+          continue;
+        }
+      }
+
+      borderlineQueue.push({
+        match_id: stillThere.id,
+        match_title: stillThere.title,
+        match_snippet: stillThere.source_snippet,
+        cosine: c.adjustedScore,
+      });
+    }
+
+    // Apply auto-merges first — they need no LLM verdict.
+    for (const am of autoMergeQueue) {
+      const mergeStatements = mergeAsAltSource(env.DB, self.id, am.match_id);
+      await env.DB.batch(mergeStatements);
+      removedIds.add(am.match_id);
+      merged += 1;
+    }
+
+    // Batched rerank for this self's borderline candidates.
+    if (borderlineQueue.length > 0) {
+      const pairs: RerankPair[] = borderlineQueue.map((b) => ({
+        a: { id: self.id, title: self.title, snippet: self.source_snippet },
+        b: { id: b.match_id, title: b.match_title, snippet: b.match_snippet },
+      }));
+      rerankPairsSent += pairs.length;
+      const verdicts = await rerankBorderlinePairsBatch(env, pairs);
+      for (let i = 0; i < borderlineQueue.length; i++) {
+        const candidate = borderlineQueue[i];
+        if (candidate === undefined) continue;
+        const sameEvent = verdicts[i] === true;
         log('info', 'digest.generation', {
           status: 'historical_dedup_rerank_decision',
           older_article_id: self.id,
-          newer_article_id: match.id,
-          cosine: adjustedScore,
+          newer_article_id: candidate.match_id,
+          cosine: candidate.cosine,
           same_event: sameEvent,
         });
         if (!sameEvent) continue;
+        if (removedIds.has(candidate.match_id)) continue;
+        const mergeStatements = mergeAsAltSource(
+          env.DB,
+          self.id,
+          candidate.match_id,
+        );
+        await env.DB.batch(mergeStatements);
+        removedIds.add(candidate.match_id);
+        merged += 1;
         rerankAccepts += 1;
       }
-
-      // Run each 6-statement merge as its own D1.batch so the route
-      // never approaches D1's per-batch statement cap regardless of
-      // the outer `batch` size or topK fan-out (worst case here was
-      // 500 outer rows × 5 matches × 6 stmts = 15k in one batch).
-      // Each merge is still atomic against itself; partial progress
-      // across the outer batch is exactly what we want — the cursor
-      // advances per outer row, so a transient mid-loop failure
-      // restarts cleanly from the resume point.
-      const mergeStatements = mergeAsAltSource(env.DB, self.id, match.id);
-      await env.DB.batch(mergeStatements);
-      removedIds.add(match.id);
-      merged += 1;
     }
   }
 
@@ -421,8 +498,10 @@ export async function runHistoricalDedupBatch(
     next_cursor_id: nextCursor?.id ?? null,
     remaining,
     rerank_floor: rerankFloor,
-    rerank_calls_this_batch: rerankCallsThisBatch,
+    rerank_pairs_sent: rerankPairsSent,
+    rerank_pairs_watermark_skipped: rerankPairsWatermarkSkipped,
     rerank_accepts_this_batch: rerankAccepts,
+    bypass_watermark: options.bypassWatermark === true,
   });
 
   return {

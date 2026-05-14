@@ -6,11 +6,18 @@ In-flight tasks and known gaps. This is NOT the spec — requirements live in `s
 
 ## Partial REQs with deferred scope
 
-### REQ-SET-002 AC 8 — `POST /api/tags/restore` server behaviour
+### REQ-SET-008 AC 4 — `POST /api/tags/restore` server behaviour
 Button + native form POST covered by `tests/settings/tag-curation.test.ts`.
 The server endpoint itself (writes `DEFAULT_HASHTAGS`, 303-redirects
 to `/digest`) has only manual verification. Add a unit test alongside
 `tests/settings/api.test.ts`.
+
+### Test-name migration after auth domain split
+Tests currently cite `REQ-AUTH-001 AC 8 / 9 / 10` for behavior now
+owned by REQ-AUTH-006 (Admin gating), REQ-AUTH-010 (Dev-bypass guard),
+and REQ-RATE-001 (rate-limit policy). Rename the relevant
+`describe`/`it` blocks so spec-reviewer's literal-match coverage rule
+attributes the tests to the new REQ IDs.
 
 ## Operational TODOs
 

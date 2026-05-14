@@ -1,5 +1,5 @@
 // Implements REQ-PIPE-002
-// Implements REQ-PIPE-008
+// Implements REQ-PIPE-003
 //
 // Single LLM-call entrypoint used by every Workers-AI site that expects
 // a JSON response (chunk consumer, finalize consumer, discovery).

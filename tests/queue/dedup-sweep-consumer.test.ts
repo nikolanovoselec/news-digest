@@ -105,6 +105,20 @@ function makeQueue() {
   return { queue, sends };
 }
 
+function makeKv() {
+  const store = new Map<string, string>();
+  return {
+    get: vi.fn().mockImplementation(async (key: string) => store.get(key) ?? null),
+    put: vi.fn().mockImplementation(async (key: string, value: string) => {
+      store.set(key, value);
+    }),
+    delete: vi.fn().mockImplementation(async (key: string) => {
+      store.delete(key);
+    }),
+    store,
+  };
+}
+
 function makeVectorize(failures: { queryThrows?: boolean } = {}) {
   return {
     queryById: vi.fn().mockImplementation(async () => {
@@ -128,11 +142,13 @@ describe('processOneDedupSweep — REQ-PIPE-003 AC 9', () => {
       remainingAfterBatch: 0,
     });
     const { queue, sends } = makeQueue();
+    const kv = makeKv();
     const env = {
       DB: db,
       VECTORIZE: makeVectorize(),
       AI: { run: vi.fn() },
       DEDUP_SWEEP: queue,
+      KV: kv,
     } as unknown as Env;
     await processOneDedupSweep(env, {
       run_id: '01TESTRUNID0000000000000AA',
@@ -146,6 +162,75 @@ describe('processOneDedupSweep — REQ-PIPE-003 AC 9', () => {
     expect(updateParams[1]).toBe('done');
     // No continuation message sent.
     expect(sends.length).toBe(0);
+    // AD48: terminal `done:true` flip writes the auto-sweep watermark
+    // so the next sweep can skip re-judging pairs that both predate it.
+    expect(kv.put).toHaveBeenCalledTimes(1);
+    expect(kv.put.mock.calls[0]?.[0]).toBe('dedup:auto_sweep_watermark');
+    const writtenSeconds = Number.parseInt(
+      kv.put.mock.calls[0]?.[1] as string,
+      10,
+    );
+    expect(Number.isFinite(writtenSeconds)).toBe(true);
+    expect(writtenSeconds).toBeGreaterThan(0);
+  });
+
+  it('AD48: non-terminal batch does NOT write the watermark', async () => {
+    const ARTICLE = {
+      id: '01ARTICLE000000000000000C3',
+      published_at: 1_700_000_000,
+      primary_source_url: 'https://example.com/c',
+    };
+    const { db } = makeDbWithRun({
+      status: 'running',
+      articles: [ARTICLE],
+      remainingAfterBatch: 50,
+    });
+    const { queue } = makeQueue();
+    const kv = makeKv();
+    const env = {
+      DB: db,
+      VECTORIZE: makeVectorize(),
+      AI: { run: vi.fn() },
+      DEDUP_SWEEP: queue,
+      KV: kv,
+    } as unknown as Env;
+    await processOneDedupSweep(env, {
+      run_id: '01TESTRUNID0000000000000AA',
+      cursor: null,
+      batch: 1,
+    });
+    // Sweep is still running → no watermark write.
+    expect(kv.put).not.toHaveBeenCalled();
+  });
+
+  it('AD48: bypassWatermark propagates through continuation messages', async () => {
+    const ARTICLE = {
+      id: '01ARTICLE000000000000000D4',
+      published_at: 1_700_000_000,
+      primary_source_url: 'https://example.com/d',
+    };
+    const { db } = makeDbWithRun({
+      status: 'running',
+      articles: [ARTICLE],
+      remainingAfterBatch: 50,
+    });
+    const { queue, sends } = makeQueue();
+    const env = {
+      DB: db,
+      VECTORIZE: makeVectorize(),
+      AI: { run: vi.fn() },
+      DEDUP_SWEEP: queue,
+      KV: makeKv(),
+    } as unknown as Env;
+    await processOneDedupSweep(env, {
+      run_id: '01TESTRUNID0000000000000AA',
+      cursor: null,
+      batch: 1,
+      bypassWatermark: true,
+    });
+    expect(sends.length).toBe(1);
+    const continuation = sends[0] as { bypassWatermark?: boolean };
+    expect(continuation.bypassWatermark).toBe(true);
   });
 
   it('re-enqueues continuation message when more articles remain', async () => {
@@ -165,6 +250,7 @@ describe('processOneDedupSweep — REQ-PIPE-003 AC 9', () => {
       VECTORIZE: makeVectorize(),
       AI: { run: vi.fn() },
       DEDUP_SWEEP: queue,
+      KV: makeKv(),
     } as unknown as Env;
     await processOneDedupSweep(env, {
       run_id: '01TESTRUNID0000000000000AA',
@@ -200,6 +286,7 @@ describe('processOneDedupSweep — REQ-PIPE-003 AC 9', () => {
       VECTORIZE: makeVectorize(),
       AI: { run: vi.fn() },
       DEDUP_SWEEP: queue,
+      KV: makeKv(),
     } as unknown as Env;
     await processOneDedupSweep(env, {
       run_id: '01TESTRUNID0000000000000AA',
@@ -218,6 +305,7 @@ describe('processOneDedupSweep — REQ-PIPE-003 AC 9', () => {
       VECTORIZE: makeVectorize(),
       AI: { run: vi.fn() },
       DEDUP_SWEEP: queue,
+      KV: makeKv(),
     } as unknown as Env;
     await processOneDedupSweep(env, {
       run_id: '01STALERUN00000000000000AA',
@@ -303,6 +391,7 @@ describe('processOneDedupSweep — REQ-PIPE-003 AC 9', () => {
       VECTORIZE: makeVectorize(),
       AI: { run: vi.fn() },
       DEDUP_SWEEP: queue,
+      KV: makeKv(),
     } as unknown as Env;
     await processOneDedupSweep(env, {
       run_id: '01TESTRUNID0000000000000AA',
@@ -368,6 +457,7 @@ describe('processOneDedupSweep — REQ-PIPE-003 AC 9', () => {
       VECTORIZE: makeVectorize(),
       AI: { run: vi.fn() },
       DEDUP_SWEEP: queue,
+      KV: makeKv(),
     } as unknown as Env;
     await expect(
       processOneDedupSweep(env, {

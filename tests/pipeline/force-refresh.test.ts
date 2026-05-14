@@ -260,7 +260,7 @@ describe('admin-auth gate (CF-001)', () => {
   });
 });
 
-describe('POST /api/admin/force-refresh', () => {
+describe('POST /api/admin/force-refresh (REQ-OPS-005)', () => {
   it('rejects POST with missing Origin (REQ-AUTH-003 CSRF defence)', async () => {
     const calls: DbFixture['calls'] = [];
     const db = makeDb({ calls });
@@ -346,7 +346,7 @@ describe('POST /api/admin/force-refresh', () => {
   });
 });
 
-describe('GET /api/admin/force-refresh', () => {
+describe('GET /api/admin/force-refresh (REQ-OPS-005)', () => {
   it('GET 200 JSON happy path: inserts scrape_runs, enqueues, returns { ok, scrape_run_id, reused: false }', async () => {
     const fixture: DbFixture = { calls: [] };
     const db = makeDb(fixture);

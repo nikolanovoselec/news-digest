@@ -20,7 +20,7 @@ import digestCardSource from '../../src/components/DigestCard.astro?raw';
 // so existing `?raw` substring matches keep finding their targets.
 const digestPageSource = `${digestPageAstro}\n${digestBundled}`;
 
-describe('digest.astro — REQ-READ-001 grid', () => {
+describe('digest.astro - REQ-READ-001 grid / REQ-READ-005 (empty state and last-updated header)', () => {
   // CF-033: REQ-ID presence theater assertions removed. The
   // scripts/check-req-backlinks.mjs CI gate enforces annotation
   // presence; duplicating that check here is text-matching theater.
@@ -35,7 +35,7 @@ describe('digest.astro — REQ-READ-001 grid', () => {
     );
   });
 
-  it('REQ-READ-001: header contains "Last updated at" and "Next update in"', () => {
+  it('REQ-READ-001 / REQ-READ-005 AC 3: header contains "Last updated at" and "Next update in" (countdown stays above empty state)', () => {
     expect(digestPageSource).toContain('Last updated at');
     expect(digestPageSource).toContain('Next update in');
   });

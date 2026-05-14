@@ -197,7 +197,7 @@ function makeEnv(
   return base as unknown as Env;
 }
 
-describe('processOneFinalize — REQ-PIPE-003', () => {
+describe('processOneFinalize — REQ-PIPE-003 / REQ-PIPE-012 (policy variants) / REQ-PIPE-013 (cross-tick automation)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -685,9 +685,12 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
       } as unknown as VectorizeMatch,
     ]);
     const mockVec = makeMockVectorize(matches);
+    // AD48: batched rerank — single pair → verdicts array of length 1.
     const aiRun = vi
       .fn()
-      .mockResolvedValue({ response: '{"same_event":true}' });
+      .mockResolvedValue({
+        response: '{"verdicts":[{"i":0,"same_event":true}]}',
+      });
     const env = makeEnv(mockDb.db, mockVec.binding, {
       aiBinding: { run: aiRun },
     });
@@ -754,16 +757,20 @@ describe('processOneFinalize — REQ-PIPE-003', () => {
       } as unknown as VectorizeMatch,
     ]);
     const mockVec = makeMockVectorize(matches);
-    const aiRun = vi
-      .fn()
-      .mockResolvedValueOnce({ response: '{"same_event":false}' })
-      .mockResolvedValueOnce({ response: '{"same_event":true}' });
+    // AD48: batched rerank — both candidates ride in ONE LLM call. The
+    // verdict array carries `i:0` (top, rejected) and `i:1` (next,
+    // accepted); the consumer walks verdicts in cosine order and stops
+    // on the first `same_event:true`.
+    const aiRun = vi.fn().mockResolvedValue({
+      response:
+        '{"verdicts":[{"i":0,"same_event":false},{"i":1,"same_event":true}]}',
+    });
     const env = makeEnv(mockDb.db, mockVec.binding, {
       aiBinding: { run: aiRun },
     });
 
     await processOneFinalize(env, { scrape_run_id: 'r1' });
-    expect(aiRun).toHaveBeenCalledTimes(2);
+    expect(aiRun).toHaveBeenCalledTimes(1);
     expect(mockVec.deleteMock).toHaveBeenCalledWith([newId]);
   });
 

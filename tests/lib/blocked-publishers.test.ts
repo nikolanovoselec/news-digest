@@ -22,7 +22,7 @@ const mkHeadline = (overrides: Partial<Headline>): Headline => ({
   ...overrides,
 });
 
-describe('blocked-publishers — direct URL host match', () => {
+describe('blocked-publishers - REQ-PIPE-011 direct URL host match', () => {
   it('blocks tradingview.com', () => {
     expect(
       isBlockedPublisher(

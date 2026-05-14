@@ -1,6 +1,6 @@
 // Implements REQ-PIPE-001
 // Implements REQ-PIPE-005
-// Implements REQ-PIPE-008
+// Implements REQ-PIPE-003
 // Implements REQ-MAIL-001
 // Implements REQ-DISC-001
 //
@@ -27,7 +27,7 @@
 // Queue dispatch (wrangler.toml: four consumers):
 //   - `scrape-coordinator` → handleCoordinatorBatch (REQ-PIPE-001).
 //   - `scrape-chunks`      → handleChunkBatch (REQ-PIPE-002).
-//   - `scrape-finalize`    → handleFinalizeBatch (REQ-PIPE-008).
+//   - `scrape-finalize`    → handleFinalizeBatch (REQ-PIPE-003).
 //   - `dedup-sweep`        → handleDedupSweepBatch (REQ-PIPE-003 AC 9).
 //   - `pipeline-jobs`      → handlePipelineJobsBatch (REQ-OPS-008).
 //

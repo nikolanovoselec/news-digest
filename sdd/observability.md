@@ -16,10 +16,14 @@ Structured JSON logging as the single operational surface — no external observ
 3. Each event carries a fixed set of fields documented in the observability implementation notes; new events are added by extending this enum.
 4. Raw exception messages and external API response bodies are logged at `level: 'error'` but never stored in D1 and never returned to clients.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P1
+
 **Dependencies:** None
+
 **Verification:** Manual check
+
 **Status:** Implemented
 
 ---
@@ -36,32 +40,65 @@ Structured JSON logging as the single operational surface — no external observ
 3. The failure page on `/digest` displays the `error_code` in a muted monospace footer, never prose from the original error.
 4. OAuth error codes follow a parallel allowlist (`access_denied`, `no_verified_email`, `invalid_state`, `oauth_error`) and any value not on the list is normalized to `oauth_error` before being put in a URL.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
-**Dependencies:** REQ-OPS-001
+
+**Dependencies:** [REQ-OPS-001](#req-ops-001-structured-json-logging)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
 
-### REQ-OPS-003: Security headers on every response
+### REQ-OPS-003: Content-Security-Policy on every response
 
-**Intent:** Baseline browser protections apply uniformly, locked down to exactly what this app needs.
+**Intent:** The browser-enforced same-origin policy is tightened beyond the default so injected references, embedded frames, or third-party form submissions cannot escape the app's origin even if a future bug introduces user-controlled markup.
 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. Every authenticated response carries a Content-Security-Policy header that restricts script execution to same-origin only and blocks inline event handlers. External image origins are limited to those the app explicitly loads (Gravatar avatars). The page cannot be embedded in an iframe and forms cannot submit to third-party origins. See `documentation/security.md` for the exact CSP directive value.
-2. Every response includes `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`.
-3. Every response includes `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`.
-4. Every response includes `Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), clipboard-read=()`.
-5. Every response includes `X-Frame-Options: DENY` as defense-in-depth alongside `frame-ancestors 'none'`.
-6. No inline script tags exist anywhere in the app; the CSP `script-src` is `'self'` only.
+1. Every authenticated response carries a Content-Security-Policy header that restricts script execution to same-origin and blocks inline event handlers.
+2. The Content-Security-Policy limits external image origins to those the app explicitly loads (Gravatar avatars) so an injected reference to an arbitrary third-party host cannot fetch images.
+3. The Content-Security-Policy prevents the page from being embedded in an iframe and prevents forms from submitting to third-party origins.
+4. Every response includes `X-Frame-Options: DENY` as defense-in-depth alongside `frame-ancestors 'none'`.
+5. No inline script tags exist anywhere in the app; the CSP `script-src` is `'self'` only.
 
-**Constraints:** CON-SEC-001
+**Notes:** Exact CSP directive value is documented at [`documentation/security.md`](../documentation/security.md).
+
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
+
 **Dependencies:** None
+
 **Verification:** Integration test
+
+**Status:** Implemented
+
+---
+
+### REQ-OPS-011: Transport and feature-policy headers on every response
+
+**Intent:** Browser-enforced transport security and feature-permission policies travel on every response so the app's surface area for downgrade attacks, MIME-confusion attacks, referrer leakage, and unsolicited platform-feature access stays uniformly tight across pages and API responses.
+
+**Applies To:** User
+
+**Acceptance Criteria:**
+1. Every response includes `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`.
+2. Every response includes `X-Content-Type-Options: nosniff`.
+3. Every response includes `Referrer-Policy: strict-origin-when-cross-origin`.
+4. Every response includes `Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), clipboard-read=()`.
+
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
+**Priority:** P0
+
+**Dependencies:** None
+
+**Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -76,13 +113,17 @@ Structured JSON logging as the single operational surface — no external observ
 1. The endpoint accepts both POST and GET. Both methods do the same work, so callers can pick whichever fits their context (form submissions, JSON fetches, and direct URL visits all reach the same coordinator dispatch).
 2. Triggering the endpoint starts a fresh scrape run with status running and sends one coordinator message — the same work the every-four-hours cron does.
 3. If a run started by an earlier cron tick or a previous manual trigger is still running and started within the last two minutes, the endpoint reuses that run rather than starting a new one. This protects against accidental double-clicks and tab-restore replays.
-4. The response is content-negotiated. Browsers and direct URL visits get a `303 See Other` redirect to `/settings?force_refresh=ok&run_id=...`. Operator scripts that send `Accept: application/json` get `200 OK` with `{ ok: true, scrape_run_id, reused }`.
-5. The endpoint is gated by all three admin layers per REQ-AUTH-001 AC 8: Cloudflare Access at the zone level (optionally audience-pinned via `CF_ACCESS_AUD`), a valid worker session, and the session email matching the configured operator email. Failure at any layer returns the layer's native deny response (Access challenge, 401 unauthorized, or 403 forbidden).
+4. The response is content-negotiated so browser callers land back on the settings surface with the run id visible and scripted callers can read the run id and reuse flag programmatically.
+5. The endpoint is gated by all three admin layers per [REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider) AC 8: Cloudflare Access at the zone level (optionally audience-pinned), a valid worker session, and the session email matching the configured operator email; failure at any layer returns that layer's native deny response.
 
-**Constraints:** CON-AUTH-001, CON-SEC-001
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P2
-**Dependencies:** REQ-PIPE-001, REQ-AUTH-001
+
+**Dependencies:** [REQ-PIPE-001](generation.md#req-pipe-001-global-scrape-and-summarise-pipeline-on-a-fixed-cadence), [REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -101,10 +142,14 @@ Structured JSON logging as the single operational surface — no external observ
 5. Error pages served for not-found and server-error conditions are flagged no-index so crawler spaces stay clean.
 6. Structured-data (JSON-LD) blocks emitted into the page head are serialized through a defensive helper that rewrites every `<`, `>`, and `&` byte to its `\uNNNN` JSON form, defeating every HTML state-transition vector that could escape the script block (`</script>`, `<!--`, `]]>`, `<script` re-entry). Today every JSON-LD value is server-controlled; the defence is preventive insurance for a future refactor that interpolates a user-controlled value (e.g., article title) into the graph.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P2
+
 **Dependencies:** None
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -117,18 +162,24 @@ Structured JSON logging as the single operational surface — no external observ
 
 **Acceptance Criteria:**
 1. The integration environment is reachable at a separate, stable hostname distinct from production. Production and integration share no Cloudflare resources — D1, KV, queues are each provisioned twice with the integration copies suffixed `-integration`.
-2. Integration deploys are triggered manually only. The operator goes to GitHub Actions, picks the deploy-integration workflow, and clicks Run. There is no auto-deploy on push.
+2. Integration deploys fire only on operator-initiated manual dispatch from GitHub Actions; no push to any branch auto-deploys to integration.
 3. The manual trigger always deploys the current `develop` branch HEAD, regardless of which branch the dispatch was fired from in the GitHub UI.
 4. The integration worker has no cron triggers — the scrape pipeline runs only when the operator hits the admin force-refresh endpoint. Production crons (every-four-hours scrape, daily cleanup, every-five-minutes email) do not fire on integration.
 5. Schema migrations apply to a fresh D1 database on first deploy. No production data is copied across; integration starts empty and accumulates only what manual force-refresh runs produce.
 6. Worker secrets are sourced from the same repo-level GitHub Actions secrets the production deploy uses, with GitHub-Environment-scoped overrides taking precedence when defined. The environment variable that anchors the public hostname (APP_URL) lives in the deployment manifest, not in secrets, so swapping environments doesn't require swapping secrets.
 7. Promotion path is one-way: develop → integration smoke (manual) → develop merged to main → production auto-deploy. There is no path that pushes integration changes back to develop.
 
-**Constraints:** CON-SEC-001
+**Constraints:** [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P2
-**Dependencies:** REQ-OPS-005
+
+**Dependencies:** [REQ-OPS-005](#req-ops-005-admin-force-refresh-endpoint)
+
 **Verification:** Manual check
+
 **Status:** Implemented
+
+**Notes:** Verification is the manual promotion checklist (develop -> integration smoke -> main). The deployment topology is exercised by [`.github/workflows/deploy-integration.yml`](../.github/workflows/deploy-integration.yml); the workflow's header comment carries the REQ-OPS-006 backlink for traceability.
 
 ---
 
@@ -147,30 +198,87 @@ Structured JSON logging as the single operational surface — no external observ
 6. The sitemap origin follows the request hostname, not a hardcoded one — a fork or staging deploy emits its own URLs, never the production origin.
 
 **Constraints:** —
+
 **Priority:** P3
+
 **Dependencies:** —
+
 **Verification:** Unit test
+
 **Status:** Implemented
 
 ---
 
-### REQ-OPS-008: Unified admin pipeline run from the settings surface
+### REQ-OPS-008: Unified admin pipeline run trigger from the settings surface
 
-**Intent:** An operator can run the complete cron-equivalent pipeline (scrape, embed any leftovers, then collapse cross-article duplicates) or just the scrape step in isolation from the settings surface, instead of clicking separate admin actions in sequence and having to remember the right order. An optional pre-phase wipes and re-embeds the entire surviving article pool so a change to the embedding model or input recipe can be rolled out across the whole corpus on demand. Live progress is visible while the run is in flight, and progress survives navigation away from the surface so the operator can return mid-run and see where the pipeline currently is rather than a blank surface.
+**Intent:** An operator can run the complete cron-equivalent pipeline (scrape, embed any leftovers, then collapse cross-article duplicates) or just the scrape step in isolation from the settings surface, instead of clicking separate admin actions in sequence and having to remember the right order. The wipe-and-re-embed pre-phase is governed by [REQ-OPS-010](#req-ops-010-wipe-and-re-embed-pre-phase-toggle).
 
 **Applies To:** Admin
 
 **Acceptance Criteria:**
-1. The settings surface exposes two adjacent admin actions inside an Administration section: a primary action labelled to the effect of "Full pipeline run" that, when activated, sequentially executes an optional wipe-and-re-embed of the entire surviving article pool, a fresh scrape tick equivalent to the every-four-hours cron, a backfill of any embeddings the scrape did not land, and an oldest-first cross-article same-story sweep across the surviving pool; and a sibling action labelled to the effect of "Refresh feeds" that runs only the scrape tick (the same work a single 4-hourly cron tick does) and reports completion when the scrape itself finishes, leaving the queue-driven embed and dedup work to proceed in the background. Each phase of the full run only begins after the previous phase reports done.
-2. A toggle adjacent to the actions lets the operator opt into the wipe-and-re-embed pre-phase for the full run. The toggle has no effect on the refresh-feeds action. With the toggle off, the full run skips the pre-phase and starts at the scrape tick. With the toggle on, the full run first wipes and re-embeds every surviving article, then proceeds to the scrape tick.
-3. While either run is in flight both actions are disabled and a status line reports the current phase in user-readable prose. The status line updates as each phase advances; both actions re-enable when the run finishes or errors.
-4. The full pipeline run continues to completion irrespective of the operator's browser tab state. Once the operator activates the run, every subsequent phase advance is driven server-side; closing the tab, navigating away, or losing network mid-run does not interrupt the pipeline. When the operator returns to the settings surface, live progress is restored from the run's audit state.
-5. If the operator navigates away from the surface while a run is in flight and returns within the last-thirty-minutes freshness window, the surface restores the most recent phase line. When the underlying run has completed in the meantime, the restored status is annotated to indicate the run finished while the operator was away. State older than the freshness window is forgotten and the surface paints fresh on return.
-6. When a run reaches a terminal status (completed, denied by the auth gate, or kick-time error), the surface paints the terminal message and keeps it visible across reloads within the freshness window so the operator can see the outcome on return. The persisted terminal state is replaced by the next kick or aged out by the freshness window in AC 5; it is not auto-cleared the moment it is rendered.
-7. Every phase is gated by the same admin authentication used elsewhere in the admin surface (REQ-AUTH-001). An unauthenticated tab where the admin gate has lapsed surfaces the auth failure as a user-readable failed-status line rather than silently no-op'ing.
+1. The settings surface exposes two adjacent admin actions inside an Administration section, labelled to the effect of "Full pipeline run" and "Refresh feeds".
+2. The "Full pipeline run" action sequentially executes the optional wipe-and-re-embed pre-phase, a fresh scrape tick equivalent to the every-four-hours cron, a backfill of any embeddings the scrape did not land, and an oldest-first cross-article same-story sweep across the surviving pool.
+3. The "Refresh feeds" action runs only the scrape tick (the same work a single 4-hourly cron tick does) and reports completion when the scrape itself finishes, leaving the queue-driven embed and dedup work to proceed in the background.
+4. Each phase of the full pipeline run only begins after the previous phase reports done; no phase fires speculatively or in parallel with its predecessor.
+5. Every phase is gated by the same admin authentication used elsewhere in the admin surface ([REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)). An unauthenticated tab where the admin gate has lapsed surfaces the auth failure as a user-readable failed-status line rather than silently no-op'ing.
 
-**Constraints:** CON-AUTH-001, CON-SEC-001
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P2
-**Dependencies:** REQ-OPS-005, REQ-PIPE-003, REQ-AUTH-001
+
+**Dependencies:** [REQ-OPS-005](#req-ops-005-admin-force-refresh-endpoint), [REQ-PIPE-003](generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider), [REQ-OPS-010](#req-ops-010-wipe-and-re-embed-pre-phase-toggle)
+
 **Verification:** Integration test
+
+**Status:** Implemented
+
+---
+
+### REQ-OPS-010: Wipe-and-re-embed pre-phase toggle
+
+**Intent:** A toggle adjacent to the admin pipeline actions lets the operator opt into a corpus-wide wipe-and-re-embed pre-phase before the full pipeline run, so a change to the embedding model or input recipe can be rolled out across the whole surviving article pool on demand.
+
+**Applies To:** Admin
+
+**Acceptance Criteria:**
+1. A toggle adjacent to the admin pipeline actions lets the operator opt into the wipe-and-re-embed pre-phase for the full pipeline run.
+2. The toggle has no effect on the "Refresh feeds" action.
+3. With the toggle off, the full pipeline run skips the pre-phase and starts at the scrape tick.
+4. With the toggle on, the full pipeline run first wipes and re-embeds every surviving article, then proceeds to the scrape tick.
+
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt)
+
+**Priority:** P2
+
+**Dependencies:** [REQ-OPS-008](#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface)
+
+**Verification:** Integration test
+
+**Status:** Implemented
+
+---
+
+### REQ-OPS-009: Admin pipeline run progress surface
+
+**Intent:** Live progress of an in-flight admin pipeline run is visible while the run is in flight, survives navigation away from the surface so the operator can return mid-run, and persists terminal status across a freshness window so the outcome is still visible on the next visit rather than disappearing the moment it is rendered.
+
+**Applies To:** Admin
+
+**Acceptance Criteria:**
+1. While either run kicked from [REQ-OPS-008](#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface) is in flight, both admin actions are disabled and a status line reports the current phase in user-readable prose; the status line updates as each phase advances, and both actions re-enable when the run finishes or errors.
+2. The full pipeline run continues to completion irrespective of the operator's browser tab state, because every phase advance is driven server-side after activation; closing the tab, navigating away, or losing network mid-run does not interrupt the pipeline.
+3. When the operator returns to the settings surface during an in-flight run, live progress is restored from the run's audit state.
+4. If the operator navigates away while a run is in flight and returns within the last-thirty-minutes freshness window, the surface restores the most recent phase line.
+5. When the underlying run completed while the operator was away, the restored status is annotated to indicate the run finished without their presence.
+6. State older than the freshness window is forgotten and the surface paints fresh on return.
+7. When a run reaches a terminal status (completed, denied by the auth gate, or kick-time error), the surface paints the terminal message and keeps it visible across reloads within the freshness window — replaced by the next kick or aged out by the freshness window in AC 6, never auto-cleared the moment it is rendered.
+
+**Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
+**Priority:** P2
+
+**Dependencies:** [REQ-OPS-008](#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface)
+
+**Verification:** Integration test
+
 **Status:** Implemented

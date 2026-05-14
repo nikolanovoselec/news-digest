@@ -180,7 +180,7 @@ async function historyRequest(token: string | null): Promise<Request> {
   });
 }
 
-describe('GET /api/history — REQ-HIST-001', () => {
+describe('GET /api/history - REQ-HIST-001 / REQ-HIST-003 (read-history queries)', () => {
   it('REQ-HIST-001: returns 401 when no session cookie is present', async () => {
     const { db } = makeDb(null, [], []);
     const req = await historyRequest(null);

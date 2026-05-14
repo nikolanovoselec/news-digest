@@ -1,6 +1,6 @@
 // Implements REQ-PIPE-002
 // Implements REQ-PIPE-003 (per-article embedding + Vectorize upsert)
-// Implements REQ-PIPE-008 (last-chunk SCRAPE_FINALIZE enqueue)
+// Implements REQ-PIPE-003 (last-chunk SCRAPE_FINALIZE enqueue)
 //
 // Chunk consumer for the `scrape-chunks` Cloudflare Queue. Each message
 // is one chunk of up to 100 canonical-deduped candidates produced by
@@ -832,7 +832,7 @@ async function recordChunkCompletionAndCheckFinalize(
 
   if (completedCount >= body.total_chunks) {
     await finishRun(env.DB, body.scrape_run_id, 'ready');
-    // REQ-PIPE-008: kick off cross-chunk semantic dedup. Articles are already
+    // REQ-PIPE-003: kick off cross-chunk semantic dedup. Articles are already
     // visible (run is ready) — finalize is a background cleanup that may
     // briefly leave duplicates in the feed.
     //

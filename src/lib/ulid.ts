@@ -19,6 +19,25 @@ export function generateUlid(): string {
 }
 
 /**
+ * Decode the 48-bit timestamp from the first 10 characters of a ULID.
+ * Returns milliseconds since the Unix epoch. Returns 0 if the input is
+ * shorter than 10 chars or contains a character outside the Crockford
+ * alphabet — callers treat 0 as "unknown/skip" (used by the dedup
+ * watermark filter to fall back to "always rerank" on malformed input).
+ */
+export function ulidTime(id: string): number {
+  if (typeof id !== 'string' || id.length < TIME_LEN) return 0;
+  let ms = 0;
+  for (let i = 0; i < TIME_LEN; i++) {
+    const ch = id.charAt(i);
+    const idx = CROCKFORD_ALPHABET.indexOf(ch);
+    if (idx < 0) return 0;
+    ms = ms * 32 + idx;
+  }
+  return ms;
+}
+
+/**
  * Encode a millisecond timestamp as 10 Crockford base32 characters (48 bits).
  * Most-significant character first so lexicographic sort matches time order.
  */

@@ -41,7 +41,7 @@ listed on [graymatter.ch](https://graymatter.ch).
 - Rate-limit bypass paths
   ([REQ-AUTH-001 AC 9](sdd/authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider))
 - LLM prompt injection that produces fabricated source attributions
-  ([REQ-PIPE-002](sdd/generation.md#req-pipe-002-chunked-llm-processing-with-json-output-contract))
+  ([REQ-PIPE-002](sdd/generation.md#req-pipe-002-chunked-llm-output-content-contract), [REQ-PIPE-015](sdd/generation.md#req-pipe-015-chunk-processing-robustness))
 - Anything that bypasses the per-user data scope
 
 ## What's out of scope

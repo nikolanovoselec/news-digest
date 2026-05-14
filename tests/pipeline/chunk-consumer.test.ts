@@ -246,7 +246,7 @@ function makeChunk(
   };
 }
 
-describe('scrape-chunk-consumer - REQ-PIPE-002', () => {
+describe('scrape-chunk-consumer - REQ-PIPE-002 / REQ-PIPE-015 (chunk robustness)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -543,7 +543,7 @@ describe('scrape-chunk-consumer - REQ-PIPE-002', () => {
     expect(finish).toBeUndefined();
   });
 
-  it('REQ-PIPE-008: last chunk enqueues exactly one SCRAPE_FINALIZE message after finishRun', async () => {
+  it('REQ-PIPE-003: last chunk enqueues exactly one SCRAPE_FINALIZE message after finishRun', async () => {
     const aiResponse = {
       response: JSON.stringify({ articles: [{ title: 'Article A - long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] }], dedup_groups: [] }),
       usage: { input_tokens: 10, output_tokens: 10 },
@@ -558,7 +558,7 @@ describe('scrape-chunk-consumer - REQ-PIPE-002', () => {
     expect(sendMock).toHaveBeenCalledWith({ scrape_run_id: 'test-run' });
   });
 
-  it('REQ-PIPE-008: non-last chunks do NOT enqueue SCRAPE_FINALIZE', async () => {
+  it('REQ-PIPE-003: non-last chunks do NOT enqueue SCRAPE_FINALIZE', async () => {
     const aiResponse = {
       response: JSON.stringify({ articles: [{ title: 'Article A - long enough headline copy', details: LONG_BODY, tags: ['cloudflare'] }], dedup_groups: [] }),
       usage: { input_tokens: 10, output_tokens: 10 },
@@ -572,7 +572,7 @@ describe('scrape-chunk-consumer - REQ-PIPE-002', () => {
     expect(sendMock).not.toHaveBeenCalled();
   });
 
-  it('REQ-PIPE-008: redelivered last-chunk message does NOT re-enqueue SCRAPE_FINALIZE (LLM cost gate)', async () => {
+  it('REQ-PIPE-003: redelivered last-chunk message does NOT re-enqueue SCRAPE_FINALIZE (LLM cost gate)', async () => {
     // CF-002 follow-up: INSERT OR IGNORE makes the per-chunk write
     // idempotent under retries, but the COUNT(*) gate still fires on
     // redelivery (count >= total_chunks remains true). The atomic
@@ -620,7 +620,7 @@ describe('scrape-chunk-consumer - REQ-PIPE-002', () => {
     expect(statsCalls).toHaveLength(1);
   });
 
-  it('REQ-PIPE-008: send-failure rollback - clears finalize_enqueued so the queue retry can re-attempt', async () => {
+  it('REQ-PIPE-003: send-failure rollback - clears finalize_enqueued so the queue retry can re-attempt', async () => {
     // CF-002 follow-up: the atomic UPDATE-then-send sequence has a
     // failure mode that the original KV gate didn't have - if send()
     // throws after the lock has been written, future redeliveries
@@ -655,12 +655,12 @@ describe('scrape-chunk-consumer - REQ-PIPE-002', () => {
     expect(sendMock).toHaveBeenCalledTimes(2);
   });
 
-  it('REQ-PIPE-008: rollback-failure path - emits finalize_lock_rollback_failed and surfaces sendErr', async () => {
+  it('REQ-PIPE-003: rollback-failure path - emits finalize_lock_rollback_failed and surfaces sendErr', async () => {
     // CF-002 follow-up: when the rollback UPDATE itself throws (a
     // second transient D1 outage during the catch handler), the
     // consumer must still surface the original sendErr to the queue
     // retry path and emit a structured operator-visible log line so
-    // the stranded lock is observable. Pins REQ-PIPE-008 AC 9 (the
+    // the stranded lock is observable. Pins REQ-PIPE-003 AC 9 (the
     // "lock-clearing step itself fails" sub-case).
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     try {
@@ -1061,10 +1061,10 @@ describe('scrape-chunk-consumer - REQ-PIPE-002', () => {
     expect(articleInserts).toHaveLength(0);
   });
 
-  // CF-042 - REQ-PIPE-008 AC9b: two concurrent recordChunkCompletion
+  // CF-042 - REQ-PIPE-003 AC9b: two concurrent recordChunkCompletion
   // calls for the same (scrape_run_id, chunk_index) - exactly one returns
   // true, one returns false.
-  it('REQ-PIPE-008 AC9b (CF-042): concurrent recordChunkCompletion: one wins, one loses', async () => {
+  it('REQ-PIPE-003 AC9b (CF-042): concurrent recordChunkCompletion: one wins, one loses', async () => {
     // Import the repository helper directly - this test targets the
     // atomicity contract of INSERT OR IGNORE at the helper level, not
     // the chunk consumer's higher-level logic.
@@ -1152,7 +1152,7 @@ describe('scrape-chunk-consumer - REQ-PIPE-002', () => {
   // rescue path inspects scrape_chunk_completions to decide between
   // 'ready' (≥1 sibling completed) and 'failed' (none completed) on
   // the final retry, then enqueues finalize for the partial-success case.
-  it('REQ-PIPE-002 / REQ-PIPE-008 partial-success rescue: terminal failure with completed > 0 marks run ready and enqueues finalize', async () => {
+  it('REQ-PIPE-002 / REQ-PIPE-003 partial-success rescue: terminal failure with completed > 0 marks run ready and enqueues finalize', async () => {
     const { db, records } = makeDb({ initialCompletedChunks: 2 });
     const { kv } = makeKv();
     // AI throws on every attempt - the rescue path is the contract here,
@@ -1200,7 +1200,7 @@ describe('scrape-chunk-consumer - REQ-PIPE-002', () => {
     expect(message.retry).toHaveBeenCalledTimes(1);
   });
 
-  it('REQ-PIPE-002 / REQ-PIPE-008 partial-success rescue: terminal failure with zero completions marks run failed and does NOT enqueue finalize', async () => {
+  it('REQ-PIPE-002 / REQ-PIPE-003 partial-success rescue: terminal failure with zero completions marks run failed and does NOT enqueue finalize', async () => {
     const { db, records } = makeDb({ initialCompletedChunks: 0 });
     const { kv } = makeKv();
     const env = makeEnv(db, kv, {});

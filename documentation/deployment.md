@@ -1,10 +1,24 @@
 # Deployment
 
-<!-- doc-allow-large: AD46 deployment-doc colocation -->
+<!-- doc-allow-large: AD46a deployment-doc colocation -->
+<!-- doc-allow-mixed-shape: AD46d deployment hybrid runbook-and-registry rendering -->
 
 **Audience:** Developers, Operators
 
 Local development setup and production deployment steps.
+
+## Contents
+
+- [Prerequisites](#prerequisites)
+- [Local Development](#local-development)
+- [Tests](#tests)
+- [Production Deployment](#production-deployment)
+- [Integration deployment](#integration-deployment)
+- [Cloudflare Resources](#cloudflare-resources)
+- [Dependency Automation](#dependency-automation)
+- [Admin-only routes (Cloudflare Access gating)](#admin-only-routes-cloudflare-access-gating)
+- [Resend domain verification](#resend-domain-verification)
+- [Related Documentation](#related-documentation)
 
 ---
 
@@ -18,11 +32,15 @@ Local development setup and production deployment steps.
 
 ## Local Development
 
+**When:** Initial setup or after pulling new migrations.
+**Command:**
 ```bash
 npm install
 npx wrangler d1 migrations apply DB --local
 npm run dev
 ```
+**Verifies:** Dev server reachable at `http://localhost:4321`.
+**Rollback:** Stop the dev server (`Ctrl+C`). No production state is affected.
 
 The dev server runs at `http://localhost:4321`.
 
@@ -44,15 +62,26 @@ Import `env` and `applyD1Migrations` from `tests/fixtures/cloudflare-test.ts` (n
 
 ## Production Deployment
 
+**When:** Automatic on merge to `main` (gated on PR Checks success). Manual re-run via Actions → Deploy → Run workflow.
+**Command:**
 ```bash
 npx wrangler d1 migrations apply DB --remote
 npx wrangler deploy
 ```
+**Verifies:** Smoke test `GET /` against `APP_URL` returns `200` or `303` (step 6 of the deploy job).
+**Rollback:** Cloudflare Workers supports instant rollback via the dashboard or CLI. To revert to the previous Worker version:
+```bash
+# List recent deployments and find the previous version ID
+npx wrangler deployments list
+# Roll back to a specific version
+npx wrangler rollback <deployment-id>
+```
+After rollback, verify `GET $APP_URL` returns `200`/`303`. D1 migrations are forward-only — if the bad deploy included a schema migration, coordinate the rollback with a matching reverse migration or restore from a D1 backup before reverting the Worker.
 
 CI/CD: `.github/workflows/deploy.yml` triggers on a `workflow_run` event — fires only when "PR Checks" on `main` completes with `success`. `workflow_dispatch` is retained for manual re-runs.
 
 The deploy job:
-1. Applies D1 migrations (drift-tolerant). "Duplicate column" / "already exists" errors are handled by stamping the migration into `d1_migrations` and retrying up to 5 attempts. Real SQL errors surface immediately.
+1. Applies D1 migrations (drift-tolerant). "Duplicate column" / "already exists" errors are handled by stamping the migration into `d1_migrations` and retrying up to 5 attempts. Real SQL errors surface immediately. Drift tolerance covers the case where an operator ran `wrangler d1 migrations apply --remote` out-of-band (e.g. during incident response); without it, the next CI deploy would block on a migration the remote already applied.
 2. Runs the same two-step security audit as PR Checks (advisory HIGH+, blocking CRITICAL) as a defence-in-depth gate — catches CVEs introduced between the merge and the deploy (transient transitive bumps, Dependabot lockfile regenerations, etc.).
 3. Pushes Worker secrets via `wrangler secret put` (file-redirect form). Conditional secrets (`ADMIN_EMAIL`, `CF_ACCESS_AUD`, `DEV_BYPASS_USER_ID`) are pushed only when the corresponding GitHub Actions secret is non-empty.
 4. Deploys the Worker.
@@ -78,7 +107,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 
 **Required secret:** `DEV_BYPASS_TOKEN` (must match the Worker secret on the target deployment).
 
-**Sandbox:** Mutations are scoped to the synthetic `__e2e__` user. Implements [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view), [REQ-HIST-001](../sdd/history.md#req-hist-001-day-grouped-article-history).
+**Sandbox:** Mutations are scoped to the synthetic `__e2e__` user. Implements [REQ-READ-002](../sdd/reading.md#req-read-002-article-detail-view-rendering), [REQ-HIST-001](../sdd/history.md#req-hist-001-day-grouped-article-history).
 
 > **Fork-friendly:** set `APP_URL` to any hostname whose apex is a zone in the same Cloudflare account. The deploy binds it automatically.
 
@@ -91,6 +120,11 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 | Production | `main` | `secrets.APP_URL` (repo-level) | Auto on merge to main, gated on PR Checks success | ON |
 
 ## Integration deployment
+
+**When:** Manually triggered via Actions → "Deploy Integration" → Run workflow. Triggered from `develop` branch only.
+**Command:** Actions tab → `Deploy Integration` → Run workflow. No CLI command needed.
+**Verifies:** Open `APP_URL` (integration hostname) in a browser. CI smoke step is absent (GHA runner IPs return `403` from Cloudflare bot management); `wrangler deploy` exit code is the success signal.
+**Rollback:** Re-trigger the workflow from the previous `develop` commit. Integration has no production traffic; redeploying is safe.
 
 **Purpose:** Smoke-test risky changes (major dependency bumps, schema migrations, CSP tightening, animation rewrites) on the live Cloudflare edge before they reach production. Implements [REQ-OPS-006](../sdd/observability.md#req-ops-006-integration-deployment-target). Architectural decision: [AD12](decisions/README.md#ad12-integration-env-separate-cloudflare-resources-manual-trigger-from-develop-crons-disabled).
 
@@ -125,7 +159,7 @@ Manually-triggered browser-side coverage that complements the curl-driven `e2e-t
 
 **Triggering a scrape on integration** (since crons are off):
 
-Use the **Full pipeline run** button on `/settings` (Administration section) — the button navigates the browser to `/api/admin/pipeline-run?mode=full` via `window.location.assign()` (top-level navigation is required because CF Access protects `/api/admin/*` and a `fetch()` in CORS mode cannot follow the cross-origin SSO redirect; see [AD38](decisions/README.md#ad38-cf-access-protected-admin-endpoints-must-be-invoked-via-top-level-navigation-not-fetch)), the endpoint enqueues a `pipeline-jobs` message and `303`s back to `/settings?pipeline=enqueued&pipeline_run_id=...`; the queue consumer then walks the seven phases server-side without depending on the operator's tab ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface), [AD37](decisions/README.md#ad37-full-pipeline-run-is-backend-orchestrated-browser-tab-is-display-only)). The sibling **Refresh feeds** button runs only the scrape tick (the same work the cron does). For scripted or headless runs:
+Use the **Full pipeline run** button on `/settings` (Administration section) — the button navigates the browser to `/api/admin/pipeline-run?mode=full` via `window.location.assign()` (top-level navigation is required because CF Access protects `/api/admin/*` and a `fetch()` in CORS mode cannot follow the cross-origin SSO redirect; see [AD38](decisions/README.md#ad38-cf-access-protected-admin-endpoints-must-be-invoked-via-top-level-navigation-not-fetch)), the endpoint enqueues a `pipeline-jobs` message and `303`s back to `/settings?pipeline=enqueued&pipeline_run_id=...`; the queue consumer then walks the seven phases server-side without depending on the operator's tab ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface), [AD37](decisions/README.md#ad37-full-pipeline-run-is-backend-orchestrated-browser-tab-is-display-only)). The sibling **Refresh feeds** button runs only the scrape tick (the same work the cron does). For scripted or headless runs:
 
 ```bash
 # Sign in at your APP_URL (or use the dev-bypass runbook below), then:
@@ -144,12 +178,12 @@ curl -i ${APP_URL}/api/admin/force-refresh
 | `KV` | KV namespace | `ai-news-digest-kv` (auto-created on first deploy by the deploy workflow's inline `wrangler kv namespace list / create` block; the resolved id is patched into wrangler.toml in CI) | Caches (headlines, sources, health) |
 | `SCRAPE_COORDINATOR` | Queue | `scrape-coordinator` | Every-4-hours coordinator dispatch (00/04/08/12/16/20 UTC) |
 | `SCRAPE_CHUNKS` | Queue | `scrape-chunks` | LLM chunk jobs |
-| `SCRAPE_FINALIZE` | Queue | `scrape-finalize` | Same-story dedup pass; one message enqueued by the last chunk consumer per scrape run ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
-| `DEDUP_SWEEP` | Queue | `dedup-sweep` | Self-chaining historical-dedup sweep; the kicker enqueues the first message and the consumer re-enqueues a continuation per batch until the corpus tail is reached ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9) |
-| `PIPELINE_JOBS` | Queue | `pipeline-jobs` (`pipeline-jobs-integration` on integration) | Backend-driven full pipeline orchestrator; one consumer walks the seven phases by self-chaining messages ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface), [AD37](decisions/README.md#ad37-full-pipeline-run-is-backend-orchestrated-browser-tab-is-display-only)) |
+| `SCRAPE_FINALIZE` | Queue | `scrape-finalize` | Same-story dedup pass; one message enqueued by the last chunk consumer per scrape run ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract)) |
+| `DEDUP_SWEEP` | Queue | `dedup-sweep` | Self-chaining historical-dedup sweep; the kicker enqueues the first message and the consumer re-enqueues a continuation per batch until the corpus tail is reached ([REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1) |
+| `PIPELINE_JOBS` | Queue | `pipeline-jobs` (`pipeline-jobs-integration` on integration) | Backend-driven full pipeline orchestrator; one consumer walks the seven phases by self-chaining messages ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface), [AD37](decisions/README.md#ad37-full-pipeline-run-is-backend-orchestrated-browser-tab-is-display-only)) |
 | — | Queue (DLQ) | `ai-news-dlq` (`ai-news-dlq-integration` on integration) | Dead-letter queue for the finalize and pipeline-jobs consumers. Terminal queue retry exhaustion lands messages here so they are inspectable rather than silently dropped (CF-001). Provisioned by the deploy workflow inline `wrangler queues create` block; no binding needed in `wrangler.toml`. |
 | `AI` | Workers AI | (account-level) | LLM inference and bge-base-en-v1.5 embedding generation |
-| `VECTORIZE` | Vectorize index | `ai-news-embeddings` | 768-dim cosine index for same-story dedup; provisioned by the deploy workflow via `wrangler vectorize create` ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history)) |
+| `VECTORIZE` | Vectorize index | `ai-news-embeddings` | 768-dim cosine index for same-story dedup; provisioned by the deploy workflow via `wrangler vectorize create` ([REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract)) |
 
 ## Dependency Automation
 
@@ -200,12 +234,12 @@ Every admin endpoint sits under `/api/admin/*` so a **single wildcard rule** cov
 
 | Path | What it does |
 |---|---|
-| `/api/admin/force-refresh` | Manually kicks the global-feed coordinator (every-4-hours cron). Implements [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint). Backs phase 1 of **Full pipeline run** and the entirety of **Refresh feeds** ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)). |
-| `/api/admin/embed-backfill` | Resumable embedding backfill. `POST ?reembed=1` re-embeds the entire corpus (backs the optional wipe phase); plain `POST` drains only `NULL`/`'failed'` rows. Backs phases 0 and 3 of **Full pipeline run** ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)). Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history). See [API Reference](api-reference.md#post-apiadminembed-backfill). |
-| `/api/admin/historical-dedup` | Kicks an oldest-first cross-article same-story sweep on the `DEDUP_SWEEP` queue. Empty-body POST is the kicker (returns `{run_id, enqueued}`); body with `{cursor, batch}` runs one batch synchronously (legacy/dev-bypass). Backs phase 4 of **Full pipeline run** ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface)). Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 3, AC 9, AC 11. See [API Reference](api-reference.md#post-apiadminhistorical-dedup). |
-| `/api/admin/dedup-status` | Polls the `dedup_runs` audit row for a queue-driven sweep. GET with `?run_id=<ULID>` returns running counters and terminal status. Backs the operator-surface progress banner. Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 9. See [API Reference](api-reference.md#get-apiadmindedup-status). |
-| `/api/admin/dedup-diag` | Returns cosine similarity, adjusted score, same-vendor penalty, and merge decision for a given article pair. Diagnostic only; no writes. Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-across-the-entire-article-history) AC 10-11. See [API Reference](api-reference.md#get-apiadmindedup-diag-req-pipe-003-ac-10-ac-11). |
-| `/api/admin/pipeline-run` | Kicker for the backend-driven full pipeline run. POST (JSON body) for scripts; GET (`?mode=`) for browser navigation via CF Access (see [AD38](decisions/README.md#ad38-cf-access-protected-admin-endpoints-must-be-invoked-via-top-level-navigation-not-fetch)). Implements [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-from-the-settings-surface). See [API Reference](api-reference.md#post-apiadminpipeline-run). |
+| `/api/admin/force-refresh` | Manually kicks the global-feed coordinator (every-4-hours cron). Implements [REQ-OPS-005](../sdd/observability.md#req-ops-005-admin-force-refresh-endpoint). Backs phase 1 of **Full pipeline run** and the entirety of **Refresh feeds** ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface)). |
+| `/api/admin/embed-backfill` | Resumable embedding backfill. `POST ?reembed=1` re-embeds the entire corpus (backs the optional wipe phase); plain `POST` drains only `NULL`/`'failed'` rows. Backs phases 0 and 3 of **Full pipeline run** ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface)). Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract). See [API Reference](api-reference.md#post-apiadminembed-backfill). |
+| `/api/admin/historical-dedup` | Kicks an oldest-first cross-article same-story sweep on the `DEDUP_SWEEP` queue. Empty-body POST is the kicker (returns `{run_id, enqueued}`); body with `{cursor, batch}` runs one batch synchronously (legacy/dev-bypass). Backs phase 4 of **Full pipeline run** ([REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface)). Implements [REQ-PIPE-003](../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract) AC 3, [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1, AC 4. See [API Reference](api-reference.md#post-apiadminhistorical-dedup). |
+| `/api/admin/dedup-status` | Polls the `dedup_runs` audit row for a queue-driven sweep. GET with `?run_id=<ULID>` returns running counters and terminal status. Backs the operator-surface progress banner. Implements [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1, AC 2. See [API Reference](api-reference.md#get-apiadmindedup-status). |
+| `/api/admin/dedup-diag` | Returns cosine similarity, adjusted score, same-vendor penalty, and merge decision for a given article pair. Diagnostic only; no writes. Implements [REQ-PIPE-014](../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 4. See [API Reference](api-reference.md#get-apiadmindedup-diag-req-pipe-014-ac-4). |
+| `/api/admin/pipeline-run` | Kicker for the backend-driven full pipeline run. POST (JSON body) for scripts; GET (`?mode=`) for browser navigation via CF Access (see [AD38](decisions/README.md#ad38-cf-access-protected-admin-endpoints-must-be-invoked-via-top-level-navigation-not-fetch)). Implements [REQ-OPS-008](../sdd/observability.md#req-ops-008-unified-admin-pipeline-run-trigger-from-the-settings-surface). See [API Reference](api-reference.md#post-apiadminpipeline-run). |
 | `/api/admin/pipeline-status` | Polling endpoint for a backend pipeline run. `?id=<ULID>` returns the `pipeline_runs` row plus nested scrape + dedup snapshots; omit `id` to recover the most recent run. See [API Reference](api-reference.md#get-apiadminpipeline-status). |
 | `/api/admin/discovery/retry` | Re-queues a single tag for LLM-assisted source discovery. |
 | `/api/admin/discovery/retry-bulk` | Re-queues every "stuck" (empty-feeds) tag for the session user in one shot — backs the **Discover missing sources** button on `/settings`. |
@@ -243,7 +277,7 @@ Keep the Cloudflare Access policy in sync with deploys so unauthorized clicks la
 
 **After every integration deploy, re-stamp both secrets via the Cloudflare REST API.** Wrangler's `/memberships` preflight fails in this container (token has Workers Scripts edit but not Account Read) — go direct to the secrets endpoint instead:
 
-<!-- doc-allow-large: AD46 dev-bypass-runbook secret re-stamp block -->
+<!-- doc-allow-element: AD46 dev-bypass-runbook secret re-stamp block -->
 ```bash
 # From the operator's local env. ACCOUNT_ID lives in the
 # `CLOUDFLARE_ACCOUNT_ID` GitHub Actions repo variable; export it from
@@ -270,9 +304,9 @@ curl -s -X PUT \
 # table (lookup: SELECT id FROM users WHERE email = '<your-email>').
 ```
 
-Both writes propagate within ~5-10 seconds. Then mint a session and drive any admin endpoint:
+Both writes propagate at Cloudflare's secret-store cadence — re-run the `/api/dev/login` mint until it returns 200 rather than relying on a fixed wait. Then mint a session and drive any admin endpoint:
 
-<!-- doc-allow-large: AD46 dev-bypass-runbook session-mint and admin-drive block -->
+<!-- doc-allow-element: AD46 dev-bypass-runbook session-mint and admin-drive block -->
 ```bash
 # Mint a session — Origin header is required (the route enforces same-origin POST).
 curl -s -X POST "https://news.novoselec.ch/api/dev/login" \
@@ -323,16 +357,16 @@ curl -s "https://news.novoselec.ch/api/admin/pipeline-status?id=$PIPE_ID" \
 | `/api/dev/login` returns 403 with "Cross-site POST forbidden" | Missing `Origin: https://news.novoselec.ch` header | Add it; the route enforces same-origin POST |
 | Session cookie present but admin still 401 | Session expired (5-minute access-token TTL) | Re-mint via `/api/dev/login` |
 
-The token in `/tmp/.bypass_token` is the canonical local source of truth; treat the GitHub Actions `DEV_BYPASS_TOKEN` secret as derivative — re-push it from `/tmp/.bypass_token` whenever they appear out of sync.
+The token in `/tmp/.bypass_token` is the canonical local source of truth; treat the GitHub Actions `DEV_BYPASS_TOKEN` secret as derivative — re-push it from `/tmp/.bypass_token` when `/api/dev/login` returns 404 on integration despite a non-empty GitHub Actions secret (deploy push truncated the worker-side value).
 
 ## Resend domain verification
 
 1. Log in to Resend dashboard.
 2. Add the sending domain under "Domains".
 3. Copy the DNS records (MX, TXT for SPF, DKIM CNAMEs, DMARC TXT) into your DNS provider.
-4. Wait for verification (typically minutes to hours).
+4. Wait for verification — the Resend dashboard shows the domain row's status flip from `Pending` to `Verified` once DNS propagation completes.
 5. Update the `RESEND_FROM` Worker secret to use an address on the verified domain.
-6. Until verified, Resend sends from a sandbox address — useful for local dev, not for users.
+6. Until verified, Resend's sandbox only delivers to the account owner's verified email; non-owner recipients receive nothing.
 
 ---
 

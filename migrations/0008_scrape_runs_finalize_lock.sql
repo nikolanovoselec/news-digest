@@ -1,4 +1,4 @@
--- Implements REQ-PIPE-008
+-- Implements REQ-PIPE-003
 --
 -- Atomic finalize-enqueue gate. CF-002 closed the chunk-count TOCTOU
 -- by moving completion tracking to D1, but a second race remained on

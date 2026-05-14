@@ -1,6 +1,6 @@
 // Implements REQ-PIPE-003
 // Implements REQ-PIPE-003 AC 17
-// Implements REQ-PIPE-008
+// Implements REQ-PIPE-003
 // Implements REQ-PIPE-009
 //
 // Cross-tick semantic dedup pass for the global-feed pipeline. Runs
@@ -50,7 +50,11 @@ import {
   readTimeWindowSeconds,
   deleteVectorsBatched,
 } from '~/lib/embeddings';
-import { readRerankFloor, rerankBorderlinePair } from '~/lib/dedup-rerank';
+import {
+  readRerankFloor,
+  rerankBorderlinePairsBatch,
+  type RerankPair,
+} from '~/lib/dedup-rerank';
 import { classifyMatchPair } from '~/lib/bidirectional-dedup';
 import { generateUlid } from '~/lib/ulid';
 
@@ -146,7 +150,7 @@ function isBetterBorderCandidate(
   return cand.matchPublishedAt < best.matchPublishedAt;
 }
 
-/** Handle one batch of `scrape-finalize` messages. Per REQ-PIPE-008
+/** Handle one batch of `scrape-finalize` messages. Per REQ-PIPE-003
  *  AC 8 we deliberately do NOT pass `onTerminalFailure` — the run is
  *  already `ready` from the chunk consumer's last-chunk write, the
  *  articles are visible, and only the cross-tick dedup is missing.
@@ -159,7 +163,7 @@ export async function handleFinalizeBatch(
     process: processOneFinalize,
     throwLogStatus: 'finalize_failed',
     extraLogFields: (body) => ({ scrape_run_id: body.scrape_run_id }),
-    // No onTerminalFailure — REQ-PIPE-008 AC 8.
+    // No onTerminalFailure — REQ-PIPE-003 AC 8.
   });
 }
 
@@ -442,15 +446,25 @@ export async function processOneFinalize(
       chosen_direction: chosenDirection,
     });
 
-    // Pick the chosen candidate. Auto wins outright; borderline walks
-    // the sorted list of candidates, calling the LLM rerank in order
-    // and taking the first same-event=true verdict. Cap protects the
-    // queue's wall-clock budget; in practice clusters with multiple
-    // borderline siblings tend to accept on candidate #1 or #2.
+    // Pick the chosen candidate. Auto wins outright; borderline batches
+    // up to RERANK_CANDIDATE_CAP candidates into ONE LLM call (AD48,
+    // pre-AD48 made one call per pair) and walks the verdict array in
+    // cosine order, taking the first same-event=true verdict. Cap
+    // protects the queue's wall-clock budget; in practice clusters
+    // with multiple borderline siblings tend to accept on candidate
+    // #1 or #2. Single batched call amortises the system prompt and
+    // the inference round-trip across all candidates for this self.
     let chosen: AutoCandidate | null = bestAuto;
     let chosenAlreadyConfirmedExists = false;
-    if (chosen === null) {
+    if (chosen === null && borderCandidates.length > 0) {
       const cap = Math.min(borderCandidates.length, RERANK_CANDIDATE_CAP);
+      // Pre-fetch `stillThere` for each candidate. Skip candidates
+      // whose D1 row vanished between the Vectorize query and now.
+      const fetched: Array<{
+        cand: BorderCandidate;
+        rank: number;
+        article: { id: string; title: string; source_snippet: string | null };
+      }> = [];
       for (let i = 0; i < cap; i++) {
         const cand = borderCandidates[i];
         if (cand === undefined) continue;
@@ -461,35 +475,40 @@ export async function processOneFinalize(
           .bind(cand.matchId)
           .first<{ id: string; title: string; source_snippet: string | null }>();
         if (existingArticle === null) continue;
-        rerankCalls += 1;
-        const sameEvent = await rerankBorderlinePair(
-          env,
-          {
-            id: self.id,
-            title: self.title,
-            snippet: self.source_snippet,
+        fetched.push({ cand, rank: i, article: existingArticle });
+      }
+
+      if (fetched.length > 0) {
+        const pairs: RerankPair[] = fetched.map((f) => ({
+          a: { id: self.id, title: self.title, snippet: self.source_snippet },
+          b: {
+            id: f.article.id,
+            title: f.article.title,
+            snippet: f.article.source_snippet,
           },
-          {
-            id: existingArticle.id,
-            title: existingArticle.title,
-            snippet: existingArticle.source_snippet,
-          },
-        );
-        log('info', 'digest.generation', {
-          status: 'finalize_rerank_decision',
-          scrape_run_id: body.scrape_run_id,
-          new_article_id: self.id,
-          existing_article_id: cand.matchId,
-          cosine: cand.adjustedScore,
-          same_event: sameEvent,
-          direction: cand.selfIsOlder ? 'self_wins' : 'self_loses',
-          rank: i,
-        });
-        if (!sameEvent) continue;
-        rerankAccepts += 1;
-        chosen = cand;
-        chosenAlreadyConfirmedExists = true;
-        break;
+        }));
+        rerankCalls += pairs.length;
+        const verdicts = await rerankBorderlinePairsBatch(env, pairs);
+        for (let i = 0; i < fetched.length; i++) {
+          const f = fetched[i];
+          if (f === undefined) continue;
+          const sameEvent = verdicts[i] === true;
+          log('info', 'digest.generation', {
+            status: 'finalize_rerank_decision',
+            scrape_run_id: body.scrape_run_id,
+            new_article_id: self.id,
+            existing_article_id: f.cand.matchId,
+            cosine: f.cand.adjustedScore,
+            same_event: sameEvent,
+            direction: f.cand.selfIsOlder ? 'self_wins' : 'self_loses',
+            rank: f.rank,
+          });
+          if (!sameEvent) continue;
+          rerankAccepts += 1;
+          chosen = f.cand;
+          chosenAlreadyConfirmedExists = true;
+          break;
+        }
       }
     }
 

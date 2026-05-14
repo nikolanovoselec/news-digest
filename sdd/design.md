@@ -18,10 +18,14 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 5. All interactive elements have a minimum 44 × 44 pixel touch target.
 6. Every page fills the mobile viewport, even when content is shorter than the viewport, so the chrome color never dominates the screen; the top of the content surface stays clear of the header and the bottom stays clear of device safe-area insets.
 
-**Constraints:** CON-A11Y-001
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum)
+
 **Priority:** P0
+
 **Dependencies:** None
+
 **Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -33,17 +37,44 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 **Applies To:** User
 
 **Acceptance Criteria:**
-1. The authenticated site header contains a standalone theme-toggle icon button, placed immediately to the left of the avatar user menu, that labels the *target* mode via its accessible name — when the current theme is light it announces "Dark Mode" and shows a moon icon; when dark it announces "Light Mode" and shows a sun icon. Clicking it performs the switch in a single tap, with no intermediate menu to open. Anonymous (signed-out) pages expose the same single-tap theme control in the same header position with visually matching styling, so the affordance and interaction are identical before and after sign-in.
-2. Clicking the toggle toggles the theme between `light` and `dark`, persists the choice for the current browser, and propagates the choice to the server so subsequent navigations render the correct theme in the first byte.
-3. On every authenticated or anonymous request, the server renders the document root with the user's chosen theme already applied, so the first paint is never the wrong theme even on slow connections or when client-side scripts are deferred.
-4. When the user has not yet expressed a preference, the theme follows `prefers-color-scheme`.
-5. The theme system exposes a consistent set of color tokens per theme (background, surface, text, muted text, border, accent) as CSS custom properties.
-6. The mobile system status bar (iOS / Android) matches the app's selected theme, not the operating-system theme — a user in the app's dark theme whose device is in light mode still sees a dark status bar above the dark UI, and vice versa. The status bar repaints immediately when the user toggles theme mid-session, and its colour persists across client-side route navigations without a transient flash to the opposite theme. The document body itself never flashes the opposite theme either — even when the app is launched as an installed PWA and navigated via client-side route swaps, the page background paints the user's chosen theme from the very first frame, never an intermediate white frame between routes.
+1. The authenticated site header contains a standalone theme-toggle icon button, placed immediately to the left of the avatar user menu, that labels the *target* mode via its accessible name — when the current theme is light it announces "Dark Mode" and shows a moon icon; when dark it announces "Light Mode" and shows a sun icon. Clicking it performs the switch in a single tap, with no intermediate menu to open.
+2. Anonymous (signed-out) pages expose the same single-tap theme control in the same header position with visually matching styling, so the affordance and interaction are identical before and after sign-in.
+3. Clicking the toggle toggles the theme between `light` and `dark`, persists the choice for the current browser, and propagates the choice to the server so subsequent navigations render the correct theme in the first byte.
+4. On every authenticated or anonymous request, the server renders the document root with the user's chosen theme already applied, so the first paint is never the wrong theme even on slow connections or when client-side scripts are deferred.
+5. When the user has not yet expressed a preference, the theme follows `prefers-color-scheme`.
+6. The theme system exposes a consistent set of color tokens per theme (background, surface, text, muted text, border, accent) as CSS custom properties.
 
-**Constraints:** CON-A11Y-001, CON-SEC-001
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
 **Priority:** P0
-**Dependencies:** REQ-DES-001
+
+**Dependencies:** [REQ-DES-001](#req-des-001-swiss-minimal-visual-language)
+
 **Verification:** Integration test
+
+**Status:** Implemented
+
+---
+
+### REQ-DES-004: Mobile and PWA no-flash chrome
+
+**Intent:** When the app runs on a mobile device or as an installed PWA, the system status bar and the document background paint the user's selected theme from the first frame — never the operating-system theme, never a transient flash to the opposite theme on toggle, and never an intermediate white frame between client-side route swaps.
+
+**Applies To:** User
+
+**Acceptance Criteria:**
+1. The mobile system status bar (iOS / Android) matches the app's selected theme, not the operating-system theme — a user in the app's dark theme whose device is in light mode still sees a dark status bar above the dark UI, and vice versa.
+2. The status bar repaints immediately when the user toggles theme mid-session, and its colour persists across client-side route navigations without a transient flash to the opposite theme.
+3. The document body never flashes the opposite theme between client-side route navigations — even when the app is launched as an installed PWA and navigated via client-side route swaps, the page background paints the user's chosen theme from the very first frame, never an intermediate white frame between routes.
+
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
+
+**Priority:** P1
+
+**Dependencies:** [REQ-DES-002](#req-des-002-light-and-dark-mode-with-no-flash)
+
+**Verification:** Integration test
+
 **Status:** Implemented
 
 ---
@@ -62,8 +93,12 @@ Swiss-minimal aesthetic — system fonts, five type sizes, two weights, neutral 
 5. Hashtag chip selection, button `:active` press, and card hover (desktop) each have a single, short transition (150–200 ms) on the relevant property only.
 6. The site header chrome stays visually solid throughout every route transition — the user never sees stale body content from the outgoing page bleeding through the header band while the page beneath cross-fades. Because the header is identical on every route, it does not animate during the swap; it simply remains in place with the theme background.
 
-**Constraints:** CON-A11Y-001
+**Constraints:** [CON-A11Y-001](constraints.md#con-a11y-001-accessibility-minimum)
+
 **Priority:** P1
-**Dependencies:** REQ-DES-001
+
+**Dependencies:** [REQ-DES-001](#req-des-001-swiss-minimal-visual-language)
+
 **Verification:** Integration test
+
 **Status:** Implemented
