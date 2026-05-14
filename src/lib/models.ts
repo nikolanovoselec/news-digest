@@ -34,20 +34,20 @@ export interface ModelOption {
   category: 'featured' | 'budget';
 }
 
-// Default model: @cf/openai/gpt-oss-20b. 128K context, native JSON
-// mode, $0.20/$0.30 per Mtok. Swapped from gpt-oss-120b on 2026-05-14
-// (AD48) — same OpenAI family, same context size, same native JSON
-// mode, ~57% cheaper input + 60% cheaper output. The earlier
-// gpt-oss-120b pick (2026-05-06) was driven by Gemma 4 26B's
-// chunk-prompt timeouts (AiError 3046, ~4% yield); gpt-oss-20b shares
-// gpt-oss-120b's reliable wall-clock at a fraction of the cost,
-// which is the headline lever in the AD48 cost-reduction package
-// alongside the borderline-rerank watermark + batched rerank prompt.
-// Rollback contract: this constant is the single source-of-truth for
-// the pipeline's model id (chunk summarisation, rerank, discovery
-// all flow through DEFAULT_MODEL_ID). A regression on 20b is reverted
-// by flipping the literal back to '@cf/openai/gpt-oss-120b'.
-export const DEFAULT_MODEL_ID = '@cf/openai/gpt-oss-20b';
+// Default model: @cf/openai/gpt-oss-120b. 128K context, native JSON
+// mode, $0.35/$0.75 per Mtok. AD48 swapped this to gpt-oss-20b on
+// 2026-05-14 to cut chunk-summarisation cost ~60%, but the first
+// production run after the swap (pipeline_run 01KRJYV8R0D0EX7HBPR2VS2YCT)
+// failed with scrape_wait_stalled — every scrape-chunks queue
+// invocation produced outcome=canceled mid-LLM-call, the same wall-
+// clock failure mode that took Gemma 4 26B out of contention on
+// 2026-05. Reverted to gpt-oss-120b for chunk reliability; the
+// AD48 watermark + batched rerank changes stay in place and carry
+// most of the cost reduction on their own. See AD48 rollback note.
+// This constant is the single source-of-truth for the pipeline's
+// model id (chunk summarisation, rerank, discovery all flow through
+// DEFAULT_MODEL_ID).
+export const DEFAULT_MODEL_ID = '@cf/openai/gpt-oss-120b';
 
 export const MODELS: ModelOption[] = [
   // Featured — the four headline choices users see at the top of the dropdown.
@@ -55,7 +55,7 @@ export const MODELS: ModelOption[] = [
     id: '@cf/openai/gpt-oss-120b',
     name: 'GPT OSS 120B',
     description:
-      'OpenAI 120B MoE with native JSON mode, 128K context. Reliable wall-clock for chunk-sized prompts.',
+      'Default. OpenAI 120B MoE with native JSON mode, 128K context. Reliable wall-clock for chunk-sized prompts.',
     inputPricePerMtok: 0.35,
     outputPricePerMtok: 0.75,
     contextTokens: 128_000,
@@ -75,7 +75,7 @@ export const MODELS: ModelOption[] = [
     id: '@cf/openai/gpt-oss-20b',
     name: 'GPT OSS 20B',
     description:
-      'Default. Native JSON mode, 128K context. Cheaper sibling of 120B at $0.20/$0.30 per Mtok.',
+      'Native JSON mode, 128K context. Cheaper sibling of 120B at $0.20/$0.30 per Mtok, but mid-call cancels on chunk-sized prompts in production (AD48 rollback, 2026-05-14).',
     inputPricePerMtok: 0.20,
     outputPricePerMtok: 0.30,
     contextTokens: 128_000,

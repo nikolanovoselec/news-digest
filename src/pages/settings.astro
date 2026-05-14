@@ -1074,46 +1074,26 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
       return;
     }
 
-    try {
-      // Refresh-only: kick the coordinator and poll scrape-status.
-      // Mirrors the 4-hourly cron - chunk + finalize consumers do the
-      // rest in the background.
-      setStatus('Kicking scrape...');
-      const frRes = await fetch('/api/admin/force-refresh', {
-        credentials: 'same-origin',
-        headers: { Accept: 'application/json' },
-      });
-      if (!frRes.ok) throw new Error(`force-refresh HTTP ${frRes.status}`);
-      const frBody = (await frRes.json()) as {
-        scrape_run_id: string;
-        reused: boolean;
-      };
-      pinnedRunId = frBody.scrape_run_id;
-      writePipelineState({ runId: frBody.scrape_run_id });
-      setStatus(
-        frBody.reused
-          ? 'Scrape already running; waiting for it to finish...'
-          : 'Scrape kicked; waiting for it to finish...',
-      );
-      while (true) {
-        await new Promise((r) => setTimeout(r, 5_000));
-        const sRes = await fetch(
-          `/api/scrape-status?run_id=${encodeURIComponent(frBody.scrape_run_id)}`,
-          { credentials: 'same-origin', headers: { Accept: 'application/json' } },
-        );
-        if (!sRes.ok) break;
-        const sBody = (await sRes.json()) as { running: boolean };
-        if (!sBody.running) break;
-      }
-      setStatus('Scrape finished.');
-      writePipelineState({ done: true });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setStatus(`Failed: ${msg}`);
-      writePipelineState({ done: true });
-    } finally {
-      for (const b of buttons) b.disabled = false;
-    }
+    // Refresh-only: same top-level-navigation pattern as the Full
+    // pipeline run button above (AD38). CF Access protects /api/admin/*
+    // and a fetch() in CORS mode cannot follow the cross-origin SSO
+    // redirect with credentials, so when the CF_AppSession cookie has
+    // expired fetch() fails immediately with "Failed to fetch" and the
+    // operator sees a useless red "Failed:" message before the request
+    // ever reaches the worker. A real navigation walks the
+    // CF_AppSession -> SSO -> endpoint -> 303 chain natively. The
+    // force-refresh endpoint 303s back to
+    // /settings?force_refresh=ok|reused|error&run_id=...; the URL
+    // handler at the bottom of this script paints the status and pins
+    // pinnedRunId so the live scrape-status poll resumes.
+    //
+    // No try/catch: the page tears down before any error path could
+    // run. Status text is painted directly (not via setStatus, which
+    // would persist "Kicking scrape..." to localStorage and leave a
+    // misleading message if the navigation never completes).
+    status.hidden = false;
+    status.textContent = 'Kicking scrape...';
+    window.location.assign('/api/admin/force-refresh');
   }
 
   /** Wire the Full / Refresh buttons to runPipeline(). Idempotent -

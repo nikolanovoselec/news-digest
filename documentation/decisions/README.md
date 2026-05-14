@@ -1416,7 +1416,7 @@ Three reasons the AD41 fix did not collapse this cluster:
 
 ### AD48: Dedup cost reduction: borderline-rerank watermark + batched rerank call + pipeline-wide gpt-oss-20b
 
-**Status:** Accepted (2026-05-14)
+**Status:** Accepted with one rollback (2026-05-14). Items 1 and 2 (watermark + batched rerank) remain in production. Item 3 (model swap to gpt-oss-20b) was reverted same day after the first production run (`pipeline_run 01KRJYV8R0D0EX7HBPR2VS2YCT`) failed with `scrape_wait_stalled`: every `scrape-chunks` queue invocation produced `outcome=canceled` mid-LLM-call, the same wall-clock failure mode that took Gemma 4 26B out of contention. `DEFAULT_MODEL_ID` was flipped back to `@cf/openai/gpt-oss-120b`.
 
 **Decision:** Stack three independent cost reductions on the dedup pipeline:
 
@@ -1435,9 +1435,8 @@ Three reasons the AD41 fix did not collapse this cluster:
 
 **Consequences:**
 - Auto-sweep LLM cost drops roughly an order of magnitude on the recurring case (watermark skip eliminates re-judgment of pre-watermark pairs; batched call amortises system prompt + round-trip across pairs from the same self).
-- Chunk summarisation cost drops ~60% from the model swap independently of dedup.
+- Chunk summarisation cost stays at gpt-oss-120b prices after the same-day 20b rollback (see Status). The ~60% chunk savings projected in the original AD48 are not realised.
 - Operator-triggered `/api/admin/historical-dedup` and `?reembed=1` invalidate the watermark (the latter via `clearWatermark`, the former via a `bypassWatermark: true` flag propagated through every continuation queue message) so a manual sweep after a threshold or prompt change re-judges everything.
-- Rollback is a single constant flip in `src/lib/models.ts` back to `@cf/openai/gpt-oss-120b` if 20b regresses on chunk-sized prompts (the Gemma 4 26B prompt-timeout failure mode from 2026-05 is the comparison shape to watch on integration).
 - Test fixtures that previously mocked single-pair `{"same_event": ...}` responses now mock the batched `{"verdicts":[{"i":N,"same_event":...}]}` shape; a no-verdicts response degrades to "all false" per pair, preserving the conservative default.
 
 **Related requirements:** [REQ-PIPE-003](../../sdd/generation.md#req-pipe-003-same-story-dedupe-core-matching-contract), [REQ-PIPE-009](../../sdd/generation.md#req-pipe-009-llm-re-rank-pass-for-borderline-same-story-candidates), [REQ-SET-004](../../sdd/settings.md#req-set-004-server-side-model-catalog-and-default)
