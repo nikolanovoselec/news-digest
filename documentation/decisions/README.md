@@ -49,7 +49,7 @@ Each ADR documents a non-obvious design choice and the trade-offs considered. De
 | [AD33](#ad33-embed-source-text-and-apply-a-same-vendor-cosine-penalty) | Embed source-text (not LLM rewrite) and apply a same-vendor cosine penalty for dedup | Architecture | 2026-05-06 |
 | [AD34](#ad34-llm-same-event-rerank-for-borderline-cosine-pairs) | LLM same-event rerank for borderline cosine pairs (between auto-merge and distinct bands) | Architecture | 2026-05-07 |
 | [AD35](#ad35-operator-historical-dedup-sweep-self-chains-via-cloudflare-queue) | Operator historical-dedup sweep self-chains via Cloudflare Queue, not the operator's browser tab | Architecture | 2026-05-07 |
-| [AD36](#ad36-lower-dedup-auto-merge-threshold-to-078-and-remove-the-per-batch-rerank-cap) | Lower dedup auto-merge threshold to 0.78 and remove the per-batch rerank cap | Architecture | 2026-05-07 |
+| [AD36](#ad36-lower-dedup-auto-merge-threshold-to-078-and-remove-the-per-batch-rerank-cap) | Lower dedup auto-merge threshold to 0.78 and remove the per-batch rerank cap *(Superseded by AD39)* | Architecture | 2026-05-07 |
 | [AD37](#ad37-full-pipeline-run-is-backend-orchestrated-browser-tab-is-display-only) | Full pipeline run is backend-orchestrated; browser tab is display-only | Architecture | 2026-05-08 |
 | [AD38](#ad38-cf-access-protected-admin-endpoints-must-be-invoked-via-top-level-navigation-not-fetch) | CF Access-protected admin endpoints must be invoked via top-level navigation, not fetch() | Security | 2026-05-08 |
 | [AD39](#ad39-raise-dedup-auto-merge-threshold-to-088-and-gate-merges-to-a-72h-news-cycle-window) | Raise dedup auto-merge threshold to 0.88 and gate merges to a 72h news-cycle window | Architecture | 2026-05-08 |
@@ -998,7 +998,9 @@ The `source_health:{url}` family was already centralised in `src/lib/feed-health
 
 ### AD36: Lower dedup auto-merge threshold to 0.78 and remove the per-batch rerank cap
 
-**Status:** Accepted (2026-05-07)
+**Status:** Superseded by AD39 (2026-05-08); rerank-cap removal further refined by AD48 (2026-05-14)
+
+**Supersession note:** The threshold change (0.85 -> 0.78) was reversed by AD39 when the 13-source false-merge cluster on 2026-05-08 showed that dense-theme topics produce independent-event pairs at 0.78-0.86. The current threshold is 0.88 with a 7-day time-window gate. The rerank-cap removal was reintroduced in a different shape: AD42's multi-rerank put a per-self cap of 5 candidates back in the in-tick finalize path, and AD48's batched-call ceiling (RERANK_BATCH_SIZE=15) now bounds the sweep path. AD36's prompt loosening ("same news cycle for the same subject") remains current.
 
 **Decision:** `DEDUP_COSINE_THRESHOLD` drops from `"0.85"` to `"0.78"` and `DEDUP_RERANK_FLOOR` drops from `"0.72"` to `"0.70"` on both production and integration. The per-batch rerank cap (`MAX_RERANKS_PER_BATCH = 4`) is removed from `runHistoricalDedupBatch`; the queue consumer's wall-clock budget bounds the work per message instead. The rerank prompt is loosened from "SAME news event" to "SAME news cycle for the SAME subject" with explicit examples of close follow-on coverage (multiple analyst takes published the same week, multiple security outlets covering the same vulnerability) so genuine same-cycle pairs that are not literally the same announcement still merge.
 
