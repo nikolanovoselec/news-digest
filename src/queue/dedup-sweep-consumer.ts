@@ -23,7 +23,7 @@
 // On terminal queue retry exhaustion the consumer flips the
 // `dedup_runs` row to `status='failed'` so the polling endpoint
 // surfaces the failure to the operator. The sweep can be resumed by
-// clicking "Full pipeline run" again — a fresh run_id starts a new
+// clicking "Refresh articles" again — a fresh run_id starts a new
 // row and walks the corpus from the head; merges already applied
 // produce no new merges (idempotent by construction).
 

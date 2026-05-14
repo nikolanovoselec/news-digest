@@ -211,16 +211,15 @@ Structured JSON logging as the single operational surface — no external observ
 
 ### REQ-OPS-008: Unified admin pipeline run trigger from the settings surface
 
-**Intent:** An operator can run the complete cron-equivalent pipeline (scrape, embed any leftovers, then collapse cross-article duplicates) or just the scrape step in isolation from the settings surface, instead of clicking separate admin actions in sequence and having to remember the right order. The wipe-and-re-embed pre-phase is governed by [REQ-OPS-010](#req-ops-010-wipe-and-re-embed-pre-phase-toggle).
+**Intent:** An operator can run the complete cron-equivalent pipeline (scrape, embed any leftovers, then collapse cross-article duplicates) from the settings surface, instead of clicking separate admin actions in sequence and having to remember the right order. The wipe-and-re-embed pre-phase is governed by [REQ-OPS-010](#req-ops-010-wipe-and-re-embed-pre-phase-toggle).
 
 **Applies To:** Admin
 
 **Acceptance Criteria:**
-1. The settings surface exposes two adjacent admin actions inside an Administration section, labelled to the effect of "Full pipeline run" and "Refresh feeds".
-2. The "Full pipeline run" action sequentially executes the optional wipe-and-re-embed pre-phase, a fresh scrape tick equivalent to the every-four-hours cron, a backfill of any embeddings the scrape did not land, and an oldest-first cross-article same-story sweep across the surviving pool.
-3. The "Refresh feeds" action runs only the scrape tick (the same work a single 4-hourly cron tick does) and reports completion when the scrape itself finishes, leaving the queue-driven embed and dedup work to proceed in the background.
-4. Each phase of the full pipeline run only begins after the previous phase reports done; no phase fires speculatively or in parallel with its predecessor.
-5. Every phase is gated by the same admin authentication used elsewhere in the admin surface ([REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)). An unauthenticated tab where the admin gate has lapsed surfaces the auth failure as a user-readable failed-status line rather than silently no-op'ing.
+1. The settings surface exposes one admin action inside an Administration section, labelled to the effect of "Refresh articles".
+2. The action sequentially executes the optional wipe-and-re-embed pre-phase, a fresh scrape tick equivalent to the every-four-hours cron, a backfill of any embeddings the scrape did not land, and an oldest-first cross-article same-story sweep across the surviving pool.
+3. Each phase only begins after the previous phase reports done; no phase fires speculatively or in parallel with its predecessor.
+4. Every phase is gated by the same admin authentication used elsewhere in the admin surface ([REQ-AUTH-001](authentication.md#req-auth-001-sign-in-with-a-federated-identity-provider)). An unauthenticated tab where the admin gate has lapsed surfaces the auth failure as a user-readable failed-status line rather than silently no-op'ing.
 
 **Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt), [CON-SEC-001](constraints.md#con-sec-001-strict-content-security-policy)
 
@@ -241,10 +240,9 @@ Structured JSON logging as the single operational surface — no external observ
 **Applies To:** Admin
 
 **Acceptance Criteria:**
-1. A toggle adjacent to the admin pipeline actions lets the operator opt into the wipe-and-re-embed pre-phase for the full pipeline run.
-2. The toggle has no effect on the "Refresh feeds" action.
-3. With the toggle off, the full pipeline run skips the pre-phase and starts at the scrape tick.
-4. With the toggle on, the full pipeline run first wipes and re-embeds every surviving article, then proceeds to the scrape tick.
+1. A toggle adjacent to the admin pipeline action lets the operator opt into the wipe-and-re-embed pre-phase before the scrape tick.
+2. With the toggle off, the action skips the pre-phase and starts at the scrape tick.
+3. With the toggle on, the action first wipes and re-embeds every surviving article, then proceeds to the scrape tick.
 
 **Constraints:** [CON-AUTH-001](constraints.md#con-auth-001-custom-federated-oauthoidc-hmac-sha256-jwt)
 

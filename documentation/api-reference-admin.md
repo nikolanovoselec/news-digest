@@ -61,7 +61,7 @@ All error responses are JSON with shape `{ ok: false, error: <slug> }` unless ex
 
 ### POST /api/admin/force-refresh
 
-Kick the global-feed coordinator on demand: identical work to the every-4-hours cron. Used by the **Refresh feeds** form submission on `/settings`.
+Kick the global-feed coordinator on demand: identical work to the every-4-hours cron. Used by scripted callers (curl with `Accept: application/json`) and by phase 1 of the **Refresh articles** orchestrator on `/settings`.
 
 ```
 POST /api/admin/force-refresh
@@ -94,7 +94,7 @@ Inserts a `scrape_runs` row and sends `SCRAPE_COORDINATOR`. A 120-second reuse w
 
 ### GET /api/admin/force-refresh
 
-Browser-direct and scripted variant of the force-refresh kicker. Driven by the **Refresh feeds** orchestrator and the **Full pipeline run** button on `/settings`, which use `GET` with `Accept: application/json`.
+Browser-direct and scripted variant of the force-refresh kicker. Driven by phase 1 of the **Refresh articles** orchestrator on `/settings` and by scripted callers using `GET` with `Accept: application/json`.
 
 ```
 GET /api/admin/force-refresh
@@ -363,7 +363,7 @@ The `/settings` surface polls this every 5 seconds while a sweep is in flight; t
 
 ### POST /api/admin/pipeline-run
 
-Kicker for the backend-driven full pipeline run. Used by scripted callers that drive the **Full pipeline run** button on `/settings`.
+Kicker for the backend-driven pipeline run. Used by the **Refresh articles** button on `/settings` and by scripted callers.
 
 ```
 POST /api/admin/pipeline-run

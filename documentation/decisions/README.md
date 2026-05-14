@@ -1051,7 +1051,7 @@ Both clusters were entirely below the 0.85 auto-merge bar; the larger valuation 
 - A new queue `pipeline-jobs` (and `pipeline-jobs-integration` mirror) is provisioned in both deploy workflows and bound in `wrangler.toml`.
 - Two new admin routes: POST `/api/admin/pipeline-run` (kicker) and GET `/api/admin/pipeline-status` (poller).
 - The `settings.astro` "Full pipeline run" button collapses from ~200 lines of phase-loop JavaScript to a single POST + a poll loop.
-- "Refresh feeds" (the scrape-only sibling) is unchanged - it still uses `/api/admin/force-refresh` directly because it explicitly wants only the scrape phase.
+- The settings Administration surface was consolidated to a single "Refresh articles" action (2026-05-14): the previously-adjacent "Refresh feeds" scrape-only button was removed once it was confirmed to be billing-equivalent to the full pipeline run on `mode=full`. The `/api/admin/force-refresh` endpoint stays alive for cron paths and scripted callers.
 
 **Related requirements:** [REQ-OPS-009](../../sdd/observability.md#req-ops-009-admin-pipeline-run-progress-surface) AC 2 (the run continues irrespective of the operator's tab state), [REQ-PIPE-014](../../sdd/generation.md#req-pipe-014-same-story-operator-surfaces) AC 1 (the dedup phase consumer is unchanged; pipeline-consumer just kicks it).
 

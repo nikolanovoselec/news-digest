@@ -521,16 +521,14 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
               <p class="settings__hint">
                 Trigger the full scrape → embed → dedup pipeline
                 immediately instead of waiting for the next 4-hour
-                cron tick, or refresh feeds only (the same work the
-                cron does on its tick). Admin-only; gated by Cloudflare
-                Access.
+                cron tick. Admin-only; gated by Cloudflare Access.
               </p>
               <label
                 class="settings__hint"
                 style="display:flex;align-items:center;gap:0.5rem;margin:0.5rem 0 0.75rem"
               >
                 <input type="checkbox" data-pipeline-wipe />
-                <span>Wipe & re-embed all existing articles (full run only)</span>
+                <span>Wipe & re-embed all existing articles before scraping</span>
               </label>
               <div class="settings__actions-row">
                 <button
@@ -538,14 +536,7 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
                   class="settings__secondary-button"
                   data-pipeline-run
                 >
-                  Full pipeline run
-                </button>
-                <button
-                  type="button"
-                  class="settings__secondary-button"
-                  data-pipeline-refresh
-                >
-                  Refresh feeds
+                  Refresh articles
                 </button>
               </div>
               <p
@@ -1025,101 +1016,56 @@ const primaryCta = isFirstRun ? 'Save and continue' : 'Save';
     }
   }
 
-  async function runPipeline(
-    mode: 'full' | 'refresh',
-    wipe: boolean,
-  ): Promise<void> {
+  async function runPipeline(wipe: boolean): Promise<void> {
     const status = document.querySelector<HTMLElement>('[data-pipeline-status]');
-    const buttons = Array.from(
-      document.querySelectorAll<HTMLButtonElement>(
-        '[data-pipeline-run], [data-pipeline-refresh]',
-      ),
-    );
-    if (status === null || buttons.length === 0) return;
-    const setStatus = (msg: string): void => {
-      status.hidden = false;
-      status.textContent = msg;
-      writePipelineState({ msg });
-    };
+    const button = document.querySelector<HTMLButtonElement>('[data-pipeline-run]');
+    if (status === null || button === null) return;
     // Clear any prior terminal state before this kick so the merge-on-prev
     // behavior of writePipelineState does not leak `done: true` from a
-    // previous failed run into the new one. Without this, a fresh refresh
-    // kick after a failed full-pipeline kick would inherit `done: true`,
-    // which short-circuits the resume block on reload and prevents the
-    // live scrape from resuming polling.
+    // previous failed run into the new one. Without this, a fresh kick
+    // after a failed run would inherit `done: true`, which short-circuits
+    // the resume block on reload and prevents the live scrape from
+    // resuming polling.
     clearPipelineState();
-    for (const b of buttons) b.disabled = true;
+    button.disabled = true;
 
-    if (mode === 'full') {
-      // Full pipeline (REQ-OPS-008). Top-level navigation to the kicker.
-      // CF Access protects /api/admin/* and a fetch() in CORS mode cannot
-      // follow the cross-origin SSO redirect with credentials, so both
-      // POST and GET via fetch fail with "Failed to fetch". A real
-      // navigation walks the CF_AppSession -> SSO -> endpoint -> 303
-      // chain natively. The endpoint inserts the audit row, enqueues
-      // the orchestrator message, then 303s back to
-      // /settings?pipeline=enqueued&pipeline_run_id=...; the
-      // return-handler in wirePipelineButton picks up the URL signal
-      // and resumes polling.
-      //
-      // No try/catch: the page tears down before any error path could
-      // run. Status text is painted directly (not via setStatus, which
-      // would persist "Kicking pipeline..." to localStorage and leave a
-      // misleading message if the navigation never completes).
-      status.hidden = false;
-      status.textContent = 'Kicking pipeline...';
-      const kickUrl =
-        '/api/admin/pipeline-run?mode=' + (wipe ? 'wipe' : 'full');
-      window.location.assign(kickUrl);
-      return;
-    }
-
-    // Refresh-only: same top-level-navigation pattern as the Full
-    // pipeline run button above (AD38). CF Access protects /api/admin/*
-    // and a fetch() in CORS mode cannot follow the cross-origin SSO
-    // redirect with credentials, so when the CF_AppSession cookie has
-    // expired fetch() fails immediately with "Failed to fetch" and the
-    // operator sees a useless red "Failed:" message before the request
-    // ever reaches the worker. A real navigation walks the
-    // CF_AppSession -> SSO -> endpoint -> 303 chain natively. The
-    // force-refresh endpoint 303s back to
-    // /settings?force_refresh=ok|reused|error&run_id=...; the URL
-    // handler at the bottom of this script paints the status and pins
-    // pinnedRunId so the live scrape-status poll resumes.
+    // Pipeline kicker (REQ-OPS-008). Top-level navigation to the kicker.
+    // CF Access protects /api/admin/* and a fetch() in CORS mode cannot
+    // follow the cross-origin SSO redirect with credentials, so both
+    // POST and GET via fetch fail with "Failed to fetch". A real
+    // navigation walks the CF_AppSession -> SSO -> endpoint -> 303
+    // chain natively. The endpoint inserts the audit row, enqueues
+    // the orchestrator message, then 303s back to
+    // /settings?pipeline=enqueued&pipeline_run_id=...; the
+    // return-handler in wirePipelineButton picks up the URL signal
+    // and resumes polling.
     //
     // No try/catch: the page tears down before any error path could
     // run. Status text is painted directly (not via setStatus, which
-    // would persist "Kicking scrape..." to localStorage and leave a
+    // would persist "Kicking pipeline..." to localStorage and leave a
     // misleading message if the navigation never completes).
     status.hidden = false;
-    status.textContent = 'Kicking scrape...';
-    window.location.assign('/api/admin/force-refresh');
+    status.textContent = 'Kicking pipeline...';
+    const kickUrl =
+      '/api/admin/pipeline-run?mode=' + (wipe ? 'wipe' : 'full');
+    window.location.assign(kickUrl);
   }
 
-  /** Wire the Full / Refresh buttons to runPipeline(). Idempotent -
+  /** Wire the Refresh articles button to runPipeline(). Idempotent -
    *  the data-bound guard prevents double-binding on Astro SPA
    *  navigation back to /settings. */
   function wirePipelineButton(): void {
     const fullBtn = document.querySelector<HTMLButtonElement>('[data-pipeline-run]');
-    const refreshBtn = document.querySelector<HTMLButtonElement>(
-      '[data-pipeline-refresh]',
-    );
     if (fullBtn !== null && fullBtn.dataset['bound'] !== '1') {
       fullBtn.dataset['bound'] = '1';
       fullBtn.addEventListener('click', () => {
         const wipe = document.querySelector<HTMLInputElement>('[data-pipeline-wipe]');
-        void runPipeline('full', wipe?.checked === true);
+        void runPipeline(wipe?.checked === true);
       });
     }
-    if (refreshBtn !== null && refreshBtn.dataset['bound'] !== '1') {
-      refreshBtn.dataset['bound'] = '1';
-      refreshBtn.addEventListener('click', () => {
-        void runPipeline('refresh', false);
-      });
-    }
-    if (fullBtn === null && refreshBtn === null) return;
+    if (fullBtn === null) return;
 
-    // Return-from-kicker handler. The Full pipeline run button does a
+    // Return-from-kicker handler. The Refresh articles button does a
     // top-level navigation to /api/admin/pipeline-run?mode=... (CF
     // Access protects /api/admin/* and a fetch() in CORS mode cannot
     // follow the cross-origin SSO redirect). The kicker 303s back to

@@ -10,6 +10,7 @@ Entries from 2026-04-22 through 2026-04-26 (the global-feed rework window) are a
 
 - REQ-PIPE-009 gains two acceptance criteria for the dedup cost reductions captured in AD48: borderline pairs for one self now ride in a single batched LLM call (parse failure falls back to "different events" per pair), and the recurring background sweep skips the same-event judgment for pairs whose two articles both predate the last successful sweep watermark. An operator-initiated sweep ignores the watermark and re-judges every borderline pair end-to-end.
 - AD48 model swap reverted same day. `DEFAULT_MODEL_ID` returned to `@cf/openai/gpt-oss-120b` after the first production scrape on gpt-oss-20b failed with `scrape_wait_stalled` (every `scrape-chunks` queue invocation produced `outcome=canceled` mid-LLM-call). The watermark and batched-rerank pieces of AD48 stayed live.
+- REQ-OPS-008 and REQ-OPS-010 ACs consolidated: the settings Administration surface now offers a single "Refresh articles" action instead of the previous "Full pipeline run" + "Refresh feeds" pair. Both buttons were billing-equivalent on `mode=full`, and the dual surface added confusion without unique behaviour. The wipe-and-re-embed toggle now applies unconditionally to the one action.
 
 ## 2026-05-13
 
