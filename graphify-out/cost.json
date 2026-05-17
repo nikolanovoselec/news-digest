@@ -1,0 +1,13 @@
+{
+  "runs": [
+    {
+      "date": "2026-05-17T20:50:34.871813+00:00",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "files": 352,
+      "mode": "ast-only"
+    }
+  ],
+  "total_input_tokens": 0,
+  "total_output_tokens": 0
+}

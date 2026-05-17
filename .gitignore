@@ -25,3 +25,22 @@ coverage/
 playwright-report/
 test-results/
 .playwright/
+
+# graphify caches (regenerable, large)
+graphify-out/cache/
+graphify-out/.cache/
+graphify-out/.chunks/
+graphify-out/manifest.json
+graphify-out/obsidian/
+
+# graphify working-tree intermediates (created mid-run, cleaned at the end
+# of a successful build; defensive in case a run is interrupted before cleanup)
+.graphify_ast.json
+.graphify_semantic.json
+.graphify_extract.json
+.graphify_detect.json
+.graphify_analysis.json
+.graphify_cached.json
+.graphify_uncached.txt
+.graphify_chunk_*.txt
+.graphify_old.json
